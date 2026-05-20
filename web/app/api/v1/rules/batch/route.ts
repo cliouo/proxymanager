@@ -1,5 +1,6 @@
 import { withProblemDetails } from '@/lib/http/handler';
 import { ProblemDetailsError } from '@/lib/http/problem';
+import { recordEvent } from '@/lib/repos/auditRepo';
 import { batchUpsertAndDelete, listRules } from '@/lib/repos/rulesRepo';
 import {
   computeNextRank,
@@ -7,6 +8,7 @@ import {
   generateRuleId,
   loadParsedBase,
   nowSeconds,
+  resolveActor,
 } from '@/lib/services/rulesService';
 import { BatchRequestSchema, type BatchOpResult, type Rule } from '@/schemas';
 
@@ -25,6 +27,14 @@ export const POST = withProblemDetails(async (request: Request) => {
   const writes: Rule[] = [];
   const removes: string[] = [];
   const results: BatchOpResult[] = [];
+
+  // Audit trail emitted post-commit. Collected during the planning loop so we
+  // know exactly which ops actually succeeded once batchUpsertAndDelete runs.
+  type PendingEvent =
+    | { op: 'rule.create'; after: Rule }
+    | { op: 'rule.update'; before: Rule; after: Rule }
+    | { op: 'rule.delete'; before: Rule };
+  const pendingEvents: PendingEvent[] = [];
 
   // Track per-anchor next-rank as we walk, so a batch of N creates against
   // the same anchor each get a unique increasing rank without N round-trips.
@@ -59,6 +69,7 @@ export const POST = withProblemDetails(async (request: Request) => {
           note: op.rule.note,
         };
         writes.push(rule);
+        pendingEvents.push({ op: 'rule.create', after: rule });
         results.push({ status: 201, data: rule });
       } else if (op.op === 'update') {
         const current = existingMap.get(op.id);
@@ -74,6 +85,7 @@ export const POST = withProblemDetails(async (request: Request) => {
           ensureValidAnchorAndPolicy({ anchor: merged.anchor, policy: merged.policy }, parsedBase);
         }
         writes.push(merged);
+        pendingEvents.push({ op: 'rule.update', before: current, after: merged });
         results.push({ status: 200, data: merged });
       } else {
         // op.op === 'delete'
@@ -85,6 +97,8 @@ export const POST = withProblemDetails(async (request: Request) => {
           continue;
         }
         removes.push(op.id);
+        const before = existingMap.get(op.id);
+        if (before) pendingEvents.push({ op: 'rule.delete', before });
         results.push({ status: 204 });
       }
     } catch (err) {
@@ -100,6 +114,31 @@ export const POST = withProblemDetails(async (request: Request) => {
   }
 
   await batchUpsertAndDelete(writes, removes);
+
+  // Emit audit events serially after the commit lands. recordEvent is fast on
+  // Upstash pipelines, and at batch sizes we expect (tens, not thousands) the
+  // extra latency is acceptable.
+  const actor = resolveActor(request);
+  for (const ev of pendingEvents) {
+    if (ev.op === 'rule.create') {
+      await recordEvent({ op: 'rule.create', actor, ruleId: ev.after.id, after: ev.after });
+    } else if (ev.op === 'rule.update') {
+      await recordEvent({
+        op: 'rule.update',
+        actor,
+        ruleId: ev.after.id,
+        before: ev.before,
+        after: ev.after,
+      });
+    } else {
+      await recordEvent({
+        op: 'rule.delete',
+        actor,
+        ruleId: ev.before.id,
+        before: ev.before,
+      });
+    }
+  }
 
   const allSucceeded = results.every((r) => r.status < 400);
   return Response.json({ results }, { status: allSucceeded ? 200 : 207 });
