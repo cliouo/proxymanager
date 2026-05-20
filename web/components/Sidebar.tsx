@@ -10,6 +10,7 @@ const NAV = [
   { href: '/rules', label: 'Rules' },
   { href: '/rule-sets', label: 'Rule sets' },
   { href: '/subscriptions', label: 'Subscriptions' },
+  { href: '/history', label: 'History' },
   { href: '/docs', label: 'API docs', external: true },
 ];
 

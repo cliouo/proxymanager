@@ -34,7 +34,7 @@ async function parseProblem(res: Response): Promise<ApiError> {
 
 export async function api<T = unknown>(path: string, opts: ApiOptions = {}): Promise<T> {
   const { body, headers, skipAuth, raw, ...rest } = opts;
-  const finalHeaders: Record<string, string> = { ...(headers ?? {}) };
+  const finalHeaders: Record<string, string> = { 'X-Source': 'web-ui', ...(headers ?? {}) };
   if (!skipAuth) {
     const key = getAdminKey();
     if (key) finalHeaders.Authorization = `Bearer ${key}`;
