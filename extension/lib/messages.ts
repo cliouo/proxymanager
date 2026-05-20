@@ -35,7 +35,17 @@ export type Request =
   | { type: 'pingBackend' }
   | { type: 'pingClash' }
   | { type: 'listRulesByAnchor'; anchor: string }
-  | { type: 'deleteRule'; ruleId: string };
+  | { type: 'deleteRule'; ruleId: string }
+  | {
+      type: 'createRulesBatch';
+      rules: Array<{
+        anchor: string;
+        ruleType: 'DOMAIN' | 'DOMAIN-SUFFIX';
+        value: string;
+        policy: string;
+        note?: string;
+      }>;
+    };
 
 export interface BackendRule {
   id: string;
@@ -43,6 +53,14 @@ export interface BackendRule {
   type: 'DOMAIN' | 'DOMAIN-SUFFIX' | string;
   value: string;
   policy: string;
+}
+
+export interface BatchCreateOutcome {
+  /** Index in the original request array. */
+  index: number;
+  status: 'ok' | 'err';
+  ruleId?: string;
+  message?: string;
 }
 
 export interface SpeedtestEntry {

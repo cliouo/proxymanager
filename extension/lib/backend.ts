@@ -112,3 +112,47 @@ export async function backendCreateRule(
   });
   return res.data;
 }
+
+export interface NewRuleInput {
+  anchor: string;
+  type: 'DOMAIN' | 'DOMAIN-SUFFIX';
+  value: string;
+  policy: string;
+  source: 'speedtest' | 'manual';
+  note?: string;
+}
+
+export interface BatchCreateResult {
+  /** Per-input outcome — index matches the input array order. */
+  outcomes: Array<
+    | { status: 'ok'; ruleId: string }
+    | { status: 'err'; message: string }
+  >;
+}
+
+export async function backendCreateRulesBatch(
+  settings: Settings,
+  rules: NewRuleInput[],
+): Promise<BatchCreateResult> {
+  const ops = rules.map((rule) => ({ op: 'create' as const, rule }));
+  const res = await call<{
+    results: Array<{
+      status: number;
+      data?: { id: string };
+      error?: { title: string; detail?: string };
+    }>;
+  }>(settings, '/api/v1/rules/batch', {
+    method: 'POST',
+    body: JSON.stringify({ ops }),
+  });
+  const outcomes = res.results.map((r) => {
+    if (r.status >= 200 && r.status < 300 && r.data?.id) {
+      return { status: 'ok' as const, ruleId: r.data.id };
+    }
+    return {
+      status: 'err' as const,
+      message: r.error?.detail ?? r.error?.title ?? `HTTP ${r.status}`,
+    };
+  });
+  return { outcomes };
+}

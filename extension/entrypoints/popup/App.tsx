@@ -46,6 +46,28 @@ export default function PopupApp() {
 
   const [recentWrites, setRecentWrites] = useState<RecentWrite[]>([]);
 
+  /**
+   * Per-card snapshot of what the ResultCard would submit if its own Write
+   * button were clicked. Keyed by a stable cardId so we can offer a
+   * "Write N rules" CTA that batches everything atomically.
+   */
+  interface CardSubmission {
+    domain: string;
+    chosen: string;
+    anchor: string;
+    ruleType: 'DOMAIN' | 'DOMAIN-SUFFIX';
+    probedUrl: string;
+    entries: SpeedtestForDomain['entries'];
+  }
+  const [submissions, setSubmissions] = useState<Map<string, CardSubmission>>(new Map());
+  const [batchPending, setBatchPending] = useState(false);
+  const [batchStatus, setBatchStatus] = useState<
+    | { kind: 'idle' }
+    | { kind: 'ok'; written: number; reloaded: boolean; reloadError: string | null }
+    | { kind: 'partial'; ok: number; failed: number }
+    | { kind: 'err'; message: string }
+  >({ kind: 'idle' });
+
   // hostname → chosen full URL to probe (overrides default `https://{host}/`).
   const [pickedUrls, setPickedUrls] = useState<Map<string, string>>(new Map());
   // Only one row's URL list expanded at a time to keep the popup compact.
@@ -228,6 +250,119 @@ export default function PopupApp() {
   const handleUndone = useCallback((id: string, patch: Partial<RecentWrite>) => {
     setRecentWrites((prev) => prev.map((w) => (w.id === id ? { ...w, ...patch } : w)));
   }, []);
+
+  const handleSubmissionChange = useCallback(
+    (cardId: string, submission: CardSubmission | null) => {
+      setSubmissions((prev) => {
+        const next = new Map(prev);
+        if (submission) next.set(cardId, submission);
+        else next.delete(cardId);
+        return next;
+      });
+    },
+    [],
+  );
+
+  async function runBatchWrite() {
+    if (submissions.size === 0 || !settings) return;
+    const items = [...submissions.entries()];
+    setBatchPending(true);
+    setBatchStatus({ kind: 'idle' });
+    try {
+      const res = await send<{
+        outcomes: Array<
+          | { status: 'ok'; ruleId: string }
+          | { status: 'err'; message: string }
+        >;
+      }>({
+        type: 'createRulesBatch',
+        rules: items.map(([, s]) => ({
+          anchor: s.anchor,
+          ruleType: s.ruleType,
+          value: s.domain,
+          policy: s.chosen,
+          note: buildBatchNote(s),
+        })),
+      });
+
+      let okCount = 0;
+      let failCount = 0;
+      const writtenCardIds: string[] = [];
+      const fresh: RecentWrite[] = [];
+      res.outcomes.forEach((outcome, i) => {
+        const [cardId, s] = items[i];
+        if (outcome.status === 'ok') {
+          okCount += 1;
+          writtenCardIds.push(cardId);
+          fresh.push({
+            id: crypto.randomUUID(),
+            ts: Date.now(),
+            anchor: s.anchor,
+            ruleType: s.ruleType,
+            value: s.domain,
+            policy: s.chosen,
+            ruleId: outcome.ruleId,
+            reloaded: false, // updated below after the single reload
+          });
+        } else {
+          failCount += 1;
+        }
+      });
+
+      let reloaded = false;
+      let reloadError: string | null = null;
+      if (okCount > 0 && settings.autoReloadClash) {
+        try {
+          await send({ type: 'reloadClash' });
+          reloaded = true;
+        } catch (err) {
+          reloadError = err instanceof Error ? err.message : String(err);
+        }
+      }
+
+      // Persist all fresh entries first (reloaded flag set from the single
+      // post-batch reload result).
+      for (const entry of fresh) {
+        entry.reloaded = reloaded;
+        await pushRecentWrite(entry).catch(() => undefined);
+      }
+      // Prepend in original order so newest batched entry is on top of the
+      // local recent-writes panel.
+      setRecentWrites((prev) => [...fresh.slice().reverse(), ...prev].slice(0, 20));
+
+      // Drop written cards. Failed ones stay so the user can retry.
+      if (writtenCardIds.length > 0) {
+        const writtenSet = new Set(writtenCardIds);
+        const writtenDomains = new Set(
+          items.filter(([cid]) => writtenSet.has(cid)).map(([, s]) => s.domain),
+        );
+        setResults((prev) =>
+          prev ? prev.filter((r) => !writtenDomains.has(r.domain)) : prev,
+        );
+        setExtraResults((prev) =>
+          prev.filter(({ id }) => !writtenSet.has(`extra-${id}`)),
+        );
+        setSubmissions((prev) => {
+          const next = new Map(prev);
+          for (const cid of writtenCardIds) next.delete(cid);
+          return next;
+        });
+      }
+
+      if (failCount === 0) {
+        setBatchStatus({ kind: 'ok', written: okCount, reloaded, reloadError });
+      } else {
+        setBatchStatus({ kind: 'partial', ok: okCount, failed: failCount });
+      }
+    } catch (err) {
+      setBatchStatus({
+        kind: 'err',
+        message: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setBatchPending(false);
+    }
+  }
 
   if (!settings) {
     return (
@@ -487,23 +622,81 @@ export default function PopupApp() {
 
       {(results || extraResults.length > 0) && tab && (
         <div className="space-y-2">
+          {submissions.size >= 2 && (
+            <Card className="border-[var(--color-accent)]/40">
+              <CardBody className="p-3 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold text-[var(--color-fg)]">
+                      Batch write
+                    </p>
+                    <p className="text-[11px] text-[var(--color-muted)]">
+                      {submissions.size} card{submissions.size === 1 ? '' : 's'} ready
+                      · single reload after commit
+                    </p>
+                  </div>
+                  <Button
+                    onClick={runBatchWrite}
+                    disabled={batchPending}
+                    className="shrink-0"
+                  >
+                    {batchPending
+                      ? 'Writing…'
+                      : `Write ${submissions.size} rule${submissions.size === 1 ? '' : 's'}`}
+                  </Button>
+                </div>
+                {batchStatus.kind === 'ok' && (
+                  <p
+                    className={`text-[11px] ${
+                      batchStatus.reloaded
+                        ? 'text-[var(--color-accent)]'
+                        : batchStatus.reloadError
+                          ? 'text-[var(--color-warn)]'
+                          : 'text-[var(--color-accent)]'
+                    }`}
+                  >
+                    {batchStatus.reloaded
+                      ? `Saved ${batchStatus.written} + reloaded. Live.`
+                      : batchStatus.reloadError
+                        ? `Saved ${batchStatus.written}, reload failed: ${batchStatus.reloadError}`
+                        : `Saved ${batchStatus.written}. Reload Clash to apply.`}
+                  </p>
+                )}
+                {batchStatus.kind === 'partial' && (
+                  <p className="text-[11px] text-[var(--color-warn)]">
+                    {batchStatus.ok} saved, {batchStatus.failed} failed — see remaining
+                    cards for details.
+                  </p>
+                )}
+                {batchStatus.kind === 'err' && (
+                  <p className="text-[11px] text-[var(--color-danger)]">
+                    {batchStatus.message}
+                  </p>
+                )}
+              </CardBody>
+            </Card>
+          )}
           {extraResults.map(({ id, result }) => (
             <ResultCard
               key={`x-${id}`}
+              cardId={`extra-${id}`}
               initial={result}
               settings={settings}
               tabId={tab.id}
               onWritten={handleWritten}
+              onSubmissionChange={handleSubmissionChange}
               onRemove={() => removeExtra(id)}
             />
           ))}
           {results?.map((r) => (
             <ResultCard
               key={r.domain}
+              cardId={`tab-${r.domain}`}
               initial={r}
               settings={settings}
               tabId={tab.id}
               onWritten={handleWritten}
+              onSubmissionChange={handleSubmissionChange}
             />
           ))}
         </div>
@@ -529,18 +722,36 @@ function probedLabelOf(probedUrl: string): string | null {
   }
 }
 
+interface CardSubmissionForBatch {
+  domain: string;
+  chosen: string;
+  anchor: string;
+  ruleType: 'DOMAIN' | 'DOMAIN-SUFFIX';
+  probedUrl: string;
+  entries: SpeedtestForDomain['entries'];
+}
+
 function ResultCard({
+  cardId,
   initial,
   settings,
   tabId,
   onWritten,
+  onSubmissionChange,
   onRemove,
 }: {
+  /** Stable id used by the batch-write CTA to track this card. */
+  cardId: string;
   initial: SpeedtestForDomain;
   settings: Settings;
   tabId: number;
   /** Notified after a successful write so the popup can refresh recent-writes. */
   onWritten?: (entry: RecentWrite) => void;
+  /**
+   * Fires whenever this card's submission state changes. Pass `null` to
+   * deregister (no policy chosen, blank anchor, or component unmounting).
+   */
+  onSubmissionChange?: (cardId: string, submission: CardSubmissionForBatch | null) => void;
   /** Present only for manually-pasted URL results; renders a dismiss button. */
   onRemove?: () => void;
 }) {
@@ -592,6 +803,39 @@ function ResultCard({
     () => (existingRules ? findCoveringRule(result.domain, ruleType, existingRules) : null),
     [existingRules, result.domain, ruleType],
   );
+
+  // Publish the card's would-write submission to the parent so the batch CTA
+  // can pick it up. Null whenever the card isn't ready to write.
+  useEffect(() => {
+    if (!onSubmissionChange) return;
+    const trimmed = anchor.trim();
+    if (!chosen || !trimmed) {
+      onSubmissionChange(cardId, null);
+      return;
+    }
+    onSubmissionChange(cardId, {
+      domain: result.domain,
+      chosen,
+      anchor: trimmed,
+      ruleType,
+      probedUrl: result.probedUrl,
+      entries: result.entries,
+    });
+  }, [
+    cardId,
+    chosen,
+    anchor,
+    ruleType,
+    result.domain,
+    result.probedUrl,
+    result.entries,
+    onSubmissionChange,
+  ]);
+
+  // Drop our registration when the card unmounts.
+  useEffect(() => {
+    return () => onSubmissionChange?.(cardId, null);
+  }, [cardId, onSubmissionChange]);
 
   async function toggleExpand() {
     if (showUrls) {
@@ -920,6 +1164,11 @@ function buildNote(result: SpeedtestForDomain, chosen: string): string {
     .map((e) => `${e.group}=${e.delayMs ?? 'x'}`)
     .join(', ');
   return `speedtest @ ${new Date().toISOString().slice(0, 16)}Z → ${chosen} (${summary})`;
+}
+
+function buildBatchNote(s: CardSubmissionForBatch): string {
+  const summary = s.entries.map((e) => `${e.group}=${e.delayMs ?? 'x'}`).join(', ');
+  return `speedtest @ ${new Date().toISOString().slice(0, 16)}Z → ${s.chosen} (${summary}) [batch]`;
 }
 
 type WriteOutcome =

@@ -2,6 +2,7 @@ import type { Request, Response, SpeedtestForDomain, SpeedtestEntry } from '@/li
 import {
   backendAnchors,
   backendCreateRule,
+  backendCreateRulesBatch,
   backendDeleteRule,
   backendHealth,
   backendListRulesByAnchor,
@@ -148,6 +149,21 @@ async function handle(req: Request): Promise<unknown> {
       const settings = await getSettings();
       await backendDeleteRule(settings, req.ruleId);
       return null;
+    }
+    case 'createRulesBatch': {
+      const settings = await getSettings();
+      const result = await backendCreateRulesBatch(
+        settings,
+        req.rules.map((r) => ({
+          anchor: r.anchor,
+          type: r.ruleType,
+          value: r.value,
+          policy: r.policy,
+          source: 'speedtest',
+          note: r.note,
+        })),
+      );
+      return result;
     }
   }
 }
