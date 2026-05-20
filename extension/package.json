@@ -11,6 +11,12 @@
     "build:firefox": "wxt build -b firefox",
     "zip": "wxt zip",
     "zip:firefox": "wxt zip -b firefox",
+    "icons": "node scripts/build-icons.mjs",
+    "pack:crx": "node scripts/pack-crx.mjs",
+    "pack": "npm run build && npm run pack:crx",
+    "release:patch": "node scripts/release.mjs patch",
+    "release:minor": "node scripts/release.mjs minor",
+    "release:major": "node scripts/release.mjs major",
     "compile": "tsc --noEmit",
     "postinstall": "wxt prepare"
   },
@@ -24,6 +30,8 @@
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@wxt-dev/module-react": "^1.1.5",
+    "crx3": "^2.0.0",
+    "sharp": "^0.34.5",
     "tailwindcss": "^4.3.0",
     "typescript": "^5.9.3",
     "wxt": "^0.20.26"
