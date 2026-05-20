@@ -294,28 +294,21 @@ export default function OptionsApp() {
         <CardHeader>
           <CardTitle>Speedtest</CardTitle>
         </CardHeader>
-        <CardBody className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <div>
-            <Label>Probe URL</Label>
-            <Input
-              value={settings.speedtestUrl}
-              onChange={(e) => patch('speedtestUrl', e.target.value)}
-              placeholder="http://www.gstatic.com/generate_204"
-            />
-            <p className="mt-1 text-xs text-[var(--color-muted)]">
-              Default is the Clash generic probe. Override per-test in the popup.
-            </p>
-          </div>
-          <div>
-            <Label>Per-probe timeout (ms)</Label>
-            <Input
-              type="number"
-              value={settings.speedtestTimeoutMs}
-              onChange={(e) =>
-                patch('speedtestTimeoutMs', Math.max(500, Number(e.target.value) || 5000))
-              }
-            />
-          </div>
+        <CardBody>
+          <Label>Per-probe timeout (ms)</Label>
+          <Input
+            type="number"
+            value={settings.speedtestTimeoutMs}
+            onChange={(e) =>
+              patch('speedtestTimeoutMs', Math.max(500, Number(e.target.value) || 5000))
+            }
+            className="max-w-xs"
+          />
+          <p className="mt-1 text-xs text-[var(--color-muted)]">
+            How long each (domain × group) latency probe waits before giving up. 5000ms is
+            usually fine; raise it if your candidate groups include geographically distant
+            regions on slow links.
+          </p>
         </CardBody>
       </Card>
     </main>
