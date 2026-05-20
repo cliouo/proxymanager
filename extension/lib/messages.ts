@@ -34,7 +34,8 @@ export type Request =
   | { type: 'reloadClash' }
   | { type: 'pingBackend' }
   | { type: 'pingClash' }
-  | { type: 'listRulesByAnchor'; anchor: string };
+  | { type: 'listRulesByAnchor'; anchor: string }
+  | { type: 'deleteRule'; ruleId: string };
 
 export interface BackendRule {
   id: string;

@@ -17,6 +17,16 @@ export interface RecentWrite {
   ruleId?: string;
   /** Whether auto-reload of Clash fired successfully after this write. */
   reloaded: boolean;
+  /**
+   * Set after the user clicks Undo on this entry. Presence implies the rule
+   * has been DELETEd from the backend; entries without ruleId can't be undone
+   * (older log entries before ruleId capture).
+   */
+  undone?: {
+    ts: number;
+    reloaded: boolean;
+    error?: string;
+  };
 }
 
 const KEY = 'proxymanager.recentWrites';
@@ -38,4 +48,14 @@ export async function pushRecentWrite(entry: RecentWrite): Promise<RecentWrite[]
 
 export async function clearRecentWrites(): Promise<void> {
   await browser.storage.local.set({ [KEY]: [] });
+}
+
+export async function updateRecentWrite(
+  id: string,
+  patch: Partial<RecentWrite>,
+): Promise<RecentWrite[]> {
+  const list = await getRecentWrites();
+  const next = list.map((w) => (w.id === id ? { ...w, ...patch } : w));
+  await browser.storage.local.set({ [KEY]: next });
+  return next;
 }

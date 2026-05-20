@@ -14,6 +14,7 @@ import {
   clearRecentWrites,
   getRecentWrites,
   pushRecentWrite,
+  updateRecentWrite,
   type RecentWrite,
 } from '@/lib/recent-writes';
 import { getSettings, type Settings } from '@/lib/settings';
@@ -224,6 +225,10 @@ export default function PopupApp() {
     setRecentWrites([]);
   }
 
+  const handleUndone = useCallback((id: string, patch: Partial<RecentWrite>) => {
+    setRecentWrites((prev) => prev.map((w) => (w.id === id ? { ...w, ...patch } : w)));
+  }, []);
+
   if (!settings) {
     return (
       <main className="p-4 text-xs text-[var(--color-muted)]">Loading settings…</main>
@@ -273,7 +278,12 @@ export default function PopupApp() {
       )}
 
       {recentWrites.length > 0 && (
-        <RecentWritesCard entries={recentWrites} onClear={onClearRecent} />
+        <RecentWritesCard
+          entries={recentWrites}
+          autoReload={settings.autoReloadClash}
+          onClear={onClearRecent}
+          onUndone={handleUndone}
+        />
       )}
 
       <Card>
@@ -939,13 +949,60 @@ function findCoveringRule(
 
 function RecentWritesCard({
   entries,
+  autoReload,
   onClear,
+  onUndone,
 }: {
   entries: RecentWrite[];
+  autoReload: boolean;
   onClear: () => void;
+  onUndone: (id: string, patch: Partial<RecentWrite>) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [pending, setPending] = useState<Set<string>>(new Set());
+  const [errors, setErrors] = useState<Map<string, string>>(new Map());
   const latest = entries[0];
+
+  async function runUndo(entry: RecentWrite) {
+    if (!entry.ruleId || entry.undone) return;
+    setPending((prev) => new Set(prev).add(entry.id));
+    setErrors((prev) => {
+      if (!prev.has(entry.id)) return prev;
+      const next = new Map(prev);
+      next.delete(entry.id);
+      return next;
+    });
+    try {
+      await send({ type: 'deleteRule', ruleId: entry.ruleId });
+
+      let reloaded = false;
+      let reloadError: string | undefined;
+      if (autoReload) {
+        try {
+          await send({ type: 'reloadClash' });
+          reloaded = true;
+        } catch (err) {
+          reloadError = err instanceof Error ? err.message : String(err);
+        }
+      }
+
+      const patch: Partial<RecentWrite> = {
+        undone: { ts: Date.now(), reloaded, error: reloadError },
+      };
+      await updateRecentWrite(entry.id, patch).catch(() => undefined);
+      onUndone(entry.id, patch);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setErrors((prev) => new Map(prev).set(entry.id, message));
+    } finally {
+      setPending((prev) => {
+        const next = new Set(prev);
+        next.delete(entry.id);
+        return next;
+      });
+    }
+  }
+
   return (
     <Card>
       <CardHeader>
@@ -965,58 +1022,117 @@ function RecentWritesCard({
         </Button>
       </CardHeader>
       {!open && latest && (
-        <CardBody className="py-2 text-[11px] flex items-center gap-2 min-w-0">
-          <span
-            className={`shrink-0 inline-block w-1.5 h-1.5 rounded-full ${
-              latest.reloaded
-                ? 'bg-[var(--color-accent)]'
-                : 'bg-[var(--color-warn)]'
-            }`}
-            title={latest.reloaded ? 'Auto-reloaded' : 'Not auto-reloaded'}
+        <CardBody className="py-2">
+          <RecentWriteRow
+            entry={latest}
+            pending={pending.has(latest.id)}
+            error={errors.get(latest.id) ?? null}
+            onUndo={() => runUndo(latest)}
           />
-          <code className="font-mono truncate flex-1 min-w-0" title={latest.value}>
-            {latest.value}
-          </code>
-          <span className="text-[var(--color-muted)] shrink-0">→</span>
-          <Badge tone="accent">{latest.policy}</Badge>
-          <span className="text-[var(--color-muted)] shrink-0 tabular-nums">
-            {formatRelativeTs(latest.ts)}
-          </span>
         </CardBody>
       )}
       {open && (
         <CardBody className="p-0 max-h-64 overflow-y-auto">
           <ul className="divide-y divide-[var(--color-border)]/60">
             {entries.map((w) => (
-              <li
-                key={w.id}
-                className="flex items-center gap-2 px-3 py-2 text-[11px] min-w-0"
-              >
-                <span
-                  className={`shrink-0 inline-block w-1.5 h-1.5 rounded-full ${
-                    w.reloaded
-                      ? 'bg-[var(--color-accent)]'
-                      : 'bg-[var(--color-warn)]'
-                  }`}
-                  title={w.reloaded ? 'Auto-reloaded' : 'Not auto-reloaded'}
+              <li key={w.id} className="px-3 py-2">
+                <RecentWriteRow
+                  entry={w}
+                  pending={pending.has(w.id)}
+                  error={errors.get(w.id) ?? null}
+                  onUndo={() => runUndo(w)}
                 />
-                <code
-                  className="font-mono truncate flex-1 min-w-0"
-                  title={`${w.ruleType} ${w.value} (anchor: ${w.anchor})`}
-                >
-                  {w.value}
-                </code>
-                <span className="text-[var(--color-muted)] shrink-0">→</span>
-                <Badge tone="accent">{w.policy}</Badge>
-                <span className="text-[var(--color-muted)] shrink-0 tabular-nums">
-                  {formatRelativeTs(w.ts)}
-                </span>
               </li>
             ))}
           </ul>
         </CardBody>
       )}
     </Card>
+  );
+}
+
+function RecentWriteRow({
+  entry,
+  pending,
+  error,
+  onUndo,
+}: {
+  entry: RecentWrite;
+  pending: boolean;
+  error: string | null;
+  onUndo: () => void;
+}) {
+  const undone = !!entry.undone;
+  const canUndo = !!entry.ruleId && !undone;
+  return (
+    <div className="space-y-1">
+      <div className="text-[11px] flex items-center gap-2 min-w-0">
+        <span
+          className={`shrink-0 inline-block w-1.5 h-1.5 rounded-full ${
+            undone
+              ? 'bg-[var(--color-muted)]'
+              : entry.reloaded
+                ? 'bg-[var(--color-accent)]'
+                : 'bg-[var(--color-warn)]'
+          }`}
+          title={
+            undone
+              ? 'Undone'
+              : entry.reloaded
+                ? 'Auto-reloaded'
+                : 'Not auto-reloaded'
+          }
+        />
+        <code
+          className={`font-mono truncate flex-1 min-w-0 ${
+            undone ? 'line-through text-[var(--color-muted)]' : ''
+          }`}
+          title={`${entry.ruleType} ${entry.value} (anchor: ${entry.anchor})`}
+        >
+          {entry.value}
+        </code>
+        <span className="text-[var(--color-muted)] shrink-0">→</span>
+        <Badge tone={undone ? 'neutral' : 'accent'}>{entry.policy}</Badge>
+        <span className="text-[var(--color-muted)] shrink-0 tabular-nums">
+          {formatRelativeTs(entry.ts)}
+        </span>
+        {undone ? (
+          <span className="shrink-0 text-[10px] text-[var(--color-muted)] italic">
+            undone
+          </span>
+        ) : canUndo ? (
+          <button
+            type="button"
+            onClick={onUndo}
+            disabled={pending}
+            className="shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-danger)] hover:border-[var(--color-danger)]/60 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            title="Delete this rule from the backend"
+          >
+            {pending ? '…' : 'Undo'}
+          </button>
+        ) : (
+          <span
+            className="shrink-0 text-[10px] text-[var(--color-muted)]/60"
+            title="Rule id not captured at write time — can't undo this entry"
+          >
+            —
+          </span>
+        )}
+      </div>
+      {error && (
+        <p className="text-[10px] text-[var(--color-danger)] pl-3 truncate" title={error}>
+          undo failed: {error}
+        </p>
+      )}
+      {entry.undone?.error && !error && (
+        <p
+          className="text-[10px] text-[var(--color-warn)] pl-3 truncate"
+          title={entry.undone.error}
+        >
+          rule deleted, reload failed: {entry.undone.error}
+        </p>
+      )}
+    </div>
   );
 }
 

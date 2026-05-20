@@ -85,6 +85,15 @@ export async function backendListRulesByAnchor(
   return res.data;
 }
 
+export async function backendDeleteRule(
+  settings: Settings,
+  ruleId: string,
+): Promise<void> {
+  await call<unknown>(settings, `/api/v1/rules/${encodeURIComponent(ruleId)}`, {
+    method: 'DELETE',
+  });
+}
+
 export async function backendCreateRule(
   settings: Settings,
   rule: {
