@@ -6,32 +6,53 @@ import {
   backendPolicies,
 } from '@/lib/backend';
 import { clashDelay, clashPing, clashReload } from '@/lib/clash';
-import { getSettings } from '@/lib/settings';
+import { getSettings, type Settings } from '@/lib/settings';
 
 const SKIP_SCHEMES = ['chrome:', 'chrome-extension:', 'about:', 'edge:', 'devtools:', 'data:'];
+const MAX_URLS_PER_HOST = 20;
 
-// Tab id → set of hostnames observed since the last main_frame navigation.
-const perTabDomains = new Map<number, Set<string>>();
-
-function tabKey(tabId: number): Set<string> {
-  let set = perTabDomains.get(tabId);
-  if (!set) {
-    set = new Set();
-    perTabDomains.set(tabId, set);
-  }
-  return set;
-}
+// Tab id → (hostname → list of distinct full URLs observed since the last
+// main_frame navigation). Distinctness is keyed by `origin + pathname` so
+// e.g. `/api/users?token=A` and `/api/users?token=B` collapse into one entry,
+// but `/api/users` and `/img/logo.png` remain separate. The full URL
+// (including query) is preserved so the speedtest hits the exact resource.
+const perTabHostUrls = new Map<number, Map<string, string[]>>();
 
 function recordRequest(tabId: number, urlStr: string): void {
-  if (tabId < 0) return; // -1 = service worker or background page
+  if (tabId < 0) return;
+  let u: URL;
   try {
-    const u = new URL(urlStr);
-    if (SKIP_SCHEMES.includes(u.protocol)) return;
-    if (!u.hostname) return;
-    tabKey(tabId).add(u.hostname);
+    u = new URL(urlStr);
   } catch {
-    /* invalid URL — ignore */
+    return;
   }
+  if (SKIP_SCHEMES.includes(u.protocol)) return;
+  if (!u.hostname) return;
+
+  let hostMap = perTabHostUrls.get(tabId);
+  if (!hostMap) {
+    hostMap = new Map();
+    perTabHostUrls.set(tabId, hostMap);
+  }
+
+  let urls = hostMap.get(u.hostname);
+  if (!urls) {
+    urls = [];
+    hostMap.set(u.hostname, urls);
+  }
+
+  const key = u.origin + u.pathname;
+  for (const existing of urls) {
+    try {
+      const e = new URL(existing);
+      if (e.origin + e.pathname === key) return;
+    } catch {
+      /* ignore */
+    }
+  }
+
+  urls.push(urlStr);
+  if (urls.length > MAX_URLS_PER_HOST) urls.shift();
 }
 
 export default defineBackground(() => {
@@ -45,11 +66,11 @@ export default defineBackground(() => {
   );
 
   browser.webNavigation?.onCommitted?.addListener?.((details) => {
-    if (details.frameId === 0) perTabDomains.delete(details.tabId);
+    if (details.frameId === 0) perTabHostUrls.delete(details.tabId);
   });
 
   browser.tabs.onRemoved.addListener((tabId: number) => {
-    perTabDomains.delete(tabId);
+    perTabHostUrls.delete(tabId);
   });
 
   browser.runtime.onMessage.addListener(async (message: unknown): Promise<Response> => {
@@ -65,11 +86,16 @@ export default defineBackground(() => {
 async function handle(req: Request): Promise<unknown> {
   switch (req.type) {
     case 'listDomains': {
-      const set = perTabDomains.get(req.tabId);
-      return set ? [...set].sort() : [];
+      const map = perTabHostUrls.get(req.tabId);
+      return map ? [...map.keys()].sort() : [];
+    }
+    case 'listUrlsForDomain': {
+      const map = perTabHostUrls.get(req.tabId);
+      const urls = map?.get(req.domain);
+      return urls ? [...urls] : [];
     }
     case 'clearDomains': {
-      perTabDomains.delete(req.tabId);
+      perTabHostUrls.delete(req.tabId);
       return null;
     }
     case 'getPolicies': {
@@ -81,7 +107,17 @@ async function handle(req: Request): Promise<unknown> {
       return backendAnchors(settings);
     }
     case 'speedtest': {
-      return runSpeedtest(req.domains, req.groups);
+      const settings = await getSettings();
+      const results: SpeedtestForDomain[] = [];
+      for (const domain of req.domains) {
+        const probedUrl = `https://${domain}/`;
+        results.push(await runOneSpeedtest(settings, domain, probedUrl, req.groups));
+      }
+      return results;
+    }
+    case 'speedtestExplicit': {
+      const settings = await getSettings();
+      return runOneSpeedtest(settings, req.label, req.url, req.groups);
     }
     case 'createRule': {
       const settings = await getSettings();
@@ -110,39 +146,33 @@ async function handle(req: Request): Promise<unknown> {
   }
 }
 
-async function runSpeedtest(
-  domains: string[],
+async function runOneSpeedtest(
+  settings: Settings,
+  label: string,
+  probedUrl: string,
   groups: string[],
-): Promise<SpeedtestForDomain[]> {
-  const settings = await getSettings();
-  const results: SpeedtestForDomain[] = [];
+): Promise<SpeedtestForDomain> {
+  const entries: SpeedtestEntry[] = await Promise.all(
+    groups.map(async (group) => {
+      try {
+        const delayMs = await clashDelay(
+          settings,
+          group,
+          probedUrl,
+          settings.speedtestTimeoutMs,
+        );
+        return { group, delayMs };
+      } catch (err) {
+        return {
+          group,
+          delayMs: null,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
+    }),
+  );
 
-  for (const domain of domains) {
-    const testUrl = `https://${domain}/`;
-    const entries: SpeedtestEntry[] = await Promise.all(
-      groups.map(async (group) => {
-        try {
-          const delayMs = await clashDelay(
-            settings,
-            group,
-            testUrl,
-            settings.speedtestTimeoutMs,
-          );
-          return { group, delayMs };
-        } catch (err) {
-          return {
-            group,
-            delayMs: null,
-            error: err instanceof Error ? err.message : String(err),
-          };
-        }
-      }),
-    );
-
-    const reachable = entries.filter((e) => e.delayMs !== null && e.delayMs > 0);
-    reachable.sort((a, b) => (a.delayMs ?? 0) - (b.delayMs ?? 0));
-    results.push({ domain, entries, best: reachable[0] });
-  }
-
-  return results;
+  const reachable = entries.filter((e) => e.delayMs !== null && e.delayMs > 0);
+  reachable.sort((a, b) => (a.delayMs ?? 0) - (b.delayMs ?? 0));
+  return { domain: label, probedUrl, entries, best: reachable[0] };
 }

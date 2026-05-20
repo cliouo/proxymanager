@@ -194,10 +194,10 @@ export default function PopupApp() {
         </Button>
       </div>
 
-      {results && (
+      {results && tab && (
         <div className="space-y-2">
           {results.map((r) => (
-            <ResultCard key={r.domain} result={r} settings={settings} />
+            <ResultCard key={r.domain} initial={r} settings={settings} tabId={tab.id} />
           ))}
         </div>
       )}
@@ -205,18 +205,93 @@ export default function PopupApp() {
   );
 }
 
+function probedPathOf(probedUrl: string): string | null {
+  try {
+    const u = new URL(probedUrl);
+    const p = u.pathname + u.search;
+    return p === '/' || p === '' ? null : p;
+  } catch {
+    return null;
+  }
+}
+
 function ResultCard({
-  result,
+  initial,
   settings,
+  tabId,
 }: {
-  result: SpeedtestForDomain;
+  initial: SpeedtestForDomain;
   settings: Settings;
+  tabId: number;
 }) {
+  const [result, setResult] = useState<SpeedtestForDomain>(initial);
   const [ruleType, setRuleType] = useState<Settings['defaultRuleType']>(settings.defaultRuleType);
   const [anchor, setAnchor] = useState(settings.defaultAnchor);
   const [chosen, setChosen] = useState<string | null>(result.best?.group ?? null);
   const [pending, setPending] = useState(false);
   const [done, setDone] = useState<'ok' | string | null>(null);
+
+  const [showUrls, setShowUrls] = useState(false);
+  const [urls, setUrls] = useState<string[] | null>(null);
+  const [selectedUrl, setSelectedUrl] = useState<string | null>(null);
+  const [loadingUrls, setLoadingUrls] = useState(false);
+  const [retesting, setRetesting] = useState(false);
+  const [urlError, setUrlError] = useState<string | null>(null);
+
+  const allFailed = result.entries.every((e) => e.delayMs === null);
+  const probedPath = probedPathOf(result.probedUrl);
+
+  async function toggleExpand() {
+    if (showUrls) {
+      setShowUrls(false);
+      return;
+    }
+    setShowUrls(true);
+    if (urls !== null) return;
+    setLoadingUrls(true);
+    setUrlError(null);
+    try {
+      const list = (await send({
+        type: 'listUrlsForDomain',
+        tabId,
+        domain: result.domain,
+      })) as string[];
+      setUrls(list);
+      const firstNonRoot = list.find((u) => {
+        try {
+          return new URL(u).pathname !== '/';
+        } catch {
+          return false;
+        }
+      });
+      setSelectedUrl(firstNonRoot ?? list[0] ?? null);
+    } catch (err) {
+      setUrlError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoadingUrls(false);
+    }
+  }
+
+  async function retest() {
+    if (!selectedUrl) return;
+    setRetesting(true);
+    setUrlError(null);
+    try {
+      const fresh = (await send({
+        type: 'speedtestExplicit',
+        label: result.domain,
+        url: selectedUrl,
+        groups: settings.candidateGroups,
+      })) as SpeedtestForDomain;
+      setResult(fresh);
+      setChosen(fresh.best?.group ?? null);
+      setShowUrls(false);
+    } catch (err) {
+      setUrlError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRetesting(false);
+    }
+  }
 
   async function write() {
     if (!chosen) return;
@@ -242,13 +317,25 @@ function ResultCard({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>
-          <code className="font-mono text-xs">{result.domain}</code>
-        </CardTitle>
-        {result.best && (
+        <div className="min-w-0">
+          <CardTitle>
+            <code className="font-mono text-xs">{result.domain}</code>
+          </CardTitle>
+          {probedPath && (
+            <p
+              className="mt-0.5 text-[10px] font-mono text-[var(--color-muted)] truncate max-w-[260px]"
+              title={result.probedUrl}
+            >
+              tested @ {probedPath}
+            </p>
+          )}
+        </div>
+        {result.best ? (
           <Badge tone="accent">
             best: {result.best.group} · {result.best.delayMs}ms
           </Badge>
+        ) : (
+          allFailed && <Badge tone="danger">all timed out</Badge>
         )}
       </CardHeader>
       <CardBody className="space-y-2">
@@ -284,6 +371,86 @@ function ResultCard({
             );
           })}
         </ul>
+
+        <div className="flex items-center justify-between text-xs">
+          <button
+            type="button"
+            onClick={toggleExpand}
+            className="text-[var(--color-muted)] hover:text-[var(--color-fg)]"
+          >
+            {showUrls ? '▾ Hide URLs' : '▸ Try a specific URL'}
+            {allFailed && !showUrls && (
+              <span className="ml-1 text-[var(--color-warn)]">(root timed out)</span>
+            )}
+          </button>
+        </div>
+
+        {showUrls && (
+          <div className="space-y-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]/40 p-2">
+            {loadingUrls ? (
+              <p className="text-xs text-[var(--color-muted)]">Loading recorded URLs…</p>
+            ) : urls && urls.length > 0 ? (
+              <>
+                <p className="text-[10px] text-[var(--color-muted)]">
+                  Pick a real resource and retest. Helps when the root path doesn't
+                  respond.
+                </p>
+                <ul className="space-y-0.5 max-h-40 overflow-y-auto">
+                  {urls.map((u) => {
+                    let path = u;
+                    try {
+                      const parsed = new URL(u);
+                      path = parsed.pathname + parsed.search;
+                    } catch {
+                      /* fall back to full URL */
+                    }
+                    return (
+                      <li key={u}>
+                        <label
+                          className="flex items-center gap-2 cursor-pointer text-xs hover:bg-[var(--color-surface-2)] rounded px-1.5 py-1"
+                          title={u}
+                        >
+                          <input
+                            type="radio"
+                            name={`url-${result.domain}`}
+                            checked={selectedUrl === u}
+                            onChange={() => setSelectedUrl(u)}
+                          />
+                          <code className="font-mono truncate">{path}</code>
+                        </label>
+                      </li>
+                    );
+                  })}
+                </ul>
+                <div className="flex items-center justify-end gap-2">
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => setShowUrls(false)}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={retest}
+                    disabled={!selectedUrl || retesting}
+                  >
+                    {retesting ? 'Retesting…' : 'Retest with this URL'}
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <p className="text-xs text-[var(--color-muted)]">
+                No recorded URLs for this domain yet. Reload the page so the extension
+                can observe its requests, then reopen this popup.
+              </p>
+            )}
+            {urlError && (
+              <p className="text-xs text-[var(--color-danger)]">{urlError}</p>
+            )}
+          </div>
+        )}
+
         <div className="flex items-center gap-2 pt-1">
           <Select
             value={ruleType}

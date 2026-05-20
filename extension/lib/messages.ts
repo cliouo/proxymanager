@@ -8,12 +8,21 @@
 
 export type Request =
   | { type: 'listDomains'; tabId: number }
+  | { type: 'listUrlsForDomain'; tabId: number; domain: string }
   | { type: 'clearDomains'; tabId: number }
   | { type: 'getPolicies' }
   | { type: 'getAnchors' }
   | {
       type: 'speedtest';
       domains: string[];
+      groups: string[];
+    }
+  | {
+      type: 'speedtestExplicit';
+      /** Display label for the result card (typically the hostname). */
+      label: string;
+      /** Full URL to probe — passed verbatim to Clash /proxies/{group}/delay. */
+      url: string;
       groups: string[];
     }
   | {
@@ -35,7 +44,10 @@ export interface SpeedtestEntry {
 }
 
 export interface SpeedtestForDomain {
+  /** Display label — usually the hostname. */
   domain: string;
+  /** URL actually probed (helpful when retesting against a specific resource). */
+  probedUrl: string;
   entries: SpeedtestEntry[];
   best?: SpeedtestEntry;
 }
