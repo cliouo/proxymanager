@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Badge,
   Button,
@@ -9,7 +9,13 @@ import {
   Input,
   Select,
 } from '@/components/ui';
-import { send, type SpeedtestForDomain } from '@/lib/messages';
+import { send, type BackendRule, type SpeedtestForDomain } from '@/lib/messages';
+import {
+  clearRecentWrites,
+  getRecentWrites,
+  pushRecentWrite,
+  type RecentWrite,
+} from '@/lib/recent-writes';
 import { getSettings, type Settings } from '@/lib/settings';
 
 interface ActiveTab {
@@ -37,6 +43,8 @@ export default function PopupApp() {
   const [pasteTesting, setPasteTesting] = useState(false);
   const [pasteError, setPasteError] = useState<string | null>(null);
 
+  const [recentWrites, setRecentWrites] = useState<RecentWrite[]>([]);
+
   // hostname → chosen full URL to probe (overrides default `https://{host}/`).
   const [pickedUrls, setPickedUrls] = useState<Map<string, string>>(new Map());
   // Only one row's URL list expanded at a time to keep the popup compact.
@@ -50,6 +58,8 @@ export default function PopupApp() {
     (async () => {
       const s = await getSettings();
       setSettings(s);
+
+      getRecentWrites().then(setRecentWrites).catch(() => undefined);
 
       const [t] = await browser.tabs.query({ active: true, currentWindow: true });
       if (!t?.id || !t.url) return;
@@ -205,6 +215,15 @@ export default function PopupApp() {
     setExtraResults((prev) => prev.filter((r) => r.id !== id));
   }
 
+  const handleWritten = useCallback((entry: RecentWrite) => {
+    setRecentWrites((prev) => [entry, ...prev].slice(0, 20));
+  }, []);
+
+  async function onClearRecent() {
+    await clearRecentWrites();
+    setRecentWrites([]);
+  }
+
   if (!settings) {
     return (
       <main className="p-4 text-xs text-[var(--color-muted)]">Loading settings…</main>
@@ -251,6 +270,10 @@ export default function PopupApp() {
         <Card className="border-[var(--color-danger)]/40">
           <CardBody className="text-xs text-[var(--color-danger)]">{error}</CardBody>
         </Card>
+      )}
+
+      {recentWrites.length > 0 && (
+        <RecentWritesCard entries={recentWrites} onClear={onClearRecent} />
       )}
 
       <Card>
@@ -460,11 +483,18 @@ export default function PopupApp() {
               initial={result}
               settings={settings}
               tabId={tab.id}
+              onWritten={handleWritten}
               onRemove={() => removeExtra(id)}
             />
           ))}
           {results?.map((r) => (
-            <ResultCard key={r.domain} initial={r} settings={settings} tabId={tab.id} />
+            <ResultCard
+              key={r.domain}
+              initial={r}
+              settings={settings}
+              tabId={tab.id}
+              onWritten={handleWritten}
+            />
           ))}
         </div>
       )}
@@ -493,11 +523,14 @@ function ResultCard({
   initial,
   settings,
   tabId,
+  onWritten,
   onRemove,
 }: {
   initial: SpeedtestForDomain;
   settings: Settings;
   tabId: number;
+  /** Notified after a successful write so the popup can refresh recent-writes. */
+  onWritten?: (entry: RecentWrite) => void;
   /** Present only for manually-pasted URL results; renders a dismiss button. */
   onRemove?: () => void;
 }) {
@@ -510,7 +543,10 @@ function ResultCard({
   const [anchor, setAnchor] = useState(settings.defaultAnchor || 'manual');
   const [chosen, setChosen] = useState<string | null>(result.best?.group ?? null);
   const [pending, setPending] = useState(false);
-  const [done, setDone] = useState<'ok' | string | null>(null);
+  const [done, setDone] = useState<WriteOutcome | null>(null);
+
+  const [existingRules, setExistingRules] = useState<BackendRule[] | null>(null);
+  const anchorFetchSeq = useRef(0);
 
   const [showUrls, setShowUrls] = useState(false);
   const [urls, setUrls] = useState<string[] | null>(null);
@@ -521,6 +557,31 @@ function ResultCard({
 
   const allFailed = result.entries.every((e) => e.delayMs === null);
   const probedLabel = probedLabelOf(result.probedUrl);
+
+  const trimmedAnchor = anchor.trim();
+  useEffect(() => {
+    if (!trimmedAnchor) {
+      setExistingRules([]);
+      return;
+    }
+    const seq = ++anchorFetchSeq.current;
+    setExistingRules(null);
+    const timer = window.setTimeout(() => {
+      send<BackendRule[]>({ type: 'listRulesByAnchor', anchor: trimmedAnchor })
+        .then((rules) => {
+          if (seq === anchorFetchSeq.current) setExistingRules(rules);
+        })
+        .catch(() => {
+          if (seq === anchorFetchSeq.current) setExistingRules([]);
+        });
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [trimmedAnchor]);
+
+  const covering = useMemo(
+    () => (existingRules ? findCoveringRule(result.domain, ruleType, existingRules) : null),
+    [existingRules, result.domain, ruleType],
+  );
 
   async function toggleExpand() {
     if (showUrls) {
@@ -581,17 +642,42 @@ function ResultCard({
     setPending(true);
     setDone(null);
     try {
-      await send({
+      const created = await send<{ id: string }>({
         type: 'createRule',
-        anchor,
+        anchor: trimmedAnchor,
         ruleType,
         value: result.domain,
         policy: chosen,
         note: buildNote(result, chosen),
       });
-      setDone('ok');
+
+      let reloaded = false;
+      let reloadError: string | null = null;
+      if (settings.autoReloadClash) {
+        try {
+          await send({ type: 'reloadClash' });
+          reloaded = true;
+        } catch (err) {
+          reloadError = err instanceof Error ? err.message : String(err);
+        }
+      }
+
+      const entry: RecentWrite = {
+        id: crypto.randomUUID(),
+        ts: Date.now(),
+        anchor: trimmedAnchor,
+        ruleType,
+        value: result.domain,
+        policy: chosen,
+        ruleId: created?.id,
+        reloaded,
+      };
+      await pushRecentWrite(entry).catch(() => undefined);
+      onWritten?.(entry);
+
+      setDone({ kind: 'ok', reloaded, reloadError });
     } catch (err) {
-      setDone(err instanceof Error ? err.message : String(err));
+      setDone({ kind: 'err', message: err instanceof Error ? err.message : String(err) });
     } finally {
       setPending(false);
     }
@@ -744,6 +830,22 @@ function ResultCard({
         )}
 
         <div className="space-y-2 pt-2 border-t border-[var(--color-border)]/60">
+          {covering && (
+            <p
+              className={`text-[10px] leading-snug rounded-md border px-2 py-1 ${
+                covering.policy === chosen
+                  ? 'border-[var(--color-warn)]/40 bg-[var(--color-warn)]/10 text-[var(--color-warn)]'
+                  : 'border-[var(--color-accent)]/30 bg-[var(--color-accent)]/10 text-[var(--color-accent)]'
+              }`}
+              title={`Existing ${covering.type} ${covering.value} → ${covering.policy}`}
+            >
+              {covering.policy === chosen ? 'Redundant: ' : 'Refines: '}
+              <code className="font-mono">
+                {covering.type} {covering.value}
+              </code>{' '}
+              already routes to <strong>{covering.policy}</strong>.
+            </p>
+          )}
           <div className="flex items-end gap-2">
             <label className="flex flex-col gap-0.5 shrink-0">
               <span className="text-[9px] uppercase tracking-wide text-[var(--color-muted)] font-semibold">
@@ -778,13 +880,25 @@ function ResultCard({
             {pending ? 'Saving…' : chosen ? `Write rule → ${chosen}` : 'Pick a group first'}
           </Button>
         </div>
-        {done === 'ok' && (
-          <p className="text-xs text-[var(--color-accent)]">
-            Saved. Reload Clash for the new rule to take effect.
+        {done?.kind === 'ok' && (
+          <p
+            className={`text-xs ${
+              done.reloaded
+                ? 'text-[var(--color-accent)]'
+                : done.reloadError
+                  ? 'text-[var(--color-warn)]'
+                  : 'text-[var(--color-accent)]'
+            }`}
+          >
+            {done.reloaded
+              ? 'Saved + reloaded. Rule is live.'
+              : done.reloadError
+                ? `Saved, but reload failed: ${done.reloadError}`
+                : 'Saved. Reload Clash for the new rule to take effect.'}
           </p>
         )}
-        {done && done !== 'ok' && (
-          <p className="text-xs text-[var(--color-danger)]">{done}</p>
+        {done?.kind === 'err' && (
+          <p className="text-xs text-[var(--color-danger)]">{done.message}</p>
         )}
       </CardBody>
     </Card>
@@ -796,4 +910,120 @@ function buildNote(result: SpeedtestForDomain, chosen: string): string {
     .map((e) => `${e.group}=${e.delayMs ?? 'x'}`)
     .join(', ');
   return `speedtest @ ${new Date().toISOString().slice(0, 16)}Z → ${chosen} (${summary})`;
+}
+
+type WriteOutcome =
+  | { kind: 'ok'; reloaded: boolean; reloadError: string | null }
+  | { kind: 'err'; message: string };
+
+/**
+ * Find an existing rule (under the same anchor) that already routes the given
+ * target. DOMAIN-SUFFIX rules cover their own value plus any sub-domain, so a
+ * `DOMAIN-SUFFIX youtube.com` shadows any later `DOMAIN-SUFFIX m.youtube.com`
+ * or `DOMAIN youtube.com` write under the same anchor.
+ */
+function findCoveringRule(
+  value: string,
+  type: 'DOMAIN' | 'DOMAIN-SUFFIX',
+  existing: BackendRule[],
+): BackendRule | null {
+  for (const r of existing) {
+    if (r.type === type && r.value === value) return r;
+    if (r.type === 'DOMAIN-SUFFIX') {
+      if (r.value === value) return r;
+      if (value.endsWith(`.${r.value}`)) return r;
+    }
+  }
+  return null;
+}
+
+function RecentWritesCard({
+  entries,
+  onClear,
+}: {
+  entries: RecentWrite[];
+  onClear: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const latest = entries[0];
+  return (
+    <Card>
+      <CardHeader>
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="flex items-center gap-2 text-left min-w-0 hover:text-[var(--color-fg)]"
+        >
+          <span className="text-[10px] leading-none">{open ? '▾' : '▸'}</span>
+          <CardTitle>
+            Recent writes{' '}
+            <span className="text-[var(--color-muted)] font-normal">({entries.length})</span>
+          </CardTitle>
+        </button>
+        <Button size="sm" variant="ghost" onClick={onClear}>
+          Clear
+        </Button>
+      </CardHeader>
+      {!open && latest && (
+        <CardBody className="py-2 text-[11px] flex items-center gap-2 min-w-0">
+          <span
+            className={`shrink-0 inline-block w-1.5 h-1.5 rounded-full ${
+              latest.reloaded
+                ? 'bg-[var(--color-accent)]'
+                : 'bg-[var(--color-warn)]'
+            }`}
+            title={latest.reloaded ? 'Auto-reloaded' : 'Not auto-reloaded'}
+          />
+          <code className="font-mono truncate flex-1 min-w-0" title={latest.value}>
+            {latest.value}
+          </code>
+          <span className="text-[var(--color-muted)] shrink-0">→</span>
+          <Badge tone="accent">{latest.policy}</Badge>
+          <span className="text-[var(--color-muted)] shrink-0 tabular-nums">
+            {formatRelativeTs(latest.ts)}
+          </span>
+        </CardBody>
+      )}
+      {open && (
+        <CardBody className="p-0 max-h-64 overflow-y-auto">
+          <ul className="divide-y divide-[var(--color-border)]/60">
+            {entries.map((w) => (
+              <li
+                key={w.id}
+                className="flex items-center gap-2 px-3 py-2 text-[11px] min-w-0"
+              >
+                <span
+                  className={`shrink-0 inline-block w-1.5 h-1.5 rounded-full ${
+                    w.reloaded
+                      ? 'bg-[var(--color-accent)]'
+                      : 'bg-[var(--color-warn)]'
+                  }`}
+                  title={w.reloaded ? 'Auto-reloaded' : 'Not auto-reloaded'}
+                />
+                <code
+                  className="font-mono truncate flex-1 min-w-0"
+                  title={`${w.ruleType} ${w.value} (anchor: ${w.anchor})`}
+                >
+                  {w.value}
+                </code>
+                <span className="text-[var(--color-muted)] shrink-0">→</span>
+                <Badge tone="accent">{w.policy}</Badge>
+                <span className="text-[var(--color-muted)] shrink-0 tabular-nums">
+                  {formatRelativeTs(w.ts)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </CardBody>
+      )}
+    </Card>
+  );
+}
+
+function formatRelativeTs(ts: number): string {
+  const diff = Date.now() - ts;
+  if (diff < 60_000) return 'just now';
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h`;
+  return new Date(ts).toLocaleDateString();
 }

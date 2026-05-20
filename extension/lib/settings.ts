@@ -17,6 +17,12 @@ export const SettingsSchema = z.object({
   defaultRuleType: z.enum(['DOMAIN', 'DOMAIN-SUFFIX']),
   /** Per-probe timeout in ms — applied to each (domain × group) delay test */
   speedtestTimeoutMs: z.number().int().positive(),
+  /**
+   * After a successful rule write, automatically PUT /configs?force=true so
+   * the new rule takes effect without a separate user action. Reload failures
+   * are surfaced but don't mark the write itself as failed.
+   */
+  autoReloadClash: z.boolean(),
 });
 
 export type Settings = z.infer<typeof SettingsSchema>;
@@ -30,6 +36,7 @@ export const DEFAULT_SETTINGS: Settings = {
   defaultAnchor: 'manual',
   defaultRuleType: 'DOMAIN-SUFFIX',
   speedtestTimeoutMs: 5000,
+  autoReloadClash: true,
 };
 
 const KEY = 'proxymanager.settings';

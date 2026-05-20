@@ -33,7 +33,16 @@ export type Request =
     }
   | { type: 'reloadClash' }
   | { type: 'pingBackend' }
-  | { type: 'pingClash' };
+  | { type: 'pingClash' }
+  | { type: 'listRulesByAnchor'; anchor: string };
+
+export interface BackendRule {
+  id: string;
+  anchor: string;
+  type: 'DOMAIN' | 'DOMAIN-SUFFIX' | string;
+  value: string;
+  policy: string;
+}
 
 export interface SpeedtestEntry {
   group: string;

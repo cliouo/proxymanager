@@ -3,6 +3,7 @@ import {
   backendAnchors,
   backendCreateRule,
   backendHealth,
+  backendListRulesByAnchor,
   backendPolicies,
 } from '@/lib/backend';
 import { clashDelay, clashPing, clashReload } from '@/lib/clash';
@@ -137,6 +138,10 @@ async function handle(req: Request): Promise<unknown> {
     case 'pingClash': {
       const settings = await getSettings();
       return clashPing(settings);
+    }
+    case 'listRulesByAnchor': {
+      const settings = await getSettings();
+      return backendListRulesByAnchor(settings, req.anchor);
     }
   }
 }

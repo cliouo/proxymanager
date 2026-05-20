@@ -1,3 +1,4 @@
+import type { BackendRule } from './messages';
 import type { Settings } from './settings';
 
 export class BackendError extends Error {
@@ -69,6 +70,18 @@ export async function backendAnchors(settings: Settings): Promise<string[]> {
 
 export async function backendPolicies(settings: Settings): Promise<string[]> {
   const res = await call<{ data: string[] }>(settings, '/api/v1/policies');
+  return res.data;
+}
+
+export async function backendListRulesByAnchor(
+  settings: Settings,
+  anchor: string,
+): Promise<BackendRule[]> {
+  const qs = new URLSearchParams({ anchor, limit: '500' });
+  const res = await call<{ data: BackendRule[] }>(
+    settings,
+    `/api/v1/rules?${qs.toString()}`,
+  );
   return res.data;
 }
 

@@ -311,6 +311,30 @@ export default function OptionsApp() {
           </p>
         </CardBody>
       </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>After write</CardTitle>
+        </CardHeader>
+        <CardBody>
+          <label className="flex items-start gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={settings.autoReloadClash}
+              onChange={(e) => patch('autoReloadClash', e.target.checked)}
+              className="mt-0.5"
+            />
+            <span className="text-sm">
+              Auto-reload Clash after a successful rule write
+              <span className="block text-xs text-[var(--color-muted)] mt-0.5">
+                Calls <code className="font-mono">PUT /configs?force=true</code> so the new
+                rule takes effect without a separate action. Reload failures are surfaced
+                inline but don&apos;t mark the write as failed.
+              </span>
+            </span>
+          </label>
+        </CardBody>
+      </Card>
     </main>
   );
 }
