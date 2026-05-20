@@ -1,0 +1,13 @@
+# OS
+.DS_Store
+
+# External reference projects (cloned separately — see REQUIREMENTS.md §8)
+reference/
+
+# Vercel
+.vercel
+
+# Env files (defense in depth; web/.gitignore also covers this)
+.env
+.env.*
+!.env.*.example

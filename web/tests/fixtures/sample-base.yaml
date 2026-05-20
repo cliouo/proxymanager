@@ -1,0 +1,47 @@
+mixed-port: 7890
+allow-lan: false
+
+proxy-providers:
+  airport-a:
+    type: http
+    url: https://example.com/a
+  airport-b:
+    type: http
+    url: https://example.com/b
+
+proxies:
+  - name: 直连
+    type: direct
+    udp: true
+
+proxy-groups:
+  - name: 默认
+    type: select
+    proxies: [香港, 日本, 美国]
+  - name: 香港
+    type: url-test
+  - name: 日本
+    type: url-test
+  - name: 美国
+    type: url-test
+
+rule-providers:
+  cn_domain:
+    type: http
+    behavior: domain
+    format: mrs
+  emby_classic:
+    type: http
+    behavior: classical
+    format: yaml
+
+rules:
+  - GEOIP,lan,直连
+  - DST-PORT,9993,直连
+  # === ANCHOR: prelude ===
+  - DOMAIN,time.windows.com,直连
+  # === ANCHOR: manual ===
+  # === ANCHOR: late ===
+  - RULE-SET,emby_classic,默认
+  - RULE-SET,cn_domain,直连
+  - MATCH,默认
