@@ -30,6 +30,7 @@ async function call<T>(
   const { url, key } = ensureBackend(settings);
   const headers: Record<string, string> = {
     Authorization: `Bearer ${key}`,
+    'X-Source': 'extension',
     ...((init?.headers as Record<string, string> | undefined) ?? {}),
   };
   if (init?.body && !('Content-Type' in headers)) {
