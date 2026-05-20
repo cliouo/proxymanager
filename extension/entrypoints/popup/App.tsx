@@ -502,8 +502,12 @@ function ResultCard({
   onRemove?: () => void;
 }) {
   const [result, setResult] = useState<SpeedtestForDomain>(initial);
-  const [ruleType, setRuleType] = useState<Settings['defaultRuleType']>(settings.defaultRuleType);
-  const [anchor, setAnchor] = useState(settings.defaultAnchor);
+  const [ruleType, setRuleType] = useState<Settings['defaultRuleType']>(
+    settings.defaultRuleType || 'DOMAIN-SUFFIX',
+  );
+  // Old storage payloads can leak an empty defaultAnchor; never seed with ''
+  // or the input renders as a blank pill with no label, no placeholder.
+  const [anchor, setAnchor] = useState(settings.defaultAnchor || 'manual');
   const [chosen, setChosen] = useState<string | null>(result.best?.group ?? null);
   const [pending, setPending] = useState(false);
   const [done, setDone] = useState<'ok' | string | null>(null);
@@ -739,26 +743,36 @@ function ResultCard({
           </div>
         )}
 
-        <div className="space-y-1.5 pt-1 border-t border-[var(--color-border)]/60">
-          <div className="flex items-center gap-1.5 pt-2">
-            <Select
-              value={ruleType}
-              onChange={(e) => setRuleType(e.target.value as Settings['defaultRuleType'])}
-              className="h-8 text-[11px] w-[8.5rem] shrink-0"
-            >
-              <option value="DOMAIN-SUFFIX">DOMAIN-SUFFIX</option>
-              <option value="DOMAIN">DOMAIN</option>
-            </Select>
-            <Input
-              value={anchor}
-              onChange={(e) => setAnchor(e.target.value)}
-              className="h-8 text-[11px] flex-1 min-w-0"
-              placeholder="anchor"
-            />
+        <div className="space-y-2 pt-2 border-t border-[var(--color-border)]/60">
+          <div className="flex items-end gap-2">
+            <label className="flex flex-col gap-0.5 shrink-0">
+              <span className="text-[9px] uppercase tracking-wide text-[var(--color-muted)] font-semibold">
+                Type
+              </span>
+              <Select
+                value={ruleType}
+                onChange={(e) => setRuleType(e.target.value as Settings['defaultRuleType'])}
+                className="h-8 text-[11px] w-[9rem]"
+              >
+                <option value="DOMAIN-SUFFIX">DOMAIN-SUFFIX</option>
+                <option value="DOMAIN">DOMAIN</option>
+              </Select>
+            </label>
+            <label className="flex flex-col gap-0.5 flex-1 min-w-0">
+              <span className="text-[9px] uppercase tracking-wide text-[var(--color-muted)] font-semibold">
+                Anchor
+              </span>
+              <Input
+                value={anchor}
+                onChange={(e) => setAnchor(e.target.value)}
+                className="h-8 text-[11px]"
+                placeholder="e.g. manual"
+              />
+            </label>
           </div>
           <Button
             onClick={write}
-            disabled={pending || !chosen}
+            disabled={pending || !chosen || !anchor.trim()}
             className="w-full"
           >
             {pending ? 'Saving…' : chosen ? `Write rule → ${chosen}` : 'Pick a group first'}
