@@ -106,18 +106,13 @@ async function handle(req: Request): Promise<unknown> {
       const settings = await getSettings();
       return backendAnchors(settings);
     }
-    case 'speedtest': {
+    case 'speedtestBatch': {
       const settings = await getSettings();
       const results: SpeedtestForDomain[] = [];
-      for (const domain of req.domains) {
-        const probedUrl = `https://${domain}/`;
-        results.push(await runOneSpeedtest(settings, domain, probedUrl, req.groups));
+      for (const t of req.targets) {
+        results.push(await runOneSpeedtest(settings, t.label, t.url, req.groups));
       }
       return results;
-    }
-    case 'speedtestExplicit': {
-      const settings = await getSettings();
-      return runOneSpeedtest(settings, req.label, req.url, req.groups);
     }
     case 'createRule': {
       const settings = await getSettings();

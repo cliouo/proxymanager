@@ -13,16 +13,14 @@ export type Request =
   | { type: 'getPolicies' }
   | { type: 'getAnchors' }
   | {
-      type: 'speedtest';
-      domains: string[];
-      groups: string[];
-    }
-  | {
-      type: 'speedtestExplicit';
-      /** Display label for the result card (typically the hostname). */
-      label: string;
-      /** Full URL to probe — passed verbatim to Clash /proxies/{group}/delay. */
-      url: string;
+      type: 'speedtestBatch';
+      /**
+       * Each target is tested across every group. `label` becomes the result
+       * card's `domain` (rule value when the user writes). `url` is passed
+       * verbatim to Clash — typically `https://{hostname}/` for host-level
+       * checks, or a full URL captured from the tab for path-level checks.
+       */
+      targets: Array<{ label: string; url: string }>;
       groups: string[];
     }
   | {

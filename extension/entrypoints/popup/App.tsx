@@ -37,6 +37,14 @@ export default function PopupApp() {
   const [pasteTesting, setPasteTesting] = useState(false);
   const [pasteError, setPasteError] = useState<string | null>(null);
 
+  // hostname → chosen full URL to probe (overrides default `https://{host}/`).
+  const [pickedUrls, setPickedUrls] = useState<Map<string, string>>(new Map());
+  // Only one row's URL list expanded at a time to keep the popup compact.
+  const [expandedHost, setExpandedHost] = useState<string | null>(null);
+  const [hostUrls, setHostUrls] = useState<Map<string, string[]>>(new Map());
+  const [loadingHost, setLoadingHost] = useState<string | null>(null);
+  const [urlListError, setUrlListError] = useState<string | null>(null);
+
   // Active tab + initial domain list.
   useEffect(() => {
     (async () => {
@@ -90,7 +98,52 @@ export default function PopupApp() {
     await send({ type: 'clearDomains', tabId: tab.id });
     setDomains([]);
     setSelected(new Set());
+    setPickedUrls(new Map());
+    setHostUrls(new Map());
+    setExpandedHost(null);
     setResults(null);
+  }
+
+  async function toggleHostUrls(domain: string) {
+    if (!tab) return;
+    if (expandedHost === domain) {
+      setExpandedHost(null);
+      return;
+    }
+    setExpandedHost(domain);
+    setUrlListError(null);
+    if (hostUrls.has(domain)) return;
+    setLoadingHost(domain);
+    try {
+      const list = (await send({
+        type: 'listUrlsForDomain',
+        tabId: tab.id,
+        domain,
+      })) as string[];
+      setHostUrls((prev) => new Map(prev).set(domain, list));
+    } catch (err) {
+      setUrlListError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoadingHost(null);
+    }
+  }
+
+  function pickUrl(domain: string, url: string | null) {
+    setPickedUrls((prev) => {
+      const next = new Map(prev);
+      if (url === null) next.delete(domain);
+      else next.set(domain, url);
+      return next;
+    });
+    // Selecting a specific URL implies you want it tested.
+    if (url !== null) {
+      setSelected((prev) => {
+        if (prev.has(domain)) return prev;
+        const next = new Set(prev);
+        next.add(domain);
+        return next;
+      });
+    }
   }
 
   async function runTest() {
@@ -99,9 +152,13 @@ export default function PopupApp() {
     setResults(null);
     setError(null);
     try {
+      const targets = [...selected].map((d) => ({
+        label: d,
+        url: pickedUrls.get(d) ?? `https://${d}/`,
+      }));
       const res = (await send({
-        type: 'speedtest',
-        domains: [...selected],
+        type: 'speedtestBatch',
+        targets,
         groups: settings.candidateGroups,
       })) as SpeedtestForDomain[];
       setResults(res);
@@ -127,14 +184,16 @@ export default function PopupApp() {
         setPasteError('Not a valid URL.');
         return;
       }
-      const fresh = (await send({
-        type: 'speedtestExplicit',
-        label,
-        url: trimmed,
+      const res = (await send({
+        type: 'speedtestBatch',
+        targets: [{ label, url: trimmed }],
         groups: settings.candidateGroups,
-      })) as SpeedtestForDomain;
-      setExtraResults((prev) => [{ id: crypto.randomUUID(), result: fresh }, ...prev]);
-      setPastedUrl('');
+      })) as SpeedtestForDomain[];
+      const fresh = res[0];
+      if (fresh) {
+        setExtraResults((prev) => [{ id: crypto.randomUUID(), result: fresh }, ...prev]);
+        setPastedUrl('');
+      }
     } catch (err) {
       setPasteError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -203,27 +262,109 @@ export default function PopupApp() {
             </Button>
           </div>
         </CardHeader>
-        <CardBody className="p-0 max-h-44 overflow-y-auto">
+        <CardBody className="p-0 max-h-72 overflow-y-auto">
           {domains.length === 0 ? (
             <p className="px-4 py-3 text-xs text-[var(--color-muted)]">
               No domains yet — reload the page and reopen this popup.
             </p>
           ) : (
             <ul className="divide-y divide-[var(--color-border)]/60">
-              {domains.map((d) => (
-                <li key={d}>
-                  <label className="flex items-center gap-2 px-3 py-1.5 text-xs cursor-pointer hover:bg-[var(--color-surface-2)]/40">
-                    <input
-                      type="checkbox"
-                      checked={selected.has(d)}
-                      onChange={() => toggle(d)}
-                    />
-                    <code className="font-mono truncate">{d}</code>
-                    {tab?.hostname === d && <Badge tone="accent">main</Badge>}
-                  </label>
-                </li>
-              ))}
+              {domains.map((d) => {
+                const picked = pickedUrls.get(d);
+                const expanded = expandedHost === d;
+                const urls = hostUrls.get(d);
+                const pickedPath = picked ? probedPathOf(picked) : null;
+                return (
+                  <li key={d} className="text-xs">
+                    <div className="flex items-center gap-2 px-3 py-1.5 hover:bg-[var(--color-surface-2)]/40">
+                      <input
+                        type="checkbox"
+                        checked={selected.has(d)}
+                        onChange={() => toggle(d)}
+                      />
+                      <code className="font-mono truncate flex-1">{d}</code>
+                      {tab?.hostname === d && <Badge tone="accent">main</Badge>}
+                      <button
+                        type="button"
+                        onClick={() => toggleHostUrls(d)}
+                        className={`shrink-0 text-[10px] px-1.5 py-0.5 rounded border ${
+                          picked
+                            ? 'border-[var(--color-accent)] text-[var(--color-accent)] bg-[var(--color-accent)]/10'
+                            : 'border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-fg)]'
+                        }`}
+                        title={picked ? `Will test ${picked}` : 'Pick a specific URL on this host'}
+                      >
+                        URL {expanded ? '▾' : picked ? '●' : '▸'}
+                      </button>
+                    </div>
+
+                    {picked && !expanded && (
+                      <code
+                        className="ml-8 mb-1 block font-mono text-[10px] text-[var(--color-accent)] truncate"
+                        title={picked}
+                      >
+                        @ {pickedPath ?? '/'}
+                      </code>
+                    )}
+
+                    {expanded && (
+                      <div className="ml-8 mr-3 mb-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]/40 p-2 space-y-0.5">
+                        {loadingHost === d ? (
+                          <p className="text-[10px] text-[var(--color-muted)]">Loading…</p>
+                        ) : (
+                          <>
+                            <label className="flex items-center gap-2 cursor-pointer rounded px-1 py-0.5 hover:bg-[var(--color-surface-2)]">
+                              <input
+                                type="radio"
+                                name={`u-${d}`}
+                                checked={!picked}
+                                onChange={() => pickUrl(d, null)}
+                              />
+                              <code className="font-mono text-[10px] text-[var(--color-muted)]">
+                                (root: https://{d}/)
+                              </code>
+                            </label>
+                            {urls && urls.length > 0 ? (
+                              urls.map((u) => {
+                                let path = u;
+                                try {
+                                  const parsed = new URL(u);
+                                  path = parsed.pathname + parsed.search;
+                                } catch {
+                                  /* keep full URL */
+                                }
+                                return (
+                                  <label
+                                    key={u}
+                                    className="flex items-center gap-2 cursor-pointer rounded px-1 py-0.5 hover:bg-[var(--color-surface-2)]"
+                                    title={u}
+                                  >
+                                    <input
+                                      type="radio"
+                                      name={`u-${d}`}
+                                      checked={picked === u}
+                                      onChange={() => pickUrl(d, u)}
+                                    />
+                                    <code className="font-mono text-[10px] truncate">{path}</code>
+                                  </label>
+                                );
+                              })
+                            ) : (
+                              <p className="text-[10px] text-[var(--color-muted)] px-1">
+                                No URLs recorded yet for this host.
+                              </p>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
+          )}
+          {urlListError && (
+            <p className="px-3 py-2 text-xs text-[var(--color-danger)]">{urlListError}</p>
           )}
         </CardBody>
       </Card>
@@ -358,15 +499,17 @@ function ResultCard({
     setRetesting(true);
     setUrlError(null);
     try {
-      const fresh = (await send({
-        type: 'speedtestExplicit',
-        label: result.domain,
-        url: selectedUrl,
+      const res = (await send({
+        type: 'speedtestBatch',
+        targets: [{ label: result.domain, url: selectedUrl }],
         groups: settings.candidateGroups,
-      })) as SpeedtestForDomain;
-      setResult(fresh);
-      setChosen(fresh.best?.group ?? null);
-      setShowUrls(false);
+      })) as SpeedtestForDomain[];
+      const fresh = res[0];
+      if (fresh) {
+        setResult(fresh);
+        setChosen(fresh.best?.group ?? null);
+        setShowUrls(false);
+      }
     } catch (err) {
       setUrlError(err instanceof Error ? err.message : String(err));
     } finally {
