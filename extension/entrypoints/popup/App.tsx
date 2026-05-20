@@ -273,7 +273,8 @@ export default function PopupApp() {
                 const picked = pickedUrls.get(d);
                 const expanded = expandedHost === d;
                 const urls = hostUrls.get(d);
-                const pickedPath = picked ? probedPathOf(picked) : null;
+                const pickedLabel = picked ? probedLabelOf(picked) : null;
+                const httpRoot = `http://${d}/`;
                 return (
                   <li key={d} className="text-xs">
                     <div className="flex items-center gap-2 px-3 py-1.5 hover:bg-[var(--color-surface-2)]/40">
@@ -303,7 +304,7 @@ export default function PopupApp() {
                         className="ml-8 mb-1 block font-mono text-[10px] text-[var(--color-accent)] truncate"
                         title={picked}
                       >
-                        @ {pickedPath ?? '/'}
+                        @ {pickedLabel ?? '/'}
                       </code>
                     )}
 
@@ -322,6 +323,20 @@ export default function PopupApp() {
                               />
                               <code className="font-mono text-[10px] text-[var(--color-muted)]">
                                 (root: https://{d}/)
+                              </code>
+                            </label>
+                            <label
+                              className="flex items-center gap-2 cursor-pointer rounded px-1 py-0.5 hover:bg-[var(--color-surface-2)]"
+                              title="Use http:// instead — for hosts that don't serve https"
+                            >
+                              <input
+                                type="radio"
+                                name={`u-${d}`}
+                                checked={picked === httpRoot}
+                                onChange={() => pickUrl(d, httpRoot)}
+                              />
+                              <code className="font-mono text-[10px] text-[var(--color-warn)]">
+                                (root: http://{d}/)
                               </code>
                             </label>
                             {urls && urls.length > 0 ? (
@@ -424,11 +439,18 @@ export default function PopupApp() {
   );
 }
 
-function probedPathOf(probedUrl: string): string | null {
+/**
+ * Short label for the URL actually probed, shown beneath a picked row or in
+ * the result card header. Returns null when there's nothing notable to show
+ * (the default behaviour — `https://host/`).
+ */
+function probedLabelOf(probedUrl: string): string | null {
   try {
     const u = new URL(probedUrl);
-    const p = u.pathname + u.search;
-    return p === '/' || p === '' ? null : p;
+    const isRoot = (u.pathname === '/' || u.pathname === '') && !u.search;
+    if (isRoot && u.protocol === 'https:') return null;
+    if (isRoot) return `${u.protocol}//`;
+    return u.pathname + u.search;
   } catch {
     return null;
   }
@@ -461,7 +483,7 @@ function ResultCard({
   const [urlError, setUrlError] = useState<string | null>(null);
 
   const allFailed = result.entries.every((e) => e.delayMs === null);
-  const probedPath = probedPathOf(result.probedUrl);
+  const probedLabel = probedLabelOf(result.probedUrl);
 
   async function toggleExpand() {
     if (showUrls) {
@@ -545,12 +567,12 @@ function ResultCard({
           <CardTitle>
             <code className="font-mono text-xs">{result.domain}</code>
           </CardTitle>
-          {probedPath && (
+          {probedLabel && (
             <p
               className="mt-0.5 text-[10px] font-mono text-[var(--color-muted)] truncate max-w-[260px]"
               title={result.probedUrl}
             >
-              tested @ {probedPath}
+              tested @ {probedLabel}
             </p>
           )}
         </div>
