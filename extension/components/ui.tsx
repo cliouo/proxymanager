@@ -10,7 +10,7 @@ type Variant = 'primary' | 'secondary' | 'danger' | 'ghost';
 type Size = 'sm' | 'md';
 
 const BUTTON_BASE =
-  'inline-flex items-center justify-center gap-1.5 rounded-md font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)]';
+  'inline-flex items-center justify-center gap-1.5 rounded-md font-medium whitespace-nowrap transition-colors disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)]';
 
 const VARIANTS: Record<Variant, string> = {
   primary:
@@ -78,7 +78,7 @@ export function Card({ className = '', ...props }: HTMLAttributes<HTMLDivElement
 export function CardHeader({ className = '', ...props }: HTMLAttributes<HTMLDivElement>) {
   return (
     <div
-      className={`flex items-center justify-between px-4 py-3 border-b border-[var(--color-border)] ${className}`}
+      className={`flex items-center justify-between gap-2 px-4 py-3 border-b border-[var(--color-border)] ${className}`}
       {...props}
     />
   );

@@ -226,19 +226,24 @@ export default function PopupApp() {
 
   return (
     <main className="p-3 space-y-3">
-      <header className="flex items-center justify-between">
+      <header className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="text-xs text-[var(--color-muted)] truncate">
-            {tab ? tab.hostname || tab.url : 'No tab'}
-          </div>
-          <h1 className="text-sm font-semibold">ProxyManager</h1>
+          <h1 className="text-sm font-semibold tracking-tight leading-none">
+            ProxyManager
+          </h1>
+          <p
+            className="text-[11px] text-[var(--color-muted)] truncate font-mono mt-1"
+            title={tab?.url}
+          >
+            {tab?.hostname || tab?.url || '—'}
+          </p>
         </div>
         <button
           type="button"
           onClick={() => browser.runtime.openOptionsPage()}
-          className="text-xs text-[var(--color-muted)] hover:text-[var(--color-fg)]"
+          className="text-[11px] text-[var(--color-muted)] hover:text-[var(--color-fg)] shrink-0"
         >
-          Options
+          ⚙ Options
         </button>
       </header>
 
@@ -277,25 +282,30 @@ export default function PopupApp() {
                 const httpRoot = `http://${d}/`;
                 return (
                   <li key={d} className="text-xs">
-                    <div className="flex items-center gap-2 px-3 py-1.5 hover:bg-[var(--color-surface-2)]/40">
+                    <div className="flex items-center gap-2 px-3 py-2 hover:bg-[var(--color-surface-2)]/40">
                       <input
                         type="checkbox"
                         checked={selected.has(d)}
                         onChange={() => toggle(d)}
+                        className="shrink-0"
                       />
-                      <code className="font-mono truncate flex-1">{d}</code>
+                      <code className="font-mono truncate flex-1 min-w-0">{d}</code>
                       {tab?.hostname === d && <Badge tone="accent">main</Badge>}
                       <button
                         type="button"
                         onClick={() => toggleHostUrls(d)}
-                        className={`shrink-0 text-[10px] px-1.5 py-0.5 rounded border ${
+                        className={`shrink-0 inline-flex items-center gap-1.5 text-[11px] font-medium px-2 py-1 rounded-md border whitespace-nowrap transition-colors ${
                           picked
-                            ? 'border-[var(--color-accent)] text-[var(--color-accent)] bg-[var(--color-accent)]/10'
-                            : 'border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-fg)]'
+                            ? 'border-[var(--color-accent)]/60 text-[var(--color-accent)] bg-[var(--color-accent)]/10 hover:bg-[var(--color-accent)]/15'
+                            : 'border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-fg)] hover:border-[var(--color-fg)]/40'
                         }`}
                         title={picked ? `Will test ${picked}` : 'Pick a specific URL on this host'}
+                        aria-expanded={expanded}
                       >
-                        URL {expanded ? '▾' : picked ? '●' : '▸'}
+                        <span>URL</span>
+                        <span className="text-[9px] leading-none">
+                          {expanded ? '▾' : picked ? '●' : '▸'}
+                        </span>
                       </button>
                     </div>
 
@@ -384,15 +394,34 @@ export default function PopupApp() {
         </CardBody>
       </Card>
 
-      <div className="flex items-center justify-between">
-        <p className="text-xs text-[var(--color-muted)]">
-          Compare {settings.candidateGroups.length} group(s):{' '}
-          {settings.candidateGroups.join(' · ')}
-        </p>
-        <Button onClick={runTest} disabled={testing || selected.size === 0}>
-          {testing ? 'Testing…' : `Speedtest ${selected.size || ''}`}
-        </Button>
-      </div>
+      <Card>
+        <CardBody className="space-y-2.5 p-3">
+          <div className="flex flex-wrap items-center gap-1">
+            <span className="text-[10px] uppercase tracking-wide text-[var(--color-muted)] mr-1">
+              Compare across
+            </span>
+            {settings.candidateGroups.map((g) => (
+              <Badge key={g} tone="neutral">
+                {g}
+              </Badge>
+            ))}
+          </div>
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[11px] text-[var(--color-muted)]">
+              {selected.size === 0
+                ? 'No domains selected'
+                : `${selected.size} domain${selected.size > 1 ? 's' : ''} selected`}
+            </span>
+            <Button
+              onClick={runTest}
+              disabled={testing || selected.size === 0}
+              className="shrink-0"
+            >
+              {testing ? 'Testing…' : selected.size > 0 ? `Speedtest (${selected.size})` : 'Speedtest'}
+            </Button>
+          </div>
+        </CardBody>
+      </Card>
 
       <Card>
         <CardHeader>
@@ -404,16 +433,20 @@ export default function PopupApp() {
               type="url"
               value={pastedUrl}
               onChange={(e) => setPastedUrl(e.target.value)}
-              placeholder="https://example.com/path/to/resource"
-              className="flex-1 text-xs"
+              placeholder="https://example.com/path"
+              className="flex-1 text-xs min-w-0"
             />
-            <Button type="submit" disabled={pasteTesting || !pastedUrl.trim()}>
+            <Button
+              type="submit"
+              disabled={pasteTesting || !pastedUrl.trim()}
+              className="shrink-0"
+            >
               {pasteTesting ? '…' : 'Test'}
             </Button>
           </form>
-          <p className="text-[10px] text-[var(--color-muted)]">
-            Paste any URL — e.g. a link copied from another tab, or a specific path you
-            already know times out. The hostname is used as the rule value if you write.
+          <p className="text-[10px] text-[var(--color-muted)] leading-relaxed">
+            For URLs not in this tab&apos;s list — or a path you already know times out.
+            Hostname becomes the rule value if you write.
           </p>
           {pasteError && <p className="text-xs text-[var(--color-danger)]">{pasteError}</p>}
         </CardBody>
@@ -597,33 +630,34 @@ function ResultCard({
           )}
         </div>
       </CardHeader>
-      <CardBody className="space-y-2">
-        <ul className="grid grid-cols-2 gap-1 text-xs">
+      <CardBody className="space-y-3">
+        <ul className="grid grid-cols-2 gap-1.5 text-xs">
           {result.entries.map((e) => {
             const isBest = result.best?.group === e.group;
             const isChosen = chosen === e.group;
+            const isDead = e.delayMs === null;
             return (
               <li key={e.group}>
                 <button
                   type="button"
                   onClick={() => setChosen(e.group)}
-                  className={`w-full flex items-center justify-between gap-2 rounded-md border px-2 py-1 transition-colors ${
+                  className={`w-full flex items-center justify-between gap-2 rounded-md border px-2.5 py-1.5 transition-colors ${
                     isChosen
                       ? 'border-[var(--color-accent)] bg-[var(--color-accent)]/10'
                       : 'border-[var(--color-border)] bg-[var(--color-surface-2)] hover:border-[var(--color-accent)]/40'
                   }`}
                 >
-                  <span className="truncate">{e.group}</span>
+                  <span className="truncate font-medium">{e.group}</span>
                   <span
-                    className={
-                      e.delayMs === null
+                    className={`tabular-nums whitespace-nowrap ${
+                      isDead
                         ? 'text-[var(--color-danger)]'
                         : isBest
                           ? 'text-[var(--color-accent)] font-semibold'
                           : 'text-[var(--color-muted)]'
-                    }
+                    }`}
                   >
-                    {e.delayMs === null ? '×' : `${e.delayMs}ms`}
+                    {isDead ? '×' : `${e.delayMs}ms`}
                   </span>
                 </button>
               </li>
@@ -631,15 +665,13 @@ function ResultCard({
           })}
         </ul>
 
-        <div className="flex items-center justify-between text-xs">
-          <button
-            type="button"
-            onClick={toggleExpand}
-            className="text-[var(--color-muted)] hover:text-[var(--color-fg)]"
-          >
-            {showUrls ? '▾ Hide URLs' : '▸ Test a different URL'}
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={toggleExpand}
+          className="text-[11px] text-[var(--color-muted)] hover:text-[var(--color-fg)] text-left transition-colors"
+        >
+          {showUrls ? '▾ Hide URLs' : '▸ Test a different URL'}
+        </button>
 
         {showUrls && (
           <div className="space-y-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]/40 p-2">
@@ -707,23 +739,29 @@ function ResultCard({
           </div>
         )}
 
-        <div className="flex items-center gap-2 pt-1">
-          <Select
-            value={ruleType}
-            onChange={(e) => setRuleType(e.target.value as Settings['defaultRuleType'])}
-            className="h-7 text-xs"
+        <div className="space-y-1.5 pt-1 border-t border-[var(--color-border)]/60">
+          <div className="flex items-center gap-1.5 pt-2">
+            <Select
+              value={ruleType}
+              onChange={(e) => setRuleType(e.target.value as Settings['defaultRuleType'])}
+              className="h-8 text-[11px] w-[8.5rem] shrink-0"
+            >
+              <option value="DOMAIN-SUFFIX">DOMAIN-SUFFIX</option>
+              <option value="DOMAIN">DOMAIN</option>
+            </Select>
+            <Input
+              value={anchor}
+              onChange={(e) => setAnchor(e.target.value)}
+              className="h-8 text-[11px] flex-1 min-w-0"
+              placeholder="anchor"
+            />
+          </div>
+          <Button
+            onClick={write}
+            disabled={pending || !chosen}
+            className="w-full"
           >
-            <option value="DOMAIN-SUFFIX">DOMAIN-SUFFIX</option>
-            <option value="DOMAIN">DOMAIN</option>
-          </Select>
-          <Input
-            value={anchor}
-            onChange={(e) => setAnchor(e.target.value)}
-            className="h-7 text-xs flex-1"
-            placeholder="anchor"
-          />
-          <Button size="sm" onClick={write} disabled={pending || !chosen}>
-            {pending ? '…' : `Write → ${chosen ?? '?'}`}
+            {pending ? 'Saving…' : chosen ? `Write rule → ${chosen}` : 'Pick a group first'}
           </Button>
         </div>
         {done === 'ok' && (
