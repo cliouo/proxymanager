@@ -18,14 +18,24 @@ interface ActiveTab {
   hostname: string;
 }
 
+interface ExtraResult {
+  id: string;
+  result: SpeedtestForDomain;
+}
+
 export default function PopupApp() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [tab, setTab] = useState<ActiveTab | null>(null);
   const [domains, setDomains] = useState<string[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [results, setResults] = useState<SpeedtestForDomain[] | null>(null);
+  const [extraResults, setExtraResults] = useState<ExtraResult[]>([]);
   const [testing, setTesting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const [pastedUrl, setPastedUrl] = useState('');
+  const [pasteTesting, setPasteTesting] = useState(false);
+  const [pasteError, setPasteError] = useState<string | null>(null);
 
   // Active tab + initial domain list.
   useEffect(() => {
@@ -100,6 +110,40 @@ export default function PopupApp() {
     } finally {
       setTesting(false);
     }
+  }
+
+  async function onPasteTest(e: React.FormEvent) {
+    e.preventDefault();
+    if (!settings) return;
+    const trimmed = pastedUrl.trim();
+    if (!trimmed) return;
+    setPasteError(null);
+    setPasteTesting(true);
+    try {
+      let label = trimmed;
+      try {
+        label = new URL(trimmed).hostname || trimmed;
+      } catch {
+        setPasteError('Not a valid URL.');
+        return;
+      }
+      const fresh = (await send({
+        type: 'speedtestExplicit',
+        label,
+        url: trimmed,
+        groups: settings.candidateGroups,
+      })) as SpeedtestForDomain;
+      setExtraResults((prev) => [{ id: crypto.randomUUID(), result: fresh }, ...prev]);
+      setPastedUrl('');
+    } catch (err) {
+      setPasteError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPasteTesting(false);
+    }
+  }
+
+  function removeExtra(id: string) {
+    setExtraResults((prev) => prev.filter((r) => r.id !== id));
   }
 
   if (!settings) {
@@ -194,9 +238,43 @@ export default function PopupApp() {
         </Button>
       </div>
 
-      {results && tab && (
+      <Card>
+        <CardHeader>
+          <CardTitle>Test any URL</CardTitle>
+        </CardHeader>
+        <CardBody className="space-y-1.5">
+          <form onSubmit={onPasteTest} className="flex gap-2">
+            <Input
+              type="url"
+              value={pastedUrl}
+              onChange={(e) => setPastedUrl(e.target.value)}
+              placeholder="https://example.com/path/to/resource"
+              className="flex-1 text-xs"
+            />
+            <Button type="submit" disabled={pasteTesting || !pastedUrl.trim()}>
+              {pasteTesting ? '…' : 'Test'}
+            </Button>
+          </form>
+          <p className="text-[10px] text-[var(--color-muted)]">
+            Paste any URL — e.g. a link copied from another tab, or a specific path you
+            already know times out. The hostname is used as the rule value if you write.
+          </p>
+          {pasteError && <p className="text-xs text-[var(--color-danger)]">{pasteError}</p>}
+        </CardBody>
+      </Card>
+
+      {(results || extraResults.length > 0) && tab && (
         <div className="space-y-2">
-          {results.map((r) => (
+          {extraResults.map(({ id, result }) => (
+            <ResultCard
+              key={`x-${id}`}
+              initial={result}
+              settings={settings}
+              tabId={tab.id}
+              onRemove={() => removeExtra(id)}
+            />
+          ))}
+          {results?.map((r) => (
             <ResultCard key={r.domain} initial={r} settings={settings} tabId={tab.id} />
           ))}
         </div>
@@ -219,10 +297,13 @@ function ResultCard({
   initial,
   settings,
   tabId,
+  onRemove,
 }: {
   initial: SpeedtestForDomain;
   settings: Settings;
   tabId: number;
+  /** Present only for manually-pasted URL results; renders a dismiss button. */
+  onRemove?: () => void;
 }) {
   const [result, setResult] = useState<SpeedtestForDomain>(initial);
   const [ruleType, setRuleType] = useState<Settings['defaultRuleType']>(settings.defaultRuleType);
@@ -330,13 +411,26 @@ function ResultCard({
             </p>
           )}
         </div>
-        {result.best ? (
-          <Badge tone="accent">
-            best: {result.best.group} · {result.best.delayMs}ms
-          </Badge>
-        ) : (
-          allFailed && <Badge tone="danger">all timed out</Badge>
-        )}
+        <div className="flex items-center gap-1.5">
+          {result.best ? (
+            <Badge tone="accent">
+              best: {result.best.group} · {result.best.delayMs}ms
+            </Badge>
+          ) : (
+            allFailed && <Badge tone="danger">all timed out</Badge>
+          )}
+          {onRemove && (
+            <button
+              type="button"
+              onClick={onRemove}
+              className="text-[var(--color-muted)] hover:text-[var(--color-danger)] text-sm leading-none px-1"
+              title="Remove this card"
+              aria-label="Remove"
+            >
+              ×
+            </button>
+          )}
+        </div>
       </CardHeader>
       <CardBody className="space-y-2">
         <ul className="grid grid-cols-2 gap-1 text-xs">
@@ -378,10 +472,7 @@ function ResultCard({
             onClick={toggleExpand}
             className="text-[var(--color-muted)] hover:text-[var(--color-fg)]"
           >
-            {showUrls ? '▾ Hide URLs' : '▸ Try a specific URL'}
-            {allFailed && !showUrls && (
-              <span className="ml-1 text-[var(--color-warn)]">(root timed out)</span>
-            )}
+            {showUrls ? '▾ Hide URLs' : '▸ Test a different URL'}
           </button>
         </div>
 
