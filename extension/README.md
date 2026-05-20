@@ -16,10 +16,10 @@ Then in Chrome:
 1. Open `chrome://extensions/`
 2. Toggle **Developer mode** on (top right)
 3. Click **Load unpacked**
-4. Select `extension/.output/chrome-mv3/`
+4. Select `extension/build/chrome-mv3/`
 
 For hot-reload during development, run `npm run dev` instead — it produces
-`.output/chrome-mv3-dev/` and rebuilds on change.
+`build/chrome-mv3-dev/` and rebuilds on change.
 
 ## First-time setup
 
@@ -101,7 +101,7 @@ normal mode. Options:
 
 - **Developer mode** (easiest for personal use): `chrome://extensions/` →
   toggle Developer mode → drag the `.crx` onto the page → confirm.
-- **Unpacked, no .crx needed**: `Load unpacked` on `.output/chrome-mv3/` as
+- **Unpacked, no .crx needed**: `Load unpacked` on `build/chrome-mv3/` as
   described above. For a private one-person setup this is what you'll
   probably use.
 - **Policy install** (corporate): see Chrome's

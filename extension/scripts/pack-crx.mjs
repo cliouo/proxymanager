@@ -18,7 +18,7 @@ import crx3 from 'crx3';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
-const SRC = resolve(ROOT, '.output/chrome-mv3');
+const SRC = resolve(ROOT, 'build/chrome-mv3');
 const DIST = resolve(ROOT, 'dist');
 const KEY = resolve(ROOT, 'key.pem');
 

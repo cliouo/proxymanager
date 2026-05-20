@@ -3,6 +3,9 @@ import { defineConfig } from 'wxt';
 // https://wxt.dev/api/config.html
 export default defineConfig({
   modules: ['@wxt-dev/module-react'],
+  // Default is `.output/` but Finder hides dot-prefixed dirs, making
+  // "Load unpacked" awkward on macOS. Use a visible name instead.
+  outDir: 'build',
   manifest: {
     name: 'ProxyManager',
     description:
