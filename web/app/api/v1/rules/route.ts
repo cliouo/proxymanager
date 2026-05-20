@@ -1,5 +1,6 @@
 import { withProblemDetails } from '@/lib/http/handler';
 import { ProblemDetailsError } from '@/lib/http/problem';
+import { recordEvent } from '@/lib/repos/auditRepo';
 import { listRules, upsertRule } from '@/lib/repos/rulesRepo';
 import {
   computeNextRank,
@@ -7,6 +8,7 @@ import {
   generateRuleId,
   loadParsedBase,
   nowSeconds,
+  resolveActor,
 } from '@/lib/services/rulesService';
 import { RuleCreateSchema, type Rule } from '@/schemas';
 
@@ -94,6 +96,12 @@ export const POST = withProblemDetails(async (request: Request) => {
   };
 
   await upsertRule(rule);
+  await recordEvent({
+    op: 'rule.create',
+    actor: resolveActor(request),
+    ruleId: rule.id,
+    after: rule,
+  });
 
   return Response.json(
     { data: rule },

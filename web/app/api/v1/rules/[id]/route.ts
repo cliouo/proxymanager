@@ -1,10 +1,12 @@
 import { withProblemDetails } from '@/lib/http/handler';
 import { ProblemDetailsError } from '@/lib/http/problem';
+import { recordEvent } from '@/lib/repos/auditRepo';
 import { deleteRule, getRule, upsertRule } from '@/lib/repos/rulesRepo';
 import {
   ensureValidAnchorAndPolicy,
   loadParsedBase,
   nowSeconds,
+  resolveActor,
 } from '@/lib/services/rulesService';
 import { RulePatchSchema, RuleReplaceSchema, type Rule } from '@/schemas';
 
@@ -45,6 +47,13 @@ export const PUT = withProblemDetails(async (request: Request, ctx: Ctx) => {
     updated_at: nowSeconds(),
   };
   await upsertRule(updated);
+  await recordEvent({
+    op: 'rule.update',
+    actor: resolveActor(request),
+    ruleId: id,
+    before: existing,
+    after: updated,
+  });
   return Response.json({ data: updated });
 });
 
@@ -70,12 +79,29 @@ export const PATCH = withProblemDetails(async (request: Request, ctx: Ctx) => {
   }
 
   await upsertRule(updated);
+  await recordEvent({
+    op: 'rule.update',
+    actor: resolveActor(request),
+    ruleId: id,
+    before: existing,
+    after: updated,
+  });
   return Response.json({ data: updated });
 });
 
-export const DELETE = withProblemDetails(async (_request: Request, ctx: Ctx) => {
+export const DELETE = withProblemDetails(async (request: Request, ctx: Ctx) => {
   const { id } = await ctx.params;
+  const existing = await getRule(id);
+  if (!existing) throw ProblemDetailsError.notFound(`Rule ${id} not found.`);
+
   const removed = await deleteRule(id);
   if (!removed) throw ProblemDetailsError.notFound(`Rule ${id} not found.`);
+
+  await recordEvent({
+    op: 'rule.delete',
+    actor: resolveActor(request),
+    ruleId: id,
+    before: existing,
+  });
   return new Response(null, { status: 204 });
 });

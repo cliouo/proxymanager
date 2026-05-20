@@ -43,3 +43,15 @@ export function nowSeconds(): number {
 export function generateRuleId(): string {
   return crypto.randomUUID();
 }
+
+/**
+ * Resolve an actor label from request headers. Defaults to "admin" since the
+ * proxy guard has already validated the Bearer key; clients can self-identify
+ * via `X-Source` (e.g. "extension", "web-ui") so the audit log can distinguish
+ * call sites without separate credentials.
+ */
+export function resolveActor(request: Request): string {
+  const source = request.headers.get('x-source')?.trim();
+  if (source) return source.slice(0, 64);
+  return 'admin';
+}
