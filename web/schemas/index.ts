@@ -10,3 +10,4 @@ export * from './problem';
 export * from './batch';
 export * from './responses';
 export * from './audit';
+export * from './collection';

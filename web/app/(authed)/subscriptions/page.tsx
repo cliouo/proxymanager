@@ -4,15 +4,22 @@ import { useCallback, useEffect, useState } from 'react';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardBody, CardHeader, CardTitle } from '@/components/ui/Card';
-import { Input } from '@/components/ui/Input';
+import { Input, Select, Textarea } from '@/components/ui/Input';
 import { ApiError, api } from '@/lib/client/api';
+
+const DEFAULT_TTL_MS = 10 * 60 * 1000;
 
 interface Subscription {
   id: string;
   name: string;
-  url: string;
+  kind: 'remote' | 'local';
   enabled: boolean;
+  url?: string;
   ua_override?: string;
+  custom_headers?: Record<string, string>;
+  ttl_ms: number;
+  content?: string;
+  tags: string[];
   last_synced_at?: number;
   last_traffic?: {
     upload: number;
@@ -20,6 +27,7 @@ interface Subscription {
     total: number;
     expire: number;
   };
+  last_error?: string;
 }
 
 interface Meta {
@@ -113,7 +121,12 @@ export default function SubscriptionsPage() {
       <div>
         <h1 className="text-xl font-semibold">Subscriptions</h1>
         <p className="text-sm text-[var(--color-muted)]">
-          Airport URLs aggregated as Clash <code>proxy-providers</code>.
+          Per-airport sources. Remote URLs are fetched + cached (default 10 min TTL);
+          local subscriptions store inline YAML. Aggregate them via{' '}
+          <a href="/collections" className="text-[var(--color-accent)]">
+            Collections
+          </a>
+          .
         </p>
       </div>
 
@@ -132,11 +145,13 @@ export default function SubscriptionsPage() {
           return (
             <Card key={sub.id}>
               <CardHeader>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 min-w-0">
                   <CardTitle>{sub.name}</CardTitle>
                   <Badge tone={sub.enabled ? 'accent' : 'neutral'}>
                     {sub.enabled ? 'enabled' : 'disabled'}
                   </Badge>
+                  <Badge tone="neutral">{sub.kind}</Badge>
+                  {sub.last_error && <Badge tone="danger">error</Badge>}
                 </div>
                 <div className="flex items-center gap-2">
                   <Button
@@ -147,13 +162,15 @@ export default function SubscriptionsPage() {
                   >
                     {sub.enabled ? 'Disable' : 'Enable'}
                   </Button>
-                  <Button
-                    size="sm"
-                    onClick={() => onRefresh(sub.id)}
-                    disabled={busyId === sub.id || !sub.enabled}
-                  >
-                    {busyId === sub.id ? '…' : 'Refresh'}
-                  </Button>
+                  {sub.kind === 'remote' && (
+                    <Button
+                      size="sm"
+                      onClick={() => onRefresh(sub.id)}
+                      disabled={busyId === sub.id || !sub.enabled}
+                    >
+                      {busyId === sub.id ? '…' : 'Refresh'}
+                    </Button>
+                  )}
                   <Button
                     size="sm"
                     variant="danger"
@@ -165,16 +182,42 @@ export default function SubscriptionsPage() {
                 </div>
               </CardHeader>
               <CardBody className="space-y-2 text-xs">
-                <div className="flex gap-2 items-start">
-                  <span className="w-28 text-[var(--color-muted)] shrink-0">Upstream</span>
-                  <code className="flex-1 break-all font-mono">{sub.url}</code>
-                </div>
+                {sub.kind === 'remote' && sub.url && (
+                  <div className="flex gap-2 items-start">
+                    <span className="w-28 text-[var(--color-muted)] shrink-0">Upstream</span>
+                    <code className="flex-1 break-all font-mono">{sub.url}</code>
+                  </div>
+                )}
+                {sub.kind === 'local' && (
+                  <div className="flex gap-2 items-start">
+                    <span className="w-28 text-[var(--color-muted)] shrink-0">Inline</span>
+                    <code className="flex-1 font-mono text-[var(--color-muted)]">
+                      {(sub.content?.length ?? 0).toLocaleString()} bytes
+                    </code>
+                  </div>
+                )}
+                {sub.tags.length > 0 && (
+                  <div className="flex gap-2 items-start">
+                    <span className="w-28 text-[var(--color-muted)] shrink-0">Tags</span>
+                    <div className="flex flex-wrap gap-1">
+                      {sub.tags.map((t) => (
+                        <Badge key={t} tone="neutral">
+                          {t}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 {sub.ua_override && (
                   <div className="flex gap-2 items-start">
                     <span className="w-28 text-[var(--color-muted)] shrink-0">UA override</span>
                     <code className="flex-1 break-all font-mono">{sub.ua_override}</code>
                   </div>
                 )}
+                <div className="flex gap-2 items-start">
+                  <span className="w-28 text-[var(--color-muted)] shrink-0">TTL</span>
+                  <span>{Math.round(sub.ttl_ms / 1000)}s</span>
+                </div>
                 <div className="flex gap-2 items-start">
                   <span className="w-28 text-[var(--color-muted)] shrink-0">Provider URL</span>
                   <code className="flex-1 break-all font-mono text-[var(--color-accent)]">
@@ -185,13 +228,22 @@ export default function SubscriptionsPage() {
                   <span className="w-28 text-[var(--color-muted)] shrink-0">Last synced</span>
                   <span>{fmtTime(sub.last_synced_at)}</span>
                 </div>
+                {sub.last_error && (
+                  <div className="flex gap-2 items-start">
+                    <span className="w-28 text-[var(--color-muted)] shrink-0">Last error</span>
+                    <span className="flex-1 break-words text-[var(--color-danger)]">
+                      {sub.last_error}
+                    </span>
+                  </div>
+                )}
                 {traffic && (
                   <div className="flex gap-2 items-start">
                     <span className="w-28 text-[var(--color-muted)] shrink-0">Traffic</span>
                     <span>
                       ↑ {fmtBytes(traffic.upload)} · ↓ {fmtBytes(traffic.download)} /{' '}
                       {fmtBytes(traffic.total)}
-                      {traffic.expire > 0 && ` · expires ${new Date(traffic.expire * 1000).toLocaleDateString()}`}
+                      {traffic.expire > 0 &&
+                        ` · expires ${new Date(traffic.expire * 1000).toLocaleDateString()}`}
                     </span>
                   </div>
                 )}
@@ -212,9 +264,13 @@ export default function SubscriptionsPage() {
 }
 
 function AddForm({ onAdded }: { onAdded: () => void }) {
+  const [kind, setKind] = useState<'remote' | 'local'>('remote');
   const [name, setName] = useState('');
   const [url, setUrl] = useState('');
+  const [content, setContent] = useState('');
   const [ua, setUa] = useState('');
+  const [tagsInput, setTagsInput] = useState('');
+  const [ttlSec, setTtlSec] = useState(Math.round(DEFAULT_TTL_MS / 1000));
   const [enabled, setEnabled] = useState(true);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -224,18 +280,29 @@ function AddForm({ onAdded }: { onAdded: () => void }) {
     setPending(true);
     setError(null);
     try {
-      await api('/api/v1/subscriptions', {
-        method: 'POST',
-        body: {
-          name: name.trim(),
-          url: url.trim(),
-          enabled,
-          ua_override: ua.trim() || undefined,
-        },
-      });
+      const tags = tagsInput
+        .split(',')
+        .map((t) => t.trim())
+        .filter((t) => t.length > 0);
+      const body: Record<string, unknown> = {
+        name: name.trim(),
+        kind,
+        enabled,
+        ttl_ms: Math.max(1000, ttlSec * 1000),
+        tags,
+      };
+      if (kind === 'remote') {
+        body.url = url.trim();
+        if (ua.trim()) body.ua_override = ua.trim();
+      } else {
+        body.content = content;
+      }
+      await api('/api/v1/subscriptions', { method: 'POST', body });
       setName('');
       setUrl('');
+      setContent('');
       setUa('');
+      setTagsInput('');
       onAdded();
     } catch (err) {
       setError(err instanceof ApiError ? err.problem.detail ?? err.message : String(err));
@@ -250,41 +317,100 @@ function AddForm({ onAdded }: { onAdded: () => void }) {
         <CardTitle>Add subscription</CardTitle>
       </CardHeader>
       <CardBody>
-        <form onSubmit={onSubmit} className="grid grid-cols-1 md:grid-cols-6 gap-2 items-start">
-          <Input
-            placeholder="name (slug, e.g. airport-a)"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            pattern="[a-z0-9-]+"
-            required
-          />
-          <Input
-            className="md:col-span-3"
-            placeholder="https://airport/sub?token=…"
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            type="url"
-            required
-          />
-          <Input
-            placeholder="UA override (optional)"
-            value={ua}
-            onChange={(e) => setUa(e.target.value)}
-          />
-          <Button type="submit" disabled={pending}>
-            {pending ? 'Adding…' : 'Add'}
-          </Button>
-          <label className="md:col-span-6 flex items-center gap-2 text-xs">
-            <input
-              type="checkbox"
-              checked={enabled}
-              onChange={(e) => setEnabled(e.target.checked)}
-            />
-            Enabled
-          </label>
-          {error && (
-            <p className="md:col-span-6 text-xs text-[var(--color-danger)]">{error}</p>
+        <form onSubmit={onSubmit} className="space-y-3">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+            <div>
+              <label className="text-xs text-[var(--color-muted)] mb-1 block">Kind</label>
+              <Select value={kind} onChange={(e) => setKind(e.target.value as 'remote' | 'local')}>
+                <option value="remote">remote (URL)</option>
+                <option value="local">local (inline YAML)</option>
+              </Select>
+            </div>
+            <div>
+              <label className="text-xs text-[var(--color-muted)] mb-1 block">Name (slug)</label>
+              <Input
+                placeholder="airport-a"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                pattern="[a-z0-9-]+"
+                required
+              />
+            </div>
+            <div>
+              <label className="text-xs text-[var(--color-muted)] mb-1 block">
+                Fetch TTL (sec)
+              </label>
+              <Input
+                type="number"
+                min={1}
+                value={ttlSec}
+                onChange={(e) => setTtlSec(Math.max(1, Number(e.target.value) || 0))}
+                disabled={kind === 'local'}
+              />
+            </div>
+            <div>
+              <label className="text-xs text-[var(--color-muted)] mb-1 block">
+                Tags (comma-separated)
+              </label>
+              <Input
+                placeholder="optional, e.g. premium, asia"
+                value={tagsInput}
+                onChange={(e) => setTagsInput(e.target.value)}
+              />
+            </div>
+          </div>
+
+          {kind === 'remote' ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              <div>
+                <label className="text-xs text-[var(--color-muted)] mb-1 block">URL</label>
+                <Input
+                  placeholder="https://airport/sub?token=…"
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
+                  type="url"
+                  required
+                />
+              </div>
+              <div>
+                <label className="text-xs text-[var(--color-muted)] mb-1 block">UA override</label>
+                <Input
+                  placeholder="optional, e.g. clash.meta/1.18.0"
+                  value={ua}
+                  onChange={(e) => setUa(e.target.value)}
+                />
+              </div>
+            </div>
+          ) : (
+            <div>
+              <label className="text-xs text-[var(--color-muted)] mb-1 block">
+                Content (Clash provider YAML — needs a top-level `proxies:` array)
+              </label>
+              <Textarea
+                rows={8}
+                value={content}
+                onChange={(e) => setContent(e.target.value)}
+                placeholder={'proxies:\n  - name: my-node\n    type: ss\n    ...'}
+                required
+              />
+            </div>
           )}
+
+          <div className="flex items-center justify-between">
+            <label className="flex items-center gap-2 text-xs">
+              <input
+                type="checkbox"
+                checked={enabled}
+                onChange={(e) => setEnabled(e.target.checked)}
+              />
+              Enabled
+            </label>
+            <Button type="submit" disabled={pending || !name}>
+              {pending ? 'Adding…' : 'Add'}
+            </Button>
+          </div>
+
+          {error && <p className="text-xs text-[var(--color-danger)]">{error}</p>}
         </form>
       </CardBody>
     </Card>

@@ -11,6 +11,7 @@ const PRIMARY_NAV = [
   { href: '/base', label: 'Base config' },
   { href: '/rule-sets', label: 'Rule sets' },
   { href: '/subscriptions', label: 'Subscriptions' },
+  { href: '/collections', label: 'Collections' },
   { href: '/history', label: 'History' },
 ];
 
