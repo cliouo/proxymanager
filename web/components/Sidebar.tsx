@@ -9,7 +9,6 @@ import { clearAdminKey } from '@/lib/client/auth-storage';
 const PRIMARY_NAV = [
   { href: '/', label: 'Dashboard' },
   { href: '/base', label: 'Base config' },
-  { href: '/rules', label: 'Rules' },
   { href: '/rule-sets', label: 'Rule sets' },
   { href: '/subscriptions', label: 'Subscriptions' },
   { href: '/history', label: 'History' },

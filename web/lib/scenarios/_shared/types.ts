@@ -118,7 +118,27 @@ export interface ScenarioDescriptor {
   navHref?: string;
 }
 
+/**
+ * Inverse of a recorded mutation. Called by `/history/{id}/undo` when the
+ * audit event's op matches a scenario action that registered one. Returns
+ * a normal OpResult — the inverse mutation itself gets audited as a new
+ * event (with `undoes: <original>` set by the undo handler).
+ *
+ * Receives the original event so it can extract `before`/`after` snapshots
+ * and apply optimistic-concurrency checks.
+ */
+export type InverseHandler = (
+  ctx: OpContext,
+  event: { id: string; before?: unknown; after?: unknown; target?: AuditTarget; ruleId?: string },
+) => Promise<OpResult>;
+
 export interface Scenario {
   descriptor: ScenarioDescriptor;
   ops: Record<string, OpHandler>;
+  /**
+   * Action-name → inverse handler. Action names match the second half of
+   * audit op strings (`${scenarioId}.${action}`). Scenarios may register a
+   * subset — actions without an inverse are simply not undoable.
+   */
+  inverses?: Record<string, InverseHandler>;
 }

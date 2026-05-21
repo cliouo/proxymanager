@@ -1,18 +1,37 @@
 import { withProblemDetails } from '@/lib/http/handler';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { getEvent, markUndone, recordEvent } from '@/lib/repos/auditRepo';
-import { deleteRule, getRule, upsertRule } from '@/lib/repos/rulesRepo';
+import { getScenario } from '@/lib/scenarios/registry';
+import { createBaseStore } from '@/lib/scenarios/_shared/baseMutator';
+import { createTaxonomyStore } from '@/lib/scenarios/_shared/GroupTaxonomy';
+import type { InverseHandler, OpContext } from '@/lib/scenarios/_shared/types';
 import {
-  ensureValidAnchorAndPolicy,
-  loadParsedBase,
-  nowSeconds,
-  resolveActor,
-} from '@/lib/services/rulesService';
-import type { AuditEvent, Rule } from '@/schemas';
+  deleteRule as deleteRuleRepo,
+  getRule as getRuleRepo,
+  listRules as listRulesRepo,
+  upsertRule as upsertRuleRepo,
+} from '@/lib/repos/rulesRepo';
+import { computeNextRank, resolveActor } from '@/lib/services/rulesService';
+import type { AuditEvent } from '@/schemas';
 
 export const dynamic = 'force-dynamic';
 
 type Ctx = RouteContext<'/api/v1/history/[id]/undo'>;
+
+/**
+ * Parse an audit op string into a scenario+action pair. Legacy `rule.*`
+ * events from before the M3-D migration are routed through the
+ * rule-anchor-append scenario for inverses since the op semantics are
+ * identical.
+ */
+function resolveInverse(opString: string): InverseHandler | null {
+  const lastDot = opString.lastIndexOf('.');
+  if (lastDot < 0) return null;
+  const rawScenario = opString.slice(0, lastDot);
+  const action = opString.slice(lastDot + 1);
+  const scenarioId = rawScenario === 'rule' ? 'rule-anchor-append' : rawScenario;
+  return getScenario(scenarioId)?.inverses?.[action] ?? null;
+}
 
 export const POST = withProblemDetails(async (request: Request, ctx: Ctx) => {
   const { id } = await ctx.params;
@@ -24,125 +43,69 @@ export const POST = withProblemDetails(async (request: Request, ctx: Ctx) => {
     );
   }
 
-  const actor = resolveActor(request);
-  const ruleId = event.ruleId ?? (event.target?.kind === 'rule' ? event.target.id : undefined);
-
-  if (!ruleId || !event.op.startsWith('rule.')) {
-    // Scenario-routed undo (chained-proxy, regional-groups, etc.) will be
-    // dispatched through scenario inverseOps in a follow-up. For now the
-    // /history page only offers Undo on rule.* events.
+  const inverse = resolveInverse(event.op);
+  if (!inverse) {
     throw ProblemDetailsError.unprocessable(
-      `Undo is currently only supported for rule.* ops. Got "${event.op}".`,
+      `No inverse registered for op "${event.op}".`,
     );
   }
 
-  let inverse: AuditEvent;
+  const actor = resolveActor(request);
+  const opCtx: OpContext = {
+    actor,
+    base: createBaseStore(),
+    rules: {
+      async list(filter) {
+        const all = await listRulesRepo();
+        return filter?.anchor ? all.filter((r) => r.anchor === filter.anchor) : all;
+      },
+      get: getRuleRepo,
+      upsert: upsertRuleRepo,
+      delete: deleteRuleRepo,
+      computeNextRank,
+    },
+    taxonomy: createTaxonomyStore(),
+  };
 
-  switch (event.op) {
-    case 'rule.create': {
-      const after = event.after as Rule | undefined;
-      if (!after) {
-        throw ProblemDetailsError.unprocessable(
-          'Cannot undo rule.create event: missing after-state.',
-        );
-      }
-      const current = await getRule(ruleId);
-      if (!current) {
-        throw ProblemDetailsError.conflict(
-          `Rule ${ruleId} no longer exists; nothing to undo.`,
-        );
-      }
-      if (current.updated_at !== after.updated_at) {
-        throw ProblemDetailsError.conflict(
-          `Rule ${ruleId} was modified after this event; refuse to undo.`,
-        );
-      }
-      const removed = await deleteRule(ruleId);
-      if (!removed) {
-        throw ProblemDetailsError.conflict(
-          `Rule ${ruleId} could not be deleted (already gone).`,
-        );
-      }
-      inverse = await recordEvent({
-        op: 'rule.delete',
-        actor,
-        ruleId,
-        target: { kind: 'rule', id: ruleId },
-        before: current,
-        undoes: event.id,
-      });
-      break;
-    }
+  const result = await inverse(opCtx, {
+    id: event.id,
+    before: event.before,
+    after: event.after,
+    target: event.target,
+    ruleId: event.ruleId,
+  });
 
-    case 'rule.delete': {
-      const before = event.before as Rule | undefined;
-      if (!before) {
-        throw ProblemDetailsError.unprocessable(
-          'Cannot undo rule.delete event: missing before-state.',
-        );
-      }
-      const existing = await getRule(ruleId);
-      if (existing) {
-        throw ProblemDetailsError.conflict(
-          `Rule ${ruleId} already exists; nothing to restore.`,
-        );
-      }
-      const parsedBase = await loadParsedBase();
-      ensureValidAnchorAndPolicy(before, parsedBase);
-      const restored: Rule = { ...before, updated_at: nowSeconds() };
-      await upsertRule(restored);
-      inverse = await recordEvent({
-        op: 'rule.create',
-        actor,
-        ruleId: restored.id,
-        target: { kind: 'rule', id: restored.id },
-        after: restored,
-        undoes: event.id,
-      });
-      break;
-    }
-
-    case 'rule.update': {
-      const before = event.before as Rule | undefined;
-      const after = event.after as Rule | undefined;
-      if (!before || !after) {
-        throw ProblemDetailsError.unprocessable(
-          'Cannot undo rule.update event: missing before- or after-state.',
-        );
-      }
-      const current = await getRule(ruleId);
-      if (!current) {
-        throw ProblemDetailsError.conflict(
-          `Rule ${ruleId} no longer exists; nothing to revert.`,
-        );
-      }
-      if (current.updated_at !== after.updated_at) {
-        throw ProblemDetailsError.conflict(
-          `Rule ${ruleId} was modified after this event; refuse to revert.`,
-        );
-      }
-      const parsedBase = await loadParsedBase();
-      ensureValidAnchorAndPolicy(before, parsedBase);
-      const reverted: Rule = { ...before, updated_at: nowSeconds() };
-      await upsertRule(reverted);
-      inverse = await recordEvent({
-        op: 'rule.update',
-        actor,
-        ruleId,
-        target: { kind: 'rule', id: ruleId },
-        before: current,
-        after: reverted,
-        undoes: event.id,
-      });
-      break;
-    }
-
-    default:
-      throw ProblemDetailsError.unprocessable(
-        `Cannot undo unknown op "${event.op}".`,
-      );
+  // Record the inverse mutation as its own event, pointing back at the
+  // original via `undoes`. Audit op string is derived from the original
+  // scenario id (so a legacy rule.* event undone produces a
+  // rule-anchor-append.* inverse — consistent with new ops going forward).
+  let inverseEvent: AuditEvent | null = null;
+  for (const ev of result.events) {
+    const lastDot = event.op.lastIndexOf('.');
+    const rawScenario = event.op.slice(0, lastDot);
+    const inverseScenarioId = rawScenario === 'rule' ? 'rule-anchor-append' : rawScenario;
+    const recorded = await recordEvent({
+      op: `${inverseScenarioId}.${ev.action}`,
+      actor,
+      target: ev.target,
+      ruleId: ev.target.kind === 'rule' ? ev.target.id : undefined,
+      before: ev.before,
+      after: ev.after,
+      undoes: event.id,
+    });
+    // First emitted event is the canonical inverse; later ones (if any)
+    // are bookkeeping and don't get the back-pointer on the original.
+    if (!inverseEvent) inverseEvent = recorded;
   }
 
-  await markUndone(event.id, inverse.id);
-  return Response.json({ data: { event: { ...event, undone_by: inverse.id }, inverse } });
+  if (!inverseEvent) {
+    throw ProblemDetailsError.unprocessable(
+      'Inverse handler emitted no events; cannot complete undo.',
+    );
+  }
+
+  await markUndone(event.id, inverseEvent.id);
+  return Response.json({
+    data: { event: { ...event, undone_by: inverseEvent.id }, inverse: inverseEvent },
+  });
 });

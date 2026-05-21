@@ -14,9 +14,10 @@
  */
 
 import { echoScenario } from './dev-echo/scenario';
+import { ruleAnchorAppendScenario } from './rule-anchor-append/scenario';
 import type { Scenario, ScenarioDescriptor } from './_shared/types';
 
-const ALL_SCENARIOS: Scenario[] = [echoScenario];
+const ALL_SCENARIOS: Scenario[] = [ruleAnchorAppendScenario, echoScenario];
 
 const byId = new Map(ALL_SCENARIOS.map((s) => [s.descriptor.id, s]));
 

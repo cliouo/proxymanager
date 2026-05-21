@@ -1,16 +1,9 @@
 import { withProblemDetails } from '@/lib/http/handler';
 import { ProblemDetailsError } from '@/lib/http/problem';
-import { recordEvent } from '@/lib/repos/auditRepo';
-import { listRules, upsertRule } from '@/lib/repos/rulesRepo';
-import {
-  computeNextRank,
-  ensureValidAnchorAndPolicy,
-  generateRuleId,
-  loadParsedBase,
-  nowSeconds,
-  resolveActor,
-} from '@/lib/services/rulesService';
-import { RuleCreateSchema, type Rule } from '@/schemas';
+import { listRules } from '@/lib/repos/rulesRepo';
+import { dispatch } from '@/lib/scenarios/_shared/dispatch';
+import { resolveActor } from '@/lib/services/rulesService';
+import { type Rule } from '@/schemas';
 
 export const dynamic = 'force-dynamic';
 
@@ -71,38 +64,22 @@ export const GET = withProblemDetails(async (request: Request) => {
   return Response.json({ data, meta: { total, limit, offset } });
 });
 
+/**
+ * Backward-compat shim. New code can hit POST /api/v1/ops directly with
+ * scenario=rule-anchor-append; this route exists so the extension and
+ * existing /rules UI keep working unchanged.
+ */
 export const POST = withProblemDetails(async (request: Request) => {
-  const raw = await request.json().catch(() => {
+  const payload = await request.json().catch(() => {
     throw ProblemDetailsError.badRequest('Request body must be valid JSON.');
   });
-  const input = RuleCreateSchema.parse(raw);
-
-  const parsedBase = await loadParsedBase();
-  ensureValidAnchorAndPolicy(input, parsedBase);
-
-  const rank = input.rank ?? (await computeNextRank(input.anchor));
-  const now = nowSeconds();
-  const rule: Rule = {
-    id: generateRuleId(),
-    anchor: input.anchor,
-    type: input.type,
-    value: input.value,
-    policy: input.policy,
-    rank,
-    source: input.source,
-    added_at: now,
-    updated_at: now,
-    note: input.note,
-  };
-
-  await upsertRule(rule);
-  await recordEvent({
-    op: 'rule.create',
+  const result = await dispatch({
+    scenario: 'rule-anchor-append',
+    op: 'create',
+    payload,
     actor: resolveActor(request),
-    ruleId: rule.id,
-    after: rule,
   });
-
+  const rule = result.data as Rule;
   return Response.json(
     { data: rule },
     {
