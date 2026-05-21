@@ -26,4 +26,14 @@ export const REDIS_KEYS = {
   taxonomy: {
     groups: 'taxonomy:groups',
   },
+  /**
+   * Fetch cache for remote subscription bodies. Each entry is a standalone
+   * Redis key with EX TTL so it auto-expires; we don't use a Hash because
+   * Upstash doesn't expose per-field TTL.
+   */
+  fetchCache: (cacheKey: string): string => `fetch-cache:${cacheKey}`,
+  /**
+   * Aggregated subscription collections. Hash keyed by collection id.
+   */
+  collections: 'collections',
 } as const;
