@@ -22,18 +22,18 @@ interface ParsedBase {
   proxies: ProxySummary[];
   proxyGroups: ProxyGroupSummary[];
   etag: string;
-  updated_at: number;
 }
 
 interface FixedChainView {
-  backend: string;
+  chainName: string;
   front: string;
+  backend: string;
 }
 interface PoolChainView {
+  chainName: string;
   poolName: string;
-  type: string;
-  members: string[];
-  backends: string[];
+  poolMembers: string[];
+  backend: string;
 }
 
 export default function ChainedProxyPage() {
@@ -76,8 +76,10 @@ export default function ChainedProxyPage() {
       <div>
         <h1 className="text-xl font-semibold">Chained proxies</h1>
         <p className="text-sm text-[var(--color-muted)]">
-          Routes traffic through a front node before the backend exits.
-          Backed by Mihomo&apos;s <code className="font-mono">dialer-proxy</code> field.
+          Wraps backend nodes in <code className="font-mono">select</code> groups with{' '}
+          <code className="font-mono">dialer-proxy</code> so chains work over both base
+          and collection-supplied nodes. Reference the chain group&apos;s name in your
+          rules to route traffic through it.
         </p>
       </div>
 
@@ -90,6 +92,7 @@ export default function ChainedProxyPage() {
       <FixedChainsCard
         chains={view.fixedChains}
         proxies={parsed.proxies}
+        groups={parsed.proxyGroups}
         onChanged={reload}
         onError={setError}
       />
@@ -111,33 +114,31 @@ function classify(parsed: ParsedBase | null): {
 } {
   if (!parsed) return { fixedChains: [], poolChains: [] };
   const groupByName = new Map(parsed.proxyGroups.map((g) => [g.name, g]));
+  const proxyNames = new Set(parsed.proxies.map((p) => p.name));
+
   const fixedChains: FixedChainView[] = [];
-  const poolChainsByName = new Map<string, PoolChainView>();
-  for (const p of parsed.proxies) {
-    if (!p.dialerProxy) continue;
-    const group = groupByName.get(p.dialerProxy);
-    if (group) {
-      const existing = poolChainsByName.get(group.name);
-      if (existing) {
-        existing.backends.push(p.name);
-      } else {
-        poolChainsByName.set(group.name, {
-          poolName: group.name,
-          type: group.type,
-          members: group.proxies,
-          backends: [p.name],
+  const poolChains: PoolChainView[] = [];
+  for (const g of parsed.proxyGroups) {
+    if (!g.dialerProxy) continue;
+    if (g.proxies.length !== 1) continue; // not a wrap shape
+    const backend = g.proxies[0];
+    if (proxyNames.has(g.dialerProxy)) {
+      fixedChains.push({ chainName: g.name, front: g.dialerProxy, backend });
+    } else {
+      const pool = groupByName.get(g.dialerProxy);
+      if (pool) {
+        poolChains.push({
+          chainName: g.name,
+          poolName: pool.name,
+          poolMembers: pool.proxies,
+          backend,
         });
       }
-    } else {
-      fixedChains.push({ backend: p.name, front: p.dialerProxy });
     }
   }
-  return {
-    fixedChains: fixedChains.sort((a, b) => a.backend.localeCompare(b.backend)),
-    poolChains: [...poolChainsByName.values()].sort((a, b) =>
-      a.poolName.localeCompare(b.poolName),
-    ),
-  };
+  fixedChains.sort((a, b) => a.chainName.localeCompare(b.chainName));
+  poolChains.sort((a, b) => a.chainName.localeCompare(b.chainName));
+  return { fixedChains, poolChains };
 }
 
 async function runOp(op: string, payload: unknown): Promise<void> {
@@ -152,13 +153,15 @@ async function runOp(op: string, payload: unknown): Promise<void> {
 function FixedChainsCard({
   chains,
   proxies,
+  groups,
   onChanged,
   onError,
 }: {
   chains: FixedChainView[];
   proxies: ProxySummary[];
+  groups: ProxyGroupSummary[];
   onChanged: () => void;
-  onError: (message: string | null) => void;
+  onError: (s: string | null) => void;
 }) {
   const [adding, setAdding] = useState(false);
   return (
@@ -177,9 +180,10 @@ function FixedChainsCard({
           <div className="p-4 border-b border-[var(--color-border)]/60">
             <FixedChainForm
               proxies={proxies}
-              onSubmit={async (backend, front) => {
+              groups={groups}
+              onSubmit={async (front, backend, chainName) => {
                 try {
-                  await runOp('set-fixed-chain', { backend, front });
+                  await runOp('set-fixed-chain', { backend, front, chainName });
                   setAdding(false);
                   onChanged();
                   onError(null);
@@ -187,20 +191,21 @@ function FixedChainsCard({
                   onError(err instanceof ApiError ? err.message : String(err));
                 }
               }}
+              onCancel={() => setAdding(false)}
             />
           </div>
         )}
         {chains.length === 0 ? (
           <p className="px-4 py-3 text-sm text-[var(--color-muted)]">
-            No fixed chains. A fixed chain ties one backend to exactly one front.
+            No fixed chains. Each fixed chain pins one front → one backend in a
+            single wrapper group.
           </p>
         ) : (
           <ul className="divide-y divide-[var(--color-border)]/60">
             {chains.map((c) => (
               <FixedChainRow
-                key={c.backend}
+                key={c.chainName}
                 chain={c}
-                proxies={proxies}
                 onChanged={onChanged}
                 onError={onError}
               />
@@ -214,32 +219,35 @@ function FixedChainsCard({
 
 function FixedChainForm({
   proxies,
-  initial,
+  groups,
   onSubmit,
   onCancel,
 }: {
   proxies: ProxySummary[];
-  initial?: { backend: string; front: string };
-  onSubmit: (backend: string, front: string) => Promise<void>;
+  groups: ProxyGroupSummary[];
+  onSubmit: (front: string, backend: string, chainName?: string) => Promise<void>;
   onCancel?: () => void;
 }) {
-  const [backend, setBackend] = useState(initial?.backend ?? '');
-  const [front, setFront] = useState(initial?.front ?? '');
+  const [front, setFront] = useState('');
+  const [backend, setBackend] = useState('');
+  const [chainName, setChainName] = useState('');
   const [pending, setPending] = useState(false);
-  const sortedNames = useMemo(
-    () => proxies.map((p) => p.name).sort((a, b) => a.localeCompare(b)),
-    [proxies],
+
+  const proxyNames = useMemo(() => proxies.map((p) => p.name).sort((a, b) => a.localeCompare(b)), [proxies]);
+  const allTargets = useMemo(
+    () => [...proxyNames, ...groups.map((g) => g.name)].sort((a, b) => a.localeCompare(b)),
+    [proxyNames, groups],
   );
 
   return (
     <form
-      className="grid grid-cols-1 md:grid-cols-3 gap-2 items-end"
+      className="grid grid-cols-1 md:grid-cols-4 gap-2 items-end"
       onSubmit={async (e) => {
         e.preventDefault();
-        if (!backend || !front || backend === front) return;
+        if (!front || !backend || backend === front) return;
         setPending(true);
         try {
-          await onSubmit(backend, front);
+          await onSubmit(front, backend, chainName.trim() || undefined);
         } finally {
           setPending(false);
         }
@@ -249,7 +257,7 @@ function FixedChainForm({
         <label className="text-xs text-[var(--color-muted)] mb-1 block">Front (entry)</label>
         <Select value={front} onChange={(e) => setFront(e.target.value)} required>
           <option value="">— pick a front —</option>
-          {sortedNames.map((n) => (
+          {allTargets.map((n) => (
             <option key={n} value={n}>
               {n}
             </option>
@@ -258,22 +266,32 @@ function FixedChainForm({
       </div>
       <div>
         <label className="text-xs text-[var(--color-muted)] mb-1 block">Backend (exit)</label>
-        <Select value={backend} onChange={(e) => setBackend(e.target.value)} required disabled={!!initial}>
+        <Select value={backend} onChange={(e) => setBackend(e.target.value)} required>
           <option value="">— pick a backend —</option>
-          {sortedNames.map((n) => (
+          {proxyNames.map((n) => (
             <option key={n} value={n}>
               {n}
             </option>
           ))}
         </Select>
       </div>
+      <div>
+        <label className="text-xs text-[var(--color-muted)] mb-1 block">
+          Group name (optional)
+        </label>
+        <Input
+          value={chainName}
+          onChange={(e) => setChainName(e.target.value)}
+          placeholder={front && backend ? `chain:${front}-to-${backend}` : 'auto-named'}
+        />
+      </div>
       <div className="flex gap-2">
         <Button
           type="submit"
-          disabled={pending || !backend || !front || backend === front}
+          disabled={pending || !front || !backend || backend === front}
           className="flex-1"
         >
-          {pending ? '…' : initial ? 'Update' : 'Create'}
+          {pending ? '…' : 'Create'}
         </Button>
         {onCancel && (
           <Button variant="secondary" onClick={onCancel} type="button">
@@ -287,22 +305,19 @@ function FixedChainForm({
 
 function FixedChainRow({
   chain,
-  proxies,
   onChanged,
   onError,
 }: {
   chain: FixedChainView;
-  proxies: ProxySummary[];
   onChanged: () => void;
-  onError: (message: string | null) => void;
+  onError: (s: string | null) => void;
 }) {
-  const [editing, setEditing] = useState(false);
   const [pending, setPending] = useState(false);
-
   async function clear() {
+    if (!confirm(`Delete chain group "${chain.chainName}"?`)) return;
     setPending(true);
     try {
-      await runOp('clear-chain', { backend: chain.backend });
+      await runOp('clear-chain', { chainName: chain.chainName });
       onChanged();
       onError(null);
     } catch (err) {
@@ -311,40 +326,18 @@ function FixedChainRow({
       setPending(false);
     }
   }
-
   return (
-    <li className="px-4 py-2.5 text-sm">
-      {editing ? (
-        <FixedChainForm
-          proxies={proxies}
-          initial={chain}
-          onSubmit={async (_b, front) => {
-            try {
-              await runOp('set-fixed-chain', { backend: chain.backend, front });
-              setEditing(false);
-              onChanged();
-              onError(null);
-            } catch (err) {
-              onError(err instanceof ApiError ? err.message : String(err));
-            }
-          }}
-          onCancel={() => setEditing(false)}
-        />
-      ) : (
-        <div className="flex items-center gap-2">
-          <code className="font-mono text-xs flex-1 min-w-0 truncate">
-            <span className="text-[var(--color-accent)]">{chain.front}</span>
-            <span className="text-[var(--color-muted)] mx-2">→</span>
-            <span>{chain.backend}</span>
-          </code>
-          <Button size="sm" variant="ghost" onClick={() => setEditing(true)} disabled={pending}>
-            Edit
-          </Button>
-          <Button size="sm" variant="danger" onClick={clear} disabled={pending}>
-            {pending ? '…' : 'Clear'}
-          </Button>
-        </div>
-      )}
+    <li className="px-4 py-2.5 text-sm flex items-center gap-2">
+      <code className="font-mono text-xs flex-1 min-w-0 truncate">
+        <span className="font-semibold">{chain.chainName}</span>{' '}
+        <span className="text-[var(--color-muted)]">{'='}</span>{' '}
+        <span className="text-[var(--color-accent)]">{chain.front}</span>
+        <span className="text-[var(--color-muted)] mx-1">→</span>
+        <span>{chain.backend}</span>
+      </code>
+      <Button size="sm" variant="danger" onClick={clear} disabled={pending}>
+        {pending ? '…' : 'Delete'}
+      </Button>
     </li>
   );
 }
@@ -362,17 +355,9 @@ function PoolChainsCard({
   proxies: ProxySummary[];
   groups: ProxyGroupSummary[];
   onChanged: () => void;
-  onError: (message: string | null) => void;
+  onError: (s: string | null) => void;
 }) {
   const [adding, setAdding] = useState(false);
-  // Names already claimed in YAML — we forbid them as pool names.
-  const claimedNames = useMemo(() => {
-    const out = new Set<string>();
-    for (const p of proxies) out.add(p.name);
-    for (const g of groups) out.add(g.name);
-    return out;
-  }, [proxies, groups]);
-
   return (
     <Card>
       <CardHeader>
@@ -389,10 +374,10 @@ function PoolChainsCard({
           <div className="p-4 border-b border-[var(--color-border)]/60">
             <PoolChainForm
               proxies={proxies}
-              claimedNames={claimedNames}
-              onSubmit={async (poolName, backend, fronts) => {
+              groups={groups}
+              onSubmit={async (backend, fronts, poolName, chainName) => {
                 try {
-                  await runOp('create-pool-chain', { poolName, backend, fronts });
+                  await runOp('create-pool-chain', { backend, fronts, poolName, chainName });
                   setAdding(false);
                   onChanged();
                   onError(null);
@@ -400,21 +385,23 @@ function PoolChainsCard({
                   onError(err instanceof ApiError ? err.message : String(err));
                 }
               }}
+              onCancel={() => setAdding(false)}
             />
           </div>
         )}
         {pools.length === 0 ? (
           <p className="px-4 py-3 text-sm text-[var(--color-muted)]">
-            No pool chains. A pool chain creates a select-group of candidate fronts;
-            switching the selection in Clash UI swaps the front without YAML edits.
+            No pool chains. Pool chain = a select-group of candidate fronts +
+            one wrapper group that lands the traffic at the backend.
           </p>
         ) : (
           <ul className="divide-y divide-[var(--color-border)]/60">
             {pools.map((p) => (
               <PoolChainRow
-                key={p.poolName}
+                key={p.chainName}
                 pool={p}
                 proxies={proxies}
+                groups={groups}
                 onChanged={onChanged}
                 onError={onError}
               />
@@ -428,28 +415,33 @@ function PoolChainsCard({
 
 function PoolChainForm({
   proxies,
-  claimedNames,
-  onSubmit,
+  groups,
   initial,
+  onSubmit,
   onCancel,
 }: {
   proxies: ProxySummary[];
-  claimedNames: Set<string>;
-  initial?: { poolName: string; backend?: string; members: string[]; locked?: boolean };
-  onSubmit: (poolName: string, backend: string, fronts: string[]) => Promise<void>;
+  groups: ProxyGroupSummary[];
+  initial?: { poolName: string; members: string[] };
+  onSubmit: (
+    backend: string,
+    fronts: string[],
+    poolName?: string,
+    chainName?: string,
+  ) => Promise<void>;
   onCancel?: () => void;
 }) {
-  const [poolName, setPoolName] = useState(initial?.poolName ?? '');
-  const [backend, setBackend] = useState(initial?.backend ?? '');
+  const [backend, setBackend] = useState('');
   const [selected, setSelected] = useState<Set<string>>(new Set(initial?.members ?? []));
+  const [poolName, setPoolName] = useState(initial?.poolName ?? '');
+  const [chainName, setChainName] = useState('');
   const [pending, setPending] = useState(false);
 
-  const sortedNames = useMemo(
-    () => proxies.map((p) => p.name).sort((a, b) => a.localeCompare(b)),
-    [proxies],
+  const proxyNames = useMemo(() => proxies.map((p) => p.name).sort((a, b) => a.localeCompare(b)), [proxies]);
+  const allTargets = useMemo(
+    () => [...proxyNames, ...groups.map((g) => g.name)].sort((a, b) => a.localeCompare(b)),
+    [proxyNames, groups],
   );
-
-  const nameInvalid = !initial && !!poolName && claimedNames.has(poolName);
 
   function toggle(name: string) {
     setSelected((prev) => {
@@ -465,55 +457,64 @@ function PoolChainForm({
       className="space-y-3"
       onSubmit={async (e) => {
         e.preventDefault();
-        if (!poolName || (!initial && !backend) || selected.size === 0) return;
-        if (nameInvalid) return;
+        if (!initial && (!backend || selected.size === 0)) return;
         setPending(true);
         try {
-          await onSubmit(poolName, backend, [...selected]);
+          await onSubmit(
+            backend,
+            [...selected],
+            poolName.trim() || undefined,
+            chainName.trim() || undefined,
+          );
         } finally {
           setPending(false);
         }
       }}
     >
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-        <div>
-          <label className="text-xs text-[var(--color-muted)] mb-1 block">Pool name</label>
-          <Input
-            value={poolName}
-            onChange={(e) => setPoolName(e.target.value)}
-            placeholder="e.g. via-jp-pool"
-            disabled={!!initial?.locked}
-            className={nameInvalid ? 'border-[var(--color-danger)]' : ''}
-          />
-          {nameInvalid && (
-            <p className="text-[10px] text-[var(--color-danger)] mt-1">
-              Name already used by an existing proxy or group.
-            </p>
-          )}
-        </div>
-        {!initial && (
+      {!initial && (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
           <div>
             <label className="text-xs text-[var(--color-muted)] mb-1 block">
               Backend (exit)
             </label>
             <Select value={backend} onChange={(e) => setBackend(e.target.value)} required>
               <option value="">— pick a backend —</option>
-              {sortedNames.map((n) => (
+              {proxyNames.map((n) => (
                 <option key={n} value={n}>
                   {n}
                 </option>
               ))}
             </Select>
           </div>
-        )}
-      </div>
+          <div>
+            <label className="text-xs text-[var(--color-muted)] mb-1 block">
+              Pool name (optional)
+            </label>
+            <Input
+              value={poolName}
+              onChange={(e) => setPoolName(e.target.value)}
+              placeholder={backend ? `pool:${backend}` : 'auto-named'}
+            />
+          </div>
+          <div>
+            <label className="text-xs text-[var(--color-muted)] mb-1 block">
+              Chain group name (optional)
+            </label>
+            <Input
+              value={chainName}
+              onChange={(e) => setChainName(e.target.value)}
+              placeholder={backend ? `chain:pool-to-${backend}` : 'auto-named'}
+            />
+          </div>
+        </div>
+      )}
 
       <div>
         <label className="text-xs text-[var(--color-muted)] mb-1 block">
           Fronts (entries) — pick one or more
         </label>
         <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2 max-h-48 overflow-y-auto grid grid-cols-2 md:grid-cols-3 gap-1 text-xs">
-          {sortedNames.map((n) => {
+          {allTargets.map((n) => {
             const checked = selected.has(n);
             return (
               <label
@@ -535,13 +536,7 @@ function PoolChainForm({
       <div className="flex gap-2">
         <Button
           type="submit"
-          disabled={
-            pending ||
-            !poolName ||
-            (!initial && !backend) ||
-            selected.size === 0 ||
-            nameInvalid
-          }
+          disabled={pending || selected.size === 0 || (!initial && !backend)}
         >
           {pending ? '…' : initial ? 'Update members' : 'Create pool'}
         </Button>
@@ -558,24 +553,24 @@ function PoolChainForm({
 function PoolChainRow({
   pool,
   proxies,
+  groups,
   onChanged,
   onError,
 }: {
   pool: PoolChainView;
   proxies: ProxySummary[];
+  groups: ProxyGroupSummary[];
   onChanged: () => void;
-  onError: (message: string | null) => void;
+  onError: (s: string | null) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [pending, setPending] = useState(false);
 
   async function del() {
-    if (!confirm(`Delete pool "${pool.poolName}" and clear dialer-proxy on ${pool.backends.length} backend(s)?`)) {
-      return;
-    }
+    if (!confirm(`Delete chain "${pool.chainName}" and its pool "${pool.poolName}"?`)) return;
     setPending(true);
     try {
-      await runOp('delete-pool-chain', { poolName: pool.poolName });
+      await runOp('delete-pool-chain', { chainName: pool.chainName });
       onChanged();
       onError(null);
     } catch (err) {
@@ -589,9 +584,9 @@ function PoolChainRow({
     <li className="px-4 py-3 text-sm space-y-2">
       <div className="flex items-center gap-2 min-w-0">
         <code className="font-mono text-xs font-semibold truncate flex-1 min-w-0">
-          {pool.poolName}
+          {pool.chainName}
         </code>
-        <Badge tone="neutral">{pool.type}</Badge>
+        <Badge tone="neutral">→ {pool.backend}</Badge>
         <Button
           size="sm"
           variant="ghost"
@@ -608,9 +603,9 @@ function PoolChainRow({
       {editing ? (
         <PoolChainForm
           proxies={proxies}
-          claimedNames={new Set()}
-          initial={{ poolName: pool.poolName, members: pool.members, locked: true }}
-          onSubmit={async (_name, _b, fronts) => {
+          groups={groups}
+          initial={{ poolName: pool.poolName, members: pool.poolMembers }}
+          onSubmit={async (_b, fronts) => {
             try {
               await runOp('update-pool-members', { poolName: pool.poolName, fronts });
               setEditing(false);
@@ -623,27 +618,17 @@ function PoolChainRow({
           onCancel={() => setEditing(false)}
         />
       ) : (
-        <>
-          <div className="flex flex-wrap items-center gap-1 text-xs">
-            <span className="text-[var(--color-muted)] mr-1">fronts:</span>
-            {pool.members.length === 0 && (
-              <span className="text-[var(--color-muted)] italic">(empty)</span>
-            )}
-            {pool.members.map((m) => (
-              <Badge key={m} tone="accent">
-                {m}
-              </Badge>
-            ))}
-          </div>
-          <div className="flex flex-wrap items-center gap-1 text-xs">
-            <span className="text-[var(--color-muted)] mr-1">→ backends:</span>
-            {pool.backends.map((b) => (
-              <code key={b} className="font-mono">
-                {b}
-              </code>
-            ))}
-          </div>
-        </>
+        <div className="flex flex-wrap items-center gap-1 text-xs">
+          <span className="text-[var(--color-muted)] mr-1">pool {pool.poolName}:</span>
+          {pool.poolMembers.length === 0 && (
+            <span className="text-[var(--color-muted)] italic">(empty)</span>
+          )}
+          {pool.poolMembers.map((m) => (
+            <Badge key={m} tone="accent">
+              {m}
+            </Badge>
+          ))}
+        </div>
       )}
     </li>
   );
