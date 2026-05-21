@@ -1,15 +1,21 @@
 import { getRedis } from '@/lib/redis/client';
 import { REDIS_KEYS } from '@/lib/redis/keys';
-import type { AuditEvent } from '@/schemas';
+import type { AuditEvent, AuditTarget } from '@/schemas';
 
 const MAX_EVENTS = 1000;
 
 interface RecordInput {
   op: AuditEvent['op'];
   actor: string;
-  ruleId: string;
-  before?: AuditEvent['before'];
-  after?: AuditEvent['after'];
+  /**
+   * Either provide a target (preferred for scenario ops) or a legacy ruleId
+   * (kept for backward compat with rule.* events). Both may be set when a
+   * scenario op happens to act on a rule.
+   */
+  target?: AuditTarget;
+  ruleId?: string;
+  before?: unknown;
+  after?: unknown;
   undoes?: string;
 }
 
@@ -33,7 +39,8 @@ export async function recordEvent(input: RecordInput): Promise<AuditEvent> {
     ts: nowMs(),
     op: input.op,
     actor: input.actor,
-    ruleId: input.ruleId,
+    ruleId: input.ruleId ?? (input.target?.kind === 'rule' ? input.target.id : undefined),
+    target: input.target,
     before: input.before,
     after: input.after,
     undoes: input.undoes,

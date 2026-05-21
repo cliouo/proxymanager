@@ -25,36 +25,49 @@ export const POST = withProblemDetails(async (request: Request, ctx: Ctx) => {
   }
 
   const actor = resolveActor(request);
+  const ruleId = event.ruleId ?? (event.target?.kind === 'rule' ? event.target.id : undefined);
+
+  if (!ruleId || !event.op.startsWith('rule.')) {
+    // Scenario-routed undo (chained-proxy, regional-groups, etc.) will be
+    // dispatched through scenario inverseOps in a follow-up. For now the
+    // /history page only offers Undo on rule.* events.
+    throw ProblemDetailsError.unprocessable(
+      `Undo is currently only supported for rule.* ops. Got "${event.op}".`,
+    );
+  }
+
   let inverse: AuditEvent;
 
   switch (event.op) {
     case 'rule.create': {
-      if (!event.after) {
+      const after = event.after as Rule | undefined;
+      if (!after) {
         throw ProblemDetailsError.unprocessable(
           'Cannot undo rule.create event: missing after-state.',
         );
       }
-      const current = await getRule(event.ruleId);
+      const current = await getRule(ruleId);
       if (!current) {
         throw ProblemDetailsError.conflict(
-          `Rule ${event.ruleId} no longer exists; nothing to undo.`,
+          `Rule ${ruleId} no longer exists; nothing to undo.`,
         );
       }
-      if (current.updated_at !== event.after.updated_at) {
+      if (current.updated_at !== after.updated_at) {
         throw ProblemDetailsError.conflict(
-          `Rule ${event.ruleId} was modified after this event; refuse to undo.`,
+          `Rule ${ruleId} was modified after this event; refuse to undo.`,
         );
       }
-      const removed = await deleteRule(event.ruleId);
+      const removed = await deleteRule(ruleId);
       if (!removed) {
         throw ProblemDetailsError.conflict(
-          `Rule ${event.ruleId} could not be deleted (already gone).`,
+          `Rule ${ruleId} could not be deleted (already gone).`,
         );
       }
       inverse = await recordEvent({
         op: 'rule.delete',
         actor,
-        ruleId: event.ruleId,
+        ruleId,
+        target: { kind: 'rule', id: ruleId },
         before: current,
         undoes: event.id,
       });
@@ -62,25 +75,27 @@ export const POST = withProblemDetails(async (request: Request, ctx: Ctx) => {
     }
 
     case 'rule.delete': {
-      if (!event.before) {
+      const before = event.before as Rule | undefined;
+      if (!before) {
         throw ProblemDetailsError.unprocessable(
           'Cannot undo rule.delete event: missing before-state.',
         );
       }
-      const existing = await getRule(event.ruleId);
+      const existing = await getRule(ruleId);
       if (existing) {
         throw ProblemDetailsError.conflict(
-          `Rule ${event.ruleId} already exists; nothing to restore.`,
+          `Rule ${ruleId} already exists; nothing to restore.`,
         );
       }
       const parsedBase = await loadParsedBase();
-      ensureValidAnchorAndPolicy(event.before, parsedBase);
-      const restored: Rule = { ...event.before, updated_at: nowSeconds() };
+      ensureValidAnchorAndPolicy(before, parsedBase);
+      const restored: Rule = { ...before, updated_at: nowSeconds() };
       await upsertRule(restored);
       inverse = await recordEvent({
         op: 'rule.create',
         actor,
         ruleId: restored.id,
+        target: { kind: 'rule', id: restored.id },
         after: restored,
         undoes: event.id,
       });
@@ -88,36 +103,44 @@ export const POST = withProblemDetails(async (request: Request, ctx: Ctx) => {
     }
 
     case 'rule.update': {
-      if (!event.before || !event.after) {
+      const before = event.before as Rule | undefined;
+      const after = event.after as Rule | undefined;
+      if (!before || !after) {
         throw ProblemDetailsError.unprocessable(
           'Cannot undo rule.update event: missing before- or after-state.',
         );
       }
-      const current = await getRule(event.ruleId);
+      const current = await getRule(ruleId);
       if (!current) {
         throw ProblemDetailsError.conflict(
-          `Rule ${event.ruleId} no longer exists; nothing to revert.`,
+          `Rule ${ruleId} no longer exists; nothing to revert.`,
         );
       }
-      if (current.updated_at !== event.after.updated_at) {
+      if (current.updated_at !== after.updated_at) {
         throw ProblemDetailsError.conflict(
-          `Rule ${event.ruleId} was modified after this event; refuse to revert.`,
+          `Rule ${ruleId} was modified after this event; refuse to revert.`,
         );
       }
       const parsedBase = await loadParsedBase();
-      ensureValidAnchorAndPolicy(event.before, parsedBase);
-      const reverted: Rule = { ...event.before, updated_at: nowSeconds() };
+      ensureValidAnchorAndPolicy(before, parsedBase);
+      const reverted: Rule = { ...before, updated_at: nowSeconds() };
       await upsertRule(reverted);
       inverse = await recordEvent({
         op: 'rule.update',
         actor,
-        ruleId: event.ruleId,
+        ruleId,
+        target: { kind: 'rule', id: ruleId },
         before: current,
         after: reverted,
         undoes: event.id,
       });
       break;
     }
+
+    default:
+      throw ProblemDetailsError.unprocessable(
+        `Cannot undo unknown op "${event.op}".`,
+      );
   }
 
   await markUndone(event.id, inverse.id);
