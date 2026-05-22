@@ -14,8 +14,8 @@ export default function RulesRedirect() {
     router.replace('/scenarios/rule-anchor-append');
   }, [router]);
   return (
-    <main className="p-6 text-sm text-[var(--color-muted)]">
-      Redirecting to /scenarios/rule-anchor-append…
+    <main className="p-8 text-sm text-[var(--color-muted)]">
+      正在跳转到「规则编辑」…
     </main>
   );
 }

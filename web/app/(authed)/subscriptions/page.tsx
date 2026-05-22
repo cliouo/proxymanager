@@ -3,8 +3,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
-import { Card, CardBody, CardHeader, CardTitle } from '@/components/ui/Card';
+import { InlineUrl } from '@/components/ui/InlineUrl';
 import { Input, Select, Textarea } from '@/components/ui/Input';
+import { Placeholder, Reveal } from '@/components/ui/Reveal';
+import { StatusDot } from '@/components/ui/StatusDot';
+import { TrafficBar } from '@/components/ui/TrafficBar';
 import { ApiError, api } from '@/lib/client/api';
 
 const DEFAULT_TTL_MS = 10 * 60 * 1000;
@@ -16,7 +19,6 @@ interface Subscription {
   enabled: boolean;
   url?: string;
   ua_override?: string;
-  custom_headers?: Record<string, string>;
   ttl_ms: number;
   content?: string;
   tags: string[];
@@ -34,21 +36,13 @@ interface Meta {
   subProvidersBase: string;
 }
 
-function fmtBytes(n: number): string {
-  if (!n) return '—';
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  let v = n;
-  let i = 0;
-  while (v >= 1024 && i < units.length - 1) {
-    v /= 1024;
-    i++;
-  }
-  return `${v.toFixed(v < 10 ? 2 : v < 100 ? 1 : 0)} ${units[i]}`;
-}
-
 function fmtTime(s: number | undefined): string {
-  if (!s) return '—';
-  return new Date(s * 1000).toLocaleString();
+  if (!s) return '从未';
+  const diff = Date.now() / 1000 - s;
+  if (diff < 60) return '刚刚';
+  if (diff < 3600) return `${Math.round(diff / 60)} 分钟前`;
+  if (diff < 86400) return `${Math.round(diff / 3600)} 小时前`;
+  return new Date(s * 1000).toLocaleString('zh-CN');
 }
 
 export default function SubscriptionsPage() {
@@ -56,6 +50,9 @@ export default function SubscriptionsPage() {
   const [meta, setMeta] = useState<Meta | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [loaded, setLoaded] = useState(false);
 
   const reload = useCallback(async () => {
     setError(null);
@@ -68,6 +65,8 @@ export default function SubscriptionsPage() {
       setMeta(m.data);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setLoaded(true);
     }
   }, []);
 
@@ -77,7 +76,6 @@ export default function SubscriptionsPage() {
 
   async function onRefresh(id: string) {
     setBusyId(id);
-    setError(null);
     try {
       await api(`/api/v1/subscriptions/${id}/refresh`, { method: 'POST' });
       await reload();
@@ -89,7 +87,7 @@ export default function SubscriptionsPage() {
   }
 
   async function onDelete(id: string) {
-    if (!confirm('Delete this subscription?')) return;
+    if (!confirm('确定删除该订阅源？')) return;
     setBusyId(id);
     try {
       await api(`/api/v1/subscriptions/${id}`, { method: 'DELETE' });
@@ -116,148 +114,336 @@ export default function SubscriptionsPage() {
     }
   }
 
+  async function onSaveEdit(id: string, patch: Record<string, unknown>) {
+    const res = await api<{ data: Subscription }>(`/api/v1/subscriptions/${id}`, {
+      method: 'PATCH',
+      body: patch,
+    });
+    setSubs((prev) => prev.map((s) => (s.id === id ? res.data : s)));
+    setEditingId(null);
+  }
+
   return (
-    <div className="space-y-4">
-      <div>
-        <h1 className="text-xl font-semibold">Subscriptions</h1>
-        <p className="text-sm text-[var(--color-muted)]">
-          Per-airport sources. Remote URLs are fetched + cached (default 10 min TTL);
-          local subscriptions store inline YAML. Aggregate them via{' '}
-          <a href="/collections" className="text-[var(--color-accent)]">
-            Collections
-          </a>
-          .
-        </p>
-      </div>
+    <div className="space-y-6">
+      <header className="flex items-baseline justify-between gap-4">
+        <div>
+          <h1
+            className="font-serif text-[28px] font-medium leading-[1.15] tracking-[-0.015em] text-[var(--color-ink)]"
+            style={{ fontVariationSettings: '"opsz" 96, "SOFT" 30' }}
+          >
+            订阅源
+          </h1>
+          <p className="mt-1.5 text-[13px] text-[var(--color-muted)]">
+            {subs.length} 个 · 远程订阅自动缓存，本地订阅直接保存 YAML。
+          </p>
+        </div>
+        <Button onClick={() => setAdding((v) => !v)}>{adding ? '取消' : '+ 新增订阅'}</Button>
+      </header>
 
       {error && (
-        <Card className="border-[var(--color-danger)]/40">
-          <CardBody className="text-sm text-[var(--color-danger)]">{error}</CardBody>
-        </Card>
+        <div className="rounded-xl border border-[var(--color-danger)]/40 bg-[#F4D8D2]/30 px-4 py-3 text-[13px] text-[var(--color-danger)]">
+          {error}
+        </div>
       )}
 
-      <AddForm onAdded={reload} />
+      {adding && <AddForm onAdded={() => { setAdding(false); reload(); }} />}
 
-      <div className="space-y-3">
-        {subs.map((sub) => {
-          const providerUrl = meta ? `${meta.subProvidersBase}/${sub.name}` : '';
-          const traffic = sub.last_traffic;
-          return (
-            <Card key={sub.id}>
-              <CardHeader>
-                <div className="flex items-center gap-2 min-w-0">
-                  <CardTitle>{sub.name}</CardTitle>
-                  <Badge tone={sub.enabled ? 'accent' : 'neutral'}>
-                    {sub.enabled ? 'enabled' : 'disabled'}
-                  </Badge>
-                  <Badge tone="neutral">{sub.kind}</Badge>
-                  {sub.last_error && <Badge tone="danger">error</Badge>}
-                </div>
-                <div className="flex items-center gap-2">
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={() => onToggle(sub)}
-                    disabled={busyId === sub.id}
-                  >
-                    {sub.enabled ? 'Disable' : 'Enable'}
-                  </Button>
-                  {sub.kind === 'remote' && (
-                    <Button
-                      size="sm"
-                      onClick={() => onRefresh(sub.id)}
-                      disabled={busyId === sub.id || !sub.enabled}
-                    >
-                      {busyId === sub.id ? '…' : 'Refresh'}
-                    </Button>
-                  )}
-                  <Button
-                    size="sm"
-                    variant="danger"
-                    onClick={() => onDelete(sub.id)}
-                    disabled={busyId === sub.id}
-                  >
-                    Delete
-                  </Button>
-                </div>
-              </CardHeader>
-              <CardBody className="space-y-2 text-xs">
-                {sub.kind === 'remote' && sub.url && (
-                  <div className="flex gap-2 items-start">
-                    <span className="w-28 text-[var(--color-muted)] shrink-0">Upstream</span>
-                    <code className="flex-1 break-all font-mono">{sub.url}</code>
-                  </div>
-                )}
-                {sub.kind === 'local' && (
-                  <div className="flex gap-2 items-start">
-                    <span className="w-28 text-[var(--color-muted)] shrink-0">Inline</span>
-                    <code className="flex-1 font-mono text-[var(--color-muted)]">
-                      {(sub.content?.length ?? 0).toLocaleString()} bytes
-                    </code>
-                  </div>
-                )}
-                {sub.tags.length > 0 && (
-                  <div className="flex gap-2 items-start">
-                    <span className="w-28 text-[var(--color-muted)] shrink-0">Tags</span>
-                    <div className="flex flex-wrap gap-1">
-                      {sub.tags.map((t) => (
-                        <Badge key={t} tone="neutral">
-                          {t}
-                        </Badge>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {sub.ua_override && (
-                  <div className="flex gap-2 items-start">
-                    <span className="w-28 text-[var(--color-muted)] shrink-0">UA override</span>
-                    <code className="flex-1 break-all font-mono">{sub.ua_override}</code>
-                  </div>
-                )}
-                <div className="flex gap-2 items-start">
-                  <span className="w-28 text-[var(--color-muted)] shrink-0">TTL</span>
-                  <span>{Math.round(sub.ttl_ms / 1000)}s</span>
-                </div>
-                <div className="flex gap-2 items-start">
-                  <span className="w-28 text-[var(--color-muted)] shrink-0">Provider URL</span>
-                  <code className="flex-1 break-all font-mono text-[var(--color-accent)]">
-                    {providerUrl}
-                  </code>
-                </div>
-                <div className="flex gap-2 items-start">
-                  <span className="w-28 text-[var(--color-muted)] shrink-0">Last synced</span>
-                  <span>{fmtTime(sub.last_synced_at)}</span>
-                </div>
-                {sub.last_error && (
-                  <div className="flex gap-2 items-start">
-                    <span className="w-28 text-[var(--color-muted)] shrink-0">Last error</span>
-                    <span className="flex-1 break-words text-[var(--color-danger)]">
-                      {sub.last_error}
-                    </span>
-                  </div>
-                )}
-                {traffic && (
-                  <div className="flex gap-2 items-start">
-                    <span className="w-28 text-[var(--color-muted)] shrink-0">Traffic</span>
-                    <span>
-                      ↑ {fmtBytes(traffic.upload)} · ↓ {fmtBytes(traffic.download)} /{' '}
-                      {fmtBytes(traffic.total)}
-                      {traffic.expire > 0 &&
-                        ` · expires ${new Date(traffic.expire * 1000).toLocaleDateString()}`}
-                    </span>
-                  </div>
-                )}
-              </CardBody>
-            </Card>
-          );
-        })}
-        {subs.length === 0 && (
-          <Card>
-            <CardBody className="text-sm text-[var(--color-muted)] text-center py-8">
-              No subscriptions yet. Add one above.
-            </CardBody>
-          </Card>
+      {!loaded ? (
+        <ul className="space-y-3">
+          <SubSkeleton />
+          <SubSkeleton />
+        </ul>
+      ) : subs.length === 0 && !adding ? (
+        <EmptyState onAdd={() => setAdding(true)} />
+      ) : (
+        <Reveal when={loaded}>
+          <ul className="space-y-3">
+            {subs.map((sub, idx) => (
+              <Dossier
+                key={sub.id}
+                sub={sub}
+                index={idx + 1}
+                providerUrl={meta ? `${meta.subProvidersBase}/${sub.name}` : ''}
+                pending={busyId === sub.id}
+                editing={editingId === sub.id}
+                anyEditing={editingId !== null}
+                onRefresh={() => onRefresh(sub.id)}
+                onDelete={() => onDelete(sub.id)}
+                onToggle={() => onToggle(sub)}
+                onEditStart={() => setEditingId(sub.id)}
+                onEditCancel={() => setEditingId(null)}
+                onEditSave={(patch) => onSaveEdit(sub.id, patch)}
+              />
+            ))}
+          </ul>
+        </Reveal>
+      )}
+    </div>
+  );
+}
+
+function SubSkeleton() {
+  return (
+    <li className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] grid grid-cols-[96px_1fr] overflow-hidden">
+      <div className="border-r border-[var(--color-border)] bg-[var(--color-bg-sunk)] py-4 px-2 flex flex-col items-center gap-3">
+        <div className="pm-pulse h-6 w-8 rounded bg-[var(--color-border-strong)]" />
+        <div className="pm-pulse h-2 w-10 rounded bg-[var(--color-border-strong)]" />
+      </div>
+      <div className="p-5 space-y-3">
+        <Placeholder rows={1} className="max-w-[200px]" />
+        <Placeholder rows={3} />
+      </div>
+    </li>
+  );
+}
+
+function Dossier({
+  sub,
+  index,
+  providerUrl,
+  pending,
+  editing,
+  anyEditing,
+  onRefresh,
+  onDelete,
+  onToggle,
+  onEditStart,
+  onEditCancel,
+  onEditSave,
+}: {
+  sub: Subscription;
+  index: number;
+  providerUrl: string;
+  pending: boolean;
+  editing: boolean;
+  anyEditing: boolean;
+  onRefresh: () => void;
+  onDelete: () => void;
+  onToggle: () => void;
+  onEditStart: () => void;
+  onEditCancel: () => void;
+  onEditSave: (patch: Record<string, unknown>) => Promise<void>;
+}) {
+  const tone = editing ? 'off' : sub.last_error ? 'error' : sub.enabled ? 'on' : 'off';
+  const statusLabel = editing
+    ? '编辑中'
+    : sub.last_error
+      ? '异常'
+      : sub.enabled
+        ? '已启用'
+        : '已停用';
+  const dimmed = anyEditing && !editing;
+
+  return (
+    <li
+      className={`rounded-xl border bg-[var(--color-surface)] shadow-[var(--shadow-card)] overflow-hidden grid grid-cols-[96px_1fr] transition-[border-color,opacity] ${
+        editing
+          ? 'border-[var(--color-primary)]/40'
+          : 'border-[var(--color-border)]'
+      } ${dimmed ? 'opacity-50' : ''}`}
+    >
+      {/* Left status strip — 紧凑居中节奏 */}
+      <div className="border-r border-[var(--color-border)] bg-[var(--color-bg-sunk)] flex flex-col items-center py-4 px-2 gap-4">
+        {/* 序号是视觉锚点（Fraunces 大字） */}
+        <div className="flex flex-col items-center gap-0.5">
+          <span
+            className="font-serif text-[22px] leading-none font-medium tabular-nums tracking-[-0.015em] text-[var(--color-ink)]"
+            style={{ fontVariationSettings: '"opsz" 48, "SOFT" 50' }}
+          >
+            {String(index).padStart(2, '0')}
+          </span>
+          <span className="text-[9px] uppercase tracking-[0.08em] font-semibold text-[var(--color-muted)] font-mono">
+            no.
+          </span>
+        </div>
+
+        {/* 状态点 + 文字 */}
+        <div className="flex flex-col items-center gap-1">
+          <StatusDot tone={tone} />
+          <span
+            className={`text-[10px] uppercase tracking-[0.06em] font-semibold whitespace-nowrap ${
+              editing
+                ? 'text-[var(--color-primary)]'
+                : 'text-[var(--color-muted)]'
+            }`}
+          >
+            {statusLabel}
+          </span>
+        </div>
+
+        {/* Actions —— 紧贴底部，编辑态整组隐藏（cancel/save 在右侧表单里） */}
+        {!editing && (
+          <div className="mt-auto flex flex-col items-center gap-1">
+            <IconButton
+              onClick={onEditStart}
+              disabled={pending || anyEditing}
+              title="编辑"
+              label="✎"
+            />
+            {sub.kind === 'remote' && (
+              <IconButton
+                onClick={onRefresh}
+                disabled={pending || anyEditing || !sub.enabled}
+                title="立即拉取"
+                label="⟲"
+              />
+            )}
+            <IconButton
+              onClick={onToggle}
+              disabled={pending || anyEditing}
+              title={sub.enabled ? '停用' : '启用'}
+              label={sub.enabled ? '⏸' : '▶'}
+            />
+            <IconButton
+              onClick={onDelete}
+              disabled={pending || anyEditing}
+              title="删除"
+              label="✕"
+              tone="danger"
+            />
+          </div>
         )}
+      </div>
+
+      {/* Right content */}
+      <div className="p-5 space-y-4 min-w-0">
+        {editing ? (
+          <EditForm sub={sub} onCancel={onEditCancel} onSave={onEditSave} />
+        ) : (
+          <>
+            <div className="flex items-baseline justify-between gap-3 flex-wrap">
+              <div className="flex items-baseline gap-2 min-w-0">
+                <h2
+                  className="font-serif text-[22px] font-medium leading-[1.2] tracking-[-0.015em] text-[var(--color-ink)] truncate"
+                  style={{ fontVariationSettings: '"opsz" 96, "SOFT" 30' }}
+                >
+                  {sub.name}
+                </h2>
+                <Badge tone="neutral">{sub.kind === 'remote' ? '远程' : '本地'}</Badge>
+              </div>
+              <div className="flex items-baseline gap-3 text-[11px] text-[var(--color-muted)] uppercase tracking-[0.08em] font-mono">
+                <span>TTL · {Math.round(sub.ttl_ms / 1000)}s</span>
+                <span>同步 · {fmtTime(sub.last_synced_at)}</span>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <FieldLine label="Provider URL">
+                <InlineUrl value={providerUrl} />
+              </FieldLine>
+              {sub.kind === 'remote' && sub.url && (
+                <FieldLine label="上游 URL">
+                  <InlineUrl value={sub.url} bare />
+                </FieldLine>
+              )}
+              {sub.kind === 'local' && sub.content && (
+                <FieldLine label="内联">
+                  <span className="text-[12px] text-[var(--color-muted)] tabular-nums font-mono">
+                    {sub.content.length.toLocaleString()} 字节
+                  </span>
+                </FieldLine>
+              )}
+              {sub.ua_override && (
+                <FieldLine label="UA 覆写">
+                  <code className="font-mono text-[12px] text-[var(--color-fg-soft)] break-all">
+                    {sub.ua_override}
+                  </code>
+                </FieldLine>
+              )}
+              {sub.tags.length > 0 && (
+                <FieldLine label="标签">
+                  <div className="flex flex-wrap gap-1">
+                    {sub.tags.map((t) => (
+                      <Badge key={t} tone="neutral">
+                        {t}
+                      </Badge>
+                    ))}
+                  </div>
+                </FieldLine>
+              )}
+            </div>
+
+            {sub.last_traffic && sub.last_traffic.total > 0 && (
+              <div className="pt-2 border-t border-[var(--color-border)]">
+                <TrafficBar
+                  upload={sub.last_traffic.upload}
+                  download={sub.last_traffic.download}
+                  total={sub.last_traffic.total}
+                  expire={sub.last_traffic.expire}
+                />
+              </div>
+            )}
+
+            {sub.last_error && (
+              <div className="rounded-md bg-[#F4D8D2]/30 border border-[var(--color-danger)]/30 px-3 py-2 text-[12px] text-[var(--color-danger)] break-words">
+                <span className="text-[10px] uppercase tracking-[0.08em] font-semibold mr-2">
+                  错误
+                </span>
+                {sub.last_error}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </li>
+  );
+}
+
+function IconButton({
+  label,
+  onClick,
+  disabled,
+  title,
+  tone = 'neutral',
+}: {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  title: string;
+  tone?: 'neutral' | 'danger';
+}) {
+  const colors =
+    tone === 'danger'
+      ? 'text-[var(--color-danger)] hover:bg-[var(--color-danger)]/8'
+      : 'text-[var(--color-muted)] hover:text-[var(--color-fg)] hover:bg-[var(--color-surface)]';
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      aria-label={title}
+      className={`w-10 h-10 rounded-md inline-flex items-center justify-center text-[16px] leading-none transition-colors active:scale-[0.94] disabled:opacity-30 disabled:cursor-not-allowed ${colors}`}
+    >
+      <span aria-hidden>{label}</span>
+    </button>
+  );
+}
+
+function FieldLine({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="grid grid-cols-[112px_1fr] gap-3 items-center">
+      <span className="text-[11px] uppercase tracking-[0.08em] font-semibold text-[var(--color-muted)]">
+        {label}
+      </span>
+      <div className="min-w-0">{children}</div>
+    </div>
+  );
+}
+
+function EmptyState({ onAdd }: { onAdd: () => void }) {
+  return (
+    <div className="rounded-xl border border-dashed border-[var(--color-border-strong)] bg-[var(--color-bg-sunk)]/50 px-8 py-16 text-center">
+      <p className="font-serif text-[20px] font-medium text-[var(--color-fg-soft)] leading-[1.25] tracking-[-0.01em]"
+        style={{ fontVariationSettings: '"opsz" 48, "SOFT" 50' }}
+      >
+        还没有订阅源
+      </p>
+      <p className="mt-1.5 text-[13px] text-[var(--color-muted)]">
+        添加远程订阅 URL 或本地 YAML 内容来开始。
+      </p>
+      <div className="mt-5">
+        <Button onClick={onAdd}>+ 添加第一个订阅</Button>
       </div>
     </div>
   );
@@ -275,7 +461,7 @@ function AddForm({ onAdded }: { onAdded: () => void }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function onSubmit(e: React.FormEvent) {
+  async function submit(e: React.FormEvent) {
     e.preventDefault();
     setPending(true);
     setError(null);
@@ -298,11 +484,6 @@ function AddForm({ onAdded }: { onAdded: () => void }) {
         body.content = content;
       }
       await api('/api/v1/subscriptions', { method: 'POST', body });
-      setName('');
-      setUrl('');
-      setContent('');
-      setUa('');
-      setTagsInput('');
       onAdded();
     } catch (err) {
       setError(err instanceof ApiError ? err.problem.detail ?? err.message : String(err));
@@ -312,107 +493,296 @@ function AddForm({ onAdded }: { onAdded: () => void }) {
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Add subscription</CardTitle>
-      </CardHeader>
-      <CardBody>
-        <form onSubmit={onSubmit} className="space-y-3">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
-            <div>
-              <label className="text-xs text-[var(--color-muted)] mb-1 block">Kind</label>
-              <Select value={kind} onChange={(e) => setKind(e.target.value as 'remote' | 'local')}>
-                <option value="remote">remote (URL)</option>
-                <option value="local">local (inline YAML)</option>
-              </Select>
-            </div>
-            <div>
-              <label className="text-xs text-[var(--color-muted)] mb-1 block">Name (slug)</label>
-              <Input
-                placeholder="airport-a"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                pattern="[a-z0-9-]+"
-                required
-              />
-            </div>
-            <div>
-              <label className="text-xs text-[var(--color-muted)] mb-1 block">
-                Fetch TTL (sec)
-              </label>
-              <Input
-                type="number"
-                min={1}
-                value={ttlSec}
-                onChange={(e) => setTtlSec(Math.max(1, Number(e.target.value) || 0))}
-                disabled={kind === 'local'}
-              />
-            </div>
-            <div>
-              <label className="text-xs text-[var(--color-muted)] mb-1 block">
-                Tags (comma-separated)
-              </label>
-              <Input
-                placeholder="optional, e.g. premium, asia"
-                value={tagsInput}
-                onChange={(e) => setTagsInput(e.target.value)}
-              />
-            </div>
-          </div>
+    <form
+      onSubmit={submit}
+      className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 space-y-5"
+    >
+      <h2
+        className="font-serif text-[20px] font-medium leading-[1.25] tracking-[-0.01em] text-[var(--color-ink)]"
+        style={{ fontVariationSettings: '"opsz" 48, "SOFT" 50' }}
+      >
+        新增订阅源
+      </h2>
 
-          {kind === 'remote' ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-              <div>
-                <label className="text-xs text-[var(--color-muted)] mb-1 block">URL</label>
-                <Input
-                  placeholder="https://airport/sub?token=…"
-                  value={url}
-                  onChange={(e) => setUrl(e.target.value)}
-                  type="url"
-                  required
-                />
-              </div>
-              <div>
-                <label className="text-xs text-[var(--color-muted)] mb-1 block">UA override</label>
-                <Input
-                  placeholder="optional, e.g. clash.meta/1.18.0"
-                  value={ua}
-                  onChange={(e) => setUa(e.target.value)}
-                />
-              </div>
-            </div>
-          ) : (
-            <div>
-              <label className="text-xs text-[var(--color-muted)] mb-1 block">
-                Content (Clash provider YAML — needs a top-level `proxies:` array)
-              </label>
-              <Textarea
-                rows={8}
-                value={content}
-                onChange={(e) => setContent(e.target.value)}
-                placeholder={'proxies:\n  - name: my-node\n    type: ss\n    ...'}
-                required
-              />
-            </div>
-          )}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <FormField label="类型">
+          <Select value={kind} onChange={(e) => setKind(e.target.value as 'remote' | 'local')}>
+            <option value="remote">远程 (URL)</option>
+            <option value="local">本地 (内联 YAML)</option>
+          </Select>
+        </FormField>
+        <FormField label="名称 (slug)">
+          <Input
+            placeholder="airport-a"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            pattern="[a-z0-9-]+"
+            required
+          />
+        </FormField>
+        <FormField label="拉取 TTL (秒)">
+          <Input
+            type="number"
+            min={1}
+            value={ttlSec}
+            onChange={(e) => setTtlSec(Math.max(1, Number(e.target.value) || 0))}
+            disabled={kind === 'local'}
+          />
+        </FormField>
+        <FormField label="标签">
+          <Input
+            placeholder="premium, asia"
+            value={tagsInput}
+            onChange={(e) => setTagsInput(e.target.value)}
+          />
+        </FormField>
+      </div>
 
-          <div className="flex items-center justify-between">
-            <label className="flex items-center gap-2 text-xs">
-              <input
-                type="checkbox"
-                checked={enabled}
-                onChange={(e) => setEnabled(e.target.checked)}
-              />
-              Enabled
-            </label>
-            <Button type="submit" disabled={pending || !name}>
-              {pending ? 'Adding…' : 'Add'}
-            </Button>
-          </div>
+      {kind === 'remote' ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <FormField label="上游 URL">
+            <Input
+              type="url"
+              placeholder="https://airport/sub?token=…"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              required
+            />
+          </FormField>
+          <FormField label="UA 覆写">
+            <Input
+              placeholder="可选，如 clash.meta/1.18.0"
+              value={ua}
+              onChange={(e) => setUa(e.target.value)}
+            />
+          </FormField>
+        </div>
+      ) : (
+        <FormField
+          label={
+            <span className="flex items-baseline gap-2">
+              <span>节点内容</span>
+              <span className="normal-case tracking-normal font-normal text-[10px] text-[var(--color-muted)]">
+                clash yaml · 或多行 ss:// vmess:// vless:// trojan:// hy2:// tuic:// anytls:// wireguard:// … · 或 base64
+              </span>
+            </span>
+          }
+        >
+          <Textarea
+            rows={8}
+            value={content}
+            onChange={(e) => setContent(e.target.value)}
+            placeholder={
+              'ss://YWVz…@host:8388#HK-01\nvmess://eyJ2…\nvless://uuid@host:443?type=ws&path=/#JP-02\ntrojan://pass@host:443?sni=foo#US-03\nanytls://pwd@host:8443?sni=h.com#AT-1\n\n# 也可以贴 Clash YAML：\n# proxies:\n#   - { name: my-node, type: ss, ... }'
+            }
+            required
+            className="text-[12px] font-mono"
+          />
+        </FormField>
+      )}
 
-          {error && <p className="text-xs text-[var(--color-danger)]">{error}</p>}
-        </form>
-      </CardBody>
-    </Card>
+      <div className="flex items-center justify-between">
+        <label className="flex items-center gap-2 text-[13px] text-[var(--color-fg-soft)] cursor-pointer">
+          <input
+            type="checkbox"
+            checked={enabled}
+            onChange={(e) => setEnabled(e.target.checked)}
+            className="accent-[var(--color-primary)] w-3.5 h-3.5"
+          />
+          立即启用
+        </label>
+        <Button type="submit" disabled={pending || !name}>
+          {pending ? '提交中…' : '创建'}
+        </Button>
+      </div>
+
+      {error && (
+        <p className="text-[12px] text-[var(--color-danger)] bg-[#F4D8D2]/40 rounded-md px-3 py-2">
+          {error}
+        </p>
+      )}
+    </form>
+  );
+}
+
+function FormField({
+  label,
+  children,
+}: {
+  label: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <label className="block text-[11px] uppercase tracking-[0.08em] font-semibold text-[var(--color-muted)] mb-1.5">
+        {label}
+      </label>
+      {children}
+    </div>
+  );
+}
+
+function EditForm({
+  sub,
+  onCancel,
+  onSave,
+}: {
+  sub: Subscription;
+  onCancel: () => void;
+  onSave: (patch: Record<string, unknown>) => Promise<void>;
+}) {
+  const [name, setName] = useState(sub.name);
+  const [url, setUrl] = useState(sub.url ?? '');
+  const [content, setContent] = useState(sub.content ?? '');
+  const [ua, setUa] = useState(sub.ua_override ?? '');
+  const [tagsInput, setTagsInput] = useState(sub.tags.join(', '));
+  const [ttlSec, setTtlSec] = useState(Math.max(1, Math.round(sub.ttl_ms / 1000)));
+  const [enabled, setEnabled] = useState(sub.enabled);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setPending(true);
+    setError(null);
+    try {
+      const tags = tagsInput
+        .split(',')
+        .map((t) => t.trim())
+        .filter((t) => t.length > 0);
+      const patch: Record<string, unknown> = {
+        name: name.trim(),
+        enabled,
+        ttl_ms: Math.max(1000, ttlSec * 1000),
+        tags,
+      };
+      if (sub.kind === 'remote') {
+        patch.url = url.trim();
+        patch.ua_override = ua.trim();
+      } else {
+        patch.content = content;
+      }
+      await onSave(patch);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.problem.detail ?? err.message : String(err));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <form onSubmit={submit} className="space-y-4">
+      <div className="flex items-baseline justify-between gap-3 flex-wrap">
+        <div className="flex items-baseline gap-2 min-w-0">
+          <h2
+            className="font-serif text-[22px] font-medium leading-[1.2] tracking-[-0.015em] text-[var(--color-ink)]"
+            style={{ fontVariationSettings: '"opsz" 96, "SOFT" 30' }}
+          >
+            编辑订阅源
+          </h2>
+          <Badge tone="neutral">{sub.kind === 'remote' ? '远程' : '本地'}</Badge>
+          <span className="text-[10px] uppercase tracking-[0.08em] font-mono text-[var(--color-muted)]">
+            类型不可改
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={onCancel}
+            disabled={pending}
+          >
+            取消
+          </Button>
+          <Button type="submit" size="sm" disabled={pending || !name.trim()}>
+            {pending ? '保存中…' : '保存'}
+          </Button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <FormField label="名称 (slug)">
+          <Input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            pattern="[a-z0-9-]+"
+            required
+          />
+        </FormField>
+        <FormField label="拉取 TTL (秒)">
+          <Input
+            type="number"
+            min={1}
+            value={ttlSec}
+            onChange={(e) => setTtlSec(Math.max(1, Number(e.target.value) || 0))}
+            disabled={sub.kind === 'local'}
+          />
+        </FormField>
+        <FormField label="标签">
+          <Input
+            placeholder="premium, asia"
+            value={tagsInput}
+            onChange={(e) => setTagsInput(e.target.value)}
+          />
+        </FormField>
+      </div>
+
+      {sub.kind === 'remote' ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <FormField label="上游 URL">
+            <Input
+              type="url"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              required
+            />
+          </FormField>
+          <FormField label="UA 覆写">
+            <Input
+              placeholder="留空 = 不覆写"
+              value={ua}
+              onChange={(e) => setUa(e.target.value)}
+            />
+          </FormField>
+        </div>
+      ) : (
+        <FormField
+          label={
+            <span className="flex items-baseline gap-2">
+              <span>节点内容</span>
+              <span className="normal-case tracking-normal font-normal text-[10px] text-[var(--color-muted)]">
+                clash yaml · 或多行 ss:// vmess:// vless:// anytls:// wireguard:// … · 或 base64
+              </span>
+            </span>
+          }
+        >
+          <Textarea
+            rows={8}
+            value={content}
+            onChange={(e) => setContent(e.target.value)}
+            required
+            className="text-[12px] font-mono"
+          />
+        </FormField>
+      )}
+
+      <div className="flex items-center justify-between gap-3 pt-3 border-t border-[var(--color-border)] flex-wrap">
+        <label className="flex items-center gap-2 text-[13px] text-[var(--color-fg-soft)] cursor-pointer">
+          <input
+            type="checkbox"
+            checked={enabled}
+            onChange={(e) => setEnabled(e.target.checked)}
+            className="accent-[var(--color-primary)] w-3.5 h-3.5"
+          />
+          启用
+        </label>
+        {error && (
+          <p className="text-[12px] text-[var(--color-danger)] bg-[#F4D8D2]/40 rounded-md px-3 py-1.5 max-w-full break-words">
+            {error}
+          </p>
+        )}
+      </div>
+    </form>
   );
 }

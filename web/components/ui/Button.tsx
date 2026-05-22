@@ -4,21 +4,22 @@ type Variant = 'primary' | 'secondary' | 'danger' | 'ghost';
 type Size = 'sm' | 'md';
 
 const BASE =
-  'inline-flex items-center justify-center gap-1.5 rounded-md font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)]';
+  'inline-flex items-center justify-center gap-1.5 font-medium transition-[background-color,border-color,color,transform] duration-150 ease-out disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--color-primary)]/30 focus-visible:border-[var(--color-primary)] active:scale-[0.98] tracking-[-0.005em]';
 
 const VARIANTS: Record<Variant, string> = {
   primary:
-    'bg-[var(--color-accent)] text-[var(--color-bg)] hover:bg-[var(--color-accent-strong)]',
+    'rounded-full bg-[var(--color-primary)] text-[var(--color-on-primary)] hover:bg-[var(--color-primary-hover)] border border-[var(--color-primary)] hover:border-[var(--color-primary-hover)]',
   secondary:
-    'bg-[var(--color-surface-2)] text-[var(--color-fg)] border border-[var(--color-border)] hover:bg-[var(--color-border)]',
+    'rounded-lg bg-[var(--color-surface)] text-[var(--color-fg)] border border-[var(--color-border)] hover:bg-[var(--color-surface-hover)] hover:border-[var(--color-border-strong)]',
   danger:
-    'bg-transparent text-[var(--color-danger)] border border-[var(--color-danger)] hover:bg-[var(--color-danger)]/10',
-  ghost: 'bg-transparent text-[var(--color-fg)] hover:bg-[var(--color-surface-2)]',
+    'rounded-lg bg-transparent text-[var(--color-danger)] border border-[var(--color-danger)]/40 hover:bg-[var(--color-danger)]/8 hover:border-[var(--color-danger)]',
+  ghost:
+    'rounded-lg bg-transparent text-[var(--color-muted)] border border-transparent hover:bg-[var(--color-bg-sunk)] hover:text-[var(--color-fg)]',
 };
 
 const SIZES: Record<Size, string> = {
-  sm: 'h-7 px-2.5 text-xs',
-  md: 'h-9 px-3.5 text-sm',
+  sm: 'h-8 px-3 text-xs',
+  md: 'h-9 px-4 text-[13px]',
 };
 
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -32,5 +33,10 @@ export function Button({
   className = '',
   ...props
 }: ButtonProps) {
-  return <button className={`${BASE} ${VARIANTS[variant]} ${SIZES[size]} ${className}`} {...props} />;
+  return (
+    <button
+      className={`${BASE} ${VARIANTS[variant]} ${SIZES[size]} ${className}`}
+      {...props}
+    />
+  );
 }

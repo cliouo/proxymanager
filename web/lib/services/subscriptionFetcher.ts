@@ -1,6 +1,11 @@
 import { parse, stringify } from 'yaml';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import {
+  looksLikeProxyUriList,
+  parseProxyUriList,
+  tryBase64Decode,
+} from '@/lib/proxies/uriToClash';
+import {
   buildCacheKey,
   getFetchCache,
   setFetchCache,
@@ -148,31 +153,69 @@ export function parseTrafficHeader(value: string | null): SubscriptionTraffic | 
 }
 
 /**
- * Accepts either a Clash subscription YAML (full config or just `proxies:`) and
- * returns a minimal provider YAML containing only the `proxies:` array. Other
- * formats (base64 v2ray subscription, raw SS/VLESS URIs) are not yet supported.
+ * Accepts any of:
+ *   - Full Clash YAML config (extracts the `proxies:` array)
+ *   - Clash provider YAML (a single `proxies:` block)
+ *   - Multi-line block of proxy URIs (ss:// vmess:// vless:// trojan:// …)
+ *   - Base64-encoded variant of the above (V2RayN airport convention)
+ *
+ * Returns a minimal provider YAML containing only `proxies:`. Throws
+ * ProblemDetailsError when no proxies can be recognised.
  */
 export function normaliseToClashProviderYaml(text: string): { yaml: string; proxyCount: number } {
+  const cleaned = stripBom(text).trim();
+  if (!cleaned) {
+    throw ProblemDetailsError.badRequest('Empty subscription content');
+  }
+
+  // 1) Clash YAML with a `proxies:` array
+  const fromYaml = tryExtractProxiesFromYaml(cleaned);
+  if (fromYaml) {
+    const yaml = stringify({ proxies: fromYaml }, { lineWidth: 0 });
+    return { yaml, proxyCount: fromYaml.length };
+  }
+
+  // 2) Line-delimited proxy URIs — optionally wrapped in base64
+  let uriText = cleaned;
+  if (!looksLikeProxyUriList(uriText)) {
+    const decoded = tryBase64Decode(uriText);
+    if (decoded && looksLikeProxyUriList(decoded)) uriText = decoded;
+  }
+  if (looksLikeProxyUriList(uriText)) {
+    const { proxies, errors } = parseProxyUriList(uriText);
+    if (proxies.length > 0) {
+      const yaml = stringify({ proxies }, { lineWidth: 0 });
+      return { yaml, proxyCount: proxies.length };
+    }
+    if (errors.length > 0) {
+      const sample = errors
+        .slice(0, 3)
+        .map((e) => `"${e.line}" → ${e.error}`)
+        .join('; ');
+      throw ProblemDetailsError.badRequest(
+        `No proxy URIs parsed (${errors.length} failed): ${sample}`,
+      );
+    }
+  }
+
+  throw ProblemDetailsError.badRequest(
+    'No recognisable proxies found. Supported: Clash YAML `proxies:` block, line-delimited proxy URIs (ss:// vmess:// vless:// trojan:// hysteria2:// tuic:// ssr:// snell:// socks5:// http://), or base64-encoded variants.',
+  );
+}
+
+function tryExtractProxiesFromYaml(text: string): unknown[] | null {
   let data: unknown;
   try {
     data = parse(text);
-  } catch (err) {
-    throw ProblemDetailsError.badRequest(
-      `Upstream is not valid YAML: ${err instanceof Error ? err.message : String(err)}`,
-    );
+  } catch {
+    return null;
   }
-
-  if (!data || typeof data !== 'object') {
-    throw ProblemDetailsError.badRequest('Upstream YAML is empty or not an object');
-  }
-
+  if (!data || typeof data !== 'object') return null;
   const proxies = (data as { proxies?: unknown }).proxies;
-  if (!Array.isArray(proxies)) {
-    throw ProblemDetailsError.badRequest(
-      'Upstream does not contain a `proxies:` array. Only Clash-format subscriptions are supported.',
-    );
-  }
+  if (!Array.isArray(proxies)) return null;
+  return proxies;
+}
 
-  const yaml = stringify({ proxies }, { lineWidth: 0 });
-  return { yaml, proxyCount: proxies.length };
+function stripBom(s: string): string {
+  return s.charCodeAt(0) === 0xfeff ? s.slice(1) : s;
 }
