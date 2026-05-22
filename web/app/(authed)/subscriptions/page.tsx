@@ -7,7 +7,6 @@ import { InlineUrl } from '@/components/ui/InlineUrl';
 import { Input, Select, Textarea } from '@/components/ui/Input';
 import { Placeholder, Reveal } from '@/components/ui/Reveal';
 import { StatusDot } from '@/components/ui/StatusDot';
-import { TrafficBar } from '@/components/ui/TrafficBar';
 import { ApiError, api } from '@/lib/client/api';
 
 const DEFAULT_TTL_MS = 10 * 60 * 1000;
@@ -149,7 +148,7 @@ export default function SubscriptionsPage() {
       {adding && <AddForm onAdded={() => { setAdding(false); reload(); }} />}
 
       {!loaded ? (
-        <ul className="space-y-3">
+        <ul className="space-y-2">
           <SubSkeleton />
           <SubSkeleton />
         </ul>
@@ -157,7 +156,7 @@ export default function SubscriptionsPage() {
         <EmptyState onAdd={() => setAdding(true)} />
       ) : (
         <Reveal when={loaded}>
-          <ul className="space-y-3">
+          <ul className="space-y-2">
             {subs.map((sub, idx) => (
               <Dossier
                 key={sub.id}
@@ -184,17 +183,62 @@ export default function SubscriptionsPage() {
 
 function SubSkeleton() {
   return (
-    <li className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] grid grid-cols-[96px_1fr] overflow-hidden">
-      <div className="border-r border-[var(--color-border)] bg-[var(--color-bg-sunk)] py-4 px-2 flex flex-col items-center gap-3">
-        <div className="pm-pulse h-6 w-8 rounded bg-[var(--color-border-strong)]" />
-        <div className="pm-pulse h-2 w-10 rounded bg-[var(--color-border-strong)]" />
+    <li className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] grid grid-cols-[36px_1fr] overflow-hidden">
+      <div className="border-r border-[var(--color-border)] bg-[var(--color-bg-sunk)] flex items-center justify-center py-3">
+        <div className="pm-pulse h-4 w-5 rounded bg-[var(--color-border-strong)]" />
       </div>
-      <div className="p-5 space-y-3">
+      <div className="p-3 space-y-2">
         <Placeholder rows={1} className="max-w-[200px]" />
-        <Placeholder rows={3} />
+        <Placeholder rows={2} />
       </div>
     </li>
   );
+}
+
+function CompactTraffic({
+  traffic,
+}: {
+  traffic: { upload: number; download: number; total: number };
+}) {
+  const used = traffic.upload + traffic.download;
+  const pct = traffic.total > 0 ? Math.min(100, (used / traffic.total) * 100) : 0;
+  const ulPct =
+    traffic.total > 0 ? Math.min(100, (traffic.upload / traffic.total) * 100) : 0;
+  const dlPct = Math.max(0, pct - ulPct);
+  return (
+    <div className="flex items-center gap-3 text-[11px] tabular-nums">
+      <span className="text-[var(--color-muted)] font-mono shrink-0 whitespace-nowrap">
+        <span className="text-[var(--color-fg)]">↑</span> {fmtBytes(traffic.upload)} ·{' '}
+        <span className="text-[var(--color-fg)]">↓</span> {fmtBytes(traffic.download)} /{' '}
+        {fmtBytes(traffic.total)}
+      </span>
+      <div className="relative h-1.5 flex-1 rounded-full bg-[var(--color-bg-strong)] overflow-hidden min-w-[60px]">
+        <div
+          className="absolute left-0 top-0 bottom-0 bg-[var(--color-plum)]"
+          style={{ width: `${ulPct}%` }}
+        />
+        <div
+          className="absolute top-0 bottom-0 bg-[var(--color-primary)]"
+          style={{ left: `${ulPct}%`, width: `${dlPct}%` }}
+        />
+      </div>
+      <span className="font-mono text-[var(--color-fg)] shrink-0 tabular-nums">
+        {pct.toFixed(pct < 10 ? 1 : 0)}%
+      </span>
+    </div>
+  );
+}
+
+function fmtBytes(n: number): string {
+  if (!n) return '0';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let v = n;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return `${v.toFixed(v < 10 ? 2 : v < 100 ? 1 : 0)}${units[i]}`;
 }
 
 function Dossier({
@@ -236,151 +280,90 @@ function Dossier({
 
   return (
     <li
-      className={`rounded-xl border bg-[var(--color-surface)] shadow-[var(--shadow-card)] overflow-hidden grid grid-cols-[96px_1fr] transition-[border-color,opacity] ${
+      className={`rounded-lg border bg-[var(--color-surface)] shadow-[var(--shadow-card)] overflow-hidden grid grid-cols-[36px_1fr] transition-[border-color,opacity] ${
         editing
           ? 'border-[var(--color-primary)]/40'
           : 'border-[var(--color-border)]'
       } ${dimmed ? 'opacity-50' : ''}`}
     >
-      {/* Left status strip — 紧凑居中节奏 */}
-      <div className="border-r border-[var(--color-border)] bg-[var(--color-bg-sunk)] flex flex-col items-center py-3 px-2 gap-3">
-        {/* 序号是视觉锚点（Fraunces 大字） */}
-        <div className="flex flex-col items-center gap-0.5">
-          <span
-            className="font-serif text-[22px] leading-none font-medium tabular-nums tracking-[-0.015em] text-[var(--color-ink)]"
-            style={{ fontVariationSettings: '"opsz" 48, "SOFT" 50' }}
-          >
-            {String(index).padStart(2, '0')}
-          </span>
-          <span className="text-[9px] uppercase tracking-[0.08em] font-semibold text-[var(--color-muted)] font-mono">
-            no.
-          </span>
-        </div>
-
-        {/* 状态点 + 文字 */}
-        <div className="flex flex-col items-center gap-1">
-          <StatusDot tone={tone} />
-          <span
-            className={`text-[10px] uppercase tracking-[0.06em] font-semibold whitespace-nowrap ${
-              editing
-                ? 'text-[var(--color-primary)]'
-                : 'text-[var(--color-muted)]'
-            }`}
-          >
-            {statusLabel}
-          </span>
-        </div>
-
-        {/* Actions —— 紧贴底部，编辑态整组隐藏（cancel/save 在右侧表单里） */}
-        {!editing && (
-          <div className="mt-auto flex flex-col items-center gap-1">
-            <IconButton
-              onClick={onEditStart}
-              disabled={pending || anyEditing}
-              title="编辑"
-              label="✎"
-            />
-            {sub.kind === 'remote' && (
-              <IconButton
-                onClick={onRefresh}
-                disabled={pending || anyEditing || !sub.enabled}
-                title="立即拉取"
-                label="⟲"
-              />
-            )}
-            <IconButton
-              onClick={onToggle}
-              disabled={pending || anyEditing}
-              title={sub.enabled ? '停用' : '启用'}
-              label={sub.enabled ? '⏸' : '▶'}
-            />
-            <IconButton
-              onClick={onDelete}
-              disabled={pending || anyEditing}
-              title="删除"
-              label="✕"
-              tone="danger"
-            />
-          </div>
-        )}
+      {/* Left serial column — 紧凑横向布局下只保留序号锚点 */}
+      <div className="border-r border-[var(--color-border)] bg-[var(--color-bg-sunk)] flex items-center justify-center">
+        <span
+          className="font-serif text-[18px] leading-none font-medium tabular-nums tracking-[-0.015em] text-[var(--color-ink)]"
+          style={{ fontVariationSettings: '"opsz" 48, "SOFT" 50' }}
+          aria-label={`订阅 ${index} · ${statusLabel}`}
+        >
+          {String(index).padStart(2, '0')}
+        </span>
       </div>
 
-      {/* Right content —— flex-col 让 TrafficBar / error 锚到卡片底部，
-          避免左条更高时右侧下方留大片空白 */}
-      <div className="p-5 min-w-0 flex flex-col gap-4">
+      {/* Right content */}
+      <div className="p-3 min-w-0 flex flex-col gap-2">
         {editing ? (
           <EditForm sub={sub} onCancel={onEditCancel} onSave={onEditSave} />
         ) : (
           <>
-            <div className="flex items-baseline justify-between gap-3 flex-wrap">
-              <div className="flex items-baseline gap-2 min-w-0">
-                <h2
-                  className="font-serif text-[22px] font-medium leading-[1.2] tracking-[-0.015em] text-[var(--color-ink)] truncate"
-                  style={{ fontVariationSettings: '"opsz" 96, "SOFT" 30' }}
-                >
-                  {sub.name}
-                </h2>
-                <Badge tone="neutral">{sub.kind === 'remote' ? '远程' : '本地'}</Badge>
-              </div>
-              <div className="flex items-baseline gap-3 text-[11px] text-[var(--color-muted)] uppercase tracking-[0.08em] font-mono">
-                <span>TTL · {Math.round(sub.ttl_ms / 1000)}s</span>
-                <span>同步 · {fmtTime(sub.last_synced_at)}</span>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <FieldLine label="Provider URL">
-                <InlineUrl value={providerUrl} />
-              </FieldLine>
-              {sub.kind === 'remote' && sub.url && (
-                <FieldLine label="上游 URL">
-                  <InlineUrl value={sub.url} bare />
-                </FieldLine>
-              )}
-              {sub.kind === 'local' && sub.content && (
-                <FieldLine label="内联">
-                  <span className="text-[12px] text-[var(--color-muted)] tabular-nums font-mono">
-                    {sub.content.length.toLocaleString()} 字节
-                  </span>
-                </FieldLine>
-              )}
-              {sub.ua_override && (
-                <FieldLine label="UA 覆写">
-                  <code className="font-mono text-[12px] text-[var(--color-fg-soft)] break-all">
-                    {sub.ua_override}
-                  </code>
-                </FieldLine>
-              )}
+            {/* Header row：状态点 · 名字 · 类型 · 元数据 · 操作组 */}
+            <div className="flex items-center gap-2 min-w-0">
+              <StatusDot tone={tone} />
+              <h2
+                className="font-serif text-[16px] font-medium leading-[1.25] tracking-[-0.01em] text-[var(--color-ink)] truncate"
+                style={{ fontVariationSettings: '"opsz" 48, "SOFT" 40' }}
+                title={sub.name}
+              >
+                {sub.name}
+              </h2>
+              <Badge tone="neutral">{sub.kind === 'remote' ? '远程' : '本地'}</Badge>
               {sub.tags.length > 0 && (
-                <FieldLine label="标签">
-                  <div className="flex flex-wrap gap-1">
-                    {sub.tags.map((t) => (
-                      <Badge key={t} tone="neutral">
-                        {t}
-                      </Badge>
-                    ))}
-                  </div>
-                </FieldLine>
+                <span className="text-[11px] text-[var(--color-muted)] font-mono truncate hidden md:inline">
+                  {sub.tags.slice(0, 3).join(' · ')}
+                </span>
               )}
-            </div>
-
-            {/* spacer 把流量条 / 错误条压到卡片底部 */}
-            <div className="flex-1 min-h-0" />
-
-            {sub.last_traffic && sub.last_traffic.total > 0 && (
-              <div className="pt-2 border-t border-[var(--color-border)]">
-                <TrafficBar
-                  upload={sub.last_traffic.upload}
-                  download={sub.last_traffic.download}
-                  total={sub.last_traffic.total}
-                  expire={sub.last_traffic.expire}
+              <span className="text-[10px] uppercase tracking-[0.06em] text-[var(--color-muted)] font-mono ml-auto whitespace-nowrap shrink-0 hidden md:inline">
+                TTL · {Math.round(sub.ttl_ms / 1000)}s · 同步 · {fmtTime(sub.last_synced_at)}
+              </span>
+              <div className="flex items-center gap-0.5 shrink-0">
+                <IconButton
+                  onClick={onEditStart}
+                  disabled={pending || anyEditing}
+                  title="编辑"
+                  label="✎"
+                />
+                {sub.kind === 'remote' && (
+                  <IconButton
+                    onClick={onRefresh}
+                    disabled={pending || anyEditing || !sub.enabled}
+                    title="立即拉取"
+                    label="⟲"
+                  />
+                )}
+                <IconButton
+                  onClick={onToggle}
+                  disabled={pending || anyEditing}
+                  title={sub.enabled ? '停用' : '启用'}
+                  label={sub.enabled ? '⏸' : '▶'}
+                />
+                <IconButton
+                  onClick={onDelete}
+                  disabled={pending || anyEditing}
+                  title="删除"
+                  label="✕"
+                  tone="danger"
                 />
               </div>
+            </div>
+
+            {/* Provider URL —— 这是日常最常复制的项，独占一行 */}
+            <InlineUrl value={providerUrl} />
+
+            {/* Compact traffic line —— 单行：数字 · 条 · 百分比 */}
+            {sub.last_traffic && sub.last_traffic.total > 0 && (
+              <CompactTraffic traffic={sub.last_traffic} />
             )}
 
             {sub.last_error && (
-              <div className="rounded-md bg-[#F4D8D2]/30 border border-[var(--color-danger)]/30 px-3 py-2 text-[12px] text-[var(--color-danger)] break-words">
-                <span className="text-[10px] uppercase tracking-[0.08em] font-semibold mr-2">
+              <div className="rounded-md bg-[#F4D8D2]/30 border border-[var(--color-danger)]/30 px-2 py-1 text-[11px] text-[var(--color-danger)] break-words">
+                <span className="text-[10px] uppercase tracking-[0.08em] font-semibold mr-1.5">
                   错误
                 </span>
                 {sub.last_error}
@@ -417,21 +400,10 @@ function IconButton({
       disabled={disabled}
       title={title}
       aria-label={title}
-      className={`w-10 h-10 rounded-md inline-flex items-center justify-center text-[16px] leading-none transition-colors active:scale-[0.94] disabled:opacity-30 disabled:cursor-not-allowed ${colors}`}
+      className={`w-7 h-7 rounded inline-flex items-center justify-center text-[13px] leading-none transition-colors active:scale-[0.94] disabled:opacity-30 disabled:cursor-not-allowed ${colors}`}
     >
       <span aria-hidden>{label}</span>
     </button>
-  );
-}
-
-function FieldLine({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="grid grid-cols-[112px_1fr] gap-3 items-center">
-      <span className="text-[11px] uppercase tracking-[0.08em] font-semibold text-[var(--color-muted)]">
-        {label}
-      </span>
-      <div className="min-w-0">{children}</div>
-    </div>
   );
 }
 
