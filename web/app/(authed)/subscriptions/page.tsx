@@ -243,7 +243,7 @@ function Dossier({
       } ${dimmed ? 'opacity-50' : ''}`}
     >
       {/* Left status strip — 紧凑居中节奏 */}
-      <div className="border-r border-[var(--color-border)] bg-[var(--color-bg-sunk)] flex flex-col items-center py-4 px-2 gap-4">
+      <div className="border-r border-[var(--color-border)] bg-[var(--color-bg-sunk)] flex flex-col items-center py-3 px-2 gap-3">
         {/* 序号是视觉锚点（Fraunces 大字） */}
         <div className="flex flex-col items-center gap-0.5">
           <span
@@ -305,8 +305,9 @@ function Dossier({
         )}
       </div>
 
-      {/* Right content */}
-      <div className="p-5 space-y-4 min-w-0">
+      {/* Right content —— flex-col 让 TrafficBar / error 锚到卡片底部，
+          避免左条更高时右侧下方留大片空白 */}
+      <div className="p-5 min-w-0 flex flex-col gap-4">
         {editing ? (
           <EditForm sub={sub} onCancel={onEditCancel} onSave={onEditSave} />
         ) : (
@@ -362,6 +363,9 @@ function Dossier({
                 </FieldLine>
               )}
             </div>
+
+            {/* spacer 把流量条 / 错误条压到卡片底部 */}
+            <div className="flex-1 min-h-0" />
 
             {sub.last_traffic && sub.last_traffic.total > 0 && (
               <div className="pt-2 border-t border-[var(--color-border)]">
