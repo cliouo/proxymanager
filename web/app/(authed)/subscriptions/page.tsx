@@ -1,6 +1,6 @@
 'use client';
 
-import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -74,6 +74,7 @@ export default function SubscriptionsPage() {
   const [adding, setAdding] = useState(false);
   const [tab, setTab] = useState<Tab>('subs');
   const [loaded, setLoaded] = useState(false);
+  const router = useRouter();
 
   const reload = useCallback(async () => {
     setError(null);
@@ -163,12 +164,7 @@ export default function SubscriptionsPage() {
         {tab === 'subs' ? (
           <Button onClick={() => setAdding((v) => !v)}>{adding ? '取消' : '+ 新增订阅'}</Button>
         ) : (
-          <Link
-            href="/collections"
-            className="inline-flex items-center h-9 px-4 rounded-full bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-on-primary)] text-[13px] font-medium leading-none transition-colors active:scale-[0.98]"
-          >
-            + 新建聚合
-          </Link>
+          <Button onClick={() => router.push('/collections')}>+ 新建聚合</Button>
         )}
       </header>
 
@@ -285,6 +281,7 @@ function TabButton({
 }
 
 function CollectionEmpty() {
+  const router = useRouter();
   return (
     <div className="rounded-xl border border-dashed border-[var(--color-border-strong)] bg-[var(--color-bg-sunk)]/50 px-8 py-12 text-center">
       <p
@@ -297,12 +294,7 @@ function CollectionEmpty() {
         聚合把多个单订阅合并成一份 provider，可在 base.yaml 用名字引用。
       </p>
       <div className="mt-5">
-        <Link
-          href="/collections"
-          className="inline-flex items-center h-9 px-4 rounded-full bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-on-primary)] text-[13px] font-medium leading-none transition-colors active:scale-[0.98]"
-        >
-          + 新建第一个聚合
-        </Link>
+        <Button onClick={() => router.push('/collections')}>+ 新建第一个聚合</Button>
       </div>
     </div>
   );
@@ -317,6 +309,7 @@ function CollectionCard({
   subs: Subscription[];
   index: number;
 }) {
+  const router = useRouter();
   const subById = useMemo(() => new Map(subs.map((s) => [s.id, s])), [subs]);
   const members = useMemo(() => {
     const ids = new Set(c.subscription_ids);
@@ -351,14 +344,15 @@ function CollectionCard({
             {c.name}
           </h2>
           <Badge tone="accent">聚合</Badge>
-          <Link
-            href="/collections"
+          <button
+            type="button"
+            onClick={() => router.push('/collections')}
             className="ml-auto inline-flex items-center h-7 px-2 rounded text-[12px] text-[var(--color-muted)] hover:text-[var(--color-fg)] hover:bg-[var(--color-bg-sunk)] transition-colors"
             aria-label="编辑聚合"
             title="编辑（前往聚合管理页）"
           >
             ✎ 编辑
-          </Link>
+          </button>
         </div>
         <div className="text-[11px] text-[var(--color-muted)] font-mono tabular-nums">
           {dedupLabel(c.dedup_by)} · {members.length} 成员

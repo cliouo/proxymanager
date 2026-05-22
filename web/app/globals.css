@@ -122,13 +122,17 @@ h1, h2, h3, .font-serif {
   font-variation-settings: 'opsz' 96, 'SOFT' 30;
 }
 
-a {
-  color: var(--color-primary);
-  text-decoration: none;
-  transition: color 0.15s ease;
-}
-a:hover {
-  color: var(--color-primary-hover);
+/* a default color lives in @layer base so Tailwind utility classes
+   (e.g. text-[var(--color-on-primary)]) can override on individual links */
+@layer base {
+  a {
+    color: var(--color-primary);
+    text-decoration: none;
+    transition: color 0.15s ease;
+  }
+  a:hover {
+    color: var(--color-primary-hover);
+  }
 }
 
 ::selection {
