@@ -11,7 +11,6 @@ const PRIMARY_NAV: { href: string; label: string; icon: string }[] = [
   { href: '/base', label: '基础配置', icon: '⌬' },
   { href: '/rule-sets', label: '规则集', icon: '⊟' },
   { href: '/subscriptions', label: '订阅源', icon: '⇣' },
-  { href: '/collections', label: '订阅聚合', icon: '⊕' },
   { href: '/history', label: '操作历史', icon: '⟲' },
 ];
 

@@ -1,6 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { InlineUrl } from '@/components/ui/InlineUrl';
@@ -35,6 +36,25 @@ interface Meta {
   subProvidersBase: string;
 }
 
+interface Collection {
+  id: string;
+  name: string;
+  subscription_ids: string[];
+  subscription_tags: string[];
+  dedup_by: 'name' | 'server-port' | 'none';
+  name_prefix?: string;
+  notes?: string;
+  updated_at?: number;
+}
+
+function dedupLabel(d: Collection['dedup_by']): string {
+  if (d === 'name') return '按名称去重';
+  if (d === 'server-port') return '按 server:port 去重';
+  return '不去重';
+}
+
+type Tab = 'subs' | 'collections';
+
 function fmtTime(s: number | undefined): string {
   if (!s) return '从未';
   const diff = Date.now() / 1000 - s;
@@ -46,22 +66,26 @@ function fmtTime(s: number | undefined): string {
 
 export default function SubscriptionsPage() {
   const [subs, setSubs] = useState<Subscription[]>([]);
+  const [collections, setCollections] = useState<Collection[]>([]);
   const [meta, setMeta] = useState<Meta | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  const [tab, setTab] = useState<Tab>('subs');
   const [loaded, setLoaded] = useState(false);
 
   const reload = useCallback(async () => {
     setError(null);
     try {
-      const [list, m] = await Promise.all([
+      const [list, m, cl] = await Promise.all([
         api<{ data: Subscription[] }>('/api/v1/subscriptions'),
         api<{ data: Meta }>('/api/v1/meta'),
+        api<{ data: Collection[] }>('/api/v1/collections'),
       ]);
       setSubs(list.data);
       setMeta(m.data);
+      setCollections(cl.data);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     } finally {
@@ -123,7 +147,7 @@ export default function SubscriptionsPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       <header className="flex items-baseline justify-between gap-4">
         <div>
           <h1
@@ -133,11 +157,34 @@ export default function SubscriptionsPage() {
             订阅源
           </h1>
           <p className="mt-1.5 text-[13px] text-[var(--color-muted)]">
-            {subs.length} 个 · 远程订阅自动缓存，本地订阅直接保存 YAML。
+            {subs.length} 单订阅 · {collections.length} 聚合 · 远程订阅自动缓存
           </p>
         </div>
-        <Button onClick={() => setAdding((v) => !v)}>{adding ? '取消' : '+ 新增订阅'}</Button>
+        {tab === 'subs' ? (
+          <Button onClick={() => setAdding((v) => !v)}>{adding ? '取消' : '+ 新增订阅'}</Button>
+        ) : (
+          <Link
+            href="/collections"
+            className="inline-flex items-center h-9 px-4 rounded-full bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-on-primary)] text-[13px] font-medium leading-none transition-colors active:scale-[0.98]"
+          >
+            + 新建聚合
+          </Link>
+        )}
       </header>
+
+      {/* Tab bar */}
+      <div className="flex gap-0 border-b border-[var(--color-border)] -mx-1 px-1">
+        <TabButton active={tab === 'subs'} onClick={() => setTab('subs')} count={subs.length}>
+          单订阅
+        </TabButton>
+        <TabButton
+          active={tab === 'collections'}
+          onClick={() => setTab('collections')}
+          count={collections.length}
+        >
+          聚合
+        </TabButton>
+      </div>
 
       {error && (
         <div className="rounded-xl border border-[var(--color-danger)]/40 bg-[#F4D8D2]/30 px-4 py-3 text-[13px] text-[var(--color-danger)]">
@@ -145,39 +192,200 @@ export default function SubscriptionsPage() {
         </div>
       )}
 
-      {adding && <AddForm onAdded={() => { setAdding(false); reload(); }} />}
+      {tab === 'subs' && adding && (
+        <AddForm
+          onAdded={() => {
+            setAdding(false);
+            reload();
+          }}
+        />
+      )}
 
       {!loaded ? (
-        <ul className="space-y-2">
+        <ul className="grid grid-cols-1 md:grid-cols-2 gap-2">
           <SubSkeleton />
           <SubSkeleton />
         </ul>
-      ) : subs.length === 0 && !adding ? (
-        <EmptyState onAdd={() => setAdding(true)} />
+      ) : tab === 'subs' ? (
+        subs.length === 0 && !adding ? (
+          <EmptyState onAdd={() => setAdding(true)} />
+        ) : (
+          <Reveal when={loaded}>
+            <ul className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              {subs.map((sub, idx) => (
+                <Dossier
+                  key={sub.id}
+                  sub={sub}
+                  index={idx + 1}
+                  providerUrl={meta ? `${meta.subProvidersBase}/${sub.name}` : ''}
+                  pending={busyId === sub.id}
+                  editing={editingId === sub.id}
+                  anyEditing={editingId !== null}
+                  onRefresh={() => onRefresh(sub.id)}
+                  onDelete={() => onDelete(sub.id)}
+                  onToggle={() => onToggle(sub)}
+                  onEditStart={() => setEditingId(sub.id)}
+                  onEditCancel={() => setEditingId(null)}
+                  onEditSave={(patch) => onSaveEdit(sub.id, patch)}
+                />
+              ))}
+            </ul>
+          </Reveal>
+        )
+      ) : collections.length === 0 ? (
+        <CollectionEmpty />
       ) : (
         <Reveal when={loaded}>
-          <ul className="space-y-2">
-            {subs.map((sub, idx) => (
-              <Dossier
-                key={sub.id}
-                sub={sub}
-                index={idx + 1}
-                providerUrl={meta ? `${meta.subProvidersBase}/${sub.name}` : ''}
-                pending={busyId === sub.id}
-                editing={editingId === sub.id}
-                anyEditing={editingId !== null}
-                onRefresh={() => onRefresh(sub.id)}
-                onDelete={() => onDelete(sub.id)}
-                onToggle={() => onToggle(sub)}
-                onEditStart={() => setEditingId(sub.id)}
-                onEditCancel={() => setEditingId(null)}
-                onEditSave={(patch) => onSaveEdit(sub.id, patch)}
-              />
+          <ul className="grid grid-cols-1 md:grid-cols-2 gap-2">
+            {collections.map((c, idx) => (
+              <CollectionCard key={c.id} c={c} subs={subs} index={idx + 1} />
             ))}
           </ul>
         </Reveal>
       )}
     </div>
+  );
+}
+
+function TabButton({
+  active,
+  onClick,
+  count,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  count: number;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`relative px-4 py-2 text-[13px] font-medium leading-none transition-colors active:scale-[0.98] ${
+        active
+          ? 'text-[var(--color-ink)]'
+          : 'text-[var(--color-muted)] hover:text-[var(--color-fg)]'
+      }`}
+    >
+      <span className="inline-flex items-baseline gap-2">
+        {children}
+        <span className="text-[11px] tabular-nums font-mono text-[var(--color-muted)]">
+          {count}
+        </span>
+      </span>
+      {active && (
+        <span
+          aria-hidden
+          className="absolute left-2 right-2 bottom-[-1px] h-[2px] bg-[var(--color-primary)] rounded-full"
+        />
+      )}
+    </button>
+  );
+}
+
+function CollectionEmpty() {
+  return (
+    <div className="rounded-xl border border-dashed border-[var(--color-border-strong)] bg-[var(--color-bg-sunk)]/50 px-8 py-12 text-center">
+      <p
+        className="font-serif text-[20px] font-medium text-[var(--color-fg-soft)] leading-[1.25] tracking-[-0.01em]"
+        style={{ fontVariationSettings: '"opsz" 48, "SOFT" 50' }}
+      >
+        还没有聚合
+      </p>
+      <p className="mt-1.5 text-[13px] text-[var(--color-muted)]">
+        聚合把多个单订阅合并成一份 provider，可在 base.yaml 用名字引用。
+      </p>
+      <div className="mt-5">
+        <Link
+          href="/collections"
+          className="inline-flex items-center h-9 px-4 rounded-full bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-on-primary)] text-[13px] font-medium leading-none transition-colors active:scale-[0.98]"
+        >
+          + 新建第一个聚合
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+function CollectionCard({
+  c,
+  subs,
+  index,
+}: {
+  c: Collection;
+  subs: Subscription[];
+  index: number;
+}) {
+  const subById = useMemo(() => new Map(subs.map((s) => [s.id, s])), [subs]);
+  const members = useMemo(() => {
+    const ids = new Set(c.subscription_ids);
+    if (c.subscription_tags.length > 0) {
+      for (const s of subs) {
+        if (s.tags?.some((t) => c.subscription_tags.includes(t))) ids.add(s.id);
+      }
+    }
+    return [...ids]
+      .map((id) => subById.get(id))
+      .filter((s): s is Subscription => !!s);
+  }, [c, subs, subById]);
+
+  return (
+    <li className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-card)] overflow-hidden grid grid-cols-[36px_1fr]">
+      <div className="border-r border-[var(--color-border)] bg-[var(--color-bg-sunk)] flex items-center justify-center">
+        <span
+          className="font-serif text-[18px] leading-none font-medium tabular-nums tracking-[-0.015em] text-[var(--color-ink)]"
+          style={{ fontVariationSettings: '"opsz" 48, "SOFT" 50' }}
+        >
+          {String(index).padStart(2, '0')}
+        </span>
+      </div>
+      <div className="p-3 min-w-0 flex flex-col gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <StatusDot tone="on" />
+          <h2
+            className="font-serif text-[16px] font-medium leading-[1.25] tracking-[-0.01em] text-[var(--color-ink)] truncate"
+            style={{ fontVariationSettings: '"opsz" 48, "SOFT" 40' }}
+            title={c.name}
+          >
+            {c.name}
+          </h2>
+          <Badge tone="accent">聚合</Badge>
+          <Link
+            href="/collections"
+            className="ml-auto inline-flex items-center h-7 px-2 rounded text-[12px] text-[var(--color-muted)] hover:text-[var(--color-fg)] hover:bg-[var(--color-bg-sunk)] transition-colors"
+            aria-label="编辑聚合"
+            title="编辑（前往聚合管理页）"
+          >
+            ✎ 编辑
+          </Link>
+        </div>
+        <div className="text-[11px] text-[var(--color-muted)] font-mono tabular-nums">
+          {dedupLabel(c.dedup_by)} · {members.length} 成员
+          {c.name_prefix && ` · 前缀「${c.name_prefix}」`}
+        </div>
+        {members.length > 0 && (
+          <div className="text-[11px] text-[var(--color-fg-soft)] font-mono truncate">
+            {members.slice(0, 6).map((m) => m.name).join(' · ')}
+            {members.length > 6 && (
+              <span className="text-[var(--color-muted)]"> +{members.length - 6}</span>
+            )}
+          </div>
+        )}
+        {c.subscription_tags.length > 0 && (
+          <div className="flex flex-wrap gap-1">
+            {c.subscription_tags.map((t) => (
+              <Badge key={t} tone="neutral">
+                #{t}
+              </Badge>
+            ))}
+          </div>
+        )}
+        <div className="text-[10px] uppercase tracking-[0.06em] text-[var(--color-muted-strong)] font-mono">
+          base.yaml 引用 ↳ <code className="text-[var(--color-fg-soft)]">{c.name}</code>
+        </div>
+      </div>
+    </li>
   );
 }
 
@@ -353,8 +561,8 @@ function Dossier({
               </div>
             </div>
 
-            {/* Provider URL —— 这是日常最常复制的项，独占一行 */}
-            <InlineUrl value={providerUrl} />
+            {/* Provider URL —— token 默认遮蔽，复制按钮始终拷完整 URL */}
+            <InlineUrl value={providerUrl} mask />
 
             {/* Compact traffic line —— 单行：数字 · 条 · 百分比 */}
             {sub.last_traffic && sub.last_traffic.total > 0 && (

@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -88,11 +89,18 @@ export default function CollectionsPage() {
     <div className="-mx-8 -mt-8 -mb-12 flex flex-col h-[calc(100vh-0px)]">
       <header className="shrink-0 flex items-center justify-between px-6 py-3 border-b border-[var(--color-border)] bg-[var(--color-surface)]">
         <div className="flex items-baseline gap-3">
+          <Link
+            href="/subscriptions"
+            className="text-[12px] text-[var(--color-muted)] hover:text-[var(--color-primary)] transition-colors -ml-1 mr-1"
+            title="返回订阅源"
+          >
+            ← 订阅源
+          </Link>
           <h1
             className="font-serif text-[22px] font-medium leading-[1.2] tracking-[-0.015em] text-[var(--color-ink)]"
             style={{ fontVariationSettings: '"opsz" 96, "SOFT" 30' }}
           >
-            订阅聚合
+            聚合管理
           </h1>
           <span className="text-[12px] tabular-nums text-[var(--color-muted)]">
             {collections.length} 个
