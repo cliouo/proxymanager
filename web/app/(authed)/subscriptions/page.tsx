@@ -1,14 +1,24 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type RefObject,
+} from 'react';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
+import { FormField } from '@/components/ui/FormField';
 import { InlineUrl } from '@/components/ui/InlineUrl';
 import { Input, Select, Textarea } from '@/components/ui/Input';
 import { Placeholder, Reveal } from '@/components/ui/Reveal';
 import { StatusDot } from '@/components/ui/StatusDot';
 import { ApiError, api } from '@/lib/client/api';
+import { type Collection, dedupLabel } from '@/lib/types/collection';
 
 const DEFAULT_TTL_MS = 10 * 60 * 1000;
 
@@ -36,23 +46,6 @@ interface Meta {
   subProvidersBase: string;
 }
 
-interface Collection {
-  id: string;
-  name: string;
-  subscription_ids: string[];
-  subscription_tags: string[];
-  dedup_by: 'name' | 'server-port' | 'none';
-  name_prefix?: string;
-  notes?: string;
-  updated_at?: number;
-}
-
-function dedupLabel(d: Collection['dedup_by']): string {
-  if (d === 'name') return '按名称去重';
-  if (d === 'server-port') return '按 server:port 去重';
-  return '不去重';
-}
-
 type Tab = 'subs' | 'collections';
 
 function fmtTime(s: number | undefined): string {
@@ -69,12 +62,60 @@ export default function SubscriptionsPage() {
   const [collections, setCollections] = useState<Collection[]>([]);
   const [meta, setMeta] = useState<Meta | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [busyId, setBusyId] = useState<string | null>(null);
+  const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
   const [editingId, setEditingId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [tab, setTab] = useState<Tab>('subs');
   const [loaded, setLoaded] = useState(false);
   const router = useRouter();
+  const tabsId = useId();
+  const subsTabRef = useRef<HTMLButtonElement>(null);
+  const collectionsTabRef = useRef<HTMLButtonElement>(null);
+
+  const handleTablistKey = useCallback(
+    (e: React.KeyboardEvent<HTMLDivElement>) => {
+      if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+        e.preventDefault();
+        const next: Tab = tab === 'subs' ? 'collections' : 'subs';
+        setTab(next);
+        requestAnimationFrame(() => {
+          (next === 'subs' ? subsTabRef : collectionsTabRef).current?.focus();
+        });
+      } else if (e.key === 'Home') {
+        e.preventDefault();
+        setTab('subs');
+        requestAnimationFrame(() => subsTabRef.current?.focus());
+      } else if (e.key === 'End') {
+        e.preventDefault();
+        setTab('collections');
+        requestAnimationFrame(() => collectionsTabRef.current?.focus());
+      }
+    },
+    [tab],
+  );
+
+  const startBusy = useCallback((id: string) => {
+    setBusyIds((prev) => {
+      if (prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
+  }, []);
+  const endBusy = useCallback((id: string) => {
+    setBusyIds((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+  }, []);
+
+  // Tab 切换时，避免另一 tab 里残留的"编辑/新增"状态泄漏回来
+  useEffect(() => {
+    setEditingId(null);
+    setAdding(false);
+  }, [tab]);
 
   const reload = useCallback(async () => {
     setError(null);
@@ -99,32 +140,32 @@ export default function SubscriptionsPage() {
   }, [reload]);
 
   async function onRefresh(id: string) {
-    setBusyId(id);
+    startBusy(id);
     try {
       await api(`/api/v1/subscriptions/${id}/refresh`, { method: 'POST' });
       await reload();
     } catch (err) {
       setError(err instanceof ApiError ? err.problem.detail ?? err.message : String(err));
     } finally {
-      setBusyId(null);
+      endBusy(id);
     }
   }
 
   async function onDelete(id: string) {
     if (!confirm('确定删除该订阅源？')) return;
-    setBusyId(id);
+    startBusy(id);
     try {
       await api(`/api/v1/subscriptions/${id}`, { method: 'DELETE' });
       setSubs((prev) => prev.filter((s) => s.id !== id));
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     } finally {
-      setBusyId(null);
+      endBusy(id);
     }
   }
 
   async function onToggle(sub: Subscription) {
-    setBusyId(sub.id);
+    startBusy(sub.id);
     try {
       const res = await api<{ data: Subscription }>(`/api/v1/subscriptions/${sub.id}`, {
         method: 'PATCH',
@@ -134,17 +175,27 @@ export default function SubscriptionsPage() {
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     } finally {
-      setBusyId(null);
+      endBusy(sub.id);
     }
   }
 
   async function onSaveEdit(id: string, patch: Record<string, unknown>) {
-    const res = await api<{ data: Subscription }>(`/api/v1/subscriptions/${id}`, {
-      method: 'PATCH',
-      body: patch,
-    });
-    setSubs((prev) => prev.map((s) => (s.id === id ? res.data : s)));
-    setEditingId(null);
+    startBusy(id);
+    try {
+      const res = await api<{ data: Subscription }>(`/api/v1/subscriptions/${id}`, {
+        method: 'PATCH',
+        body: patch,
+      });
+      setSubs((prev) => prev.map((s) => (s.id === id ? res.data : s)));
+      setEditingId(null);
+    } catch (err) {
+      const msg =
+        err instanceof ApiError ? err.problem.detail ?? err.message : String(err);
+      setError(msg);
+      throw err; // EditForm 内 catch 仍可显示 inline 错误
+    } finally {
+      endBusy(id);
+    }
   }
 
   return (
@@ -164,19 +215,36 @@ export default function SubscriptionsPage() {
         {tab === 'subs' ? (
           <Button onClick={() => setAdding((v) => !v)}>{adding ? '取消' : '+ 新增订阅'}</Button>
         ) : (
-          <Button onClick={() => router.push('/collections')}>+ 新建聚合</Button>
+          <Button onClick={() => router.push('/collections?mode=create&from=subs')}>
+            + 新建聚合
+          </Button>
         )}
       </header>
 
       {/* Tab bar */}
-      <div className="flex gap-0 border-b border-[var(--color-border)] -mx-1 px-1">
-        <TabButton active={tab === 'subs'} onClick={() => setTab('subs')} count={subs.length}>
+      <div
+        role="tablist"
+        aria-label="订阅源类型"
+        onKeyDown={handleTablistKey}
+        className="flex gap-0 border-b border-[var(--color-border)] -mx-1 px-1"
+      >
+        <TabButton
+          ref={subsTabRef}
+          active={tab === 'subs'}
+          onClick={() => setTab('subs')}
+          count={subs.length}
+          controlsId={`${tabsId}-panel-subs`}
+          tabId={`${tabsId}-tab-subs`}
+        >
           单订阅
         </TabButton>
         <TabButton
+          ref={collectionsTabRef}
           active={tab === 'collections'}
           onClick={() => setTab('collections')}
           count={collections.length}
+          controlsId={`${tabsId}-panel-collections`}
+          tabId={`${tabsId}-tab-collections`}
         >
           聚合
         </TabButton>
@@ -197,68 +265,99 @@ export default function SubscriptionsPage() {
         />
       )}
 
-      {!loaded ? (
-        <ul className="grid grid-cols-1 md:grid-cols-2 gap-2">
-          <SubSkeleton />
-          <SubSkeleton />
-        </ul>
-      ) : tab === 'subs' ? (
-        subs.length === 0 && !adding ? (
-          <EmptyState onAdd={() => setAdding(true)} />
-        ) : (
-          <Reveal when={loaded}>
+      {tab === 'subs' ? (
+        <section
+          id={`${tabsId}-panel-subs`}
+          role="tabpanel"
+          aria-labelledby={`${tabsId}-tab-subs`}
+        >
+          {!loaded ? (
             <ul className="grid grid-cols-1 md:grid-cols-2 gap-2">
-              {subs.map((sub, idx) => (
-                <Dossier
-                  key={sub.id}
-                  sub={sub}
-                  index={idx + 1}
-                  providerUrl={meta ? `${meta.subProvidersBase}/${sub.name}` : ''}
-                  pending={busyId === sub.id}
-                  editing={editingId === sub.id}
-                  anyEditing={editingId !== null}
-                  onRefresh={() => onRefresh(sub.id)}
-                  onDelete={() => onDelete(sub.id)}
-                  onToggle={() => onToggle(sub)}
-                  onEditStart={() => setEditingId(sub.id)}
-                  onEditCancel={() => setEditingId(null)}
-                  onEditSave={(patch) => onSaveEdit(sub.id, patch)}
-                />
-              ))}
+              <SubSkeleton />
+              <SubSkeleton />
             </ul>
-          </Reveal>
-        )
-      ) : collections.length === 0 ? (
-        <CollectionEmpty />
+          ) : subs.length === 0 && !adding ? (
+            <EmptyState onAdd={() => setAdding(true)} />
+          ) : (
+            <Reveal when={loaded}>
+              <ul className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                {subs.map((sub, idx) => (
+                  <Dossier
+                    key={sub.id}
+                    sub={sub}
+                    index={idx + 1}
+                    providerUrl={meta ? `${meta.subProvidersBase}/${sub.name}` : ''}
+                    pending={busyIds.has(sub.id)}
+                    editing={editingId === sub.id}
+                    anyEditing={editingId !== null}
+                    onRefresh={() => onRefresh(sub.id)}
+                    onDelete={() => onDelete(sub.id)}
+                    onToggle={() => onToggle(sub)}
+                    onEditStart={() => setEditingId(sub.id)}
+                    onEditCancel={() => setEditingId(null)}
+                    onEditSave={(patch) => onSaveEdit(sub.id, patch)}
+                  />
+                ))}
+              </ul>
+            </Reveal>
+          )}
+        </section>
       ) : (
-        <Reveal when={loaded}>
-          <ul className="grid grid-cols-1 md:grid-cols-2 gap-2">
-            {collections.map((c, idx) => (
-              <CollectionCard key={c.id} c={c} subs={subs} index={idx + 1} />
-            ))}
-          </ul>
-        </Reveal>
+        <section
+          id={`${tabsId}-panel-collections`}
+          role="tabpanel"
+          aria-labelledby={`${tabsId}-tab-collections`}
+        >
+          {!loaded ? (
+            <ul className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              <SubSkeleton />
+              <SubSkeleton />
+            </ul>
+          ) : collections.length === 0 ? (
+            <CollectionEmpty />
+          ) : (
+            <Reveal when={loaded}>
+              <ul className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                {collections.map((c, idx) => (
+                  <CollectionCard key={c.id} c={c} subs={subs} index={idx + 1} />
+                ))}
+              </ul>
+            </Reveal>
+          )}
+        </section>
       )}
     </div>
   );
 }
 
 function TabButton({
+  ref,
   active,
   onClick,
   count,
+  controlsId,
+  tabId,
   children,
 }: {
+  ref?: RefObject<HTMLButtonElement | null>;
   active: boolean;
   onClick: () => void;
   count: number;
+  controlsId: string;
+  tabId: string;
   children: React.ReactNode;
 }) {
   return (
     <button
+      ref={ref}
       type="button"
+      role="tab"
+      id={tabId}
+      aria-selected={active}
+      aria-controls={controlsId}
+      tabIndex={active ? 0 : -1}
       onClick={onClick}
-      className={`relative px-4 py-2 text-[13px] font-medium leading-none transition-colors active:scale-[0.98] ${
+      className={`pm-focus-ring relative px-4 py-2 text-[13px] font-medium leading-none transition-colors active:scale-[0.98] rounded-sm ${
         active
           ? 'text-[var(--color-ink)]'
           : 'text-[var(--color-muted)] hover:text-[var(--color-fg)]'
@@ -270,12 +369,12 @@ function TabButton({
           {count}
         </span>
       </span>
-      {active && (
-        <span
-          aria-hidden
-          className="absolute left-2 right-2 bottom-[-1px] h-[2px] bg-[var(--color-primary)] rounded-full"
-        />
-      )}
+      <span
+        aria-hidden
+        className={`absolute left-2 right-2 bottom-[-1px] h-[2px] bg-[var(--color-primary)] rounded-full transition-opacity duration-200 ease-out ${
+          active ? 'opacity-100' : 'opacity-0'
+        }`}
+      />
     </button>
   );
 }
@@ -294,7 +393,9 @@ function CollectionEmpty() {
         聚合把多个单订阅合并成一份 provider，可在 base.yaml 用名字引用。
       </p>
       <div className="mt-5">
-        <Button onClick={() => router.push('/collections')}>+ 新建第一个聚合</Button>
+        <Button onClick={() => router.push('/collections?mode=create&from=subs')}>
+          + 新建第一个聚合
+        </Button>
       </div>
     </div>
   );
@@ -324,42 +425,77 @@ function CollectionCard({
   }, [c, subs, subById]);
 
   return (
-    <li className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-card)] overflow-hidden grid grid-cols-[36px_1fr]">
-      <div className="border-r border-[var(--color-border)] bg-[var(--color-bg-sunk)] flex items-center justify-center">
-        <span
-          className="font-serif text-[18px] leading-none font-medium tabular-nums tracking-[-0.015em] text-[var(--color-ink)]"
-          style={{ fontVariationSettings: '"opsz" 48, "SOFT" 50' }}
-        >
-          {String(index).padStart(2, '0')}
-        </span>
+    <li className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-card)] overflow-hidden grid grid-cols-[40px_1fr] lg:grid-cols-[88px_1fr] xl:grid-cols-[96px_1fr]">
+      {/* 左侧档案条：与 Dossier 对称的三段（序号 + NO. / StatusDot / Edit IconButton 列） */}
+      <div className="border-r border-[var(--color-border)] bg-[var(--color-bg-sunk)] flex flex-col items-center lg:items-stretch lg:py-2 py-0">
+        <div className="flex flex-col items-center justify-center flex-1 lg:flex-none lg:py-1">
+          <span
+            className="font-serif text-[18px] lg:text-[24px] xl:text-[28px] leading-none font-medium tabular-nums tracking-[-0.015em] text-[var(--color-ink)]"
+            style={{ fontVariationSettings: '"opsz" 48, "SOFT" 50' }}
+            aria-label={`聚合 ${index}`}
+          >
+            {String(index).padStart(2, '0')}
+          </span>
+          <span
+            aria-hidden
+            className="hidden lg:block mt-0.5 text-[9px] uppercase tracking-[0.1em] font-mono text-[var(--color-muted-strong)]"
+          >
+            NO.
+          </span>
+        </div>
+        <div className="hidden lg:flex flex-col items-center gap-1 py-2 border-t border-[var(--color-border)]">
+          <StatusDot tone="on" />
+          <span className="text-[10px] uppercase tracking-[0.06em] font-mono text-[var(--color-muted)] leading-none">
+            聚合
+          </span>
+        </div>
+        <div className="hidden lg:flex flex-col items-center gap-0.5 py-2 mt-auto border-t border-[var(--color-border)]">
+          <IconLinkButton
+            href={`/collections?id=${encodeURIComponent(c.id)}&from=subs`}
+            title={`编辑聚合 ${c.name}`}
+            label="✎"
+          />
+        </div>
       </div>
+
       <div className="p-3 min-w-0 flex flex-col gap-2">
         <div className="flex items-center gap-2 min-w-0">
-          <StatusDot tone="on" />
+          <span className="lg:hidden">
+            <StatusDot tone="on" />
+          </span>
           <h2
-            className="font-serif text-[16px] font-medium leading-[1.25] tracking-[-0.01em] text-[var(--color-ink)] truncate"
+            className="font-serif text-[16px] lg:text-[18px] font-medium leading-[1.25] tracking-[-0.01em] text-[var(--color-ink)] truncate"
             style={{ fontVariationSettings: '"opsz" 48, "SOFT" 40' }}
             title={c.name}
           >
             {c.name}
           </h2>
-          <Badge tone="accent">聚合</Badge>
-          <button
-            type="button"
-            onClick={() => router.push('/collections')}
-            className="ml-auto inline-flex items-center h-7 px-2 rounded text-[12px] text-[var(--color-muted)] hover:text-[var(--color-fg)] hover:bg-[var(--color-bg-sunk)] transition-colors"
-            aria-label="编辑聚合"
+          <Badge tone="neutral">聚合</Badge>
+          {c.updated_at && (
+            <span className="text-[10px] uppercase tracking-[0.06em] font-mono text-[var(--color-muted)] ml-auto whitespace-nowrap shrink-0 hidden md:inline">
+              更新 · {fmtTime(c.updated_at)}
+            </span>
+          )}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => router.push(`/collections?id=${encodeURIComponent(c.id)}&from=subs`)}
+            className="lg:hidden ml-auto"
+            aria-label={`编辑聚合 ${c.name}`}
             title="编辑（前往聚合管理页）"
           >
-            ✎ 编辑
-          </button>
+            <span aria-hidden>✎</span> 编辑
+          </Button>
         </div>
         <div className="text-[11px] text-[var(--color-muted)] font-mono tabular-nums">
           {dedupLabel(c.dedup_by)} · {members.length} 成员
           {c.name_prefix && ` · 前缀「${c.name_prefix}」`}
         </div>
         {members.length > 0 && (
-          <div className="text-[11px] text-[var(--color-fg-soft)] font-mono truncate">
+          <div
+            className="text-[11px] text-[var(--color-fg-soft)] font-mono truncate"
+            title={members.map((m) => m.name).join(', ')}
+          >
             {members.slice(0, 6).map((m) => m.name).join(' · ')}
             {members.length > 6 && (
               <span className="text-[var(--color-muted)]"> +{members.length - 6}</span>
@@ -375,6 +511,14 @@ function CollectionCard({
             ))}
           </div>
         )}
+        {c.notes && (
+          <p
+            className="text-[11px] text-[var(--color-muted)] leading-[1.5] line-clamp-1"
+            title={c.notes}
+          >
+            {c.notes}
+          </p>
+        )}
         <div className="text-[10px] uppercase tracking-[0.06em] text-[var(--color-muted-strong)] font-mono">
           base.yaml 引用 ↳ <code className="text-[var(--color-fg-soft)]">{c.name}</code>
         </div>
@@ -383,9 +527,33 @@ function CollectionCard({
   );
 }
 
+/** Strip 内的链接型 IconButton，外观与 IconButton 一致但走 router.push。 */
+function IconLinkButton({
+  href,
+  title,
+  label,
+}: {
+  href: string;
+  title: string;
+  label: string;
+}) {
+  const router = useRouter();
+  return (
+    <button
+      type="button"
+      onClick={() => router.push(href)}
+      title={title}
+      aria-label={title}
+      className="pm-focus-ring w-7 h-7 rounded inline-flex items-center justify-center text-[13px] leading-none transition-colors active:scale-[0.98] text-[var(--color-muted)] hover:text-[var(--color-fg)] hover:bg-[var(--color-surface)]"
+    >
+      <span aria-hidden>{label}</span>
+    </button>
+  );
+}
+
 function SubSkeleton() {
   return (
-    <li className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] grid grid-cols-[36px_1fr] overflow-hidden">
+    <li className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] grid grid-cols-[40px_1fr] lg:grid-cols-[88px_1fr] xl:grid-cols-[96px_1fr] overflow-hidden">
       <div className="border-r border-[var(--color-border)] bg-[var(--color-bg-sunk)] flex items-center justify-center py-3">
         <div className="pm-pulse h-4 w-5 rounded bg-[var(--color-border-strong)]" />
       </div>
@@ -482,21 +650,73 @@ function Dossier({
 
   return (
     <li
-      className={`rounded-lg border bg-[var(--color-surface)] shadow-[var(--shadow-card)] overflow-hidden grid grid-cols-[36px_1fr] transition-[border-color,opacity] ${
+      className={`rounded-lg border bg-[var(--color-surface)] shadow-[var(--shadow-card)] overflow-hidden grid grid-cols-[40px_1fr] lg:grid-cols-[88px_1fr] xl:grid-cols-[96px_1fr] transition-[border-color,opacity] duration-150 ease-out ${
         editing
           ? 'border-[var(--color-primary)]/40'
           : 'border-[var(--color-border)]'
       } ${dimmed ? 'opacity-50' : ''}`}
     >
-      {/* Left serial column — 紧凑横向布局下只保留序号锚点 */}
-      <div className="border-r border-[var(--color-border)] bg-[var(--color-bg-sunk)] flex items-center justify-center">
-        <span
-          className="font-serif text-[18px] leading-none font-medium tabular-nums tracking-[-0.015em] text-[var(--color-ink)]"
-          style={{ fontVariationSettings: '"opsz" 48, "SOFT" 50' }}
-          aria-label={`订阅 ${index} · ${statusLabel}`}
-        >
-          {String(index).padStart(2, '0')}
-        </span>
+      {/* Left strip ——
+        · <lg: 紧凑序号（2 列网格密度优先）
+        · lg+:  DESIGN.md §Page Patterns.4 三段（序号 + NO. 铭牌 / StatusDot + 状态 / IconButton 列） */}
+      <div className="border-r border-[var(--color-border)] bg-[var(--color-bg-sunk)] flex flex-col items-center lg:items-stretch lg:py-2 py-0">
+        {/* 段 1 ：大序号 + NO. 铭牌 */}
+        <div className="flex flex-col items-center justify-center flex-1 lg:flex-none lg:py-1">
+          <span
+            className="font-serif text-[18px] lg:text-[24px] xl:text-[28px] leading-none font-medium tabular-nums tracking-[-0.015em] text-[var(--color-ink)]"
+            style={{ fontVariationSettings: '"opsz" 48, "SOFT" 50' }}
+            aria-label={`订阅 ${index} · ${statusLabel}`}
+          >
+            {String(index).padStart(2, '0')}
+          </span>
+          <span
+            aria-hidden
+            className="hidden lg:block mt-0.5 text-[9px] uppercase tracking-[0.1em] font-mono text-[var(--color-muted-strong)]"
+          >
+            NO.
+          </span>
+        </div>
+
+        {/* 段 2 ：状态点 + 文字（仅 lg+） */}
+        <div className="hidden lg:flex flex-col items-center gap-1 py-2 border-t border-[var(--color-border)]">
+          <StatusDot tone={tone} />
+          <span className="text-[10px] uppercase tracking-[0.06em] font-mono text-[var(--color-muted)] leading-none">
+            {statusLabel}
+          </span>
+        </div>
+
+        {/* 段 3 ：IconButton 列（仅 lg+ 且非编辑态）—— 顶到底 */}
+        {!editing && (
+          <div className="hidden lg:flex flex-col items-center gap-0.5 py-2 mt-auto border-t border-[var(--color-border)]">
+            <IconButton
+              onClick={onEditStart}
+              disabled={pending || anyEditing}
+              title="编辑"
+              label="✎"
+            />
+            {sub.kind === 'remote' && (
+              <IconButton
+                onClick={onRefresh}
+                disabled={pending || anyEditing || !sub.enabled}
+                title="立即拉取"
+                label="⟲"
+              />
+            )}
+            <IconButton
+              onClick={onToggle}
+              disabled={pending || anyEditing}
+              title={sub.enabled ? '停用' : '启用'}
+              label={sub.enabled ? '⏸' : '▶'}
+            />
+            <IconButton
+              onClick={onDelete}
+              disabled={pending || anyEditing}
+              title="删除"
+              label="✕"
+              tone="danger"
+            />
+          </div>
+        )}
       </div>
 
       {/* Right content */}
@@ -505,11 +725,13 @@ function Dossier({
           <EditForm sub={sub} onCancel={onEditCancel} onSave={onEditSave} />
         ) : (
           <>
-            {/* Header row：状态点 · 名字 · 类型 · 元数据 · 操作组 */}
+            {/* Header row：状态点 · 名字 · 类型 · 元数据 · 操作组（<lg 才显示状态点 + 操作组，lg+ 已搬到左侧 strip） */}
             <div className="flex items-center gap-2 min-w-0">
-              <StatusDot tone={tone} />
+              <span className="lg:hidden">
+                <StatusDot tone={tone} />
+              </span>
               <h2
-                className="font-serif text-[16px] font-medium leading-[1.25] tracking-[-0.01em] text-[var(--color-ink)] truncate"
+                className="font-serif text-[16px] lg:text-[18px] font-medium leading-[1.25] tracking-[-0.01em] text-[var(--color-ink)] truncate"
                 style={{ fontVariationSettings: '"opsz" 48, "SOFT" 40' }}
                 title={sub.name}
               >
@@ -524,7 +746,7 @@ function Dossier({
               <span className="text-[10px] uppercase tracking-[0.06em] text-[var(--color-muted)] font-mono ml-auto whitespace-nowrap shrink-0 hidden md:inline">
                 TTL · {Math.round(sub.ttl_ms / 1000)}s · 同步 · {fmtTime(sub.last_synced_at)}
               </span>
-              <div className="flex items-center gap-0.5 shrink-0">
+              <div className="flex items-center gap-0.5 shrink-0 lg:hidden">
                 <IconButton
                   onClick={onEditStart}
                   disabled={pending || anyEditing}
@@ -602,7 +824,7 @@ function IconButton({
       disabled={disabled}
       title={title}
       aria-label={title}
-      className={`w-7 h-7 rounded inline-flex items-center justify-center text-[13px] leading-none transition-colors active:scale-[0.94] disabled:opacity-30 disabled:cursor-not-allowed ${colors}`}
+      className={`pm-focus-ring w-7 h-7 rounded inline-flex items-center justify-center text-[13px] leading-none transition-colors active:scale-[0.98] disabled:opacity-30 disabled:cursor-not-allowed ${colors}`}
     >
       <span aria-hidden>{label}</span>
     </button>
@@ -780,23 +1002,6 @@ function AddForm({ onAdded }: { onAdded: () => void }) {
         </p>
       )}
     </form>
-  );
-}
-
-function FormField({
-  label,
-  children,
-}: {
-  label: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  return (
-    <div>
-      <label className="block text-[11px] uppercase tracking-[0.08em] font-semibold text-[var(--color-muted)] mb-1.5">
-        {label}
-      </label>
-      {children}
-    </div>
   );
 }
 

@@ -3,8 +3,9 @@ import type { ButtonHTMLAttributes } from 'react';
 type Variant = 'primary' | 'secondary' | 'danger' | 'ghost';
 type Size = 'sm' | 'md';
 
+// pm-focus-ring 来自 globals.css，双层陶土环（DESIGN.md §Elevation.5）。
 const BASE =
-  'inline-flex items-center justify-center gap-1.5 font-medium transition-[background-color,border-color,color,transform] duration-150 ease-out disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--color-primary)]/30 focus-visible:border-[var(--color-primary)] active:scale-[0.98] tracking-[-0.005em]';
+  'pm-focus-ring inline-flex items-center justify-center gap-1.5 font-medium transition-[background-color,border-color,color,box-shadow,transform] duration-150 ease-out disabled:cursor-not-allowed disabled:opacity-40 active:scale-[0.98] tracking-[-0.005em]';
 
 const VARIANTS: Record<Variant, string> = {
   primary:

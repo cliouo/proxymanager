@@ -140,6 +140,20 @@ h1, h2, h3, .font-serif {
   color: var(--color-primary-hover);
 }
 
+/* —— 陶土双层 focus ring（DESIGN.md §Elevation.5 签名细节） ——
+   内 2px primary-tint 外晕 + 外 3px primary 实环。用 box-shadow 叠两层；
+   Tailwind ring utility 只能给一层，无法表达双环。 */
+.pm-focus-ring {
+  outline: none;
+}
+.pm-focus-ring:focus-visible {
+  outline: none;
+  /* DESIGN.md §Elevation.5 原文：2px tint + 3px primary。 */
+  box-shadow:
+    0 0 0 2px var(--color-primary-tint),
+    0 0 0 3px var(--color-primary);
+}
+
 /* —— 滚动条：暖灰，与边框同色相 —— */
 ::-webkit-scrollbar {
   width: 10px;

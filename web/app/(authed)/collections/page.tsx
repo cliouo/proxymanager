@@ -1,24 +1,16 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
+import { FormField } from '@/components/ui/FormField';
 import { Input, Select } from '@/components/ui/Input';
 import { Placeholder } from '@/components/ui/Reveal';
 import { StatusDot } from '@/components/ui/StatusDot';
 import { ApiError, api } from '@/lib/client/api';
-
-interface Collection {
-  id: string;
-  name: string;
-  subscription_ids: string[];
-  subscription_tags: string[];
-  dedup_by: 'name' | 'server-port' | 'none';
-  name_prefix?: string;
-  notes?: string;
-  updated_at?: number;
-}
+import { type Collection, type DedupBy, dedupLabel } from '@/lib/types/collection';
 
 interface Subscription {
   id: string;
@@ -27,23 +19,29 @@ interface Subscription {
   tags?: string[];
 }
 
-function dedupLabel(d: Collection['dedup_by']): string {
-  switch (d) {
-    case 'name':
-      return '按名称去重';
-    case 'server-port':
-      return '按 server:port 去重';
-    case 'none':
-      return '不去重';
-  }
+export default function CollectionsPage() {
+  // App Router 要求 useSearchParams 消费者包在 Suspense 里，否则 prerender
+  // 时整页 CSR bailout；fallback 给一个零高度占位即可，本页内自带 loaded 状态。
+  return (
+    <Suspense fallback={null}>
+      <CollectionsView />
+    </Suspense>
+  );
 }
 
-export default function CollectionsPage() {
+function CollectionsView() {
+  const searchParams = useSearchParams();
+  const initialId = searchParams.get('id');
+  const initialMode = searchParams.get('mode');
+  const fromSubs = searchParams.get('from') === 'subs';
+
   const [collections, setCollections] = useState<Collection[]>([]);
   const [subs, setSubs] = useState<Subscription[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [mode, setMode] = useState<'view' | 'edit' | 'create'>('view');
+  const [selectedId, setSelectedId] = useState<string | null>(initialId);
+  const [mode, setMode] = useState<'view' | 'edit' | 'create'>(
+    initialMode === 'create' ? 'create' : 'view',
+  );
   const [loaded, setLoaded] = useState(false);
 
   const reload = useCallback(async () => {
@@ -55,7 +53,10 @@ export default function CollectionsPage() {
       setCollections(cs.data);
       setSubs(ss.data);
       setError(null);
-      setSelectedId((prev) => prev ?? cs.data[0]?.id ?? null);
+      setSelectedId((prev) => {
+        if (prev && cs.data.some((c) => c.id === prev)) return prev;
+        return cs.data[0]?.id ?? null;
+      });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     } finally {
@@ -86,13 +87,14 @@ export default function CollectionsPage() {
   }
 
   return (
-    <div className="-mx-8 -mt-8 -mb-12 flex flex-col h-[calc(100vh-0px)]">
+    <div className="-mx-8 -mt-8 -mb-12 flex flex-col h-screen">
       <header className="shrink-0 flex items-center justify-between px-6 py-3 border-b border-[var(--color-border)] bg-[var(--color-surface)]">
         <div className="flex items-baseline gap-3">
           <Link
             href="/subscriptions"
             className="text-[12px] text-[var(--color-muted)] hover:text-[var(--color-primary)] transition-colors -ml-1 mr-1"
             title="返回订阅源"
+            aria-label={fromSubs ? '返回订阅源（聚合 tab）' : '返回订阅源'}
           >
             ← 订阅源
           </Link>
@@ -342,9 +344,7 @@ function CollectionForm({
     new Set(initial?.subscription_ids ?? []),
   );
   const [tagsInput, setTagsInput] = useState(initial?.subscription_tags?.join(', ') ?? '');
-  const [dedupBy, setDedupBy] = useState<'name' | 'server-port' | 'none'>(
-    initial?.dedup_by ?? 'name',
-  );
+  const [dedupBy, setDedupBy] = useState<DedupBy>(initial?.dedup_by ?? 'name');
   const [namePrefix, setNamePrefix] = useState(initial?.name_prefix ?? '');
   const [notes, setNotes] = useState(initial?.notes ?? '');
   const [pending, setPending] = useState(false);
@@ -409,7 +409,7 @@ function CollectionForm({
         <FormField label="去重方式">
           <Select
             value={dedupBy}
-            onChange={(e) => setDedupBy(e.target.value as 'name' | 'server-port' | 'none')}
+            onChange={(e) => setDedupBy(e.target.value as DedupBy)}
           >
             <option value="name">按名称去重</option>
             <option value="server-port">按 server:port 去重</option>
@@ -492,19 +492,3 @@ function CollectionForm({
   );
 }
 
-function FormField({
-  label,
-  children,
-}: {
-  label: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  return (
-    <div>
-      <label className="block text-[11px] uppercase tracking-[0.08em] font-semibold text-[var(--color-muted)] mb-1.5">
-        {label}
-      </label>
-      {children}
-    </div>
-  );
-}

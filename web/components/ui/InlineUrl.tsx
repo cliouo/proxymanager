@@ -38,17 +38,21 @@ export function InlineUrl({
     }
   }
 
-  const display = mask && !revealed ? maskTokenSegment(value) : value;
+  const masked = mask ? maskTokenSegment(value) : value;
+  // 只有 mask 模式且正则实际命中（masked !== value）时才展示「显示/隐藏」开关，
+  // 避免给用户"已遮蔽"的错觉。
+  const maskActive = mask && masked !== value;
+  const display = maskActive && !revealed ? masked : value;
 
   return (
     <div className={`flex items-stretch gap-2 ${className}`}>
       <code
         className="surface-dark flex-1 min-w-0 bg-[var(--color-surface-dark)] text-[var(--color-on-dark)] font-mono text-[12px] leading-[1.55] rounded-lg px-3 py-2 overflow-x-auto whitespace-nowrap"
-        title={mask && !revealed ? '点「显示」查看完整 URL，或直接「复制」' : value}
+        title={maskActive && !revealed ? '点「显示」查看完整 URL，或直接「复制」' : value}
       >
         {display}
       </code>
-      {mask && (
+      {maskActive && (
         <Button
           variant="secondary"
           size="sm"
