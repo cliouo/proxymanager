@@ -1090,3 +1090,8 @@ motion:
 - Shiki 必须用 `shiki/core` + 显式 `@shikijs/langs/*` 按需 import + `@shikijs/engine-javascript`，
   绝不用 `import('shiki')` meta 包 — 后者会让打包器把 ~200 个 grammar 都列为可加载入口，
   dev 模式爆内存。
+- **本地 dev 默认走 webpack（`next dev --webpack`），不是 Turbopack**。Next 16 的 `next dev`
+  默认引擎是 Turbopack，其冷启动会把整个模块图预扫进内存；在 16GB 机器上叠加 Chrome /
+  编辑器 / MCP 进程会瞬间打满并触发 swap 风暴（webpack dev 同一项目峰值低一个量级，
+  `Ready in <200ms`）。`package.json` 的 `dev` 已锁 `--webpack`，要试 Turbopack 用
+  `npm run dev:turbo`。production build 本就走 `next build --webpack`，两端一致。
