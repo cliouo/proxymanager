@@ -410,7 +410,6 @@ function CollectionCard({
   subs: Subscription[];
   index: number;
 }) {
-  const router = useRouter();
   const subById = useMemo(() => new Map(subs.map((s) => [s.id, s])), [subs]);
   const members = useMemo(() => {
     const ids = new Set(c.subscription_ids);
@@ -424,13 +423,14 @@ function CollectionCard({
       .filter((s): s is Subscription => !!s);
   }, [c, subs, subById]);
 
+  const hasDisabledMember = members.some((m) => !m.enabled);
   return (
-    <li className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-card)] overflow-hidden grid grid-cols-[40px_1fr] lg:grid-cols-[88px_1fr] xl:grid-cols-[96px_1fr]">
-      {/* 左侧档案条：与 Dossier 对称的三段（序号 + NO. / StatusDot / Edit IconButton 列） */}
-      <div className="border-r border-[var(--color-border)] bg-[var(--color-bg-sunk)] flex flex-col items-center lg:items-stretch lg:py-2 py-0">
-        <div className="flex flex-col items-center justify-center flex-1 lg:flex-none lg:py-1">
+    <li className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-card)] overflow-hidden grid grid-cols-[52px_1fr] lg:grid-cols-[60px_1fr] xl:grid-cols-[68px_1fr]">
+      {/* 左条：与 Dossier 对称，竖直居中单块（序号 + NO. + 状态点/聚合），不撑高 */}
+      <div className="border-r border-[var(--color-border)] bg-[var(--color-bg-sunk)] flex flex-col items-center justify-center gap-2 py-3">
+        <div className="flex flex-col items-center leading-none">
           <span
-            className="font-serif text-[18px] lg:text-[24px] xl:text-[28px] leading-none font-medium tabular-nums tracking-[-0.015em] text-[var(--color-ink)]"
+            className="font-serif text-[20px] lg:text-[22px] xl:text-[24px] leading-none font-medium tabular-nums tracking-[-0.015em] text-[var(--color-ink)]"
             style={{ fontVariationSettings: '"opsz" 48, "SOFT" 50' }}
             aria-label={`聚合 ${index}`}
           >
@@ -438,54 +438,36 @@ function CollectionCard({
           </span>
           <span
             aria-hidden
-            className="hidden lg:block mt-0.5 text-[9px] uppercase tracking-[0.1em] font-mono text-[var(--color-muted-strong)]"
+            className="mt-1 text-[9px] uppercase tracking-[0.1em] font-mono text-[var(--color-muted-strong)]"
           >
             NO.
           </span>
         </div>
-        <div className="hidden lg:flex flex-col items-center gap-1 py-2 border-t border-[var(--color-border)]">
-          <StatusDot tone="on" />
-          <span className="text-[10px] uppercase tracking-[0.06em] font-mono text-[var(--color-muted)] leading-none">
+        <div className="flex flex-col items-center gap-1">
+          <StatusDot tone={hasDisabledMember ? 'warn' : 'on'} />
+          <span className="text-[9px] uppercase tracking-[0.04em] font-mono text-[var(--color-muted)] leading-none whitespace-nowrap">
             聚合
           </span>
-        </div>
-        <div className="hidden lg:flex flex-col items-center gap-0.5 py-2 mt-auto border-t border-[var(--color-border)]">
-          <IconLinkButton
-            href={`/collections?id=${encodeURIComponent(c.id)}&from=subs`}
-            title={`编辑聚合 ${c.name}`}
-            label="✎"
-          />
         </div>
       </div>
 
       <div className="p-3 min-w-0 flex flex-col gap-2">
         <div className="flex items-center gap-2 min-w-0">
-          <span className="lg:hidden">
-            <StatusDot tone="on" />
-          </span>
           <h2
-            className="font-serif text-[16px] lg:text-[18px] font-medium leading-[1.25] tracking-[-0.01em] text-[var(--color-ink)] truncate"
+            className="font-serif text-[17px] font-medium leading-[1.25] tracking-[-0.01em] text-[var(--color-ink)] truncate"
             style={{ fontVariationSettings: '"opsz" 48, "SOFT" 40' }}
             title={c.name}
           >
             {c.name}
           </h2>
           <Badge tone="neutral">聚合</Badge>
-          {c.updated_at && (
-            <span className="text-[10px] uppercase tracking-[0.06em] font-mono text-[var(--color-muted)] ml-auto whitespace-nowrap shrink-0 hidden md:inline">
-              更新 · {fmtTime(c.updated_at)}
-            </span>
-          )}
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => router.push(`/collections?id=${encodeURIComponent(c.id)}&from=subs`)}
-            className="lg:hidden ml-auto"
-            aria-label={`编辑聚合 ${c.name}`}
-            title="编辑（前往聚合管理页）"
-          >
-            <span aria-hidden>✎</span> 编辑
-          </Button>
+          <div className="flex items-center gap-0.5 shrink-0 ml-auto">
+            <IconLinkButton
+              href={`/collections?id=${encodeURIComponent(c.id)}&from=subs`}
+              title={`编辑聚合 ${c.name}`}
+              label="✎"
+            />
+          </div>
         </div>
         <div className="text-[11px] text-[var(--color-muted)] font-mono tabular-nums">
           {dedupLabel(c.dedup_by)} · {members.length} 成员
@@ -519,8 +501,15 @@ function CollectionCard({
             {c.notes}
           </p>
         )}
-        <div className="text-[10px] uppercase tracking-[0.06em] text-[var(--color-muted-strong)] font-mono">
-          base.yaml 引用 ↳ <code className="text-[var(--color-fg-soft)]">{c.name}</code>
+        <div className="mt-auto flex items-center gap-2 pt-1.5 border-t border-[var(--color-border)] text-[10px] uppercase tracking-[0.06em] text-[var(--color-muted-strong)] font-mono">
+          <span className="truncate">
+            base.yaml 引用 ↳ <code className="text-[var(--color-fg-soft)]">{c.name}</code>
+          </span>
+          {c.updated_at && (
+            <span className="ml-auto whitespace-nowrap shrink-0 text-[var(--color-muted)]">
+              更新 · {fmtTime(c.updated_at)}
+            </span>
+          )}
         </div>
       </div>
     </li>
@@ -553,7 +542,7 @@ function IconLinkButton({
 
 function SubSkeleton() {
   return (
-    <li className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] grid grid-cols-[40px_1fr] lg:grid-cols-[88px_1fr] xl:grid-cols-[96px_1fr] overflow-hidden">
+    <li className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] grid grid-cols-[52px_1fr] lg:grid-cols-[60px_1fr] xl:grid-cols-[68px_1fr] overflow-hidden">
       <div className="border-r border-[var(--color-border)] bg-[var(--color-bg-sunk)] flex items-center justify-center py-3">
         <div className="pm-pulse h-4 w-5 rounded bg-[var(--color-border-strong)]" />
       </div>
@@ -650,20 +639,19 @@ function Dossier({
 
   return (
     <li
-      className={`rounded-lg border bg-[var(--color-surface)] shadow-[var(--shadow-card)] overflow-hidden grid grid-cols-[40px_1fr] lg:grid-cols-[88px_1fr] xl:grid-cols-[96px_1fr] transition-[border-color,opacity] duration-150 ease-out ${
+      className={`rounded-lg border bg-[var(--color-surface)] shadow-[var(--shadow-card)] overflow-hidden grid grid-cols-[52px_1fr] lg:grid-cols-[60px_1fr] xl:grid-cols-[68px_1fr] transition-[border-color,opacity] duration-150 ease-out ${
         editing
           ? 'border-[var(--color-primary)]/40'
           : 'border-[var(--color-border)]'
       } ${dimmed ? 'opacity-50' : ''}`}
     >
-      {/* Left strip ——
-        · <lg: 紧凑序号（2 列网格密度优先）
-        · lg+:  DESIGN.md §Page Patterns.4 三段（序号 + NO. 铭牌 / StatusDot + 状态 / IconButton 列） */}
-      <div className="border-r border-[var(--color-border)] bg-[var(--color-bg-sunk)] flex flex-col items-center lg:items-stretch lg:py-2 py-0">
-        {/* 段 1 ：大序号 + NO. 铭牌 */}
-        <div className="flex flex-col items-center justify-center flex-1 lg:flex-none lg:py-1">
+      {/* Left strip —— 竖直居中的单块：序号 + NO. 铭牌 + 状态点/文字。
+        不再撑高（无 mt-auto 图标列），卡片高度完全由右栏内容决定；编辑态下
+        strip 仍居中，自然跟随表单高度。 */}
+      <div className="border-r border-[var(--color-border)] bg-[var(--color-bg-sunk)] flex flex-col items-center justify-center gap-2 py-3">
+        <div className="flex flex-col items-center leading-none">
           <span
-            className="font-serif text-[18px] lg:text-[24px] xl:text-[28px] leading-none font-medium tabular-nums tracking-[-0.015em] text-[var(--color-ink)]"
+            className="font-serif text-[20px] lg:text-[22px] xl:text-[24px] leading-none font-medium tabular-nums tracking-[-0.015em] text-[var(--color-ink)]"
             style={{ fontVariationSettings: '"opsz" 48, "SOFT" 50' }}
             aria-label={`订阅 ${index} · ${statusLabel}`}
           >
@@ -671,52 +659,17 @@ function Dossier({
           </span>
           <span
             aria-hidden
-            className="hidden lg:block mt-0.5 text-[9px] uppercase tracking-[0.1em] font-mono text-[var(--color-muted-strong)]"
+            className="mt-1 text-[9px] uppercase tracking-[0.1em] font-mono text-[var(--color-muted-strong)]"
           >
             NO.
           </span>
         </div>
-
-        {/* 段 2 ：状态点 + 文字（仅 lg+） */}
-        <div className="hidden lg:flex flex-col items-center gap-1 py-2 border-t border-[var(--color-border)]">
+        <div className="flex flex-col items-center gap-1">
           <StatusDot tone={tone} />
-          <span className="text-[10px] uppercase tracking-[0.06em] font-mono text-[var(--color-muted)] leading-none">
+          <span className="text-[9px] uppercase tracking-[0.04em] font-mono text-[var(--color-muted)] leading-none whitespace-nowrap">
             {statusLabel}
           </span>
         </div>
-
-        {/* 段 3 ：IconButton 列（仅 lg+ 且非编辑态）—— 顶到底 */}
-        {!editing && (
-          <div className="hidden lg:flex flex-col items-center gap-0.5 py-2 mt-auto border-t border-[var(--color-border)]">
-            <IconButton
-              onClick={onEditStart}
-              disabled={pending || anyEditing}
-              title="编辑"
-              label="✎"
-            />
-            {sub.kind === 'remote' && (
-              <IconButton
-                onClick={onRefresh}
-                disabled={pending || anyEditing || !sub.enabled}
-                title="立即拉取"
-                label="⟲"
-              />
-            )}
-            <IconButton
-              onClick={onToggle}
-              disabled={pending || anyEditing}
-              title={sub.enabled ? '停用' : '启用'}
-              label={sub.enabled ? '⏸' : '▶'}
-            />
-            <IconButton
-              onClick={onDelete}
-              disabled={pending || anyEditing}
-              title="删除"
-              label="✕"
-              tone="danger"
-            />
-          </div>
-        )}
       </div>
 
       {/* Right content */}
@@ -725,13 +678,10 @@ function Dossier({
           <EditForm sub={sub} onCancel={onEditCancel} onSave={onEditSave} />
         ) : (
           <>
-            {/* Header row：状态点 · 名字 · 类型 · 元数据 · 操作组（<lg 才显示状态点 + 操作组，lg+ 已搬到左侧 strip） */}
+            {/* Header row：名字 · 类型 · 标签 · 横排操作组 */}
             <div className="flex items-center gap-2 min-w-0">
-              <span className="lg:hidden">
-                <StatusDot tone={tone} />
-              </span>
               <h2
-                className="font-serif text-[16px] lg:text-[18px] font-medium leading-[1.25] tracking-[-0.01em] text-[var(--color-ink)] truncate"
+                className="font-serif text-[17px] font-medium leading-[1.25] tracking-[-0.01em] text-[var(--color-ink)] truncate"
                 style={{ fontVariationSettings: '"opsz" 48, "SOFT" 40' }}
                 title={sub.name}
               >
@@ -743,10 +693,7 @@ function Dossier({
                   {sub.tags.slice(0, 3).join(' · ')}
                 </span>
               )}
-              <span className="text-[10px] uppercase tracking-[0.06em] text-[var(--color-muted)] font-mono ml-auto whitespace-nowrap shrink-0 hidden md:inline">
-                TTL · {Math.round(sub.ttl_ms / 1000)}s · 同步 · {fmtTime(sub.last_synced_at)}
-              </span>
-              <div className="flex items-center gap-0.5 shrink-0 lg:hidden">
+              <div className="flex items-center gap-0.5 shrink-0 ml-auto">
                 <IconButton
                   onClick={onEditStart}
                   disabled={pending || anyEditing}
@@ -793,6 +740,13 @@ function Dossier({
                 {sub.last_error}
               </div>
             )}
+
+            {/* Footer 元数据 —— 填充底部，避免右下大片空白 */}
+            <div className="mt-auto flex items-center gap-2 pt-1.5 border-t border-[var(--color-border)] text-[10px] uppercase tracking-[0.06em] text-[var(--color-muted)] font-mono">
+              <span className="whitespace-nowrap">TTL · {Math.round(sub.ttl_ms / 1000)}s</span>
+              <span aria-hidden className="text-[var(--color-border-strong)]">·</span>
+              <span className="truncate">同步 · {fmtTime(sub.last_synced_at)}</span>
+            </div>
           </>
         )}
       </div>
