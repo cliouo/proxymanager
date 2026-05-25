@@ -272,7 +272,7 @@ export default function SubscriptionsPage() {
           aria-labelledby={`${tabsId}-tab-subs`}
         >
           {!loaded ? (
-            <ul className="grid grid-cols-1 md:grid-cols-2 gap-2">
+            <ul className="grid grid-cols-1 md:grid-cols-2 gap-2 items-start">
               <SubSkeleton />
               <SubSkeleton />
             </ul>
@@ -280,7 +280,7 @@ export default function SubscriptionsPage() {
             <EmptyState onAdd={() => setAdding(true)} />
           ) : (
             <Reveal when={loaded}>
-              <ul className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              <ul className="grid grid-cols-1 md:grid-cols-2 gap-2 items-start">
                 {subs.map((sub, idx) => (
                   <Dossier
                     key={sub.id}
@@ -309,7 +309,7 @@ export default function SubscriptionsPage() {
           aria-labelledby={`${tabsId}-tab-collections`}
         >
           {!loaded ? (
-            <ul className="grid grid-cols-1 md:grid-cols-2 gap-2">
+            <ul className="grid grid-cols-1 md:grid-cols-2 gap-2 items-start">
               <SubSkeleton />
               <SubSkeleton />
             </ul>
@@ -317,7 +317,7 @@ export default function SubscriptionsPage() {
             <CollectionEmpty />
           ) : (
             <Reveal when={loaded}>
-              <ul className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              <ul className="grid grid-cols-1 md:grid-cols-2 gap-2 items-start">
                 {collections.map((c, idx) => (
                   <CollectionCard key={c.id} c={c} subs={subs} index={idx + 1} />
                 ))}
