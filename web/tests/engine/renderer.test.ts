@@ -37,6 +37,32 @@ describe('renderRule', () => {
       'RULE-SET,cn_ip,直连',
     );
   });
+
+  it('appends a single modifier after the policy', () => {
+    expect(
+      renderRule(makeRule({ type: 'GEOIP', value: 'lan', policy: '直连', options: ['no-resolve'] })),
+    ).toBe('GEOIP,lan,直连,no-resolve');
+  });
+
+  it('appends multiple modifiers in order', () => {
+    expect(
+      renderRule(
+        makeRule({ type: 'IP-CIDR', value: '0.0.0.0/8', policy: 'DIRECT', options: ['no-resolve', 'src'] }),
+      ),
+    ).toBe('IP-CIDR,0.0.0.0/8,DIRECT,no-resolve,src');
+  });
+
+  it('ignores an empty options array', () => {
+    expect(
+      renderRule(makeRule({ type: 'DOMAIN', value: 'x.com', policy: '香港', options: [] })),
+    ).toBe('DOMAIN,x.com,香港');
+  });
+
+  it('ignores options on MATCH', () => {
+    expect(
+      renderRule(makeRule({ type: 'MATCH', value: '', policy: '默认', options: ['no-resolve'] })),
+    ).toBe('MATCH,默认');
+  });
 });
 
 describe('renderBase', () => {
@@ -87,6 +113,27 @@ describe('renderBase', () => {
     const a = renderBase(FIXTURE, [makeRule({ value: 'a.com' })]);
     const b = renderBase(FIXTURE, [makeRule({ value: 'b.com' })]);
     expect(a.buildId).not.toEqual(b.buildId);
+  });
+
+  it('skips parked rules (enabled === false) but keeps active and legacy ones', () => {
+    const rules: Rule[] = [
+      makeRule({ id: 'on', anchor: 'manual', value: 'on.com', rank: 10 }),
+      makeRule({ id: 'off', anchor: 'manual', value: 'off.com', rank: 20, enabled: false }),
+      makeRule({ id: 'legacy', anchor: 'manual', value: 'legacy.com', rank: 30 }),
+    ];
+    const result = renderBase(FIXTURE, rules);
+    expect(result.content).toContain('- DOMAIN,on.com,香港');
+    expect(result.content).toContain('- DOMAIN,legacy.com,香港');
+    expect(result.content).not.toContain('off.com');
+    const map = Object.fromEntries(result.anchorsApplied.map((s) => [s.anchor, s.ruleCount]));
+    expect(map.manual).toBe(2);
+  });
+
+  it('treats enabled === true identically to a missing enabled field', () => {
+    const a = renderBase(FIXTURE, [makeRule({ value: 'x.com', enabled: true })]);
+    const b = renderBase(FIXTURE, [makeRule({ value: 'x.com' })]);
+    expect(a.content).toEqual(b.content);
+    expect(a.buildId).toEqual(b.buildId);
   });
 
   it('aggregates rule counts per anchor', () => {

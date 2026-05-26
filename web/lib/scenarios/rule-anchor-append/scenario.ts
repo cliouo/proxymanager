@@ -83,6 +83,8 @@ const create: OpHandler = async (ctx, raw) => {
     added_at: now,
     updated_at: now,
     note: input.note,
+    options: input.options,
+    enabled: input.enabled,
   };
   await ctx.rules.upsert(rule);
 
@@ -115,6 +117,8 @@ const replace: OpHandler = async (ctx, raw) => {
     rank: body.rank,
     source: body.source,
     note: body.note,
+    options: body.options,
+    enabled: body.enabled,
     added_at: existing.added_at,
     updated_at: nowSeconds(),
   };
@@ -216,6 +220,8 @@ const batchCreate: OpHandler = async (ctx, raw) => {
       added_at: now,
       updated_at: now,
       note: r.note,
+      options: r.options,
+      enabled: r.enabled,
     };
     writes.push(rule);
     outcomes.push({ status: 'ok', ruleId: rule.id });

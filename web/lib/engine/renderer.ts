@@ -17,7 +17,8 @@ const ANCHOR_LINE_PATTERN = /^([ \t]*)#\s*===\s*ANCHOR:\s*([\w-]+)\s*===\s*$/gm;
 
 export function renderRule(rule: Rule): string {
   if (rule.type === 'MATCH') return `MATCH,${rule.policy}`;
-  return `${rule.type},${rule.value},${rule.policy}`;
+  const modifiers = rule.options?.length ? `,${rule.options.join(',')}` : '';
+  return `${rule.type},${rule.value},${rule.policy}${modifiers}`;
 }
 
 export function groupRulesByAnchor(rules: Rule[]): Map<string, Rule[]> {
@@ -34,7 +35,10 @@ export function groupRulesByAnchor(rules: Rule[]): Map<string, Rule[]> {
 }
 
 export function renderBase(baseContent: string, rules: Rule[]): RenderResult {
-  const byAnchor = groupRulesByAnchor(rules);
+  // Parked rules (enabled === false) stay in the hash but never reach the
+  // rendered config. Legacy rules have no `enabled` field and render normally.
+  const active = rules.filter((rule) => rule.enabled !== false);
+  const byAnchor = groupRulesByAnchor(active);
   const seenAnchors = new Set<string>();
   const stats: AnchorStats[] = [];
 
