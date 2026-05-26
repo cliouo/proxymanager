@@ -54,6 +54,7 @@ npm run vercel:deploy:prod  # Deploy to production
 | `KV_REST_API_TOKEN` | Upstash Redis REST token                                     |
 | `ADMIN_KEY`         | Bearer token for management API                              |
 | `SUB_TOKEN`         | URL path token for subscription endpoint                     |
+| `DEEPSEEK_API_KEY`  | DeepSeek key for the in-app AI config assistant (optional)   |
 
 ## Vercel setup
 

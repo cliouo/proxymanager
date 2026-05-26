@@ -10,10 +10,10 @@
  */
 @theme {
   /* —— 暖白表面四阶 —— */
-  --color-bg: #faf9f5;            /* 主背景：纸张暖米白 */
-  --color-bg-sunk: #f2f0e8;       /* 下沉：sidebar、空状态、表格 hover */
-  --color-bg-strong: #e8e0d2;     /* 强调：选中 band、当前 tab、置顶 */
-  --color-surface: #ffffff;       /* 卡面纯白 */
+  --color-bg: #faf9f5; /* 主背景：纸张暖米白 */
+  --color-bg-sunk: #f2f0e8; /* 下沉：sidebar、空状态、表格 hover */
+  --color-bg-strong: #e8e0d2; /* 强调：选中 band、当前 tab、置顶 */
+  --color-surface: #ffffff; /* 卡面纯白 */
   --color-surface-hover: #fbfaf6; /* 卡面 hover */
 
   /* —— Dark micro-surface（仅小处使用） —— */
@@ -26,11 +26,11 @@
   --color-border-active: #c8553d;
 
   /* —— 前景六档 —— */
-  --color-ink: #141413;           /* H1 与品牌字 */
-  --color-fg: #1f1e1b;            /* 标题与关键正文 */
-  --color-fg-soft: #423f39;       /* 常规正文 */
-  --color-muted: #6b6862;         /* 辅助说明、时间戳、metadata */
-  --color-muted-strong: #8b867d;  /* 占位、禁用文字 */
+  --color-ink: #141413; /* H1 与品牌字 */
+  --color-fg: #1f1e1b; /* 标题与关键正文 */
+  --color-fg-soft: #423f39; /* 常规正文 */
+  --color-muted: #6b6862; /* 辅助说明、时间戳、metadata */
+  --color-muted-strong: #8b867d; /* 占位、禁用文字 */
   --color-on-primary: #ffffff;
   --color-on-dark: #faf9f5;
   --color-on-dark-soft: #a09d96;
@@ -64,21 +64,18 @@
 
   /* —— 字体栈 —— */
   --font-sans:
-    var(--font-inter), var(--font-noto-sc), -apple-system, BlinkMacSystemFont,
-    'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, sans-serif;
+    var(--font-inter), var(--font-noto-sc), -apple-system, BlinkMacSystemFont, 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', system-ui, sans-serif;
   --font-serif:
-    var(--font-fraunces), 'Iowan Old Style', 'Apple Garamond', 'Baskerville',
-    'Times New Roman', 'PingFang SC', 'Songti SC', 'Noto Serif SC', serif;
+    var(--font-fraunces), 'Iowan Old Style', 'Apple Garamond', 'Baskerville', 'Times New Roman',
+    'PingFang SC', 'Songti SC', 'Noto Serif SC', serif;
   --font-mono:
-    var(--font-jetbrains), 'SF Mono', ui-monospace, 'Menlo', 'Consolas',
-    'PingFang SC', monospace;
+    var(--font-jetbrains), 'SF Mono', ui-monospace, 'Menlo', 'Consolas', 'PingFang SC', monospace;
 
   /* —— 阴影：克制使用 —— */
   --shadow-card: 0 1px 2px 0 rgba(20, 20, 19, 0.04);
-  --shadow-card-lift: 0 1px 2px 0 rgba(20, 20, 19, 0.04),
-    0 4px 12px -8px rgba(20, 20, 19, 0.08);
-  --shadow-modal: 0 1px 2px 0 rgba(20, 20, 19, 0.04),
-    0 12px 32px -12px rgba(20, 20, 19, 0.12);
+  --shadow-card-lift: 0 1px 2px 0 rgba(20, 20, 19, 0.04), 0 4px 12px -8px rgba(20, 20, 19, 0.08);
+  --shadow-modal: 0 1px 2px 0 rgba(20, 20, 19, 0.04), 0 12px 32px -12px rgba(20, 20, 19, 0.12);
 }
 
 html,
@@ -116,10 +113,15 @@ main,
 }
 
 /* —— 标题用 Fraunces，靠字号 + 负字距撑场 —— */
-h1, h2, h3, .font-serif {
+h1,
+h2,
+h3,
+.font-serif {
   font-family: var(--font-serif);
   font-weight: 500;
-  font-variation-settings: 'opsz' 96, 'SOFT' 30;
+  font-variation-settings:
+    'opsz' 96,
+    'SOFT' 30;
 }
 
 /* a default color lives in @layer base so Tailwind utility classes
@@ -199,8 +201,12 @@ kbd {
    Retina / 非整数 DPR 屏会做亚像素重排，与父层滚动条出现/消失叠加会让
    居中内容横向闪 1-2px。 仅 opacity 既不动布局也不动合成层。 */
 @keyframes pm-reveal {
-  from { opacity: 0; }
-  to   { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 .pm-reveal {
   animation: pm-reveal 220ms ease-out both;
@@ -211,9 +217,18 @@ kbd {
 
 /* —— 路由切换顶部进度条 —— */
 @keyframes pm-progress-stage1 {
-  0%   { left: -30%; right: 100%; }
-  60%  { left: 0%;   right: 20%; }
-  100% { left: 70%;  right: 0%; }
+  0% {
+    left: -30%;
+    right: 100%;
+  }
+  60% {
+    left: 0%;
+    right: 20%;
+  }
+  100% {
+    left: 70%;
+    right: 0%;
+  }
 }
 .pm-route-progress {
   position: fixed;
@@ -241,14 +256,35 @@ kbd {
 
 /* —— 占位状态：温润脉动（不是骨架灰条） —— */
 @keyframes pm-pulse {
-  0%, 100% { opacity: 0.6; }
-  50%      { opacity: 1; }
+  0%,
+  100% {
+    opacity: 0.6;
+  }
+  50% {
+    opacity: 1;
+  }
 }
 .pm-pulse {
   animation: pm-pulse 1400ms ease-in-out infinite;
 }
 
+/* —— 抽屉：从右侧轻滑入（fixed 覆盖层、自有合成层，不动页面布局） —— */
+@keyframes pm-slide-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+.pm-slide-in-right {
+  animation: pm-slide-in-right 200ms ease-out both;
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .pm-slide-in-right,
   .pm-reveal,
   .pm-reveal-slow,
   .pm-route-progress::after,

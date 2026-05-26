@@ -2,6 +2,7 @@
 
 import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
+import { AssistantPanel } from '@/components/assistant/AssistantPanel';
 import { RouteProgress } from '@/components/RouteProgress';
 import { Sidebar } from '@/components/Sidebar';
 import { getAdminKey } from '@/lib/client/auth-storage';
@@ -43,6 +44,7 @@ export default function AuthedLayout({ children }: { children: React.ReactNode }
           </div>
         </main>
       </div>
+      <AssistantPanel />
     </div>
   );
 }

@@ -36,4 +36,16 @@ export const REDIS_KEYS = {
    * Aggregated subscription collections. Hash keyed by collection id.
    */
   collections: 'collections',
+  /**
+   * Pending AI write confirmations. Each is a standalone key with a short
+   * EX TTL holding the {actor, action, input} to execute once the user
+   * authorises it; consumed atomically (one-time) via GETDEL.
+   */
+  assistantConfirm: (token: string): string => `assistant:confirm:${token}`,
+  /**
+   * Per-conversation assistant transcript (full message thread incl. tool
+   * calls / tool results / reasoning_content), so follow-up turns keep the
+   * context the model already gathered. Standalone key with EX TTL.
+   */
+  assistantSession: (id: string): string => `assistant:session:${id}`,
 } as const;
