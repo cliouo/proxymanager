@@ -8,11 +8,16 @@ import { clearAdminKey } from '@/lib/client/auth-storage';
 
 const PRIMARY_NAV: { href: string; label: string; icon: string }[] = [
   { href: '/', label: '总览', icon: '◐' },
-  { href: '/base', label: '基础配置', icon: '⌬' },
+  { href: '/config', label: '最终配置', icon: '◉' },
+  { href: '/base', label: '结构', icon: '⌬' },
+  { href: '/scenarios/rule-anchor-append', label: '规则', icon: '≡' },
   { href: '/rule-sets', label: '规则集', icon: '⊟' },
   { href: '/subscriptions', label: '订阅源', icon: '⇣' },
   { href: '/history', label: '操作历史', icon: '⟲' },
 ];
+
+// Promoted into PRIMARY_NAV above, so it's hidden from the auto "场景" list.
+const PROMOTED_SCENARIOS = new Set(['rule-anchor-append']);
 
 const FOOTER_NAV: { href: string; label: string }[] = [
   { href: '/docs', label: 'API 文档' },
@@ -98,7 +103,7 @@ export function Sidebar() {
           }
         />
         {scenarios.map((s) =>
-          s.navHref ? (
+          s.navHref && !PROMOTED_SCENARIOS.has(s.id) ? (
             <SidebarLink
               key={s.id}
               href={s.navHref}

@@ -132,7 +132,7 @@ export default function BasePage() {
             className="font-serif text-[22px] font-medium leading-[1.2] tracking-[-0.015em] text-[var(--color-ink)]"
             style={{ fontVariationSettings: '"opsz" 96, "SOFT" 30' }}
           >
-            基础配置
+            结构
           </h1>
           {etag && (
             <span className="text-[11px] uppercase tracking-[0.08em] font-mono text-[var(--color-muted)]">
@@ -169,6 +169,11 @@ export default function BasePage() {
           </Button>
         </div>
       </header>
+
+      {/* Role hint */}
+      <div className="shrink-0 px-6 py-2 text-[12px] border-b border-[var(--color-border)] bg-[var(--color-primary-tint)] text-[var(--color-primary-hover)]">
+        这里只编辑骨架（dns / 策略组 / 嗅探 / tun / 订阅源 / 规则集声明 等）。<code className="font-mono">rules:</code> 块只放锚点标记 —— 规则统一到「规则」页管理；保存时出现规则行会被拒绝。
+      </div>
 
       {/* Status strip */}
       {(loadError || status) && (
