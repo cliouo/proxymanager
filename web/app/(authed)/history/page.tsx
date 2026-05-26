@@ -15,31 +15,129 @@ interface RuleSnapshot {
   policy: string;
 }
 
+type AuditTarget =
+  | { kind: 'rule'; id: string }
+  | { kind: 'proxy'; name: string }
+  | { kind: 'proxy-group'; name: string }
+  | { kind: 'base'; field?: string };
+
 interface AuditEvent {
   id: string;
   ts: number;
-  op: 'rule.create' | 'rule.update' | 'rule.delete';
+  // Namespaced `<scenario>.<action>` (e.g. config-section.set-section), plus
+  // legacy `rule.create|update|delete`. Shape of before/after depends on op.
+  op: string;
   actor: string;
-  ruleId: string;
-  before?: RuleSnapshot;
-  after?: RuleSnapshot;
+  ruleId?: string;
+  target?: AuditTarget;
+  before?: unknown;
+  after?: unknown;
   undone_by?: string;
   undoes?: string;
 }
 
 const PAGE_SIZE = 100;
 
-function opGlyph(op: AuditEvent['op'], isUndo: boolean): 'create' | 'update' | 'delete' | 'undo' {
-  if (isUndo) return 'undo';
-  if (op === 'rule.create') return 'create';
-  if (op === 'rule.update') return 'update';
-  return 'delete';
+type Glyph = 'create' | 'update' | 'delete' | 'undo';
+
+/** The action is the op's last dotted segment; the scenario prefix is ignored. */
+function actionOf(op: string): string {
+  const i = op.lastIndexOf('.');
+  return i === -1 ? op : op.slice(i + 1);
 }
 
-function opLabel(op: AuditEvent['op']): string {
-  if (op === 'rule.create') return '新增';
-  if (op === 'rule.update') return '修改';
-  return '删除';
+// Maps every action verb the scenarios emit to a label + glyph. Unknown verbs
+// fall back to the raw verb with a neutral 'update' glyph rather than being
+// mislabelled "删除".
+const VERBS: Record<string, { label: string; glyph: Glyph }> = {
+  create: { label: '新增', glyph: 'create' },
+  'batch-create': { label: '批量新增', glyph: 'create' },
+  'create-pool-chain': { label: '建链', glyph: 'create' },
+  update: { label: '修改', glyph: 'update' },
+  patch: { label: '修改', glyph: 'update' },
+  'set-section': { label: '设置', glyph: 'update' },
+  'set-fixed-chain': { label: '设固定链', glyph: 'update' },
+  'update-pool-members': { label: '改链成员', glyph: 'update' },
+  mark: { label: '标记', glyph: 'update' },
+  delete: { label: '删除', glyph: 'delete' },
+  'delete-section': { label: '删除', glyph: 'delete' },
+  'delete-pool-chain': { label: '删链', glyph: 'delete' },
+  'clear-chain': { label: '清链', glyph: 'delete' },
+};
+
+function describeOp(op: string): { label: string; glyph: Glyph } {
+  const v = actionOf(op);
+  return VERBS[v] ?? { label: v, glyph: 'update' };
+}
+
+/** Compact, one-line hint for a base-section value — never dumps a long block. */
+function valueHint(v: unknown): string {
+  if (v === null || v === undefined) return '';
+  if (typeof v === 'string') return v.length > 48 ? `${v.slice(0, 48)}…` : v;
+  if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+  if (Array.isArray(v)) return `${v.length} 项`;
+  if (typeof v === 'object') {
+    const keys = Object.keys(v as Record<string, unknown>);
+    return keys.slice(0, 4).join('、') + (keys.length > 4 ? '…' : '');
+  }
+  return String(v);
+}
+
+/** Renders the event detail by target kind: rule chips, base field+hint, or proxy name. */
+function EventBody({ e, undone }: { e: AuditEvent; undone: boolean }) {
+  const kind = e.target?.kind ?? (e.ruleId ? 'rule' : undefined);
+
+  if (kind === 'rule') {
+    const before = e.before as RuleSnapshot | undefined;
+    const after = e.after as RuleSnapshot | undefined;
+    const snap = after ?? before;
+    if (!snap) return null;
+    const policyChange =
+      before && after && before.policy !== after.policy
+        ? `${before.policy} → ${after.policy}`
+        : null;
+    return (
+      <>
+        <Badge tone="neutral">{snap.anchor}</Badge>
+        <code className="font-mono text-[12px] text-[var(--color-muted)]">{snap.type}</code>
+        <code
+          className={`font-mono text-[12px] ${
+            undone ? 'line-through text-[var(--color-muted)]' : 'text-[var(--color-fg)]'
+          }`}
+        >
+          {snap.value || '—'}
+        </code>
+        <span className="text-[var(--color-muted)]">→</span>
+        <Badge tone={undone ? 'neutral' : 'accent'}>{snap.policy}</Badge>
+        {policyChange && (
+          <span className="ml-1 font-mono text-[11px] text-[var(--color-muted)]">
+            ({policyChange})
+          </span>
+        )}
+      </>
+    );
+  }
+
+  if (kind === 'base') {
+    const field = e.target?.kind === 'base' ? e.target.field : undefined;
+    const hint = valueHint(e.after ?? e.before);
+    return (
+      <>
+        {field && <code className="font-mono text-[12px] text-[var(--color-fg)]">{field}</code>}
+        {hint && (
+          <span className="max-w-[280px] truncate text-[12px] text-[var(--color-muted)]">
+            {hint}
+          </span>
+        )}
+      </>
+    );
+  }
+
+  if ((kind === 'proxy' || kind === 'proxy-group') && e.target && 'name' in e.target) {
+    return <code className="font-mono text-[12px] text-[var(--color-fg)]">{e.target.name}</code>;
+  }
+
+  return null;
 }
 
 function dayKey(ts: number): string {
@@ -181,15 +279,11 @@ export default function HistoryPage() {
               {g.events.map((e) => {
                 const undone = !!e.undone_by;
                 const isUndo = !!e.undoes;
-                const target = e.after ?? e.before;
-                const policyChange =
-                  e.op === 'rule.update' && e.before && e.after && e.before.policy !== e.after.policy
-                    ? `${e.before.policy} → ${e.after.policy}`
-                    : null;
+                const { label, glyph } = describeOp(e.op);
                 return (
                   <TimelineEvent
                     key={e.id}
-                    glyph={opGlyph(e.op, isUndo)}
+                    glyph={isUndo ? 'undo' : glyph}
                     time={timeLabel(e.ts)}
                     actor={e.actor}
                     faded={undone}
@@ -207,33 +301,8 @@ export default function HistoryPage() {
                     }
                   >
                     <span className="inline-flex items-center gap-1.5 flex-wrap">
-                      <span className="text-[var(--color-muted)] font-medium">
-                        {opLabel(e.op)}
-                      </span>
-                      {target && (
-                        <>
-                          <Badge tone="neutral">{target.anchor}</Badge>
-                          <code className="font-mono text-[12px] text-[var(--color-muted)]">
-                            {target.type}
-                          </code>
-                          <code
-                            className={`font-mono text-[12px] ${
-                              undone
-                                ? 'line-through text-[var(--color-muted)]'
-                                : 'text-[var(--color-fg)]'
-                            }`}
-                          >
-                            {target.value || '—'}
-                          </code>
-                          <span className="text-[var(--color-muted)]">→</span>
-                          <Badge tone={undone ? 'neutral' : 'accent'}>{target.policy}</Badge>
-                          {policyChange && (
-                            <span className="text-[11px] text-[var(--color-muted)] font-mono ml-1">
-                              ({policyChange})
-                            </span>
-                          )}
-                        </>
-                      )}
+                      <span className="text-[var(--color-muted)] font-medium">{label}</span>
+                      <EventBody e={e} undone={undone} />
                       {undone && (
                         <span className="ml-1 text-[11px] text-[var(--color-plum)] italic">
                           已撤销
