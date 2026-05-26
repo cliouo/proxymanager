@@ -39,11 +39,17 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
+    // suppressHydrationWarning: browser extensions (e.g. 沉浸式翻译 /
+    // Immersive Translate) inject attributes like
+    // data-immersive-translate-page-theme onto <html>/<body> before React
+    // hydrates. This tolerates that top-level attribute mismatch only; it
+    // does not affect descendants.
     <html
       lang="zh-CN"
       className={`${inter.variable} ${notoSC.variable} ${jetbrains.variable} ${fraunces.variable}`}
+      suppressHydrationWarning
     >
-      <body>{children}</body>
+      <body suppressHydrationWarning>{children}</body>
     </html>
   );
 }

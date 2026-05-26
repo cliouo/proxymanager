@@ -1,6 +1,9 @@
 # OS
 .DS_Store
 
+# Local scratch (screenshots, throwaway artifacts)
+.tmp/
+
 # External reference projects (cloned separately — see REQUIREMENTS.md §8)
 reference/
 
