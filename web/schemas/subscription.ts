@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { OperatorSchema } from './operator';
 
 /**
  * Default TTL for the fetch cache — within this window subsequent reads of
@@ -41,6 +42,11 @@ export const SubscriptionSchema = z.object({
   content: z.string().optional(),
   /** Tags used by Collections for `subscription_tags` auto-inclusion. */
   tags: z.array(z.string()).default([]),
+  /**
+   * Ordered node-processing pipeline (Sub-Store 节点操作). Applied to this
+   * sub's parsed proxies after fetch/normalise; see lib/proxies/operators.ts.
+   */
+  operators: z.array(OperatorSchema).default([]),
   /** Last successful sync time (ms epoch via Date.now). */
   last_synced_at: z.number().int().optional(),
   /** Sub-Userinfo header parse from the last successful fetch. */
@@ -69,6 +75,7 @@ export const SubscriptionCreateSchema = z
     ttl_ms: z.number().int().positive().default(DEFAULT_SUBSCRIPTION_TTL_MS),
     content: z.string().optional(),
     tags: z.array(z.string()).default([]),
+    operators: z.array(OperatorSchema).default([]),
   })
   .refine(
     (s) => (s.kind === 'remote' ? !!s.url : !!s.content),
@@ -89,6 +96,7 @@ export const SubscriptionUpdateSchema = z.object({
   ttl_ms: z.number().int().positive().optional(),
   content: z.string().optional(),
   tags: z.array(z.string()).optional(),
+  operators: z.array(OperatorSchema).optional(),
 });
 
 export type Subscription = z.infer<typeof SubscriptionSchema>;

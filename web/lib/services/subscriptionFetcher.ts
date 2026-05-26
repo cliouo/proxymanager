@@ -1,5 +1,6 @@
 import { parse, stringify } from 'yaml';
 import { ProblemDetailsError } from '@/lib/http/problem';
+import { applyOperatorsToProviderYaml } from '@/lib/proxies/operators';
 import {
   looksLikeProxyUriList,
   parseProxyUriList,
@@ -24,8 +25,28 @@ export interface FetchSubscriptionResult {
 }
 
 /**
- * Resolve a subscription's current content. The single entry point used by
- * every other caller:
+ * Resolve a subscription's current content — the single entry point used by
+ * every other caller. Returns proxies with the sub's node-processing
+ * pipeline (`operators`) already applied, so the sub-provider endpoint,
+ * collection expansion, and refresh all see the same processed list.
+ *
+ * The fetch cache stores the *raw* (pre-operator) provider YAML, so editing
+ * operators never forces a re-fetch — only the cheap pipeline re-runs.
+ */
+export async function resolveSubscriptionContent(
+  sub: Subscription,
+  options: { noCache?: boolean; timeoutMs?: number } = {},
+): Promise<FetchSubscriptionResult> {
+  const raw = await resolveSubscriptionContentRaw(sub, options);
+  if (!sub.operators || sub.operators.length === 0) return raw;
+  const { yaml, proxyCount } = applyOperatorsToProviderYaml(raw.yaml, sub.operators);
+  return { yaml, traffic: raw.traffic, proxyCount };
+}
+
+/**
+ * Resolve a subscription's *raw* content — fetch/normalise only, no
+ * operator pipeline. Used by {@link resolveSubscriptionContent} and by the
+ * preview endpoint (which applies an unsaved pipeline to these raw proxies).
  *
  *   - kind=local → returns the inline content verbatim, normalised
  *   - kind=remote + !noCache + cache hit (within ttl_ms) → returns cache
@@ -35,7 +56,7 @@ export interface FetchSubscriptionResult {
  * two subs hitting the same airport with the same UA share cache; flipping
  * UA invalidates.
  */
-export async function resolveSubscriptionContent(
+export async function resolveSubscriptionContentRaw(
   sub: Subscription,
   options: { noCache?: boolean; timeoutMs?: number } = {},
 ): Promise<FetchSubscriptionResult> {

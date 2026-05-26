@@ -19,6 +19,7 @@ import { Placeholder, Reveal } from '@/components/ui/Reveal';
 import { StatusDot } from '@/components/ui/StatusDot';
 import { ApiError, api } from '@/lib/client/api';
 import { type Collection, dedupLabel } from '@/lib/types/collection';
+import type { Operator } from '@/schemas/operator';
 
 const DEFAULT_TTL_MS = 10 * 60 * 1000;
 
@@ -40,6 +41,7 @@ interface Subscription {
     expire: number;
   };
   last_error?: string;
+  operators?: Operator[];
 }
 
 interface Meta {
@@ -516,6 +518,36 @@ function CollectionCard({
   );
 }
 
+/** 节点处理入口 —— 跳转全屏流水线工作台；有算子时右上角挂 accent 计数。 */
+function PipelineButton({
+  subId,
+  count,
+  disabled,
+}: {
+  subId: string;
+  count: number;
+  disabled?: boolean;
+}) {
+  const router = useRouter();
+  return (
+    <button
+      type="button"
+      onClick={() => router.push(`/subscriptions/${subId}/pipeline`)}
+      disabled={disabled}
+      title={count > 0 ? `节点处理（${count} 个算子）` : '节点处理'}
+      aria-label={count > 0 ? `节点处理，${count} 个算子` : '节点处理'}
+      className="pm-focus-ring relative w-7 h-7 rounded inline-flex items-center justify-center text-[13px] leading-none transition-colors active:scale-[0.98] disabled:opacity-30 disabled:cursor-not-allowed text-[var(--color-muted)] hover:text-[var(--color-fg)] hover:bg-[var(--color-surface)]"
+    >
+      <span aria-hidden>⌗</span>
+      {count > 0 && (
+        <span className="absolute -top-1 -right-1 min-w-[14px] h-[14px] px-[3px] rounded-full bg-[var(--color-primary-soft)] text-[var(--color-primary-hover)] text-[9px] font-mono leading-[14px] tabular-nums text-center">
+          {count}
+        </span>
+      )}
+    </button>
+  );
+}
+
 /** Strip 内的链接型 IconButton，外观与 IconButton 一致但走 router.push。 */
 function IconLinkButton({
   href,
@@ -694,6 +726,11 @@ function Dossier({
                 </span>
               )}
               <div className="flex items-center gap-0.5 shrink-0 ml-auto">
+                <PipelineButton
+                  subId={sub.id}
+                  count={sub.operators?.length ?? 0}
+                  disabled={anyEditing}
+                />
                 <IconButton
                   onClick={onEditStart}
                   disabled={pending || anyEditing}
