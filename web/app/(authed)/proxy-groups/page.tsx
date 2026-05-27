@@ -713,6 +713,27 @@ function presetDefaults(kind: ProxyGroupKind): Partial<FormState> {
   }
 }
 
+/**
+ * Plain native-field keys a kind surfaces as essentials (so they get hidden
+ * from the advanced block to avoid a double input). `name` is always
+ * essential and always omitted from advanced. Bound-* fields aren't part of
+ * the advanced sections, so they need no guard.
+ */
+function essentialFieldKeys(kind: ProxyGroupKind): Set<string> {
+  switch (kind) {
+    case 'region':
+      return new Set(['filter']);
+    case 'service':
+      return new Set(['proxies', 'filter']);
+    case 'system':
+      return new Set(['proxies']);
+    case 'rule-set-policy':
+      return new Set(['proxies', 'template_id']);
+    default:
+      return new Set();
+  }
+}
+
 function FormPanel({
   form,
   setForm,
@@ -740,6 +761,39 @@ function FormPanel({
     setForm({ ...form, [k]: v });
 
   const boundSub = subs.find((s) => s.id === form.bound_subscription_id) ?? null;
+  const isRaw = form.kind === 'raw';
+  // raw shows the full form expanded; presets keep it folded until asked.
+  const [advancedOpen, setAdvancedOpen] = useState(isRaw);
+  const essential = essentialFieldKeys(form.kind);
+  const showAdv = (key: string) => key !== 'name' && !essential.has(key);
+
+  const proxiesField = (label: string) => (
+    <FormField label={label}>
+      <textarea
+        className="w-full font-mono text-[12px] px-3 py-2 rounded border border-[var(--color-border)] bg-[var(--color-bg)] focus:border-[var(--color-primary)] focus:outline-none"
+        rows={6}
+        value={form.proxies}
+        onChange={(e) => set('proxies', e.target.value)}
+      />
+    </FormField>
+  );
+  const filterField = (
+    <FormField label="filter(正则)">
+      <Input value={form.filter} onChange={(e) => set('filter', e.target.value)} />
+    </FormField>
+  );
+  const templateField = (
+    <FormField label="共享模板(template)">
+      <Select value={form.template_id} onChange={(e) => set('template_id', e.target.value)}>
+        <option value="">(无)</option>
+        {templates.map((t) => (
+          <option key={t.id} value={t.id}>
+            {t.name}
+          </option>
+        ))}
+      </Select>
+    </FormField>
+  );
 
   return (
     <div className="space-y-6 max-w-3xl">
@@ -755,122 +809,202 @@ function FormPanel({
       </div>
       <p className="text-[12px] text-[var(--color-muted)]">{KIND_DESCRIPTIONS[form.kind]}</p>
 
-      {/* Preset-specific helpers above the main form */}
-      {form.kind === 'region' && (
-        <Section title="地区快填">
-          <div className="flex flex-wrap gap-2">
-            {REGIONS.map((r) => (
-              <button
-                key={r.code}
-                type="button"
-                onClick={() =>
-                  setForm({
-                    ...form,
-                    name: form.name || r.nameSuggestion,
-                    filter: r.filter,
-                  })
-                }
-                className="px-3 py-1.5 rounded border border-[var(--color-border)] hover:border-[var(--color-primary)] text-[12px]"
-              >
-                {r.label} ({r.code})
-              </button>
-            ))}
-            <button
-              type="button"
-              onClick={() => {
-                const others = REGIONS.map((r) => r.filter.split('|')[0]).join('|');
-                setForm({
-                  ...form,
-                  name: form.name || '其它',
-                  filter: `^(?!.*(${others})).*`,
-                });
-              }}
-              className="px-3 py-1.5 rounded border border-[var(--color-border)] hover:border-[var(--color-primary)] text-[12px]"
-            >
-              其它(负 lookahead)
-            </button>
-          </div>
-          <p className="text-[11px] text-[var(--color-muted)]">
-            点击后会回填 filter + 名称建议;你仍然可以在下方手改。
-          </p>
-        </Section>
-      )}
-
-      {form.kind === 'single-sub' && (
-        <Section title="绑定订阅源">
-          <FormField label="bound_subscription_id">
-            <Select
-              value={form.bound_subscription_id}
-              onChange={(e) => set('bound_subscription_id', e.target.value)}
-            >
-              <option value="">(请选择)</option>
-              {subs.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name} {s.node_prefix ? `[${s.node_prefix.trim()}]` : '(无 node_prefix)'}
-                </option>
-              ))}
-            </Select>
-          </FormField>
-          {boundSub && !boundSub.node_prefix && (
-            <p className="text-[12px] text-[var(--color-warn)]">
-              该订阅源未设 node_prefix,filter 将无法自动生成。先到「订阅源」页设 node_prefix。
-            </p>
-          )}
-          {boundSub && boundSub.node_prefix && (
-            <p className="text-[12px] text-[var(--color-muted)]">
-              渲染时 filter 自动生成为{' '}
-              <code className="font-mono">{`^${boundSub.node_prefix}`}</code>;
-              本表单 filter 字段会被覆盖。
-            </p>
-          )}
-        </Section>
-      )}
-
-      {form.kind === 'collection-scope' && (
-        <Section title="绑定聚合订阅">
-          <FormField label="bound_collection_id">
-            <Select
-              value={form.bound_collection_id}
-              onChange={(e) => set('bound_collection_id', e.target.value)}
-            >
-              <option value="">(请选择)</option>
-              {collections.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name} ({c.subscription_ids.length} 订阅源 +{' '}
-                  {c.subscription_tags.length} 标签)
-                </option>
-              ))}
-            </Select>
-          </FormField>
-          <p className="text-[12px] text-[var(--color-muted)]">
-            渲染时 proxies 自动从该聚合订阅的成员节点取;本表单 proxies 字段会被覆盖。
-          </p>
-        </Section>
-      )}
-
-      {form.kind === 'all-auto-pair' && isCreate && (
-        <Section title="两个组的命名">
-          <FormField label="select 组名(name 字段)">
-            <Input value={form.name} onChange={(e) => set('name', e.target.value)} />
-          </FormField>
-          <FormField label="url-test 组名(留空 → ${name}-auto)">
-            <Input
-              value={form.notes}
-              onChange={(e) => set('notes', e.target.value)}
-              placeholder={form.name ? `${form.name}-auto` : '自动'}
-            />
-          </FormField>
-          <p className="text-[12px] text-[var(--color-muted)]">
-            提交后会创建两个组:一个 select 组(`proxies: [auto 组名]`),一个 url-test 组
-            (`include-all-proxies: true`,使用下方 url/interval)。
-          </p>
-        </Section>
-      )}
-
-      <Section title="身份">
+      {/* ─── Essentials: the handful of fields this kind actually needs ─── */}
+      <div className="space-y-3">
         <FormField label="名称">
           <Input value={form.name} onChange={(e) => set('name', e.target.value)} />
         </FormField>
+
+        {form.kind === 'region' && (
+          <>
+            <div>
+              <div className="flex flex-wrap gap-2 mb-2">
+                {REGIONS.map((r) => (
+                  <button
+                    key={r.code}
+                    type="button"
+                    onClick={() =>
+                      setForm({ ...form, name: form.name || r.nameSuggestion, filter: r.filter })
+                    }
+                    className="px-3 py-1.5 rounded border border-[var(--color-border)] hover:border-[var(--color-primary)] text-[12px]"
+                  >
+                    {r.label} ({r.code})
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const others = REGIONS.map((r) => r.filter.split('|')[0]).join('|');
+                    setForm({
+                      ...form,
+                      name: form.name || '其它',
+                      filter: `^(?!.*(${others})).*`,
+                    });
+                  }}
+                  className="px-3 py-1.5 rounded border border-[var(--color-border)] hover:border-[var(--color-primary)] text-[12px]"
+                >
+                  其它(负 lookahead)
+                </button>
+              </div>
+            </div>
+            {filterField}
+            <p className="text-[11px] text-[var(--color-muted)]">
+              点上面的地区快填会回填 filter + 名称建议;也可手改正则。type/健康检查在「高级设置」里。
+            </p>
+          </>
+        )}
+
+        {form.kind === 'single-sub' && (
+          <>
+            <FormField label="绑定订阅源">
+              <Select
+                value={form.bound_subscription_id}
+                onChange={(e) => set('bound_subscription_id', e.target.value)}
+              >
+                <option value="">(请选择)</option>
+                {subs.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name} {s.node_prefix ? `[${s.node_prefix.trim()}]` : '(无 node_prefix)'}
+                  </option>
+                ))}
+              </Select>
+            </FormField>
+            {boundSub && !boundSub.node_prefix && (
+              <p className="text-[12px] text-[var(--color-warn)]">
+                该订阅源未设 node_prefix,filter 将无法自动生成。先到「订阅源」页设 node_prefix。
+              </p>
+            )}
+            {boundSub && boundSub.node_prefix && (
+              <p className="text-[12px] text-[var(--color-muted)]">
+                渲染时 filter 自动生成为{' '}
+                <code className="font-mono">{`^${boundSub.node_prefix}`}</code>。
+              </p>
+            )}
+          </>
+        )}
+
+        {form.kind === 'collection-scope' && (
+          <>
+            <FormField label="绑定聚合订阅">
+              <Select
+                value={form.bound_collection_id}
+                onChange={(e) => set('bound_collection_id', e.target.value)}
+              >
+                <option value="">(请选择)</option>
+                {collections.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name} ({c.subscription_ids.length} 订阅源 + {c.subscription_tags.length} 标签)
+                  </option>
+                ))}
+              </Select>
+            </FormField>
+            <p className="text-[12px] text-[var(--color-muted)]">
+              渲染时 proxies 自动从该聚合订阅的成员节点取。
+            </p>
+          </>
+        )}
+
+        {form.kind === 'service' && (
+          <>
+            {proxiesField('固定出口 proxies(一行一项)')}
+            {filterField}
+            <p className="text-[11px] text-[var(--color-muted)]">
+              显式列出的出口 + filter 兜底匹配(Emby 形态)。
+            </p>
+          </>
+        )}
+
+        {form.kind === 'system' && proxiesField('proxies(一行一项)')}
+
+        {form.kind === 'rule-set-policy' && (
+          <>
+            {proxiesField('可选出口 proxies(一行一项)')}
+            {templateField}
+          </>
+        )}
+
+        {form.kind === 'all-auto-pair' && isCreate && (
+          <>
+            <FormField label="url-test 组名(留空 → ${名称}-auto)">
+              <Input
+                value={form.notes}
+                onChange={(e) => set('notes', e.target.value)}
+                placeholder={form.name ? `${form.name}-auto` : '自动'}
+              />
+            </FormField>
+            <p className="text-[12px] text-[var(--color-muted)]">
+              提交会创建两个组:select 组(指向 auto 组)+ url-test 组(全部节点自动测速)。url/interval 在「高级设置」。
+            </p>
+          </>
+        )}
+      </div>
+
+      {/* ─── Advanced: every native field, folded unless raw ─────────── */}
+      {isRaw ? (
+        <AdvancedFields form={form} set={set} showAdv={showAdv} templates={templates} />
+      ) : (
+        <div className="rounded border border-[var(--color-border)]">
+          <button
+            type="button"
+            onClick={() => setAdvancedOpen((v) => !v)}
+            className="w-full flex items-center justify-between px-4 py-2.5 text-[13px] text-[var(--color-fg-soft)] hover:bg-[var(--color-surface)]"
+          >
+            <span>⚙ 高级设置(全部 mihomo 字段)</span>
+            <span className="text-[var(--color-muted)]">{advancedOpen ? '收起 ▴' : '展开 ▾'}</span>
+          </button>
+          {advancedOpen && (
+            <div className="px-4 pb-4 pt-1 space-y-6 border-t border-[var(--color-border)]">
+              <AdvancedFields form={form} set={set} showAdv={showAdv} templates={templates} />
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="flex gap-3 pt-4 border-t border-[var(--color-border)]">
+        <Button onClick={onSubmit} disabled={busy}>
+          {busy ? '保存中…' : isCreate ? '创建' : '保存'}
+        </Button>
+        <Button variant="secondary" onClick={onCancel} disabled={busy}>
+          取消
+        </Button>
+        {!isRaw && (
+          <button
+            type="button"
+            onClick={() => {
+              if (confirm('转为自由编辑后无法自动转回预设(形态识别会误判)。继续?')) {
+                set('kind', 'raw');
+                setAdvancedOpen(true);
+              }
+            }}
+            className="ml-auto text-[12px] text-[var(--color-muted)] hover:text-[var(--color-fg)] underline"
+          >
+            转为自由编辑 →
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The full native-field surface, split into the original sections. `showAdv`
+ * hides fields already surfaced in the preset essentials so they don't appear
+ * twice. Rendered inline for raw, or inside the collapsible for presets.
+ */
+function AdvancedFields({
+  form,
+  set,
+  showAdv,
+  templates,
+}: {
+  form: FormState;
+  set: <K extends keyof FormState>(k: K, v: FormState[K]) => void;
+  showAdv: (key: string) => boolean;
+  templates: ProxyGroupTemplate[];
+}) {
+  return (
+    <>
+      <Section title="身份">
         <FormField label="kind(类型标签)">
           <Select value={form.kind} onChange={(e) => set('kind', e.target.value as ProxyGroupKind)}>
             {Object.entries(KIND_LABELS).map(([k, label]) => (
@@ -895,30 +1029,31 @@ function FormPanel({
         <FormField label="备注 notes">
           <Input value={form.notes} onChange={(e) => set('notes', e.target.value)} />
         </FormField>
-        <FormField label="template_id(共享模板)">
-          <Select
-            value={form.template_id}
-            onChange={(e) => set('template_id', e.target.value)}
-          >
-            <option value="">(无)</option>
-            {templates.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}
-              </option>
-            ))}
-          </Select>
-        </FormField>
+        {showAdv('template_id') && (
+          <FormField label="template_id(共享模板)">
+            <Select value={form.template_id} onChange={(e) => set('template_id', e.target.value)}>
+              <option value="">(无)</option>
+              {templates.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </Select>
+          </FormField>
+        )}
       </Section>
 
       <Section title="成员">
-        <FormField label="proxies(一行一项)">
-          <textarea
-            className="w-full font-mono text-[12px] px-3 py-2 rounded border border-[var(--color-border)] bg-[var(--color-bg)] focus:border-[var(--color-primary)] focus:outline-none"
-            rows={6}
-            value={form.proxies}
-            onChange={(e) => set('proxies', e.target.value)}
-          />
-        </FormField>
+        {showAdv('proxies') && (
+          <FormField label="proxies(一行一项)">
+            <textarea
+              className="w-full font-mono text-[12px] px-3 py-2 rounded border border-[var(--color-border)] bg-[var(--color-bg)] focus:border-[var(--color-primary)] focus:outline-none"
+              rows={6}
+              value={form.proxies}
+              onChange={(e) => set('proxies', e.target.value)}
+            />
+          </FormField>
+        )}
         <FormField label="use(provider 名,一行一项)">
           <textarea
             className="w-full font-mono text-[12px] px-3 py-2 rounded border border-[var(--color-border)] bg-[var(--color-bg)] focus:border-[var(--color-primary)] focus:outline-none"
@@ -942,9 +1077,11 @@ function FormPanel({
           checked={form['include-all']}
           onChange={(v) => set('include-all', v)}
         />
-        <FormField label="filter(正则)">
-          <Input value={form.filter} onChange={(e) => set('filter', e.target.value)} />
-        </FormField>
+        {showAdv('filter') && (
+          <FormField label="filter(正则)">
+            <Input value={form.filter} onChange={(e) => set('filter', e.target.value)} />
+          </FormField>
+        )}
         <FormField label="exclude-filter(正则)">
           <Input
             value={form['exclude-filter']}
@@ -1002,7 +1139,7 @@ function FormPanel({
         </Section>
       )}
 
-      <Section title="高级">
+      <Section title="其他">
         <FormField label="dialer-proxy(链式代理上游)">
           <Input
             value={form['dialer-proxy']}
@@ -1025,16 +1162,7 @@ function FormPanel({
           <Input value={form.icon} onChange={(e) => set('icon', e.target.value)} />
         </FormField>
       </Section>
-
-      <div className="flex gap-3 pt-4 border-t border-[var(--color-border)]">
-        <Button onClick={onSubmit} disabled={busy}>
-          {busy ? '保存中…' : isCreate ? '创建' : '保存'}
-        </Button>
-        <Button variant="secondary" onClick={onCancel} disabled={busy}>
-          取消
-        </Button>
-      </div>
-    </div>
+    </>
   );
 }
 
