@@ -169,7 +169,6 @@ function extractGroupSources(content: string): GroupSource[] {
 function detectKind(src: GroupSource): ProxyGroupKind {
   const eff = src.effective;
   const name = String(eff['name'] ?? '');
-  const type = eff['type'];
   const filter = eff['filter'];
   const proxies = eff['proxies'];
   const includeAllProviders = eff['include-all-providers'] === true || eff['include-all'] === true;
@@ -183,9 +182,11 @@ function detectKind(src: GroupSource): ProxyGroupKind {
   if (includeAllProviders && Array.isArray(proxies) && typeof filter === 'string') {
     return 'service';
   }
-  if (includeAllProviders && type === 'url-test' && !filter && !Array.isArray(proxies)) {
-    return 'all-auto-pair';
-  }
+  // A lone url-test-over-everything group is NOT an all-auto-pair: that kind
+  // describes the two-group UI preset (select「全部」+ url-test「自动」). Migration
+  // sees groups one at a time and can't tell a real pair from a standalone
+  // auto-test, so we label it the honest fallback — raw — and let the user
+  // re-tag it in the UI if they want.
   return 'raw';
 }
 
