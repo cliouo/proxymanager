@@ -359,11 +359,22 @@ async function main(): Promise<void> {
     },
   );
 
-  const oldPg = (parseYaml(oldRendered.content) as { 'proxy-groups'?: unknown[] } | undefined)?.['proxy-groups'] ?? [];
-  const newPg = (parseYaml(newRendered.content) as { 'proxy-groups'?: unknown[] } | undefined)?.['proxy-groups'] ?? [];
+  // Parse BOTH sides with merge:true so the literal block's `<<: *pr` merge
+  // keys resolve to the same flat fields the hash render already emits —
+  // otherwise OLD keeps a literal `<<` key and the comparison is apples-to-
+  // oranges. Key order is irrelevant to mihomo, so canonicalise (sort object
+  // keys, preserve array order) before stringifying.
+  const oldPg =
+    (parseYaml(oldRendered.content, { merge: true }) as { 'proxy-groups'?: unknown[] } | undefined)?.[
+      'proxy-groups'
+    ] ?? [];
+  const newPg =
+    (parseYaml(newRendered.content, { merge: true }) as { 'proxy-groups'?: unknown[] } | undefined)?.[
+      'proxy-groups'
+    ] ?? [];
 
-  const oldStr = JSON.stringify(oldPg, null, 2);
-  const newStr = JSON.stringify(newPg, null, 2);
+  const oldStr = JSON.stringify(canonicalise(oldPg), null, 2);
+  const newStr = JSON.stringify(canonicalise(newPg), null, 2);
   const equal = oldStr === newStr;
   console.log(`迁移前 proxy-groups 条数 : ${oldPg.length}`);
   console.log(`迁移后 proxy-groups 条数 : ${newPg.length}`);
@@ -486,6 +497,23 @@ async function maybeCommitMarkerOnly(args: CommitMarkerOnlyArgs): Promise<void> 
   tx.set(REDIS_KEYS.base.meta, newMeta);
   await tx.exec();
   console.log(`\n✓ 已写入 marker。备份:base:content:backup:${ts}\n`);
+}
+
+/**
+ * Recursively sort object keys (arrays keep their order). Two proxy-group
+ * maps that differ only in key order are identical to mihomo, so we
+ * normalise key order before the byte-equivalence comparison.
+ */
+function canonicalise(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(canonicalise);
+  if (v && typeof v === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const k of Object.keys(v as Record<string, unknown>).sort()) {
+      out[k] = canonicalise((v as Record<string, unknown>)[k]);
+    }
+    return out;
+  }
+  return v;
 }
 
 function sanitizeTemplateName(anchor: string): string {
