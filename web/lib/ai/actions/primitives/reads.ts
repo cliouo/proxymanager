@@ -10,24 +10,27 @@
 
 import { z } from 'zod';
 import { listRules } from '@/lib/repos/rulesRepo';
+import { listRuleSets } from '@/lib/repos/ruleSetsRepo';
 import { loadParsedBase } from '@/lib/services/rulesService';
 import { defineAction } from '../types';
 
 const getBaseOverview = defineAction({
   name: 'get_base_overview',
   description:
-    '读取当前 base.yaml 的结构摘要：可用的规则锚点(anchors)、策略组/节点名(policies)、代理集合(proxy-providers)、规则集(rule-providers)。回答"有哪些策略组/锚点能用"或写规则前先查可用目标时调用。不含任何节点凭证。',
+    '读取当前 base.yaml 的结构摘要：可用的规则锚点(anchors)、策略组/节点名(policies)、代理集合(proxy-providers)、规则集(ruleProviders，即规则集库的 name，RULE-SET 规则可引用)。回答"有哪些策略组/锚点/规则集能用"或写规则前先查可用目标时调用。不含任何节点凭证。',
   input: z.object({}),
   risk: 'read',
   async run() {
-    const parsed = await loadParsedBase();
+    // rule-providers are now platform-managed (the rule-set library), not the
+    // base.yaml block — surface their names from the hash, not the parsed base.
+    const [parsed, sets] = await Promise.all([loadParsedBase(), listRuleSets()]);
     return {
       kind: 'base-overview',
       data: {
         anchors: parsed.anchors,
         policies: parsed.policies,
         proxyProviders: parsed.proxyProviders,
-        ruleProviders: parsed.ruleProviders,
+        ruleProviders: sets.map((s) => s.name),
       },
     };
   },

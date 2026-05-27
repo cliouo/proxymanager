@@ -16,6 +16,7 @@
     "test:coverage": "vitest run --coverage",
     "import:substore": "tsx --env-file=.env.local scripts/import-from-substore.ts",
     "migrate:rules": "tsx --env-file=.env.local scripts/migrate-rules-into-hash.ts",
+    "migrate:providers": "tsx --env-file=.env.local scripts/migrate-providers-into-hash.ts",
     "dedupe:rules": "tsx --env-file=.env.local scripts/dedupe-rules.ts",
     "vercel:dev": "vercel dev",
     "vercel:link": "vercel link",

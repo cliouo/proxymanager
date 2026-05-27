@@ -6,10 +6,16 @@ import {
   listRuleSets,
   upsertRuleSet,
 } from '@/lib/repos/ruleSetsRepo';
-import type { RuleSet, RuleSetCreate, RuleSetUpdate } from '@/schemas';
+import { ruleSetIssues, type RuleSet, type RuleSetCreate, type RuleSetUpdate } from '@/schemas';
 
 export function nowSeconds(): number {
   return Math.floor(Date.now() / 1000);
+}
+
+/** Throw a 422 if the (possibly merged) record violates a cross-field invariant. */
+function assertInvariants(set: Pick<RuleSet, 'source' | 'format' | 'content' | 'url'>): void {
+  const issues = ruleSetIssues(set);
+  if (issues.length > 0) throw ProblemDetailsError.unprocessable(issues[0].message);
 }
 
 export function generateRuleSetId(): string {
@@ -38,6 +44,7 @@ export async function replaceRuleSet(id: string, input: RuleSetCreate): Promise<
     }
   }
   const next: RuleSet = { ...input, id, updated_at: nowSeconds() };
+  assertInvariants(next);
   await upsertRuleSet(next);
   return next;
 }
@@ -54,6 +61,7 @@ export async function patchRuleSet(id: string, patch: RuleSetUpdate): Promise<Ru
     }
   }
   const next: RuleSet = { ...current, ...patch, id, updated_at: nowSeconds() };
+  assertInvariants(next);
   await upsertRuleSet(next);
   return next;
 }

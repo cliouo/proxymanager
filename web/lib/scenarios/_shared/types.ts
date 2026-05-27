@@ -36,6 +36,7 @@ export type AuditTarget =
   | { kind: 'rule'; id: string }
   | { kind: 'proxy'; name: string }
   | { kind: 'proxy-group'; name: string }
+  | { kind: 'rule-set'; name: string }
   | { kind: 'base'; field?: string };
 
 /**

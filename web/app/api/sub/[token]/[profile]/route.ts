@@ -5,6 +5,7 @@ import { withProblemDetails } from '@/lib/http/handler';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { getBase } from '@/lib/repos/baseRepo';
 import { listRules } from '@/lib/repos/rulesRepo';
+import { listRuleSets } from '@/lib/repos/ruleSetsRepo';
 
 export const dynamic = 'force-dynamic';
 
@@ -32,9 +33,14 @@ export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
     noCache,
   });
 
-  // Step 2 — splice rules into anchored slots (existing behaviour).
-  const rules = await listRules();
-  const rendered = renderBase(expandedContent, rules);
+  // Step 2 — splice rules into anchored slots + inject the referenced
+  // rule-providers (managed library → base.yaml at render time).
+  const [rules, providers] = await Promise.all([listRules(), listRuleSets()]);
+  const origin = new URL(request.url).origin;
+  const rendered = renderBase(expandedContent, rules, {
+    providers,
+    providerUrlBase: `${origin}/api/rule-providers/${token}`,
+  });
 
   return new Response(rendered.content, {
     status: 200,

@@ -62,6 +62,7 @@ export default function RulesPage() {
   const [rules, setRules] = useState<Rule[]>([]);
   const [anchors, setAnchors] = useState<string[]>([]);
   const [policies, setPolicies] = useState<string[]>([]);
+  const [ruleSets, setRuleSets] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -77,14 +78,16 @@ export default function RulesPage() {
   const reload = useCallback(async () => {
     setError(null);
     try {
-      const [r, a, p] = await Promise.all([
+      const [r, a, p, rs] = await Promise.all([
         api<{ data: Rule[] }>('/api/v1/rules?limit=500&sort=rank:asc'),
         api<{ data: string[] }>('/api/v1/anchors').catch(() => ({ data: [] as string[] })),
         api<{ data: string[] }>('/api/v1/policies').catch(() => ({ data: [] as string[] })),
+        api<{ data: { name: string }[] }>('/api/v1/rule-sets').catch(() => ({ data: [] as { name: string }[] })),
       ]);
       setRules(r.data);
       setAnchors(a.data);
       setPolicies(p.data);
+      setRuleSets(rs.data.map((s) => s.name));
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     } finally {
@@ -346,6 +349,7 @@ export default function RulesPage() {
             mode="create"
             anchors={anchors}
             policies={policies}
+            ruleSets={ruleSets}
             onSubmit={onCreate}
             onCancel={() => setAdding(false)}
           />
@@ -398,6 +402,7 @@ export default function RulesPage() {
                     siblings={allInAnchor.sort((a, b) => a.rank - b.rank)}
                     policies={policies}
                     anchors={anchors}
+                    ruleSets={ruleSets}
                     busy={busy}
                     editingId={editingId}
                     onSetEditing={(id) => {
@@ -438,6 +443,7 @@ function GroupBody({
   siblings,
   policies,
   anchors,
+  ruleSets,
   busy,
   editingId,
   onSetEditing,
@@ -455,6 +461,7 @@ function GroupBody({
   siblings: Rule[];
   policies: string[];
   anchors: string[];
+  ruleSets: string[];
   busy: boolean;
   editingId: string | null;
   onSetEditing: (id: string | null) => void;
@@ -595,6 +602,7 @@ function GroupBody({
                     mode="edit"
                     anchors={anchors}
                     policies={policies}
+                    ruleSets={ruleSets}
                     initial={r}
                     onSubmit={(f) => onEdit(r.id, f)}
                     onCancel={() => onSetEditing(null)}
@@ -636,6 +644,7 @@ function RuleForm({
   mode,
   anchors,
   policies,
+  ruleSets,
   initial,
   onSubmit,
   onCancel,
@@ -643,6 +652,7 @@ function RuleForm({
   mode: 'create' | 'edit';
   anchors: string[];
   policies: string[];
+  ruleSets: string[];
   initial?: Rule;
   onSubmit: (fields: RuleFields) => Promise<void>;
   onCancel: () => void;
@@ -663,6 +673,7 @@ function RuleForm({
   }, [anchors, policies, anchor, policy, initial]);
 
   const noValue = NO_VALUE_TYPES.has(type);
+  const isRuleSet = type === 'RULE-SET';
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -709,14 +720,35 @@ function RuleForm({
           <option key={t}>{t}</option>
         ))}
       </Select>
-      <Input
-        placeholder={noValue ? '（此类型无需值）' : '值（如 emby.media）'}
-        value={noValue ? '' : value}
-        onChange={(e) => setValue(e.target.value)}
-        disabled={noValue}
-        className="h-8 text-[12px] flex-1 min-w-[160px]"
-        autoFocus={mode === 'create'}
-      />
+      {isRuleSet ? (
+        <Select
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          className="h-8 text-[12px] !pr-7 flex-1 min-w-[160px]"
+          title="引用规则集库中的条目（被引用的会注入到 rule-providers）"
+        >
+          <option value="">
+            {ruleSets.length ? '选择规则集…' : '（暂无规则集，请先到「规则集」页创建）'}
+          </option>
+          {value && !ruleSets.includes(value) ? (
+            <option value={value}>{value}（库中不存在）</option>
+          ) : null}
+          {ruleSets.map((n) => (
+            <option key={n} value={n}>
+              {n}
+            </option>
+          ))}
+        </Select>
+      ) : (
+        <Input
+          placeholder={noValue ? '（此类型无需值）' : '值（如 emby.media）'}
+          value={noValue ? '' : value}
+          onChange={(e) => setValue(e.target.value)}
+          disabled={noValue}
+          className="h-8 text-[12px] flex-1 min-w-[160px]"
+          autoFocus={mode === 'create'}
+        />
+      )}
       <Select value={policy} onChange={(e) => setPolicy(e.target.value)} className="h-8 text-[12px] !pr-7 w-[130px]">
         {policy && !policies.includes(policy) ? <option>{policy}</option> : null}
         {policies.map((p) => (

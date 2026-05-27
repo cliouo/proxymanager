@@ -19,6 +19,7 @@ export const AuditTargetSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('rule'), id: z.string().min(1) }),
   z.object({ kind: z.literal('proxy'), name: z.string().min(1) }),
   z.object({ kind: z.literal('proxy-group'), name: z.string().min(1) }),
+  z.object({ kind: z.literal('rule-set'), name: z.string().min(1) }),
   z.object({ kind: z.literal('base'), field: z.string().optional() }),
 ]);
 

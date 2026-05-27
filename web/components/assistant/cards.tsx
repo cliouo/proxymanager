@@ -354,7 +354,11 @@ function ConfigDiffView({ diff }: { diff: unknown }) {
 
 function ConfirmWriteCard({ data, onResolved }: CardProps) {
   const d = data as { action: string; summary: string; diff: unknown; token: string };
-  const isConfigEdit = d.action === 'set_config_section' || d.action === 'delete_config_section';
+  // Pick the renderer by diff shape: a YAML line-diff carries before/afterYaml
+  // (config-section + rule-provider edits); the rule diff carries before/after
+  // rule objects. Shape-based so new YAML-diff actions render without a list here.
+  const diffObj = (d.diff ?? {}) as { beforeYaml?: string; afterYaml?: string };
+  const isYamlDiff = 'beforeYaml' in diffObj || 'afterYaml' in diffObj;
   const [state, setState] = useState<'idle' | 'busy' | 'cancelled' | 'error'>('idle');
   const [result, setResult] = useState<{ kind: string; data: unknown } | null>(null);
   const [error, setError] = useState('');
@@ -393,7 +397,7 @@ function ConfirmWriteCard({ data, onResolved }: CardProps) {
         待你确认的写操作
       </div>
       <div className="mb-2 text-[13px] text-[var(--color-fg)]">{d.summary}</div>
-      {isConfigEdit ? <ConfigDiffView diff={d.diff} /> : <DiffView diff={d.diff} />}
+      {isYamlDiff ? <ConfigDiffView diff={d.diff} /> : <DiffView diff={d.diff} />}
       {state === 'error' && (
         <div className="mt-2 text-[12px] text-[var(--color-danger)]">{error}</div>
       )}

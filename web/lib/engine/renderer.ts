@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import type { Rule } from '@/schemas';
+import { stringify } from 'yaml';
+import type { Rule, RuleSet } from '@/schemas';
 
 export interface AnchorStats {
   anchor: string;
@@ -11,9 +12,26 @@ export interface RenderResult {
   buildId: string;
   anchorsApplied: AnchorStats[];
   unmatchedAnchors: string[];
+  /** Names of rule-sets emitted into the `rule-providers:` block (referenced + enabled). */
+  ruleProvidersApplied: string[];
+}
+
+export interface RenderOptions {
+  /** The rule-set library. Only entries referenced by an enabled RULE-SET rule are emitted. */
+  providers?: RuleSet[];
+  /**
+   * Absolute base for local providers' URLs, e.g.
+   * `https://host/api/rule-providers/<token>`. The provider name is appended.
+   * Remote providers ignore this and use their own `url`.
+   */
+  providerUrlBase?: string;
 }
 
 const ANCHOR_LINE_PATTERN = /^([ \t]*)#\s*===\s*ANCHOR:\s*([\w-]+)\s*===\s*$/gm;
+/** Where the managed `rule-providers:` block is injected. Distinct from rule anchors. */
+const RULE_PROVIDERS_MARKER = /^[ \t]*#\s*===\s*RULE-PROVIDERS\s*===[ \t]*$/m;
+/** Placeholder host shown when no real provider URL base is supplied (preview/AI views). */
+const PLACEHOLDER_URL_BASE = '<rule-providers-base>';
 
 export function renderRule(rule: Rule): string {
   if (rule.type === 'MATCH') return `MATCH,${rule.policy}`;
@@ -34,7 +52,49 @@ export function groupRulesByAnchor(rules: Rule[]): Map<string, Rule[]> {
   return byAnchor;
 }
 
-export function renderBase(baseContent: string, rules: Rule[]): RenderResult {
+/** Provider names referenced by RULE-SET rules among the given (already-active) rules. */
+export function referencedProviderNames(rules: Rule[]): Set<string> {
+  const refs = new Set<string>();
+  for (const rule of rules) {
+    if (rule.type === 'RULE-SET' && rule.value) refs.add(rule.value);
+  }
+  return refs;
+}
+
+/**
+ * Build the `rule-providers:` YAML block for the subset of `providers` that are
+ * referenced by `refs` (an enabled RULE-SET rule points at them). A rule-set is
+ * "off" simply by having no enabled rule reference it. Returns '' when empty.
+ */
+function renderRuleProviders(
+  providers: RuleSet[],
+  refs: Set<string>,
+  urlBase: string,
+): { block: string; applied: string[] } {
+  const used = providers
+    .filter((p) => refs.has(p.name))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  if (used.length === 0) return { block: '', applied: [] };
+
+  const map: Record<string, Record<string, unknown>> = {};
+  for (const p of used) {
+    const decl: Record<string, unknown> = { type: 'http' };
+    if (p.behavior) decl.behavior = p.behavior;
+    decl.format = p.format;
+    decl.url = p.source === 'remote' ? p.url : `${urlBase}/${p.name}`;
+    decl.interval = p.interval ?? 86400;
+    if (p.proxy) decl.proxy = p.proxy;
+    map[p.name] = decl;
+  }
+  const block = stringify({ 'rule-providers': map }).trimEnd();
+  return { block, applied: used.map((p) => p.name) };
+}
+
+export function renderBase(
+  baseContent: string,
+  rules: Rule[],
+  opts: RenderOptions = {},
+): RenderResult {
   // Parked rules (enabled === false) stay in the hash but never reach the
   // rendered config. Legacy rules have no `enabled` field and render normally.
   const active = rules.filter((rule) => rule.enabled !== false);
@@ -42,17 +102,30 @@ export function renderBase(baseContent: string, rules: Rule[]): RenderResult {
   const seenAnchors = new Set<string>();
   const stats: AnchorStats[] = [];
 
-  const content = baseContent.replace(ANCHOR_LINE_PATTERN, (line, indent: string, name: string) => {
-    seenAnchors.add(name);
-    const matched = byAnchor.get(name);
-    if (!matched || matched.length === 0) {
-      stats.push({ anchor: name, ruleCount: 0 });
-      return line;
-    }
-    stats.push({ anchor: name, ruleCount: matched.length });
-    const rendered = matched.map((r) => `${indent}- ${renderRule(r)}`).join('\n');
-    return `${line}\n${rendered}`;
-  });
+  let content = baseContent.replace(
+    ANCHOR_LINE_PATTERN,
+    (line, indent: string, name: string) => {
+      seenAnchors.add(name);
+      const matched = byAnchor.get(name);
+      if (!matched || matched.length === 0) {
+        stats.push({ anchor: name, ruleCount: 0 });
+        return line;
+      }
+      stats.push({ anchor: name, ruleCount: matched.length });
+      const rendered = matched.map((r) => `${indent}- ${renderRule(r)}`).join('\n');
+      return `${line}\n${rendered}`;
+    },
+  );
+
+  // Inject the managed rule-providers block at its marker — only the providers
+  // an enabled RULE-SET rule actually references make it into the output.
+  const refs = referencedProviderNames(active);
+  const { block, applied } = renderRuleProviders(
+    opts.providers ?? [],
+    refs,
+    opts.providerUrlBase ?? PLACEHOLDER_URL_BASE,
+  );
+  content = content.replace(RULE_PROVIDERS_MARKER, () => block);
 
   const unmatchedAnchors: string[] = [];
   for (const anchor of byAnchor.keys()) {
@@ -61,5 +134,11 @@ export function renderBase(baseContent: string, rules: Rule[]): RenderResult {
 
   const buildId = createHash('sha256').update(content, 'utf8').digest('hex').slice(0, 8);
 
-  return { content, buildId, anchorsApplied: stats, unmatchedAnchors };
+  return {
+    content,
+    buildId,
+    anchorsApplied: stats,
+    unmatchedAnchors,
+    ruleProvidersApplied: applied,
+  };
 }

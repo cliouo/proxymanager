@@ -17,10 +17,12 @@ import { chainedProxyScenario } from './chained-proxy/scenario';
 import { configSectionScenario } from './config-section/scenario';
 import { echoScenario } from './dev-echo/scenario';
 import { ruleAnchorAppendScenario } from './rule-anchor-append/scenario';
+import { ruleProviderScenario } from './rule-provider/scenario';
 import type { Scenario, ScenarioDescriptor } from './_shared/types';
 
 const ALL_SCENARIOS: Scenario[] = [
   ruleAnchorAppendScenario,
+  ruleProviderScenario,
   chainedProxyScenario,
   configSectionScenario,
   echoScenario,

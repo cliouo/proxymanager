@@ -11,6 +11,10 @@ describe('action registry → DeepSeek tools', () => {
     expect(getAction('add_rule')?.risk).toBe('write');
     expect(getAction('update_rule')?.risk).toBe('write');
     expect(getAction('delete_rule')?.risk).toBe('write');
+    expect(getAction('list_rule_providers')?.risk).toBe('read');
+    expect(getAction('create_rule_provider')?.risk).toBe('write');
+    expect(getAction('update_rule_provider')?.risk).toBe('write');
+    expect(getAction('delete_rule_provider')?.risk).toBe('write');
   });
 
   it('generates a valid function tool schema for every action (incl. refined inputs)', () => {

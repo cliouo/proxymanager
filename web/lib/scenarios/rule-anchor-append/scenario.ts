@@ -26,8 +26,10 @@ import { ProblemDetailsError } from '@/lib/http/problem';
 import { batchUpsertAndDelete } from '@/lib/repos/rulesRepo';
 import {
   ensureValidAnchorAndPolicy,
+  ensureValidRuleSetRef,
   generateRuleId,
   loadParsedBase,
+  loadProviderNames,
   nowSeconds,
 } from '@/lib/services/rulesService';
 import {
@@ -69,6 +71,7 @@ const create: OpHandler = async (ctx, raw) => {
   const input = CreatePayloadSchema.parse(raw);
   const parsedBase = await loadParsedBase();
   ensureValidAnchorAndPolicy(input, parsedBase);
+  if (input.type === 'RULE-SET') ensureValidRuleSetRef(input, await loadProviderNames());
 
   const rank = input.rank ?? (await ctx.rules.computeNextRank(input.anchor));
   const now = nowSeconds();
@@ -107,6 +110,7 @@ const replace: OpHandler = async (ctx, raw) => {
 
   const parsedBase = await loadParsedBase();
   ensureValidAnchorAndPolicy(body, parsedBase);
+  if (body.type === 'RULE-SET') ensureValidRuleSetRef(body, await loadProviderNames());
 
   const updated: Rule = {
     id,
@@ -146,6 +150,9 @@ const patch: OpHandler = async (ctx, raw) => {
   if (body.anchor !== undefined || body.policy !== undefined) {
     const parsedBase = await loadParsedBase();
     ensureValidAnchorAndPolicy({ anchor: updated.anchor, policy: updated.policy }, parsedBase);
+  }
+  if ((body.type !== undefined || body.value !== undefined) && updated.type === 'RULE-SET') {
+    ensureValidRuleSetRef(updated, await loadProviderNames());
   }
   await ctx.rules.upsert(updated);
 
@@ -187,7 +194,13 @@ const batchCreate: OpHandler = async (ctx, raw) => {
   const parsedBase = await loadParsedBase();
 
   // Pre-validate everything; refuse the whole batch if any anchor/policy is invalid.
-  for (const r of inputs) ensureValidAnchorAndPolicy(r, parsedBase);
+  const providerNames = inputs.some((r) => r.type === 'RULE-SET')
+    ? await loadProviderNames()
+    : new Set<string>();
+  for (const r of inputs) {
+    ensureValidAnchorAndPolicy(r, parsedBase);
+    if (r.type === 'RULE-SET') ensureValidRuleSetRef(r, providerNames);
+  }
 
   // Compute starting rank per anchor once.
   const nextRankByAnchor = new Map<string, number>();

@@ -1,7 +1,12 @@
 import type { BaseOrphan, BaseValidationResult, Rule } from '@/schemas';
 import type { ParsedBase } from './parser';
 
-export function validateBase(parsed: ParsedBase, rules: Rule[]): BaseValidationResult {
+export function validateBase(
+  parsed: ParsedBase,
+  rules: Rule[],
+  /** Rule-set library names. When supplied, RULE-SET rules pointing outside it are flagged. */
+  providerNames?: Set<string>,
+): BaseValidationResult {
   const anchorSet = new Set(parsed.anchors);
   const policySet = new Set(parsed.policies);
   const orphans: BaseOrphan[] = [];
@@ -17,6 +22,12 @@ export function validateBase(parsed: ParsedBase, rules: Rule[]): BaseValidationR
       orphans.push({
         rule_id: rule.id,
         reason: `policy "${rule.policy}" not present in proxy-groups`,
+      });
+    }
+    if (providerNames && rule.type === 'RULE-SET' && rule.value && !providerNames.has(rule.value)) {
+      orphans.push({
+        rule_id: rule.id,
+        reason: `RULE-SET 引用的规则集 "${rule.value}" 不在规则集库中`,
       });
     }
   }

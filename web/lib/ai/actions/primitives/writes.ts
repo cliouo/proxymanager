@@ -10,7 +10,12 @@ import { z } from 'zod';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { getRule } from '@/lib/repos/rulesRepo';
 import { dispatch } from '@/lib/scenarios/_shared/dispatch';
-import { ensureValidAnchorAndPolicy, loadParsedBase } from '@/lib/services/rulesService';
+import {
+  ensureValidAnchorAndPolicy,
+  ensureValidRuleSetRef,
+  loadParsedBase,
+  loadProviderNames,
+} from '@/lib/services/rulesService';
 import { RuleTypeSchema, type Rule } from '@/schemas';
 import { defineWriteAction, type ActionEnvelope } from '../types';
 
@@ -93,6 +98,9 @@ const addRule = defineWriteAction({
   async preview(_ctx, input) {
     const parsed = await loadParsedBase();
     ensureValidAnchorAndPolicy({ anchor: input.anchor, policy: input.policy }, parsed);
+    if (input.type === 'RULE-SET') {
+      ensureValidRuleSetRef({ type: input.type, value: input.value ?? '' }, await loadProviderNames());
+    }
     return { diff: { op: 'add', after: trim(input) } };
   },
   async execute(ctx, input) {
@@ -150,6 +158,9 @@ const updateRule = defineWriteAction({
     if (input.anchor !== undefined || input.policy !== undefined) {
       const parsed = await loadParsedBase();
       ensureValidAnchorAndPolicy({ anchor: after.anchor, policy: after.policy }, parsed);
+    }
+    if ((input.type !== undefined || input.value !== undefined) && after.type === 'RULE-SET') {
+      ensureValidRuleSetRef({ type: after.type, value: after.value }, await loadProviderNames());
     }
     return { diff: { op: 'update', before: trim(before), after: trim(after) } };
   },

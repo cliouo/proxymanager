@@ -1,12 +1,8 @@
 import { withProblemDetails } from '@/lib/http/handler';
 import { ProblemDetailsError } from '@/lib/http/problem';
-import {
-  deleteRuleSet,
-  getRuleSet,
-  patchRuleSet,
-  replaceRuleSet,
-} from '@/lib/services/ruleSetService';
-import { RuleSetCreateSchema, RuleSetUpdateSchema } from '@/schemas';
+import { dispatch } from '@/lib/scenarios/_shared/dispatch';
+import { getRuleSet } from '@/lib/services/ruleSetService';
+import { resolveActor } from '@/lib/services/rulesService';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,9 +20,13 @@ export const PUT = withProblemDetails(async (request: Request, ctx: Ctx) => {
   const raw = await request.json().catch(() => {
     throw ProblemDetailsError.badRequest('Request body must be valid JSON.');
   });
-  const input = RuleSetCreateSchema.parse(raw);
-  const next = await replaceRuleSet(id, input);
-  return Response.json({ data: next });
+  const res = await dispatch({
+    scenario: 'rule-provider',
+    op: 'replace',
+    payload: { id, set: raw },
+    actor: resolveActor(request),
+  });
+  return Response.json({ data: res.data });
 });
 
 export const PATCH = withProblemDetails(async (request: Request, ctx: Ctx) => {
@@ -34,14 +34,22 @@ export const PATCH = withProblemDetails(async (request: Request, ctx: Ctx) => {
   const raw = await request.json().catch(() => {
     throw ProblemDetailsError.badRequest('Request body must be valid JSON.');
   });
-  const patch = RuleSetUpdateSchema.parse(raw);
-  const next = await patchRuleSet(id, patch);
-  return Response.json({ data: next });
+  const res = await dispatch({
+    scenario: 'rule-provider',
+    op: 'patch',
+    payload: { id, patch: raw },
+    actor: resolveActor(request),
+  });
+  return Response.json({ data: res.data });
 });
 
-export const DELETE = withProblemDetails(async (_request: Request, ctx: Ctx) => {
+export const DELETE = withProblemDetails(async (request: Request, ctx: Ctx) => {
   const { id } = await ctx.params;
-  const removed = await deleteRuleSet(id);
-  if (!removed) throw ProblemDetailsError.notFound(`Rule set ${id} not found.`);
+  await dispatch({
+    scenario: 'rule-provider',
+    op: 'delete',
+    payload: { id },
+    actor: resolveActor(request),
+  });
   return new Response(null, { status: 204 });
 });

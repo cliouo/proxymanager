@@ -14,6 +14,7 @@ import {
 } from '@/lib/ai/configAccess';
 import { renderBase } from '@/lib/engine/renderer';
 import { listRules } from '@/lib/repos/rulesRepo';
+import { listRuleSets } from '@/lib/repos/ruleSetsRepo';
 import { defineAction } from '../types';
 
 const getConfigOutline = defineAction({
@@ -68,8 +69,12 @@ const getConfigFull = defineAction({
   input: z.object({}),
   risk: 'read',
   async run() {
-    const [content, rules] = await Promise.all([loadBaseContent(), listRules()]);
-    const rendered = renderBase(content, rules).content;
+    const [content, rules, providers] = await Promise.all([
+      loadBaseContent(),
+      listRules(),
+      listRuleSets(),
+    ]);
+    const rendered = renderBase(content, rules, { providers }).content;
     return { kind: 'config-full', data: { yaml: fullRedactedYaml(rendered) } };
   },
 });

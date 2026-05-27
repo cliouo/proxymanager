@@ -10,15 +10,23 @@
 import { searchMihomoDocs } from '../docs';
 import { CONFIG_READ_ACTIONS } from './primitives/configReads';
 import { CONFIG_WRITE_ACTIONS } from './primitives/configWrites';
+import { FETCH_ACTIONS } from './primitives/fetch';
 import { READ_ACTIONS } from './primitives/reads';
+import {
+  RULE_PROVIDER_READ_ACTIONS,
+  RULE_PROVIDER_WRITE_ACTIONS,
+} from './primitives/ruleProviderWrites';
 import { WRITE_ACTIONS } from './primitives/writes';
 import type { ActionDef } from './types';
 
 const ALL_ACTIONS: ActionDef[] = [
   ...READ_ACTIONS,
   ...CONFIG_READ_ACTIONS,
+  ...RULE_PROVIDER_READ_ACTIONS,
+  ...FETCH_ACTIONS,
   searchMihomoDocs,
   ...WRITE_ACTIONS,
+  ...RULE_PROVIDER_WRITE_ACTIONS,
   ...CONFIG_WRITE_ACTIONS,
 ];
 

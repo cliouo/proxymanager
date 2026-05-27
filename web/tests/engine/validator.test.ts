@@ -72,4 +72,32 @@ describe('validateBase', () => {
     expect(result.anchors).toEqual(PARSED.anchors);
     expect(result.policies).toEqual(PARSED.policies);
   });
+
+  it('ignores RULE-SET references when no provider set is supplied', () => {
+    const result = validateBase(PARSED, [
+      makeRule({ id: 'r', type: 'RULE-SET', value: 'whatever', policy: '香港' }),
+    ]);
+    expect(result.valid).toBe(true);
+  });
+
+  it('flags a RULE-SET rule pointing outside the provider library', () => {
+    const result = validateBase(
+      PARSED,
+      [makeRule({ id: 'r', type: 'RULE-SET', value: 'ghost', policy: '香港' })],
+      new Set(['cn_domain']),
+    );
+    expect(result.valid).toBe(false);
+    expect(result.orphans).toEqual([
+      { rule_id: 'r', reason: 'RULE-SET 引用的规则集 "ghost" 不在规则集库中' },
+    ]);
+  });
+
+  it('accepts a RULE-SET rule whose provider is in the library', () => {
+    const result = validateBase(
+      PARSED,
+      [makeRule({ id: 'r', type: 'RULE-SET', value: 'cn_domain', policy: '香港' })],
+      new Set(['cn_domain']),
+    );
+    expect(result.valid).toBe(true);
+  });
 });

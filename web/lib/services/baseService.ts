@@ -3,6 +3,7 @@ import type { BaseOrphan, BaseValidationResult } from '@/schemas';
 import { BaseParseError, type ParsedBase, parseBase } from '@/lib/engine/parser';
 import { validateBase } from '@/lib/engine/validator';
 import { listRules } from '@/lib/repos/rulesRepo';
+import { listRuleSets } from '@/lib/repos/ruleSetsRepo';
 import { ProblemDetailsError } from '@/lib/http/problem';
 
 export function computeEtag(content: string): string {
@@ -36,6 +37,37 @@ export function rulesBlockViolations(content: string): BaseOrphan[] {
   return out;
 }
 
+/**
+ * Like {@link rulesBlockViolations}, but for the `rule-providers:` block:
+ * provider declarations are managed in the「规则集」library and injected at
+ * render time via the `# === RULE-PROVIDERS ===` marker (a comment, which
+ * passes). Any literal top-level provider entry left in the skeleton is a
+ * violation — one per offending entry — so it surfaces in the validation UI.
+ */
+export function ruleProvidersBlockViolations(content: string): BaseOrphan[] {
+  const lines = content.split('\n');
+  const start = lines.findIndex((l) => /^rule-providers:\s*$/.test(l));
+  if (start === -1) return [];
+  const out: BaseOrphan[] = [];
+  let childIndent: number | null = null;
+  for (let i = start + 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.trim() === '' || line.trim().startsWith('#')) continue;
+    if (!/^\s/.test(line)) break; // first col-0 line ends the block
+    const indent = line.length - line.trimStart().length;
+    if (childIndent === null) childIndent = indent;
+    if (indent !== childIndent) continue; // nested provider option (type:/url:/…)
+    const m = line.trim().match(/^([A-Za-z0-9_.-]+):/);
+    if (m) {
+      out.push({
+        rule_id: `rule-providers:${m[1]}`,
+        reason: `规则提供者「${m[1]}」请到「规则集」页管理；base 里用 # === RULE-PROVIDERS === 标记（运行 migrate:providers 迁移）`,
+      });
+    }
+  }
+  return out;
+}
+
 export interface ParseAndValidateResult {
   parsedBase: ParsedBase;
   validation: BaseValidationResult;
@@ -51,9 +83,10 @@ export async function parseAndValidate(content: string): Promise<ParseAndValidat
     }
     throw err;
   }
-  const rules = await listRules();
-  const validation = validateBase(parsedBase, rules);
-  const blockViolations = rulesBlockViolations(content);
+  const [rules, providerSets] = await Promise.all([listRules(), listRuleSets()]);
+  const providerNames = new Set(providerSets.map((s) => s.name));
+  const validation = validateBase(parsedBase, rules, providerNames);
+  const blockViolations = [...rulesBlockViolations(content), ...ruleProvidersBlockViolations(content)];
   if (blockViolations.length > 0) {
     validation.orphans = [...validation.orphans, ...blockViolations];
     validation.valid = false;

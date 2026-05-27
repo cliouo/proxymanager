@@ -22,6 +22,8 @@ const FORBIDDEN_EDIT_ROOTS: Record<string, string> = {
   proxies: '节点由订阅功能管理',
   'proxy-providers': '订阅来源由订阅功能管理',
   rules: '规则请用 add_rule / update_rule / delete_rule 管理，不能经 config-section 改',
+  'rule-providers':
+    '规则集由 create_rule_provider / update_rule_provider / delete_rule_provider 管理，不能经 config-section 改',
 };
 
 export interface Segment {

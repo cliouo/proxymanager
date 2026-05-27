@@ -15,6 +15,10 @@ export const GET = withProblemDetails(async (_request: Request, ctx: Ctx) => {
   if (!set) {
     throw ProblemDetailsError.notFound(`Rule set "${name}" not found.`);
   }
+  // Remote rule-sets are fetched by mihomo from their own URL; we don't proxy them.
+  if (set.source === 'remote') {
+    throw ProblemDetailsError.notFound(`Rule set "${name}" is remote and not hosted here.`);
+  }
 
   const contentType =
     set.format === 'yaml' ? 'text/yaml; charset=utf-8' : 'text/plain; charset=utf-8';

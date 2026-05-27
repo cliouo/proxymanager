@@ -13,12 +13,16 @@ import {
   syntaxHighlighting,
 } from '@codemirror/language';
 import { searchKeymap } from '@codemirror/search';
-import { Compartment, EditorState } from '@codemirror/state';
+import { Compartment, EditorState, RangeSet } from '@codemirror/state';
 import {
+  Decoration,
+  type DecorationSet,
   EditorView,
+  GutterMarker,
+  ViewPlugin,
+  type ViewUpdate,
   drawSelection,
-  highlightActiveLine,
-  highlightActiveLineGutter,
+  gutterLineClass,
   highlightSpecialChars,
   keymap,
   lineNumbers,
@@ -63,9 +67,19 @@ const heritageTheme = EditorView.theme(
       color: 'var(--color-muted)',
       border: 'none',
       borderRight: '1px solid var(--color-border)',
-      paddingRight: '4px',
+      // No right padding here: that gap sits outside the gutter elements, so the
+      // active-line tint can't reach it and the highlight breaks before the
+      // border. Breathing room is moved inside the fold-gutter element below.
       fontSize: '11px',
       fontVariantNumeric: 'tabular-nums',
+    },
+    // Each gutter element is sized to the line's full height (lineHeight 1.6),
+    // but the smaller 11px digit is top-aligned by default — center it so the
+    // number sits in the middle of the active-line shading.
+    '.cm-lineNumbers .cm-gutterElement': {
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'flex-end',
     },
     '.cm-activeLineGutter': {
       backgroundColor: 'var(--color-primary-tint)',
@@ -75,7 +89,15 @@ const heritageTheme = EditorView.theme(
     '.cm-activeLine': {
       backgroundColor: 'var(--color-primary-tint)',
     },
-    '.cm-foldGutter .cm-gutterElement': { color: 'var(--color-muted)' },
+    '.cm-foldGutter .cm-gutterElement': {
+      color: 'var(--color-muted)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      // Spacing before the border lives here (inside the element) so the
+      // active-line tint extends all the way to the divider — no break.
+      paddingRight: '4px',
+    },
     '.cm-foldPlaceholder': {
       backgroundColor: 'var(--color-bg-strong)',
       border: 'none',
@@ -125,6 +147,49 @@ const heritageHighlight = HighlightStyle.define([
   { tag: t.punctuation, color: 'var(--color-muted)' },
   { tag: t.invalid, color: 'var(--color-danger)' },
 ]);
+
+/**
+ * Active-line highlight, VSCode-style: shown only when the selection is empty
+ * (a bare cursor). CodeMirror's built-in highlightActiveLine highlights the
+ * line under the selection *head* even mid-drag, so that one line would get the
+ * lighter active-line tint on top of the selection tint and read differently
+ * from the rest of a multi-line selection. Suppressing it during a selection
+ * lets the selection shading stay uniform.
+ */
+const activeLineDeco = Decoration.line({ class: 'cm-activeLine' });
+
+function activeLineDecorations(view: EditorView): DecorationSet {
+  const { main } = view.state.selection;
+  if (!main.empty) return Decoration.none;
+  const line = view.state.doc.lineAt(main.head);
+  return Decoration.set(activeLineDeco.range(line.from));
+}
+
+const activeLineExt = ViewPlugin.fromClass(
+  class {
+    decorations: DecorationSet;
+    constructor(view: EditorView) {
+      this.decorations = activeLineDecorations(view);
+    }
+    update(u: ViewUpdate) {
+      if (u.docChanged || u.selectionSet || u.viewportChanged) {
+        this.decorations = activeLineDecorations(u.view);
+      }
+    }
+  },
+  { decorations: (v) => v.decorations },
+);
+
+const activeLineGutterMarker = new (class extends GutterMarker {
+  elementClass = 'cm-activeLineGutter';
+})();
+
+const activeLineGutterExt = gutterLineClass.compute(['selection', 'doc'], (state) => {
+  const { main } = state.selection;
+  if (!main.empty) return RangeSet.empty;
+  const line = state.doc.lineAt(main.head);
+  return RangeSet.of([activeLineGutterMarker.range(line.from)]);
+});
 
 export interface YamlEditorHandle {
   focus: () => void;
@@ -177,7 +242,7 @@ export function YamlEditor({
       doc: value,
       extensions: [
         lineNumbers(),
-        highlightActiveLineGutter(),
+        activeLineGutterExt,
         highlightSpecialChars(),
         history(),
         foldGutter({
@@ -193,7 +258,7 @@ export function YamlEditor({
         drawSelection(),
         indentOnInput(),
         bracketMatching(),
-        highlightActiveLine(),
+        activeLineExt,
         indentUnit.of('  '), // 2 空格
         EditorState.tabSize.of(2),
         yaml(),

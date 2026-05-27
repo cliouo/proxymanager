@@ -41,6 +41,12 @@ const TOOL_LABELS: Record<string, string> = {
   add_rule: '准备新增规则',
   update_rule: '准备修改规则',
   delete_rule: '准备删除规则',
+  list_rule_providers: '读取规则集库',
+  fetch_url: '抓取外部链接',
+  create_rule_provider: '准备新增规则集',
+  update_rule_provider: '准备修改规则集',
+  delete_rule_provider: '准备删除规则集',
+  localize_rule_provider: '准备转为本地托管',
   set_config_section: '准备修改配置区块',
   delete_config_section: '准备删除配置区块',
 };
