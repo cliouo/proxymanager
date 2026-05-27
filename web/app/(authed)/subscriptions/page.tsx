@@ -13,12 +13,11 @@ import {
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { FormField } from '@/components/ui/FormField';
-import { InlineUrl } from '@/components/ui/InlineUrl';
 import { Input, Select, Textarea } from '@/components/ui/Input';
 import { Placeholder, Reveal } from '@/components/ui/Reveal';
 import { StatusDot } from '@/components/ui/StatusDot';
 import { ApiError, api } from '@/lib/client/api';
-import { type Collection, dedupLabel } from '@/lib/types/collection';
+import { type Collection } from '@/lib/types/collection';
 import type { Operator } from '@/schemas/operator';
 
 const DEFAULT_TTL_MS = 10 * 60 * 1000;
@@ -33,6 +32,7 @@ interface Subscription {
   ttl_ms: number;
   content?: string;
   tags: string[];
+  node_prefix?: string;
   last_synced_at?: number;
   last_traffic?: {
     upload: number;
@@ -42,10 +42,6 @@ interface Subscription {
   };
   last_error?: string;
   operators?: Operator[];
-}
-
-interface Meta {
-  subProvidersBase: string;
 }
 
 type Tab = 'subs' | 'collections';
@@ -62,7 +58,6 @@ function fmtTime(s: number | undefined): string {
 export default function SubscriptionsPage() {
   const [subs, setSubs] = useState<Subscription[]>([]);
   const [collections, setCollections] = useState<Collection[]>([]);
-  const [meta, setMeta] = useState<Meta | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -122,13 +117,11 @@ export default function SubscriptionsPage() {
   const reload = useCallback(async () => {
     setError(null);
     try {
-      const [list, m, cl] = await Promise.all([
+      const [list, cl] = await Promise.all([
         api<{ data: Subscription[] }>('/api/v1/subscriptions'),
-        api<{ data: Meta }>('/api/v1/meta'),
         api<{ data: Collection[] }>('/api/v1/collections'),
       ]);
       setSubs(list.data);
-      setMeta(m.data);
       setCollections(cl.data);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
@@ -211,14 +204,14 @@ export default function SubscriptionsPage() {
             订阅源
           </h1>
           <p className="mt-1.5 text-[13px] text-[var(--color-muted)]">
-            {subs.length} 单订阅 · {collections.length} 聚合 · 远程订阅自动缓存
+            {subs.length} 订阅源 · {collections.length} 节点池 · 启用即自动注入 proxies
           </p>
         </div>
         {tab === 'subs' ? (
           <Button onClick={() => setAdding((v) => !v)}>{adding ? '取消' : '+ 新增订阅'}</Button>
         ) : (
           <Button onClick={() => router.push('/collections?mode=create&from=subs')}>
-            + 新建聚合
+            + 新建节点池
           </Button>
         )}
       </header>
@@ -248,7 +241,7 @@ export default function SubscriptionsPage() {
           controlsId={`${tabsId}-panel-collections`}
           tabId={`${tabsId}-tab-collections`}
         >
-          聚合
+          节点池
         </TabButton>
       </div>
 
@@ -288,7 +281,6 @@ export default function SubscriptionsPage() {
                     key={sub.id}
                     sub={sub}
                     index={idx + 1}
-                    providerUrl={meta ? `${meta.subProvidersBase}/${sub.name}` : ''}
                     pending={busyIds.has(sub.id)}
                     editing={editingId === sub.id}
                     anyEditing={editingId !== null}
@@ -389,14 +381,14 @@ function CollectionEmpty() {
         className="font-serif text-[20px] font-medium text-[var(--color-fg-soft)] leading-[1.25] tracking-[-0.01em]"
         style={{ fontVariationSettings: '"opsz" 48, "SOFT" 50' }}
       >
-        还没有聚合
+        还没有节点池
       </p>
       <p className="mt-1.5 text-[13px] text-[var(--color-muted)]">
-        聚合把多个单订阅合并成一份 provider，可在 base.yaml 用名字引用。
+        节点池把多个订阅源的节点聚成一个 proxy-group，规则和链式代理可以用它的名字。
       </p>
       <div className="mt-5">
         <Button onClick={() => router.push('/collections?mode=create&from=subs')}>
-          + 新建第一个聚合
+          + 新建第一个节点池
         </Button>
       </div>
     </div>
@@ -428,13 +420,13 @@ function CollectionCard({
   const hasDisabledMember = members.some((m) => !m.enabled);
   return (
     <li className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-card)] overflow-hidden grid grid-cols-[52px_1fr] lg:grid-cols-[60px_1fr] xl:grid-cols-[68px_1fr]">
-      {/* 左条：与 Dossier 对称，竖直居中单块（序号 + NO. + 状态点/聚合），不撑高 */}
+      {/* 左条：与 Dossier 对称，竖直居中单块（序号 + NO. + 状态点/节点池），不撑高 */}
       <div className="border-r border-[var(--color-border)] bg-[var(--color-bg-sunk)] flex flex-col items-center justify-center gap-2 py-3">
         <div className="flex flex-col items-center leading-none">
           <span
             className="font-serif text-[20px] lg:text-[22px] xl:text-[24px] leading-none font-medium tabular-nums tracking-[-0.015em] text-[var(--color-ink)]"
             style={{ fontVariationSettings: '"opsz" 48, "SOFT" 50' }}
-            aria-label={`聚合 ${index}`}
+            aria-label={`节点池 ${index}`}
           >
             {String(index).padStart(2, '0')}
           </span>
@@ -446,9 +438,9 @@ function CollectionCard({
           </span>
         </div>
         <div className="flex flex-col items-center gap-1">
-          <StatusDot tone={hasDisabledMember ? 'warn' : 'on'} />
+          <StatusDot tone={!c.enabled ? 'off' : hasDisabledMember ? 'warn' : 'on'} />
           <span className="text-[9px] uppercase tracking-[0.04em] font-mono text-[var(--color-muted)] leading-none whitespace-nowrap">
-            聚合
+            节点池
           </span>
         </div>
       </div>
@@ -462,18 +454,17 @@ function CollectionCard({
           >
             {c.name}
           </h2>
-          <Badge tone="neutral">聚合</Badge>
+          <Badge tone="neutral">节点池</Badge>
           <div className="flex items-center gap-0.5 shrink-0 ml-auto">
             <IconLinkButton
               href={`/collections?id=${encodeURIComponent(c.id)}&from=subs`}
-              title={`编辑聚合 ${c.name}`}
+              title={`编辑节点池 ${c.name}`}
               label="✎"
             />
           </div>
         </div>
         <div className="text-[11px] text-[var(--color-muted)] font-mono tabular-nums">
-          {dedupLabel(c.dedup_by)} · {members.length} 成员
-          {c.name_prefix && ` · 前缀「${c.name_prefix}」`}
+          {c.enabled ? '已启用' : '已停用'} · {c.type} · {members.length} 成员
         </div>
         {members.length > 0 && (
           <div
@@ -505,7 +496,7 @@ function CollectionCard({
         )}
         <div className="mt-auto flex items-center gap-2 pt-1.5 border-t border-[var(--color-border)] text-[10px] uppercase tracking-[0.06em] text-[var(--color-muted-strong)] font-mono">
           <span className="truncate">
-            base.yaml 引用 ↳ <code className="text-[var(--color-fg-soft)]">{c.name}</code>
+            策略组 ↳ <code className="text-[var(--color-fg-soft)]">{c.name}</code>
           </span>
           {c.updated_at && (
             <span className="ml-auto whitespace-nowrap shrink-0 text-[var(--color-muted)]">
@@ -635,7 +626,6 @@ function fmtBytes(n: number): string {
 function Dossier({
   sub,
   index,
-  providerUrl,
   pending,
   editing,
   anyEditing,
@@ -648,7 +638,6 @@ function Dossier({
 }: {
   sub: Subscription;
   index: number;
-  providerUrl: string;
   pending: boolean;
   editing: boolean;
   anyEditing: boolean;
@@ -761,9 +750,6 @@ function Dossier({
               </div>
             </div>
 
-            {/* Provider URL —— token 默认遮蔽，复制按钮始终拷完整 URL */}
-            <InlineUrl value={providerUrl} mask />
-
             {/* Compact traffic line —— 单行：数字 · 条 · 百分比 */}
             {sub.last_traffic && sub.last_traffic.total > 0 && (
               <CompactTraffic traffic={sub.last_traffic} />
@@ -783,6 +769,14 @@ function Dossier({
               <span className="whitespace-nowrap">TTL · {Math.round(sub.ttl_ms / 1000)}s</span>
               <span aria-hidden className="text-[var(--color-border-strong)]">·</span>
               <span className="truncate">同步 · {fmtTime(sub.last_synced_at)}</span>
+              {sub.node_prefix && (
+                <>
+                  <span aria-hidden className="text-[var(--color-border-strong)]">·</span>
+                  <span className="truncate normal-case" title={`节点名前缀: ${sub.node_prefix}`}>
+                    前缀 · <span className="text-[var(--color-fg-soft)]">{sub.node_prefix}</span>
+                  </span>
+                </>
+              )}
             </div>
           </>
         )}
@@ -847,6 +841,7 @@ function AddForm({ onAdded }: { onAdded: () => void }) {
   const [content, setContent] = useState('');
   const [ua, setUa] = useState('');
   const [tagsInput, setTagsInput] = useState('');
+  const [nodePrefix, setNodePrefix] = useState('');
   const [ttlSec, setTtlSec] = useState(Math.round(DEFAULT_TTL_MS / 1000));
   const [enabled, setEnabled] = useState(true);
   const [pending, setPending] = useState(false);
@@ -868,6 +863,7 @@ function AddForm({ onAdded }: { onAdded: () => void }) {
         ttl_ms: Math.max(1000, ttlSec * 1000),
         tags,
       };
+      if (nodePrefix.trim()) body.node_prefix = nodePrefix;
       if (kind === 'remote') {
         body.url = url.trim();
         if (ua.trim()) body.ua_override = ua.trim();
@@ -928,6 +924,23 @@ function AddForm({ onAdded }: { onAdded: () => void }) {
           />
         </FormField>
       </div>
+
+      <FormField
+        label={
+          <span className="flex items-baseline gap-2">
+            <span>节点名前缀</span>
+            <span className="normal-case tracking-normal font-normal text-[10px] text-[var(--color-muted)]">
+              可选 · 给本订阅每个节点名前置命名空间，避免跨源同名被去重丢弃
+            </span>
+          </span>
+        }
+      >
+        <Input
+          placeholder="[Airport-A] "
+          value={nodePrefix}
+          onChange={(e) => setNodePrefix(e.target.value)}
+        />
+      </FormField>
 
       {kind === 'remote' ? (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1010,6 +1023,7 @@ function EditForm({
   const [content, setContent] = useState(sub.content ?? '');
   const [ua, setUa] = useState(sub.ua_override ?? '');
   const [tagsInput, setTagsInput] = useState(sub.tags.join(', '));
+  const [nodePrefix, setNodePrefix] = useState(sub.node_prefix ?? '');
   const [ttlSec, setTtlSec] = useState(Math.max(1, Math.round(sub.ttl_ms / 1000)));
   const [enabled, setEnabled] = useState(sub.enabled);
   const [pending, setPending] = useState(false);
@@ -1029,6 +1043,8 @@ function EditForm({
         enabled,
         ttl_ms: Math.max(1000, ttlSec * 1000),
         tags,
+        // Sending empty string clears the field; the API treats undefined as "no change".
+        node_prefix: nodePrefix,
       };
       if (sub.kind === 'remote') {
         patch.url = url.trim();
@@ -1101,6 +1117,23 @@ function EditForm({
           />
         </FormField>
       </div>
+
+      <FormField
+        label={
+          <span className="flex items-baseline gap-2">
+            <span>节点名前缀</span>
+            <span className="normal-case tracking-normal font-normal text-[10px] text-[var(--color-muted)]">
+              可选 · 给本订阅每个节点名前置命名空间，避免跨源同名被去重丢弃
+            </span>
+          </span>
+        }
+      >
+        <Input
+          placeholder="[Airport-A] "
+          value={nodePrefix}
+          onChange={(e) => setNodePrefix(e.target.value)}
+        />
+      </FormField>
 
       {sub.kind === 'remote' ? (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

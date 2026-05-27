@@ -16,7 +16,6 @@ export const GET = withProblemDetails(async (request: Request) => {
   return Response.json({
     data: {
       subscriptionUrl: `${origin}/api/sub/${token}/default`,
-      subProvidersBase: `${origin}/api/sub-providers/${token}`,
       ruleProvidersBase: `${origin}/api/rule-providers/${token}`,
       buildId: base?.etag ?? null,
       hasBase: base !== null,

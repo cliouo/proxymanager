@@ -11,13 +11,14 @@
 import { z } from 'zod';
 import { listRules } from '@/lib/repos/rulesRepo';
 import { listRuleSets } from '@/lib/repos/ruleSetsRepo';
+import { getResolvedSnapshot } from '@/lib/repos/resolvedRepo';
 import { loadParsedBase } from '@/lib/services/rulesService';
 import { defineAction } from '../types';
 
 const getBaseOverview = defineAction({
   name: 'get_base_overview',
   description:
-    '读取当前 base.yaml 的结构摘要：可用的规则锚点(anchors)、策略组/节点名(policies)、代理集合(proxy-providers)、规则集(ruleProviders，即规则集库的 name，RULE-SET 规则可引用)。回答"有哪些策略组/锚点/规则集能用"或写规则前先查可用目标时调用。不含任何节点凭证。',
+    '读取当前 base.yaml 的结构摘要：可用的规则锚点(anchors)、策略组/手写节点名(policies)、用户手写残留的 proxy-providers(若有)、规则集(ruleProviders，即规则集库的 name，RULE-SET 规则可引用)。回答"有哪些策略组/锚点/规则集能用"或写规则前先查可用目标时调用。订阅源注入的节点不在这里——查可用节点请用 list_proxy_nodes。不含任何节点凭证。',
   input: z.object({}),
   risk: 'read',
   async run() {
@@ -31,6 +32,36 @@ const getBaseOverview = defineAction({
         policies: parsed.policies,
         proxyProviders: parsed.proxyProviders,
         ruleProviders: sets.map((s) => s.name),
+      },
+    };
+  },
+});
+
+const listProxyNodes = defineAction({
+  name: 'list_proxy_nodes',
+  description:
+    '列出渲染后实际可用的代理节点名（手写节点 + 全部 enabled 订阅源注入的节点，已应用节点前缀与算子）。读自上次 resolveConfig 的快照——若快照缺失（系统刚启动 / 未渲染过），返回空列表并提示用户先打开「最终配置」预览一次。回答"我有哪些节点可用"、写涉及具体节点名的 proxy-group 之前必查。仅返回名字，不含任何节点凭证。',
+  input: z.object({}),
+  risk: 'read',
+  async run() {
+    const snapshot = await getResolvedSnapshot();
+    if (!snapshot) {
+      return {
+        kind: 'proxy-nodes',
+        data: {
+          nodes: [],
+          collisions: [],
+          hint: '尚未生成解析快照——让用户打开「最终配置」或访问订阅 URL 触发一次渲染后再查。',
+        },
+      };
+    }
+    return {
+      kind: 'proxy-nodes',
+      data: {
+        nodes: snapshot.nodeNames,
+        collisions: snapshot.collisions,
+        computedAt: snapshot.computedAt,
+        buildId: snapshot.buildId,
       },
     };
   },
@@ -68,4 +99,4 @@ const listRulesAction = defineAction({
   },
 });
 
-export const READ_ACTIONS = [getBaseOverview, listRulesAction];
+export const READ_ACTIONS = [getBaseOverview, listProxyNodes, listRulesAction];

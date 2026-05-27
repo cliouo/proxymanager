@@ -16,12 +16,27 @@ import type { Subscription, SubscriptionTraffic } from '@/schemas';
 
 const DEFAULT_UA = 'clash.meta/1.18.0';
 const FETCH_TIMEOUT_MS = 15_000;
+/**
+ * Upper bound on how long we keep a stale cache entry around as a fallback
+ * for stale-on-error. The Redis EX is set to `max(ttl_ms, STALE_TTL_MS)` so
+ * the key survives past the freshness window; freshness is judged separately
+ * via `fetched_at`.
+ */
+const STALE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 export interface FetchSubscriptionResult {
   /** Normalised Clash provider YAML: `proxies:` block only. */
   yaml: string;
   traffic?: SubscriptionTraffic;
   proxyCount: number;
+  /**
+   * True when this result came from a stale cache entry because the upstream
+   * fetch failed. Callers surface this in summaries so users know the data
+   * may be out of date.
+   */
+  stale?: boolean;
+  /** When `stale`, the error message that caused the fallback. */
+  staleReason?: string;
 }
 
 /**
@@ -40,7 +55,13 @@ export async function resolveSubscriptionContent(
   const raw = await resolveSubscriptionContentRaw(sub, options);
   if (!sub.operators || sub.operators.length === 0) return raw;
   const { yaml, proxyCount } = applyOperatorsToProviderYaml(raw.yaml, sub.operators);
-  return { yaml, traffic: raw.traffic, proxyCount };
+  return {
+    yaml,
+    traffic: raw.traffic,
+    proxyCount,
+    stale: raw.stale,
+    staleReason: raw.staleReason,
+  };
 }
 
 /**
@@ -49,12 +70,16 @@ export async function resolveSubscriptionContent(
  * preview endpoint (which applies an unsaved pipeline to these raw proxies).
  *
  *   - kind=local → returns the inline content verbatim, normalised
- *   - kind=remote + !noCache + cache hit (within ttl_ms) → returns cache
- *   - kind=remote + (noCache OR cache miss/stale) → HTTP fetch, persist cache
+ *   - kind=remote + !noCache + cache fresh (within ttl_ms) → returns cache
+ *   - kind=remote + (noCache OR stale) → HTTP fetch; on failure with a
+ *     cached entry still present, falls back to that entry tagged
+ *     `stale: true` (unless `noCache` — the caller explicitly asked for
+ *     fresh, so we surface the error).
  *
  * Cache key is keyed by url + ua + custom_headers (Sub-Store convention) so
  * two subs hitting the same airport with the same UA share cache; flipping
- * UA invalidates.
+ * UA invalidates. Entries persist in Redis for `max(ttl_ms, STALE_TTL_MS)`
+ * so the stale-on-error fallback has something to serve past expiry.
  */
 export async function resolveSubscriptionContentRaw(
   sub: Subscription,
@@ -82,28 +107,46 @@ export async function resolveSubscriptionContentRaw(
     headers: sub.custom_headers,
   });
 
-  if (!options.noCache) {
-    const cached = await getFetchCache(cacheKey);
-    if (cached) {
-      return { yaml: cached.content, traffic: cached.traffic, proxyCount: cached.proxy_count };
-    }
+  // Read once up front — we may use it as fresh, or as the stale fallback.
+  const cached = options.noCache ? null : await getFetchCache(cacheKey);
+  if (cached && Date.now() - cached.fetched_at < sub.ttl_ms) {
+    return { yaml: cached.content, traffic: cached.traffic, proxyCount: cached.proxy_count };
   }
 
-  const fresh = await fetchSubscriptionInternal(sub.url, {
-    userAgent: sub.ua_override ?? DEFAULT_UA,
-    timeoutMs: options.timeoutMs ?? FETCH_TIMEOUT_MS,
-    customHeaders: sub.custom_headers,
-  });
+  try {
+    const fresh = await fetchSubscriptionInternal(sub.url, {
+      userAgent: sub.ua_override ?? DEFAULT_UA,
+      timeoutMs: options.timeoutMs ?? FETCH_TIMEOUT_MS,
+      customHeaders: sub.custom_headers,
+    });
 
-  const entry: FetchCacheEntry = {
-    content: fresh.yaml,
-    traffic: fresh.traffic,
-    proxy_count: fresh.proxyCount,
-    fetched_at: Date.now(),
-  };
-  await setFetchCache(cacheKey, entry, sub.ttl_ms).catch(() => undefined);
+    const entry: FetchCacheEntry = {
+      content: fresh.yaml,
+      traffic: fresh.traffic,
+      proxy_count: fresh.proxyCount,
+      fetched_at: Date.now(),
+    };
+    // Keep the entry around long enough to back stale-on-error reads.
+    await setFetchCache(cacheKey, entry, Math.max(sub.ttl_ms, STALE_TTL_MS)).catch(
+      () => undefined,
+    );
 
-  return fresh;
+    return fresh;
+  } catch (err) {
+    if (cached) {
+      // Stale-on-error: upstream is unreachable but we have a prior fetch.
+      // Better to serve last-known-good than fail the whole render.
+      const reason = err instanceof Error ? err.message : String(err);
+      return {
+        yaml: cached.content,
+        traffic: cached.traffic,
+        proxyCount: cached.proxy_count,
+        stale: true,
+        staleReason: reason,
+      };
+    }
+    throw err;
+  }
 }
 
 /** Fetch + normalise an upstream subscription URL into a Clash provider YAML. */

@@ -6,6 +6,7 @@ import {
   listCollections,
   upsertCollection,
 } from '@/lib/repos/collectionsRepo';
+import { invalidateResolvedSnapshot } from '@/lib/repos/resolvedRepo';
 import {
   CollectionCreateSchema,
   CollectionUpdateSchema,
@@ -16,6 +17,11 @@ import {
 
 function nowSeconds(): number {
   return Math.floor(Date.now() / 1000);
+}
+
+/** Fire-and-forget snapshot invalidation. See subscriptionService for rationale. */
+function invalidateSnapshot(): void {
+  invalidateResolvedSnapshot().catch(() => undefined);
 }
 
 export async function createCollection(input: CollectionCreate): Promise<Collection> {
@@ -32,6 +38,7 @@ export async function createCollection(input: CollectionCreate): Promise<Collect
     updated_at: now,
   };
   await upsertCollection(col);
+  invalidateSnapshot();
   return col;
 }
 
@@ -58,7 +65,14 @@ export async function patchCollection(
     updated_at: nowSeconds(),
   };
   await upsertCollection(next);
+  invalidateSnapshot();
   return next;
 }
 
-export { listCollections, getCollection, getCollectionByName, repoDelete as deleteCollection };
+export async function deleteCollection(id: string): Promise<boolean> {
+  const removed = await repoDelete(id);
+  if (removed) invalidateSnapshot();
+  return removed;
+}
+
+export { listCollections, getCollection, getCollectionByName };

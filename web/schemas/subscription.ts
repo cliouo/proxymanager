@@ -43,6 +43,14 @@ export const SubscriptionSchema = z.object({
   /** Tags used by Collections for `subscription_tags` auto-inclusion. */
   tags: z.array(z.string()).default([]),
   /**
+   * Optional namespace prefix prepended to each node's `name` at resolve
+   * time, e.g. `[Airport-A] `. Used to disambiguate cross-source name
+   * collisions when multiple subscriptions ship a node with the same name.
+   * Applied after the operators pipeline; the underlying sub content is
+   * left untouched.
+   */
+  node_prefix: z.string().optional(),
+  /**
    * Ordered node-processing pipeline (Sub-Store 节点操作). Applied to this
    * sub's parsed proxies after fetch/normalise; see lib/proxies/operators.ts.
    */
@@ -75,6 +83,7 @@ export const SubscriptionCreateSchema = z
     ttl_ms: z.number().int().positive().default(DEFAULT_SUBSCRIPTION_TTL_MS),
     content: z.string().optional(),
     tags: z.array(z.string()).default([]),
+    node_prefix: z.string().optional(),
     operators: z.array(OperatorSchema).default([]),
   })
   .refine(
@@ -96,6 +105,7 @@ export const SubscriptionUpdateSchema = z.object({
   ttl_ms: z.number().int().positive().optional(),
   content: z.string().optional(),
   tags: z.array(z.string()).optional(),
+  node_prefix: z.string().optional(),
   operators: z.array(OperatorSchema).optional(),
 });
 

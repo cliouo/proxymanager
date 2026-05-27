@@ -1,11 +1,12 @@
 import { requireSubToken } from '@/lib/auth';
-import { expandCollections } from '@/lib/engine/collectionExpander';
-import { renderBase } from '@/lib/engine/renderer';
+import { resolveConfig } from '@/lib/engine/resolve';
 import { withProblemDetails } from '@/lib/http/handler';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { getBase } from '@/lib/repos/baseRepo';
+import { listCollections } from '@/lib/repos/collectionsRepo';
 import { listRules } from '@/lib/repos/rulesRepo';
 import { listRuleSets } from '@/lib/repos/ruleSetsRepo';
+import { listSubscriptions } from '@/lib/repos/subscriptionsRepo';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,31 +27,30 @@ export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
     throw ProblemDetailsError.notFound('Base config has not been initialized yet.');
   }
 
-  // Step 1 — inline pm-inline-collections subscriptions into proxies:
   const noCache = new URL(request.url).searchParams.get('noCache') === '1';
-  const { expandedContent, summary } = await expandCollections(base.content, {
+  const [rules, providers, subscriptions, collections] = await Promise.all([
+    listRules(),
+    listRuleSets(),
+    listSubscriptions(),
+    listCollections(),
+  ]);
+  const origin = new URL(request.url).origin;
+  const resolved = await resolveConfig(base.content, rules, subscriptions, collections, {
+    providers,
+    providerUrlBase: `${origin}/api/rule-providers/${token}`,
     ignoreFailedSubs: true,
     noCache,
   });
 
-  // Step 2 — splice rules into anchored slots + inject the referenced
-  // rule-providers (managed library → base.yaml at render time).
-  const [rules, providers] = await Promise.all([listRules(), listRuleSets()]);
-  const origin = new URL(request.url).origin;
-  const rendered = renderBase(expandedContent, rules, {
-    providers,
-    providerUrlBase: `${origin}/api/rule-providers/${token}`,
-  });
-
-  return new Response(rendered.content, {
+  return new Response(resolved.content, {
     status: 200,
     headers: {
       'Content-Type': 'text/yaml; charset=utf-8',
       'Content-Disposition': `attachment; filename="proxymanager-${profile}.yaml"`,
       'Cache-Control': 'no-store',
       'Profile-Update-Interval': '24',
-      'X-Build-Id': rendered.buildId,
-      'X-Inlined-Proxy-Count': String(summary.inlinedProxyCount),
+      'X-Build-Id': resolved.buildId,
+      'X-Inlined-Proxy-Count': String(resolved.inlinedProxyCount),
     },
   });
 });

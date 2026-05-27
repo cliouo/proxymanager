@@ -6,18 +6,39 @@ import { useEffect, useState } from 'react';
 import { api } from '@/lib/client/api';
 import { clearAdminKey } from '@/lib/client/auth-storage';
 
-const PRIMARY_NAV: { href: string; label: string; icon: string }[] = [
+/**
+ * The IA splits into three groups (Phase D):
+ *   - 总览                      single entry point
+ *   - 资源库 (Resources)         reusable inputs that flow INTO the config
+ *                              (订阅源 → proxies, 节点池 → proxy-groups, 规则集 → rule-providers)
+ *   - 配置 (Configuration)       the assembled output and the tools that shape it
+ *
+ * Scenarios + system links live under the FOOTER section.
+ */
+const OVERVIEW_NAV: { href: string; label: string; icon: string }[] = [
   { href: '/', label: '总览', icon: '◐' },
-  { href: '/config', label: '最终配置', icon: '◉' },
-  { href: '/base', label: '结构', icon: '⌬' },
-  { href: '/scenarios/rule-anchor-append', label: '规则', icon: '≡' },
-  { href: '/rule-sets', label: '规则集', icon: '⊟' },
+];
+
+const RESOURCE_NAV: { href: string; label: string; icon: string }[] = [
   { href: '/subscriptions', label: '订阅源', icon: '⇣' },
+  { href: '/collections', label: '节点池', icon: '⊞' },
+  { href: '/rule-sets', label: '规则集', icon: '⊟' },
+];
+
+const CONFIG_NAV: { href: string; label: string; icon: string }[] = [
+  { href: '/base', label: '结构骨架', icon: '⌬' },
+  { href: '/scenarios/rule-anchor-append', label: '规则', icon: '≡' },
+  { href: '/scenarios/chained-proxy', label: '链式代理', icon: '↻' },
+  { href: '/config', label: '最终配置', icon: '◉' },
+];
+
+const SYSTEM_NAV: { href: string; label: string; icon: string }[] = [
   { href: '/history', label: '操作历史', icon: '⟲' },
 ];
 
-// Promoted into PRIMARY_NAV above, so it's hidden from the auto "场景" list.
-const PROMOTED_SCENARIOS = new Set(['rule-anchor-append']);
+// Promoted into the dedicated CONFIG_NAV slot above, so they're hidden from
+// the auto "场景" list below.
+const PROMOTED_SCENARIOS = new Set(['rule-anchor-append', 'chained-proxy']);
 
 const FOOTER_NAV: { href: string; label: string }[] = [
   { href: '/docs', label: 'API 文档' },
@@ -81,7 +102,7 @@ export function Sidebar() {
       </div>
 
       <nav className="flex-1 px-3 pb-3 space-y-0.5 overflow-y-auto">
-        {PRIMARY_NAV.map((item) => (
+        {OVERVIEW_NAV.map((item) => (
           <SidebarLink
             key={item.href}
             href={item.href}
@@ -91,7 +112,40 @@ export function Sidebar() {
           />
         ))}
 
-        <SectionLabel>场景</SectionLabel>
+        <SectionLabel>资源库</SectionLabel>
+        {RESOURCE_NAV.map((item) => (
+          <SidebarLink
+            key={item.href}
+            href={item.href}
+            label={item.label}
+            icon={item.icon}
+            active={isActive(item.href)}
+          />
+        ))}
+
+        <SectionLabel>配置</SectionLabel>
+        {CONFIG_NAV.map((item) => (
+          <SidebarLink
+            key={item.href}
+            href={item.href}
+            label={item.label}
+            icon={item.icon}
+            active={isActive(item.href)}
+          />
+        ))}
+
+        <SectionLabel>系统</SectionLabel>
+        {SYSTEM_NAV.map((item) => (
+          <SidebarLink
+            key={item.href}
+            href={item.href}
+            label={item.label}
+            icon={item.icon}
+            active={isActive(item.href)}
+          />
+        ))}
+
+        <SectionLabel>更多场景</SectionLabel>
         <SidebarLink
           href="/scenarios"
           label="全部场景"
@@ -114,7 +168,7 @@ export function Sidebar() {
           ) : null,
         )}
 
-        <SectionLabel>其它</SectionLabel>
+        <SectionLabel>文档</SectionLabel>
         {FOOTER_NAV.map((item) => (
           <SidebarLink
             key={item.href}

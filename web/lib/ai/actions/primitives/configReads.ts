@@ -12,9 +12,11 @@ import {
   getConfigSection,
   loadBaseContent,
 } from '@/lib/ai/configAccess';
-import { renderBase } from '@/lib/engine/renderer';
+import { resolveConfig } from '@/lib/engine/resolve';
+import { listCollections } from '@/lib/repos/collectionsRepo';
 import { listRules } from '@/lib/repos/rulesRepo';
 import { listRuleSets } from '@/lib/repos/ruleSetsRepo';
+import { listSubscriptions } from '@/lib/repos/subscriptionsRepo';
 import { defineAction } from '../types';
 
 const getConfigOutline = defineAction({
@@ -40,7 +42,7 @@ const getConfigOutline = defineAction({
 const getConfigSectionAction = defineAction({
   name: 'get_config_section',
   description:
-    '读取 base.yaml 某个区块/路径的具体内容（返回 YAML）。路径语法：map 用点，如 `dns` 或 `dns.enhanced-mode`；具名序列用 [名字]，如 `proxy-groups[OpenAI]`、`rule-providers[openai_classic]`。含节点凭证的部分（proxies/proxy-providers）会自动脱敏为 ***。',
+    '读取 base.yaml 某个区块/路径的具体内容（返回 YAML）。路径语法：map 用点，如 `dns` 或 `dns.enhanced-mode`；具名序列用 [名字]，如 `proxy-groups[OpenAI]`、`rule-providers[openai_classic]`。⚠️ 这是骨架视图：`proxies:` 区块只含用户手写的固定节点（订阅源注入的节点不在这里），完整渲染请用 get_config_full 或 list_proxy_nodes。含节点凭证的部分（proxies/proxy-providers）会自动脱敏为 ***。',
   input: z.object({
     path: z
       .string()
@@ -65,17 +67,26 @@ const getConfigSectionAction = defineAction({
 const getConfigFull = defineAction({
   name: 'get_config_full',
   description:
-    '读取完整下发配置（已脱敏）：骨架 + 注入到各锚点的全部**生效**规则，等于实际发给 Mihomo/Clash 的最终结果。仅当需要全局视角时调用——例如"优化整个配置""通盘检查一下"；日常单点问题请用 get_config_outline + get_config_section。注意：渲染结果**不含已停用规则、也没有规则 id**——要看停用规则或拿 id 改规则，请用 list_rules 配合 add/update/delete_rule。节点凭证 / 订阅 token 已脱敏为 ***。',
+    '读取完整下发配置（已脱敏）：骨架 + 注入到各锚点的全部**生效**规则 + enabled 订阅源注入的节点，等于实际发给 Mihomo/Clash 的最终结果。仅当需要全局视角时调用——例如"优化整个配置""通盘检查一下"；日常单点问题请用 get_config_outline + get_config_section。注意：渲染结果**不含已停用规则、也没有规则 id**——要看停用规则或拿 id 改规则，请用 list_rules 配合 add/update/delete_rule。节点凭证 / 订阅 token 已脱敏为 ***。',
   input: z.object({}),
   risk: 'read',
   async run() {
-    const [content, rules, providers] = await Promise.all([
+    const [content, rules, providers, subs, cols] = await Promise.all([
       loadBaseContent(),
       listRules(),
       listRuleSets(),
+      listSubscriptions(),
+      listCollections(),
     ]);
-    const rendered = renderBase(content, rules, { providers }).content;
-    return { kind: 'config-full', data: { yaml: fullRedactedYaml(rendered) } };
+    const resolved = await resolveConfig(content, rules, subs, cols, {
+      providers,
+      ignoreFailedSubs: true,
+      // The user-triggered config-full read shouldn't poison the production
+      // snapshot if some sub is currently misbehaving — leave the snapshot to
+      // /api/sub and /api/v1/preview.
+      persistSnapshot: false,
+    });
+    return { kind: 'config-full', data: { yaml: fullRedactedYaml(resolved.content) } };
   },
 });
 

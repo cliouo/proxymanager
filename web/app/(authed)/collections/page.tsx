@@ -10,7 +10,7 @@ import { Input, Select } from '@/components/ui/Input';
 import { Placeholder } from '@/components/ui/Reveal';
 import { StatusDot } from '@/components/ui/StatusDot';
 import { ApiError, api } from '@/lib/client/api';
-import { type Collection, type DedupBy, dedupLabel } from '@/lib/types/collection';
+import { type Collection } from '@/lib/types/collection';
 
 interface Subscription {
   id: string;
@@ -74,7 +74,7 @@ function CollectionsView() {
   );
 
   async function onDelete(id: string) {
-    if (!confirm('确定删除该聚合？')) return;
+    if (!confirm('确定删除该节点池？')) return;
     try {
       await api(`/api/v1/collections/${id}`, { method: 'DELETE' });
       const next = collections.filter((c) => c.id !== id);
@@ -94,7 +94,7 @@ function CollectionsView() {
             href="/subscriptions"
             className="text-[12px] text-[var(--color-muted)] hover:text-[var(--color-primary)] transition-colors -ml-1 mr-1"
             title="返回订阅源"
-            aria-label={fromSubs ? '返回订阅源（聚合 tab）' : '返回订阅源'}
+            aria-label={fromSubs ? '返回订阅源（节点池 tab）' : '返回订阅源'}
           >
             ← 订阅源
           </Link>
@@ -102,7 +102,7 @@ function CollectionsView() {
             className="font-serif text-[22px] font-medium leading-[1.2] tracking-[-0.015em] text-[var(--color-ink)]"
             style={{ fontVariationSettings: '"opsz" 96, "SOFT" 30' }}
           >
-            聚合管理
+            节点池
           </h1>
           <span className="text-[12px] tabular-nums text-[var(--color-muted)]">
             {collections.length} 个
@@ -115,7 +115,7 @@ function CollectionsView() {
             setSelectedId(null);
           }}
         >
-          + 新建聚合
+          + 新建节点池
         </Button>
       </header>
 
@@ -138,7 +138,7 @@ function CollectionsView() {
             </div>
           ) : collections.length === 0 && mode !== 'create' ? (
             <p className="px-5 py-8 text-[13px] text-[var(--color-muted)] text-center">
-              还没有聚合
+              还没有节点池
             </p>
           ) : (
             <ul>
@@ -164,7 +164,7 @@ function CollectionsView() {
                       </span>
                     </div>
                     <div className="flex items-center gap-2 mt-1 text-[11px] text-[var(--color-muted)] font-mono">
-                      <span>{dedupLabel(c.dedup_by)}</span>
+                      <span>{c.enabled ? '已启用' : '已停用'}</span>
                       <span>·</span>
                       <span className="tabular-nums">{c.subscription_ids.length} 订阅</span>
                     </div>
@@ -209,7 +209,7 @@ function CollectionsView() {
             />
           ) : (
             <div className="h-full flex items-center justify-center">
-              <p className="text-[13px] text-[var(--color-muted)]">从左侧选择一个聚合</p>
+              <p className="text-[13px] text-[var(--color-muted)]">从左侧选择一个节点池</p>
             </div>
           )}
         </main>
@@ -255,9 +255,7 @@ function CollectionDetail({
             {collection.name}
           </h2>
           <p className="mt-1 text-[12px] text-[var(--color-muted)] font-mono">
-            {dedupLabel(collection.dedup_by)}
-            {collection.name_prefix && ` · 前缀 ${collection.name_prefix}`}
-            {' · '}{resolved.length} 个成员
+            {collection.enabled ? '已启用' : '已停用'} · type {collection.type} · {resolved.length} 个成员
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -340,12 +338,11 @@ function CollectionForm({
   onCancel: () => void;
 }) {
   const [name, setName] = useState(initial?.name ?? '');
+  const [enabled, setEnabled] = useState<boolean>(initial?.enabled ?? true);
   const [selected, setSelected] = useState<Set<string>>(
     new Set(initial?.subscription_ids ?? []),
   );
   const [tagsInput, setTagsInput] = useState(initial?.subscription_tags?.join(', ') ?? '');
-  const [dedupBy, setDedupBy] = useState<DedupBy>(initial?.dedup_by ?? 'name');
-  const [namePrefix, setNamePrefix] = useState(initial?.name_prefix ?? '');
   const [notes, setNotes] = useState(initial?.notes ?? '');
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -371,10 +368,10 @@ function CollectionForm({
         .filter((t) => t.length > 0);
       await onSubmit({
         name: name.trim(),
+        enabled,
+        type: 'select',
         subscription_ids: [...selected],
         subscription_tags: tags,
-        dedup_by: dedupBy,
-        name_prefix: namePrefix.trim() || undefined,
         notes: notes.trim() || undefined,
       });
     } catch (err) {
@@ -391,8 +388,11 @@ function CollectionForm({
           className="font-serif text-[28px] font-medium leading-[1.15] tracking-[-0.015em] text-[var(--color-ink)]"
           style={{ fontVariationSettings: '"opsz" 96, "SOFT" 30' }}
         >
-          {initial ? `编辑「${initial.name}」` : '新建聚合'}
+          {initial ? `编辑「${initial.name}」` : '新建节点池'}
         </h2>
+        <p className="mt-1.5 text-[13px] text-[var(--color-muted)] leading-[1.55]">
+          节点池 = 一个 proxy-group。启用时,resolve 会以此名生成 select 组,成员是入选订阅源的全部节点。
+        </p>
       </header>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -406,22 +406,21 @@ function CollectionForm({
             required
           />
         </FormField>
-        <FormField label="去重方式">
-          <Select
-            value={dedupBy}
-            onChange={(e) => setDedupBy(e.target.value as DedupBy)}
-          >
-            <option value="name">按名称去重</option>
-            <option value="server-port">按 server:port 去重</option>
-            <option value="none">不去重</option>
+        <FormField label="proxy-group 类型">
+          <Select value="select" disabled>
+            <option value="select">select（手动选定）</option>
           </Select>
         </FormField>
-        <FormField label="名称前缀">
-          <Input
-            placeholder="可选，如 [主]"
-            value={namePrefix}
-            onChange={(e) => setNamePrefix(e.target.value)}
-          />
+        <FormField label="状态">
+          <label className="flex items-center gap-2 h-9 px-2.5 text-[13px] text-[var(--color-fg-soft)] cursor-pointer">
+            <input
+              type="checkbox"
+              checked={enabled}
+              onChange={(e) => setEnabled(e.target.checked)}
+              className="accent-[var(--color-primary)] w-3.5 h-3.5"
+            />
+            {enabled ? '启用 — 注入到配置' : '停用 — 不生成 group'}
+          </label>
         </FormField>
       </div>
 

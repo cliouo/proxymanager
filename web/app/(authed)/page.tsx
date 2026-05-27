@@ -10,7 +10,6 @@ import { ApiError, api } from '@/lib/client/api';
 
 interface Meta {
   subscriptionUrl: string;
-  subProvidersBase: string;
   buildId: string | null;
   hasBase: boolean;
 }

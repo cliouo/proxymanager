@@ -6,12 +6,22 @@ import {
   listSubscriptions,
   upsertSubscription,
 } from '@/lib/repos/subscriptionsRepo';
+import { invalidateResolvedSnapshot } from '@/lib/repos/resolvedRepo';
 import type {
   Subscription,
   SubscriptionCreate,
   SubscriptionTraffic,
   SubscriptionUpdate,
 } from '@/schemas';
+
+/**
+ * Fire-and-forget snapshot invalidation. Snapshot reads have a long Redis
+ * EX as a safety net, so a missed invalidation is bounded; never let a
+ * Redis hiccup here turn a successful mutation into a 500.
+ */
+function invalidateSnapshot(): void {
+  invalidateResolvedSnapshot().catch(() => undefined);
+}
 
 export function nowSeconds(): number {
   return Math.floor(Date.now() / 1000);
@@ -28,6 +38,7 @@ export async function createSubscription(input: SubscriptionCreate): Promise<Sub
   }
   const sub: Subscription = { ...input, id: generateSubscriptionId() };
   await upsertSubscription(sub);
+  invalidateSnapshot();
   return sub;
 }
 
@@ -52,6 +63,7 @@ export async function replaceSubscription(
     last_traffic: current.last_traffic,
   };
   await upsertSubscription(next);
+  invalidateSnapshot();
   return next;
 }
 
@@ -71,6 +83,7 @@ export async function patchSubscription(
   }
   const next: Subscription = { ...current, ...patch };
   await upsertSubscription(next);
+  invalidateSnapshot();
   return next;
 }
 
@@ -89,12 +102,14 @@ export async function recordSubscriptionSync(
     last_traffic: traffic ?? current.last_traffic,
   };
   await upsertSubscription(next);
+  invalidateSnapshot();
   return next;
 }
 
-export {
-  listSubscriptions,
-  getSubscription,
-  getSubscriptionByName,
-  repoDelete as deleteSubscription,
-};
+export async function deleteSubscription(id: string): Promise<boolean> {
+  const removed = await repoDelete(id);
+  if (removed) invalidateSnapshot();
+  return removed;
+}
+
+export { listSubscriptions, getSubscription, getSubscriptionByName };

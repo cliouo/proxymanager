@@ -37,6 +37,15 @@ export const REDIS_KEYS = {
    */
   collections: 'collections',
   /**
+   * Cached summary of the most recent successful resolveConfig() — node
+   * names, collisions, per-sub status. Readers (UI pickers, AI tools) that
+   * only need the resolved node list can hit this instead of re-running the
+   * pipeline. Invalidated on subscription mutations and on every successful
+   * resolveConfig (which rewrites it). Plain Redis key with a long EX as a
+   * safety net in case an invalidation call is missed.
+   */
+  resolvedSnapshot: 'resolved:snapshot',
+  /**
    * Pending AI write confirmations. Each is a standalone key with a short
    * EX TTL holding the {actor, action, input} to execute once the user
    * authorises it; consumed atomically (one-time) via GETDEL.

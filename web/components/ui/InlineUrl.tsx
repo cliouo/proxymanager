@@ -7,7 +7,7 @@ interface InlineUrlProps {
   value: string;
   /** 隐藏右侧"复制"按钮。 */
   bare?: boolean;
-  /** 默认遮蔽 sub-providers / 类似敏感段，按"显示"切换；复制按钮始终复制完整 URL。 */
+  /** 默认遮蔽 sub / rule-providers 路径的 token 段，按"显示"切换；复制按钮始终复制完整 URL。 */
   mask?: boolean;
   className?: string;
 }
@@ -79,13 +79,13 @@ export function InlineUrl({
 }
 
 /**
- * 替换 sub-providers / sub / rule-providers 路径里的 token 段为 `••••••`。
+ * 替换 sub / rule-providers 路径里的 token 段为 `••••••`。
  * Pattern: `…/<api-path>/<TOKEN>/<name>` → `…/<api-path>/••••••/<name>`
  * 不匹配时原样返回（fallback 安全）。
  */
 function maskTokenSegment(url: string): string {
   return url.replace(
-    /^(.*?\/(?:sub-providers|sub|rule-providers)\/)([^/]+)(\/.*)$/,
+    /^(.*?\/(?:sub|rule-providers)\/)([^/]+)(\/.*)$/,
     (_full, prefix, _token, rest) => `${prefix}••••••${rest}`,
   );
 }

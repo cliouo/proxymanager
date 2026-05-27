@@ -172,7 +172,8 @@ registry.registerPath({
   method: 'get',
   path: '/api/v1/subscriptions',
   summary: 'List subscriptions',
-  description: 'Upstream airport subscription sources (referenced by base.yaml `proxy-providers`).',
+  description:
+    'Upstream airport subscription sources. Every enabled subscription has its (operator-processed) nodes auto-injected into the rendered config\'s `proxies:` block at resolve time — see /api/v1/preview for the resolved view.',
   tags: ['subscriptions'],
   responses: {
     200: {
@@ -265,7 +266,7 @@ registry.registerPath({
   path: '/api/v1/subscriptions/{id}/refresh',
   summary: 'Refresh subscription from upstream',
   description:
-    'Fetches the upstream URL, validates it parses as Clash YAML, and records sync time + traffic info. Does not cache the upstream proxies — those are streamed on every `/api/sub-providers/{token}/{name}` request.',
+    'Force-fetches the upstream URL (bypasses the fetch cache), validates it parses as Clash YAML, and records sync time + traffic info. The fresh content is cached and used at the next resolveConfig run when the subscription\'s nodes are injected into `/api/sub/{token}/default`.',
   tags: ['subscriptions'],
   request: { params: z.object({ id: z.string() }) },
   responses: {
@@ -373,22 +374,6 @@ registry.registerPath({
     200: { description: 'Rule-set body (text/yaml or text/plain)' },
     401: { description: 'Bad token' },
     404: { description: 'Unknown rule-set name' },
-  },
-});
-
-registry.registerPath({
-  method: 'get',
-  path: '/api/sub-providers/{token}/{name}',
-  summary: 'Public proxy-provider endpoint',
-  description:
-    'Mihomo `proxy-providers` `url:` target. Validates SUB_TOKEN, streams upstream subscription normalised to a Clash provider YAML. CORS allowed for all origins.',
-  tags: ['subscriptions'],
-  security: [],
-  request: { params: z.object({ token: z.string(), name: z.string() }) },
-  responses: {
-    200: { description: 'Clash provider YAML (text/yaml)' },
-    401: { description: 'Bad token' },
-    404: { description: 'Unknown provider name' },
   },
 });
 
