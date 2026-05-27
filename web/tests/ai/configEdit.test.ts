@@ -97,8 +97,14 @@ describe('assertEditablePath (Never-List)', () => {
     expect(() => assertEditablePath(parsePath('rules[0]'))).toThrow();
   });
 
-  it('allows policy/behaviour blocks', () => {
+  it('forbids editing proxy-groups via config-section (E1: proxy-groups live in hash, not base.yaml)', () => {
+    expect(() => assertEditablePath(parsePath('proxy-groups'))).toThrow();
+    expect(() => assertEditablePath(parsePath('proxy-groups[OpenAI]'))).toThrow();
+  });
+
+  it('allows skeleton blocks that still live in base.yaml', () => {
     expect(() => assertEditablePath(parsePath('dns.enhanced-mode'))).not.toThrow();
-    expect(() => assertEditablePath(parsePath('proxy-groups[OpenAI]'))).not.toThrow();
+    expect(() => assertEditablePath(parsePath('sniffer'))).not.toThrow();
+    expect(() => assertEditablePath(parsePath('tun.enable'))).not.toThrow();
   });
 });

@@ -9,6 +9,8 @@
  */
 
 import { z } from 'zod';
+import { listProxyGroups } from '@/lib/repos/proxyGroupsRepo';
+import { listProxyGroupTemplates } from '@/lib/repos/proxyGroupTemplatesRepo';
 import { listRules } from '@/lib/repos/rulesRepo';
 import { listRuleSets } from '@/lib/repos/ruleSetsRepo';
 import { getResolvedSnapshot } from '@/lib/repos/resolvedRepo';
@@ -99,4 +101,58 @@ const listRulesAction = defineAction({
   },
 });
 
-export const READ_ACTIONS = [getBaseOverview, listProxyNodes, listRulesAction];
+const listProxyGroupsAction = defineAction({
+  name: 'list_proxy_groups',
+  description:
+    '列出当前 hash 中的全部策略组(proxy-groups)和共享模板(templates)。每个策略组含 name/type(mihomo 原生类型)/kind(UI 预设标签:raw/region/single-sub/collection-scope/...)/proxies/filter/template_id/dialer-proxy/include-all-* 等字段;single-sub 组的 bound_subscription_id 与 collection-scope 组的 bound_collection_id 在此暴露(渲染时据此自动生成 filter / proxies)。回答"我有哪些策略组""某组怎么配的""有没有用模板"或写规则需要选 policy 之前调用。AI 不能改策略组,只读;用户改要去「策略组」页。',
+  input: z.object({}),
+  risk: 'read',
+  async run() {
+    const [groups, templates] = await Promise.all([
+      listProxyGroups(),
+      listProxyGroupTemplates(),
+    ]);
+    return {
+      kind: 'proxy-group-list',
+      data: {
+        count: groups.length,
+        groups: groups.map((g) => ({
+          name: g.name,
+          type: g.type,
+          kind: g.kind,
+          section: g.section ?? null,
+          template_id: g.template_id ?? null,
+          bound_subscription_id: g.bound_subscription_id ?? null,
+          bound_collection_id: g.bound_collection_id ?? null,
+          proxies: g.proxies ?? null,
+          use: g.use ?? null,
+          'include-all-proxies': g['include-all-proxies'] ?? null,
+          'include-all-providers': g['include-all-providers'] ?? null,
+          filter: g.filter ?? null,
+          'exclude-filter': g['exclude-filter'] ?? null,
+          'dialer-proxy': g['dialer-proxy'] ?? null,
+          url: g.url ?? null,
+          interval: g.interval ?? null,
+          tolerance: g.tolerance ?? null,
+          notes: g.notes ?? null,
+        })),
+        templates: templates.map((t) => ({
+          id: t.id,
+          name: t.name,
+          type: t.type ?? null,
+          url: t.url ?? null,
+          interval: t.interval ?? null,
+          tolerance: t.tolerance ?? null,
+          notes: t.notes ?? null,
+        })),
+      },
+    };
+  },
+});
+
+export const READ_ACTIONS = [
+  getBaseOverview,
+  listProxyNodes,
+  listRulesAction,
+  listProxyGroupsAction,
+];

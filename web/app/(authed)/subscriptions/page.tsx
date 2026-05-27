@@ -204,14 +204,14 @@ export default function SubscriptionsPage() {
             订阅源
           </h1>
           <p className="mt-1.5 text-[13px] text-[var(--color-muted)]">
-            {subs.length} 订阅源 · {collections.length} 节点池 · 启用即自动注入 proxies
+            {subs.length} 订阅源 · {collections.length} 聚合订阅 · 启用订阅源即注入 proxies;聚合订阅供策略组绑定
           </p>
         </div>
         {tab === 'subs' ? (
           <Button onClick={() => setAdding((v) => !v)}>{adding ? '取消' : '+ 新增订阅'}</Button>
         ) : (
           <Button onClick={() => router.push('/collections?mode=create&from=subs')}>
-            + 新建节点池
+            + 新建聚合订阅
           </Button>
         )}
       </header>
@@ -241,7 +241,7 @@ export default function SubscriptionsPage() {
           controlsId={`${tabsId}-panel-collections`}
           tabId={`${tabsId}-tab-collections`}
         >
-          节点池
+          聚合订阅
         </TabButton>
       </div>
 
@@ -381,14 +381,14 @@ function CollectionEmpty() {
         className="font-serif text-[20px] font-medium text-[var(--color-fg-soft)] leading-[1.25] tracking-[-0.01em]"
         style={{ fontVariationSettings: '"opsz" 48, "SOFT" 50' }}
       >
-        还没有节点池
+        还没有聚合订阅
       </p>
       <p className="mt-1.5 text-[13px] text-[var(--color-muted)]">
-        节点池把多个订阅源的节点聚成一个 proxy-group，规则和链式代理可以用它的名字。
+        聚合订阅是一组订阅源的标记。策略组用 kind: collection-scope 绑定它就能拿到这组订阅源的节点。
       </p>
       <div className="mt-5">
         <Button onClick={() => router.push('/collections?mode=create&from=subs')}>
-          + 新建第一个节点池
+          + 新建第一个聚合订阅
         </Button>
       </div>
     </div>
@@ -420,13 +420,13 @@ function CollectionCard({
   const hasDisabledMember = members.some((m) => !m.enabled);
   return (
     <li className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-card)] overflow-hidden grid grid-cols-[52px_1fr] lg:grid-cols-[60px_1fr] xl:grid-cols-[68px_1fr]">
-      {/* 左条：与 Dossier 对称，竖直居中单块（序号 + NO. + 状态点/节点池），不撑高 */}
+      {/* 左条：与 Dossier 对称，竖直居中单块（序号 + NO. + 状态点/聚合订阅），不撑高 */}
       <div className="border-r border-[var(--color-border)] bg-[var(--color-bg-sunk)] flex flex-col items-center justify-center gap-2 py-3">
         <div className="flex flex-col items-center leading-none">
           <span
             className="font-serif text-[20px] lg:text-[22px] xl:text-[24px] leading-none font-medium tabular-nums tracking-[-0.015em] text-[var(--color-ink)]"
             style={{ fontVariationSettings: '"opsz" 48, "SOFT" 50' }}
-            aria-label={`节点池 ${index}`}
+            aria-label={`聚合订阅 ${index}`}
           >
             {String(index).padStart(2, '0')}
           </span>
@@ -440,7 +440,7 @@ function CollectionCard({
         <div className="flex flex-col items-center gap-1">
           <StatusDot tone={!c.enabled ? 'off' : hasDisabledMember ? 'warn' : 'on'} />
           <span className="text-[9px] uppercase tracking-[0.04em] font-mono text-[var(--color-muted)] leading-none whitespace-nowrap">
-            节点池
+            聚合订阅
           </span>
         </div>
       </div>
@@ -454,11 +454,11 @@ function CollectionCard({
           >
             {c.name}
           </h2>
-          <Badge tone="neutral">节点池</Badge>
+          <Badge tone="neutral">聚合订阅</Badge>
           <div className="flex items-center gap-0.5 shrink-0 ml-auto">
             <IconLinkButton
               href={`/collections?id=${encodeURIComponent(c.id)}&from=subs`}
-              title={`编辑节点池 ${c.name}`}
+              title={`编辑聚合订阅 ${c.name}`}
               label="✎"
             />
           </div>

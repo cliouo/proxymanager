@@ -7,13 +7,16 @@ import { api } from '@/lib/client/api';
 import { clearAdminKey } from '@/lib/client/auth-storage';
 
 /**
- * The IA splits into three groups (Phase D):
+ * The IA splits into three groups (E4):
  *   - 总览                      single entry point
- *   - 资源库 (Resources)         reusable inputs that flow INTO the config
- *                              (订阅源 → proxies, 节点池 → proxy-groups, 规则集 → rule-providers)
- *   - 配置 (Configuration)       the assembled output and the tools that shape it
+ *   - 资源 (Resources)           reusable inputs that flow INTO the config
+ *                              (订阅源 → proxies, 聚合订阅 → 一个 sub bundle,
+ *                               规则集 → rule-providers)
+ *   - 应用 (Application)         what's actually rendered: policy (策略组 +
+ *                              链式代理 + 规则), the skeleton, the final yaml.
+ *   - 系统 (System)              operational/admin views.
  *
- * Scenarios + system links live under the FOOTER section.
+ * Auto-discovered scenarios + the docs link live under the FOOTER sections.
  */
 const OVERVIEW_NAV: { href: string; label: string; icon: string }[] = [
   { href: '/', label: '总览', icon: '◐' },
@@ -21,28 +24,27 @@ const OVERVIEW_NAV: { href: string; label: string; icon: string }[] = [
 
 const RESOURCE_NAV: { href: string; label: string; icon: string }[] = [
   { href: '/subscriptions', label: '订阅源', icon: '⇣' },
-  { href: '/collections', label: '节点池', icon: '⊞' },
+  { href: '/collections', label: '聚合订阅', icon: '⊞' },
   { href: '/rule-sets', label: '规则集', icon: '⊟' },
 ];
 
-const CONFIG_NAV: { href: string; label: string; icon: string }[] = [
-  { href: '/base', label: '结构骨架', icon: '⌬' },
-  { href: '/scenarios/rule-anchor-append', label: '规则', icon: '≡' },
+const APP_NAV: { href: string; label: string; icon: string }[] = [
+  { href: '/proxy-groups', label: '策略组', icon: '⊕' },
   { href: '/scenarios/chained-proxy', label: '链式代理', icon: '↻' },
+  { href: '/scenarios/rule-anchor-append', label: '规则', icon: '≡' },
+  { href: '/base', label: '结构骨架', icon: '⌬' },
   { href: '/config', label: '最终配置', icon: '◉' },
 ];
 
 const SYSTEM_NAV: { href: string; label: string; icon: string }[] = [
   { href: '/history', label: '操作历史', icon: '⟲' },
+  { href: '/docs', label: 'API 文档', icon: '❡' },
 ];
 
 // Promoted into the dedicated CONFIG_NAV slot above, so they're hidden from
 // the auto "场景" list below.
 const PROMOTED_SCENARIOS = new Set(['rule-anchor-append', 'chained-proxy']);
 
-const FOOTER_NAV: { href: string; label: string }[] = [
-  { href: '/docs', label: 'API 文档' },
-];
 
 interface ScenarioDescriptor {
   id: string;
@@ -112,7 +114,7 @@ export function Sidebar() {
           />
         ))}
 
-        <SectionLabel>资源库</SectionLabel>
+        <SectionLabel>资源</SectionLabel>
         {RESOURCE_NAV.map((item) => (
           <SidebarLink
             key={item.href}
@@ -123,8 +125,8 @@ export function Sidebar() {
           />
         ))}
 
-        <SectionLabel>配置</SectionLabel>
-        {CONFIG_NAV.map((item) => (
+        <SectionLabel>应用</SectionLabel>
+        {APP_NAV.map((item) => (
           <SidebarLink
             key={item.href}
             href={item.href}
@@ -167,17 +169,6 @@ export function Sidebar() {
             />
           ) : null,
         )}
-
-        <SectionLabel>文档</SectionLabel>
-        {FOOTER_NAV.map((item) => (
-          <SidebarLink
-            key={item.href}
-            href={item.href}
-            label={item.label}
-            icon="❡"
-            active={false}
-          />
-        ))}
       </nav>
 
       <div className="p-3 border-t border-[var(--color-border)]">

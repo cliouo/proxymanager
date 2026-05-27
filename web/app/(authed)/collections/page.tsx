@@ -74,7 +74,7 @@ function CollectionsView() {
   );
 
   async function onDelete(id: string) {
-    if (!confirm('确定删除该节点池？')) return;
+    if (!confirm('确定删除该聚合订阅？')) return;
     try {
       await api(`/api/v1/collections/${id}`, { method: 'DELETE' });
       const next = collections.filter((c) => c.id !== id);
@@ -94,7 +94,7 @@ function CollectionsView() {
             href="/subscriptions"
             className="text-[12px] text-[var(--color-muted)] hover:text-[var(--color-primary)] transition-colors -ml-1 mr-1"
             title="返回订阅源"
-            aria-label={fromSubs ? '返回订阅源（节点池 tab）' : '返回订阅源'}
+            aria-label={fromSubs ? '返回订阅源（聚合订阅 tab）' : '返回订阅源'}
           >
             ← 订阅源
           </Link>
@@ -102,7 +102,7 @@ function CollectionsView() {
             className="font-serif text-[22px] font-medium leading-[1.2] tracking-[-0.015em] text-[var(--color-ink)]"
             style={{ fontVariationSettings: '"opsz" 96, "SOFT" 30' }}
           >
-            节点池
+            聚合订阅
           </h1>
           <span className="text-[12px] tabular-nums text-[var(--color-muted)]">
             {collections.length} 个
@@ -115,7 +115,7 @@ function CollectionsView() {
             setSelectedId(null);
           }}
         >
-          + 新建节点池
+          + 新建聚合订阅
         </Button>
       </header>
 
@@ -138,7 +138,7 @@ function CollectionsView() {
             </div>
           ) : collections.length === 0 && mode !== 'create' ? (
             <p className="px-5 py-8 text-[13px] text-[var(--color-muted)] text-center">
-              还没有节点池
+              还没有聚合订阅
             </p>
           ) : (
             <ul>
@@ -209,7 +209,7 @@ function CollectionsView() {
             />
           ) : (
             <div className="h-full flex items-center justify-center">
-              <p className="text-[13px] text-[var(--color-muted)]">从左侧选择一个节点池</p>
+              <p className="text-[13px] text-[var(--color-muted)]">从左侧选择一个聚合订阅</p>
             </div>
           )}
         </main>
@@ -388,10 +388,12 @@ function CollectionForm({
           className="font-serif text-[28px] font-medium leading-[1.15] tracking-[-0.015em] text-[var(--color-ink)]"
           style={{ fontVariationSettings: '"opsz" 96, "SOFT" 30' }}
         >
-          {initial ? `编辑「${initial.name}」` : '新建节点池'}
+          {initial ? `编辑「${initial.name}」` : '新建聚合订阅'}
         </h2>
         <p className="mt-1.5 text-[13px] text-[var(--color-muted)] leading-[1.55]">
-          节点池 = 一个 proxy-group。启用时,resolve 会以此名生成 select 组,成员是入选订阅源的全部节点。
+          聚合订阅 = 一组订阅源的标记。本身不进最终配置;只有当策略组以
+          <code className="font-mono mx-1">kind: collection-scope</code>
+          绑定它时,resolve 才把这组订阅源的节点填进该策略组的 <code className="font-mono">proxies</code>。
         </p>
       </header>
 

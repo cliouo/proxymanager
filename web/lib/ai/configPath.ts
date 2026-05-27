@@ -14,17 +14,17 @@ export const SENSITIVE_KEY =
 
 /**
  * Top-level blocks config-section edits must never touch, with the reason shown
- * to the model. `proxies` is partly auto-injected from enabled subscriptions
- * at render time — hand-editing fights the resolve pipeline. `proxy-providers`
- * is no longer managed by the project (subscriptions inject straight into
- * `proxies:`); any literal entries the user wrote stay untouched. `rules` and
- * `rule-providers` are owned by their respective dedicated actions and live
- * in Redis hashes, not base.yaml.
+ * to the model. After E1 most of these are no longer in base.yaml at all —
+ * they're rendered into the final config from Redis hashes, and base only
+ * carries markers. Hand-editing base would silently fight the resolve
+ * pipeline; the dedicated actions are the only correct path.
  */
 const FORBIDDEN_EDIT_ROOTS: Record<string, string> = {
   proxies: '节点由订阅源自动注入；要增减节点请到「订阅源」页',
   'proxy-providers':
     '本项目不再管理 proxy-providers（订阅源直接注入到 proxies）；用户在 base 里手写的条目会原样透传，AI 不要触碰',
+  'proxy-groups':
+    '策略组现在存在 proxy-groups Redis hash 里，base 只有 # === PROXY-GROUPS === 标记。用 create_proxy_group / update_proxy_group / delete_proxy_group 管理',
   rules: '规则请用 add_rule / update_rule / delete_rule 管理，不能经 config-section 改',
   'rule-providers':
     '规则集由 create_rule_provider / update_rule_provider / delete_rule_provider 管理，不能经 config-section 改',
