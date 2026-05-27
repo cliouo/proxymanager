@@ -4,6 +4,8 @@ import { resolveConfig } from '@/lib/engine/resolve';
 import { extractStructured } from '@/lib/engine/structured';
 import { getBase } from '@/lib/repos/baseRepo';
 import { listCollections } from '@/lib/repos/collectionsRepo';
+import { listProxyGroups } from '@/lib/repos/proxyGroupsRepo';
+import { listProxyGroupTemplates } from '@/lib/repos/proxyGroupTemplatesRepo';
 import { listRules } from '@/lib/repos/rulesRepo';
 import { listRuleSets } from '@/lib/repos/ruleSetsRepo';
 import { listSubscriptions } from '@/lib/repos/subscriptionsRepo';
@@ -25,16 +27,26 @@ export const GET = withProblemDetails(async () => {
   if (!base) {
     throw ProblemDetailsError.unprocessable('Base config has not been initialized.');
   }
-  const [rules, providers, subscriptions, collections] = await Promise.all([
+  const [rules, providers, subscriptions, proxyGroups, templates, collections] = await Promise.all([
     listRules(),
     listRuleSets(),
     listSubscriptions(),
+    listProxyGroups(),
+    listProxyGroupTemplates(),
     listCollections(),
   ]);
-  const resolved = await resolveConfig(base.content, rules, subscriptions, collections, {
-    providers,
-    ignoreFailedSubs: true,
-  });
+  const resolved = await resolveConfig(
+    base.content,
+    rules,
+    subscriptions,
+    proxyGroups,
+    templates,
+    {
+      providers,
+      ignoreFailedSubs: true,
+      collections,
+    },
+  );
   const structured = extractStructured(resolved.content);
   return Response.json({
     data: {
@@ -44,10 +56,10 @@ export const GET = withProblemDetails(async () => {
       resolve: {
         buildId: resolved.buildId,
         inlinedProxyCount: resolved.inlinedProxyCount,
+        proxyGroupCount: resolved.proxyGroupCount,
         nodeNames: resolved.nodeNames,
         collisions: resolved.collisions,
         subscriptions: resolved.subscriptions,
-        pools: resolved.pools,
         warnings: resolved.warnings,
       },
     },

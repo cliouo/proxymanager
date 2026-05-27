@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Collection, Rule, Subscription } from '@/schemas';
+import type {
+  Collection,
+  ProxyGroup,
+  ProxyGroupTemplate,
+  Rule,
+  Subscription,
+} from '@/schemas';
 
 /**
  * The repo modules read process.env at import time via getRedis(); short-
@@ -71,7 +77,7 @@ describe('resolveConfig — subscription injection', () => {
       .mockResolvedValueOnce({ yaml: providerYaml([{ name: 'US-01' }]), proxyCount: 1 });
 
     const subs = [makeSub({ name: 'air-a' }), makeSub({ name: 'air-b' })];
-    const result = await resolveConfig(BASE_WITH_LITERAL, [], subs, [], {});
+    const result = await resolveConfig(BASE_WITH_LITERAL, [], subs, [], [], {});
 
     expect(result.inlinedProxyCount).toBe(3);
     expect(result.nodeNames).toEqual(['直连', 'HK-01', 'JP-02', 'US-01']);
@@ -87,7 +93,7 @@ describe('resolveConfig — subscription injection', () => {
     resolveSubMock.mockResolvedValueOnce({ yaml: providerYaml([{ name: 'HK-01' }]), proxyCount: 1 });
 
     const subs = [makeSub({ name: 'on' }), makeSub({ name: 'off', enabled: false })];
-    const result = await resolveConfig(BASE_WITH_LITERAL, [], subs, [], {});
+    const result = await resolveConfig(BASE_WITH_LITERAL, [], subs, [], [], {});
 
     expect(resolveSubMock).toHaveBeenCalledTimes(1);
     expect(result.subscriptions).toHaveLength(1);
@@ -100,6 +106,7 @@ describe('resolveConfig — subscription injection', () => {
       BASE_WITH_LITERAL,
       [],
       [makeSub({ name: 'a', node_prefix: '[A] ' })],
+      [],
       [],
       {},
     );
@@ -116,6 +123,7 @@ describe('resolveConfig — subscription injection', () => {
       BASE_WITH_LITERAL,
       [],
       [makeSub({ name: 'first' }), makeSub({ name: 'second' })],
+      [],
       [],
       {},
     );
@@ -135,7 +143,7 @@ describe('resolveConfig — subscription injection', () => {
       proxyCount: 2,
     });
 
-    const result = await resolveConfig(BASE_WITH_LITERAL, [], [makeSub({ name: 'a' })], [], {});
+    const result = await resolveConfig(BASE_WITH_LITERAL, [], [makeSub({ name: 'a' })], [], [], {});
 
     expect(result.collisions).toEqual([
       { name: '直连', keptFrom: null, droppedFrom: ['a'] },
@@ -148,7 +156,7 @@ describe('resolveConfig — subscription injection', () => {
     const baseWithLegacy = `${BASE_WITH_LITERAL}\npm-inline-collections:\n  - old-pool\n`;
     resolveSubMock.mockResolvedValueOnce({ yaml: providerYaml([{ name: 'X' }]), proxyCount: 1 });
 
-    const result = await resolveConfig(baseWithLegacy, [], [makeSub({ name: 'a' })], [], {});
+    const result = await resolveConfig(baseWithLegacy, [], [makeSub({ name: 'a' })], [], [], {});
 
     expect(result.content).not.toContain('pm-inline-collections');
     expect(result.warnings.some((w) => w.includes('pm-inline-collections'))).toBe(true);
@@ -164,6 +172,7 @@ describe('resolveConfig — subscription injection', () => {
       BASE_WITH_LITERAL,
       [],
       [makeSub({ name: 'a' }), makeSub({ name: 'b' })],
+      [],
       [],
       {},
     );
@@ -181,7 +190,7 @@ describe('resolveConfig — subscription injection', () => {
       staleReason: 'connect ECONNREFUSED',
     });
 
-    const result = await resolveConfig(BASE_WITH_LITERAL, [], [makeSub({ name: 'a' })], [], {});
+    const result = await resolveConfig(BASE_WITH_LITERAL, [], [makeSub({ name: 'a' })], [], [], {});
 
     const status = result.subscriptions[0];
     expect(status.stale).toBe(true);
@@ -203,7 +212,14 @@ describe('resolveConfig — subscription injection', () => {
       updated_at: 0,
     };
 
-    const result = await resolveConfig(BASE_WITH_LITERAL, [rule], [makeSub({ name: 'a' })], [], {});
+    const result = await resolveConfig(
+      BASE_WITH_LITERAL,
+      [rule],
+      [makeSub({ name: 'a' })],
+      [],
+      [],
+      {},
+    );
 
     expect(result.content).toContain('DOMAIN-SUFFIX,example.com,默认');
     expect(result.anchorsApplied.find((a) => a.anchor === 'manual')?.ruleCount).toBe(1);
@@ -211,7 +227,7 @@ describe('resolveConfig — subscription injection', () => {
 
   it('writes the resolved snapshot by default', async () => {
     resolveSubMock.mockResolvedValueOnce({ yaml: providerYaml([{ name: 'HK-01' }]), proxyCount: 1 });
-    await resolveConfig(BASE_WITH_LITERAL, [], [makeSub({ name: 'a' })], [], {});
+    await resolveConfig(BASE_WITH_LITERAL, [], [makeSub({ name: 'a' })], [], [], {});
     expect(snapshotMock).toHaveBeenCalledTimes(1);
     const [snapshot] = snapshotMock.mock.calls[0];
     expect(snapshot.nodeNames).toContain('HK-01');
@@ -219,95 +235,309 @@ describe('resolveConfig — subscription injection', () => {
 
   it('skips snapshot persistence when persistSnapshot is false', async () => {
     resolveSubMock.mockResolvedValueOnce({ yaml: providerYaml([{ name: 'HK-01' }]), proxyCount: 1 });
-    await resolveConfig(BASE_WITH_LITERAL, [], [makeSub({ name: 'a' })], [], {
+    await resolveConfig(BASE_WITH_LITERAL, [], [makeSub({ name: 'a' })], [], [], {
       persistSnapshot: false,
     });
     expect(snapshotMock).not.toHaveBeenCalled();
   });
 });
 
-function makeCollection(over: Partial<Collection>): Collection {
+/* ─── E1: managed proxy-groups (hash-rendered) ─────────────────────── */
+
+/** Skeleton with the PROXY-GROUPS marker in place of a literal block. Post-migration shape. */
+const BASE_WITH_MARKER = `mixed-port: 7890
+proxies:
+  - name: 直连
+    type: direct
+
+# === PROXY-GROUPS ===
+
+rules:
+  # === ANCHOR: manual ===
+  - MATCH,默认
+`;
+
+function makeGroup(over: Partial<ProxyGroup>): ProxyGroup {
+  const now = 1_700_000_000;
   return {
     id: crypto.randomUUID(),
-    name: 'pool',
-    enabled: true,
+    kind: 'raw',
+    name: 'g',
     type: 'select',
-    subscription_ids: [],
-    subscription_tags: [],
+    rank: 10,
+    updated_at: now,
     ...over,
-  } as Collection;
+  } as ProxyGroup;
 }
 
-describe('resolveConfig — collection pool-groups', () => {
-  it('emits an enabled collection as a proxy-group over its member nodes', async () => {
-    resolveSubMock
-      .mockResolvedValueOnce({ yaml: providerYaml([{ name: 'HK-01' }, { name: 'HK-02' }]), proxyCount: 2 })
-      .mockResolvedValueOnce({ yaml: providerYaml([{ name: 'JP-01' }]), proxyCount: 1 });
+function makeTemplate(over: Partial<ProxyGroupTemplate>): ProxyGroupTemplate {
+  const now = 1_700_000_000;
+  return {
+    id: crypto.randomUUID(),
+    name: 't',
+    updated_at: now,
+    ...over,
+  } as ProxyGroupTemplate;
+}
 
+describe('resolveConfig — managed proxy-groups', () => {
+  it('replaces the marker with the rendered proxy-groups block from the hash', async () => {
+    resolveSubMock.mockResolvedValueOnce({
+      yaml: providerYaml([{ name: 'HK-01' }]),
+      proxyCount: 1,
+    });
+    const g1 = makeGroup({ name: '默认', type: 'select', proxies: ['HK-01', '直连'], rank: 10 });
+    const g2 = makeGroup({
+      name: '香港',
+      type: 'url-test',
+      'include-all-proxies': true,
+      filter: 'HK',
+      url: 'http://www.gstatic.com/generate_204',
+      interval: 600,
+      rank: 20,
+    });
+
+    const result = await resolveConfig(
+      BASE_WITH_MARKER,
+      [],
+      [makeSub({ name: 'a' })],
+      [g1, g2],
+      [],
+      {},
+    );
+
+    expect(result.proxyGroupCount).toBe(2);
+    expect(result.content).not.toContain('# === PROXY-GROUPS ===');
+    expect(result.content).toContain('proxy-groups:');
+    expect(result.content).toContain('name: 默认');
+    expect(result.content).toContain('name: 香港');
+    // Rank order preserved in render output.
+    expect(result.content.indexOf('name: 默认')).toBeLessThan(result.content.indexOf('name: 香港'));
+  });
+
+  it('renders groups in rank order, ties broken by name', async () => {
+    const a = makeGroup({ name: 'z-low', rank: 5 });
+    const b = makeGroup({ name: 'a-high', rank: 100 });
+    const c = makeGroup({ name: 'b-tied', rank: 50 });
+    const d = makeGroup({ name: 'a-tied', rank: 50 });
+
+    const result = await resolveConfig(BASE_WITH_MARKER, [], [], [a, b, c, d], [], {});
+    const order = ['z-low', 'a-tied', 'b-tied', 'a-high'].map((n) =>
+      result.content.indexOf(`name: ${n}`),
+    );
+    for (let i = 0; i < order.length - 1; i++) {
+      expect(order[i]).toBeLessThan(order[i + 1]);
+    }
+  });
+
+  it('merges template fields underneath the group (group wins, template fills gaps)', async () => {
+    const tpl = makeTemplate({
+      name: 'pr',
+      type: 'url-test',
+      url: 'http://www.gstatic.com/generate_204',
+      interval: 600,
+      tolerance: 50,
+    });
+    const g = makeGroup({
+      name: 'OpenAI',
+      type: 'url-test', // matches template; harmless
+      template_id: tpl.id,
+      proxies: ['DIRECT'],
+      // group does NOT set url/interval/tolerance — comes from template
+    });
+    const result = await resolveConfig(BASE_WITH_MARKER, [], [], [g], [tpl], {});
+    expect(result.content).toContain('url: http://www.gstatic.com/generate_204');
+    expect(result.content).toContain('interval: 600');
+    expect(result.content).toContain('tolerance: 50');
+  });
+
+  it('group field overrides template field on the same key', async () => {
+    const tpl = makeTemplate({ name: 'pr', interval: 600 });
+    const g = makeGroup({ name: 'X', template_id: tpl.id, interval: 9999, type: 'url-test' });
+    const result = await resolveConfig(BASE_WITH_MARKER, [], [], [g], [tpl], {});
+    expect(result.content).toContain('interval: 9999');
+    expect(result.content).not.toContain('interval: 600');
+  });
+
+  it('warns and renders without merge when template_id is dangling', async () => {
+    const g = makeGroup({
+      name: 'X',
+      type: 'url-test',
+      template_id: '00000000-0000-0000-0000-000000000000',
+      url: 'http://probe',
+    });
+    const result = await resolveConfig(BASE_WITH_MARKER, [], [], [g], [], {});
+    expect(result.warnings.some((w) => w.includes('模板'))).toBe(true);
+    expect(result.content).toContain('name: X');
+    expect(result.content).toContain('url: http://probe');
+  });
+
+  it('warns when hash has groups but the base lacks the marker', async () => {
+    const g = makeGroup({ name: 'orphan' });
+    const result = await resolveConfig(BASE_WITH_LITERAL, [], [], [g], [], {});
+    expect(result.warnings.some((w) => w.includes('PROXY-GROUPS'))).toBe(true);
+    // Literal proxy-group ("默认") from the base survives unchanged.
+    expect(result.content).toContain('name: 默认');
+    // The hash group did not get injected because there's no marker.
+    expect(result.content).not.toContain('name: orphan');
+  });
+
+  it('empty hash leaves the marker as no-op (no proxy-groups block emitted)', async () => {
+    const result = await resolveConfig(BASE_WITH_MARKER, [], [], [], [], {});
+    expect(result.proxyGroupCount).toBe(0);
+    expect(result.content).not.toContain('# === PROXY-GROUPS ===');
+    expect(result.content).not.toContain('proxy-groups:');
+  });
+
+  it('single-sub binding builds filter from sub.node_prefix', async () => {
+    resolveSubMock.mockResolvedValueOnce({
+      yaml: providerYaml([{ name: 'HK-01' }, { name: 'JP-01' }]),
+      proxyCount: 2,
+    });
+    const sub = makeSub({ name: 'air-a', node_prefix: '[A] ' });
+    const g = makeGroup({
+      name: 'air-a-only',
+      kind: 'single-sub',
+      bound_subscription_id: sub.id,
+      type: 'select',
+    });
+    const result = await resolveConfig(BASE_WITH_MARKER, [], [sub], [g], [], {});
+    // Filter generated from the prefix, regex-escaped for the bracket.
+    // yaml.stringify double-quotes strings with backslashes and doubles them;
+    // the rendered literal bytes are: filter: "^\\[A\\] "
+    expect(result.content).toContain('filter: "^\\\\[A\\\\] "');
+    expect(result.content).toContain('include-all-proxies: true');
+    // Sub nodes still land in proxies:.
+    expect(result.content).toContain('[A] HK-01');
+  });
+
+  it('single-sub warns when bound sub has no node_prefix', async () => {
+    resolveSubMock.mockResolvedValueOnce({
+      yaml: providerYaml([{ name: 'X' }]),
+      proxyCount: 1,
+    });
+    const sub = makeSub({ name: 'air-a' }); // no node_prefix
+    const g = makeGroup({
+      name: 'sub-no-prefix',
+      kind: 'single-sub',
+      bound_subscription_id: sub.id,
+      type: 'select',
+    });
+    const result = await resolveConfig(BASE_WITH_MARKER, [], [sub], [g], [], {});
+    expect(result.warnings.some((w) => w.includes('node_prefix'))).toBe(true);
+    expect(result.content).not.toMatch(/filter: \^/);
+  });
+
+  it('single-sub warns when bound subscription id is dangling', async () => {
+    const g = makeGroup({
+      name: 'dangling',
+      kind: 'single-sub',
+      bound_subscription_id: '00000000-0000-0000-0000-000000000000',
+    });
+    const result = await resolveConfig(BASE_WITH_MARKER, [], [], [g], [], {});
+    expect(result.warnings.some((w) => w.includes('订阅源') && w.includes('不存在'))).toBe(true);
+  });
+
+  it('collection-scope binding builds proxies from member-sub nodes', async () => {
+    resolveSubMock
+      .mockResolvedValueOnce({
+        yaml: providerYaml([{ name: 'HK-01' }, { name: 'HK-02' }]),
+        proxyCount: 2,
+      })
+      .mockResolvedValueOnce({ yaml: providerYaml([{ name: 'JP-01' }]), proxyCount: 1 });
     const subA = makeSub({ name: 'air-a' });
     const subB = makeSub({ name: 'air-b' });
-    const pool = makeCollection({
-      name: 'main-pool',
-      subscription_ids: [subA.id, subB.id],
-    });
-    const result = await resolveConfig(BASE_WITH_LITERAL, [], [subA, subB], [pool], {});
-
-    expect(result.pools).toEqual([
-      { name: 'main-pool', type: 'select', memberCount: 3 },
-    ]);
-    expect(result.content).toMatch(/name: main-pool\s+type: select\s+proxies:[^]*HK-01[^]*HK-02[^]*JP-01/);
-  });
-
-  it('skips a disabled collection with reason', async () => {
-    resolveSubMock.mockResolvedValueOnce({ yaml: providerYaml([{ name: 'HK-01' }]), proxyCount: 1 });
-    const sub = makeSub({ name: 'air-a' });
-    const pool = makeCollection({
-      name: 'paused-pool',
-      enabled: false,
-      subscription_ids: [sub.id],
-    });
-    const result = await resolveConfig(BASE_WITH_LITERAL, [], [sub], [pool], {});
-    expect(result.pools[0]).toEqual({
-      name: 'paused-pool',
+    const col: Collection = {
+      id: crypto.randomUUID(),
+      name: 'asia',
+      enabled: true,
       type: 'select',
-      memberCount: 0,
-      skipped: true,
-      reason: 'collection 已停用',
+      subscription_ids: [subA.id, subB.id],
+      subscription_tags: [],
+    } as Collection;
+    const g = makeGroup({
+      name: 'asia-scope',
+      kind: 'collection-scope',
+      bound_collection_id: col.id,
+      type: 'select',
     });
-    expect(result.content).not.toContain('paused-pool');
+    const result = await resolveConfig(
+      BASE_WITH_MARKER,
+      [],
+      [subA, subB],
+      [g],
+      [],
+      { collections: [col] },
+    );
+    // proxies list includes all member-sub survivors in member-sub order.
+    expect(result.content).toMatch(/name: asia-scope[^]*proxies:[^]*HK-01[^]*HK-02[^]*JP-01/);
   });
 
-  it('skips a collection whose name collides with an existing proxy-group', async () => {
-    resolveSubMock.mockResolvedValueOnce({ yaml: providerYaml([{ name: 'HK-01' }]), proxyCount: 1 });
-    const sub = makeSub({ name: 'air-a' });
-    // 默认 is already a proxy-group in BASE_WITH_LITERAL
-    const pool = makeCollection({ name: '默认', subscription_ids: [sub.id] });
-    const result = await resolveConfig(BASE_WITH_LITERAL, [], [sub], [pool], {});
-    expect(result.pools[0].skipped).toBe(true);
-    expect(result.pools[0].reason).toContain('已存在');
-  });
-
-  it('skips a collection with no available member nodes', async () => {
-    const sub = makeSub({ name: 'off', enabled: false });
-    const pool = makeCollection({ name: 'empty-pool', subscription_ids: [sub.id] });
-    const result = await resolveConfig(BASE_WITH_LITERAL, [], [sub], [pool], {});
-    expect(result.pools[0].skipped).toBe(true);
-    expect(result.pools[0].reason).toContain('无可用节点');
-  });
-
-  it('resolves members by both subscription_ids and tags', async () => {
-    resolveSubMock
-      .mockResolvedValueOnce({ yaml: providerYaml([{ name: 'HK-01' }]), proxyCount: 1 })
-      .mockResolvedValueOnce({ yaml: providerYaml([{ name: 'JP-01' }]), proxyCount: 1 });
-    const subA = makeSub({ name: 'air-a', tags: [] });
-    const subB = makeSub({ name: 'air-b', tags: ['asia'] });
-    const pool = makeCollection({
-      name: 'mix-pool',
-      subscription_ids: [subA.id],
-      subscription_tags: ['asia'],
+  it('collection-scope warns when bound collection has no nodes', async () => {
+    const col: Collection = {
+      id: crypto.randomUUID(),
+      name: 'empty',
+      enabled: true,
+      type: 'select',
+      subscription_ids: [],
+      subscription_tags: [],
+    } as Collection;
+    const g = makeGroup({
+      name: 'empty-scope',
+      kind: 'collection-scope',
+      bound_collection_id: col.id,
     });
-    const result = await resolveConfig(BASE_WITH_LITERAL, [], [subA, subB], [pool], {});
-    expect(result.pools[0].memberCount).toBe(2);
-    expect(result.content).toMatch(/mix-pool[^]*HK-01[^]*JP-01/);
+    const result = await resolveConfig(BASE_WITH_MARKER, [], [], [g], [], {
+      collections: [col],
+    });
+    expect(result.warnings.some((w) => w.includes('无可用节点'))).toBe(true);
+  });
+
+  it('non-bound presets (region/system/service/...) render as raw fields', async () => {
+    // kind only labels the form intent — these groups render their explicit
+    // fields verbatim, no special resolve-time transformation.
+    const g = makeGroup({
+      name: 'HK',
+      kind: 'region',
+      type: 'url-test',
+      'include-all-proxies': true,
+      filter: '^香港|HK',
+      url: 'http://probe',
+      interval: 600,
+    });
+    const result = await resolveConfig(BASE_WITH_MARKER, [], [], [g], [], {});
+    expect(result.content).toContain('filter: ^香港|HK');
+    expect(result.content).toContain('include-all-proxies: true');
+  });
+
+  it('preserves all native fields the group sets', async () => {
+    const g = makeGroup({
+      name: 'full',
+      type: 'load-balance',
+      proxies: ['a', 'b'],
+      filter: 'HK',
+      'exclude-filter': 'expire',
+      'exclude-type': 'Direct,Reject',
+      'include-all-proxies': true,
+      'disable-udp': true,
+      hidden: false,
+      strategy: 'round-robin',
+      url: 'http://probe',
+      interval: 300,
+      'expected-status': '200',
+      'dialer-proxy': '前置',
+      icon: 'https://example/i.png',
+    });
+    const result = await resolveConfig(BASE_WITH_MARKER, [], [], [g], [], {});
+    expect(result.content).toContain('name: full');
+    expect(result.content).toContain('type: load-balance');
+    expect(result.content).toContain('filter: HK');
+    expect(result.content).toContain('exclude-filter: expire');
+    expect(result.content).toContain('exclude-type:');
+    expect(result.content).toContain('include-all-proxies: true');
+    expect(result.content).toContain('disable-udp: true');
+    expect(result.content).toContain('strategy: round-robin');
+    expect(result.content).toContain('expected-status:');
+    expect(result.content).toContain('dialer-proxy:');
   });
 });

@@ -12,9 +12,12 @@
  *   4. Dedup candidates by `name` across subs and against base's literal
  *      proxies (first writer wins). Collisions are recorded — never silent.
  *   5. Append survivors to the `proxies:` sequence (creating it if missing).
- *   6. Run renderBase on the expanded content to inject rules at anchors and
+ *   6. Replace the `# === PROXY-GROUPS ===` marker (if present) with the
+ *      managed proxy-groups block — every ProxyGroup in the hash, merged
+ *      underneath its optional ProxyGroupTemplate, ordered by `rank`.
+ *   7. Run renderBase on the expanded content to inject rules at anchors and
  *      referenced rule-sets at `# === RULE-PROVIDERS ===`.
- *   7. Persist a resolved-snapshot (best-effort) so cheap readers (UI
+ *   8. Persist a resolved-snapshot (best-effort) so cheap readers (UI
  *      pickers, AI tools) don't need to re-run the pipeline.
  *
  * Used by: /api/sub/{token}/{profile} (production output), /api/v1/preview
@@ -26,25 +29,34 @@
 import {
   parse as parseYaml,
   parseDocument,
+  stringify as stringifyYaml,
   isMap,
   isScalar,
   isSeq,
   type YAMLMap,
   type YAMLSeq,
 } from 'yaml';
-import type { Collection, Rule, Subscription } from '@/schemas';
+import {
+  mergeWithTemplate,
+  type Collection,
+  type ProxyGroup,
+  type ProxyGroupTemplate,
+  type Rule,
+  type Subscription,
+} from '@/schemas';
 import {
   invalidateResolvedSnapshot,
   setResolvedSnapshot,
   type ResolvedSnapshot,
   type SnapshotCollision,
-  type SnapshotPoolStatus,
   type SnapshotSubStatus,
 } from '@/lib/repos/resolvedRepo';
 import { resolveSubscriptionContent } from '@/lib/services/subscriptionFetcher';
 import { renderBase, type RenderOptions, type RenderResult } from './renderer';
 
 const LEGACY_INLINE_FIELD = 'pm-inline-collections';
+/** Marker line replaced by the rendered `proxy-groups:` block. */
+const PROXY_GROUPS_MARKER = /^[ \t]*#\s*===\s*PROXY-GROUPS\s*===[ \t]*$/m;
 
 export interface ResolveOptions extends RenderOptions {
   /** Force-refresh upstream subscriptions (bypass the fetch cache). */
@@ -53,6 +65,12 @@ export interface ResolveOptions extends RenderOptions {
   ignoreFailedSubs?: boolean;
   /** When false, the resolved-snapshot is not persisted. Default true. */
   persistSnapshot?: boolean;
+  /**
+   * Collections used by `kind: collection-scope` proxy-groups to resolve
+   * their `proxies:` list. Defaults to []; groups bound to an unknown
+   * collection id emit a warning and render with their existing fields.
+   */
+  collections?: Collection[];
 }
 
 export interface ResolveResult extends RenderResult {
@@ -62,12 +80,12 @@ export interface ResolveResult extends RenderResult {
   collisions: SnapshotCollision[];
   /** Final node names in `proxies:` in resolution order (base first, then sub-injected survivors). */
   nodeNames: string[];
-  /** Per-collection pool-group injection status. */
-  pools: SnapshotPoolStatus[];
-  /** Warnings, e.g. `pm-inline-collections` legacy field detected. */
+  /** Warnings, e.g. `pm-inline-collections` legacy field detected, missing marker, unresolved template id. */
   warnings: string[];
   /** Count of subscription nodes appended to `proxies:` (post-dedup). */
   inlinedProxyCount: number;
+  /** Number of proxy-groups emitted into the rendered config (from the hash, post-template-merge). */
+  proxyGroupCount: number;
 }
 
 interface InjectionCandidate {
@@ -80,7 +98,8 @@ export async function resolveConfig(
   baseContent: string,
   rules: Rule[],
   subscriptions: Subscription[],
-  collections: Collection[],
+  proxyGroups: ProxyGroup[],
+  templates: ProxyGroupTemplate[],
   opts: ResolveOptions = {},
 ): Promise<ResolveResult> {
   const doc = parseDocument(baseContent);
@@ -137,7 +156,7 @@ export async function resolveConfig(
   const collisionMap = new Map<string, SnapshotCollision>();
   const survivors: InjectionCandidate[] = [];
   const keptPerSub = new Map<string, number>();
-  /** Per-sub list of node names that survived dedup — used to build pool-groups. */
+  /** Per-sub list of surviving node names — used by collection-scope kind. */
   const nodesBySub = new Map<string, string[]>();
 
   const recordCollision = (name: string, keptFrom: string | null, droppedFrom: string): void => {
@@ -176,13 +195,33 @@ export async function resolveConfig(
     appendProxies(doc, survivors.map((s) => s.node));
   }
 
-  // Pool-group emission — one proxy-group per enabled Collection. Each group's
-  // `proxies:` field lists the survivor node names from the collection's
-  // member subs. Name collisions with existing groups (manual or chained-proxy
-  // wrappers) or earlier pools are skipped + reported, never silently overwrite.
-  const pools = injectCollectionPools(doc, collections, subscriptions, nodesBySub);
+  let expandedContent = doc.toString();
 
-  const expandedContent = doc.toString();
+  // Apply kind-driven bindings BEFORE rendering. single-sub builds `filter`
+  // from the bound sub's node_prefix; collection-scope builds `proxies`
+  // from the bound collection's member nodes. Bindings transform groups
+  // in-memory only — the hash is never rewritten by resolveConfig.
+  const transformedGroups = applyKindBindings(
+    proxyGroups,
+    subscriptions,
+    opts.collections ?? [],
+    nodesBySub,
+    warnings,
+  );
+
+  // Inject managed proxy-groups at the marker. Hash entries are rendered in
+  // `rank` order, each merged underneath its optional template (group wins,
+  // template fills gaps). Groups whose `template_id` doesn't resolve still
+  // render — their own fields are used as-is and a warning is recorded.
+  const proxyGroupRender = renderProxyGroupsBlock(transformedGroups, templates, warnings);
+  if (PROXY_GROUPS_MARKER.test(expandedContent)) {
+    expandedContent = expandedContent.replace(PROXY_GROUPS_MARKER, proxyGroupRender.block);
+  } else if (proxyGroups.length > 0) {
+    warnings.push(
+      'base.yaml 缺少 `# === PROXY-GROUPS ===` 标记;hash 中已有策略组无法注入。请先运行迁移脚本或手动插入标记。',
+    );
+  }
+
   const rendered = renderBase(expandedContent, rules, opts);
 
   const nodeNames: string[] = [];
@@ -196,7 +235,6 @@ export async function resolveConfig(
       nodeNames,
       collisions,
       subscriptions: subStatuses,
-      pools,
       warnings,
       computedAt: Date.now(),
       buildId: rendered.buildId,
@@ -209,17 +247,102 @@ export async function resolveConfig(
     subscriptions: subStatuses,
     collisions,
     nodeNames,
-    pools,
     warnings,
     inlinedProxyCount: survivors.length,
+    proxyGroupCount: proxyGroupRender.count,
   };
 }
 
+/* ─── kind-driven bindings ──────────────────────────────────────────── */
+
 /**
- * Resolve a Collection's member subs the same way the legacy expander did —
- * explicit `subscription_ids` (in order, dedup) + any sub matching at least
- * one tag in `subscription_tags`.
+ * Transform proxy-groups in-memory based on their `kind` + binding fields.
+ * Two presets need render-time resolution; the other six produce ProxyGroup
+ * records whose mihomo fields already encode their intent:
+ *
+ *   - `kind: single-sub` + `bound_subscription_id` → set `filter` to
+ *     `^<escaped node_prefix>` and `include-all-proxies: true`. The user
+ *     never has to keep the regex in sync with the sub's prefix.
+ *   - `kind: collection-scope` + `bound_collection_id` → set `proxies` to
+ *     the surviving node names of the collection's member subs (in member
+ *     sub order, then sub-internal order; deduped).
+ *
+ * Bindings that resolve to nothing (missing sub/collection, sub with no
+ * prefix, collection with no nodes) emit a warning and leave the group's
+ * fields untouched so the user can still see the group render — better
+ * than a silent omission.
  */
+function applyKindBindings(
+  groups: ProxyGroup[],
+  subscriptions: Subscription[],
+  collections: Collection[],
+  nodesBySub: Map<string, string[]>,
+  warnings: string[],
+): ProxyGroup[] {
+  if (groups.length === 0) return groups;
+  const subById = new Map(subscriptions.map((s) => [s.id, s]));
+  const colById = new Map(collections.map((c) => [c.id, c]));
+
+  return groups.map((g) => {
+    if (g.kind === 'single-sub' && g.bound_subscription_id) {
+      const sub = subById.get(g.bound_subscription_id);
+      if (!sub) {
+        warnings.push(
+          `策略组 "${g.name}" 绑定的订阅源 ${g.bound_subscription_id} 不存在,filter 未自动生成`,
+        );
+        return g;
+      }
+      if (!sub.node_prefix) {
+        warnings.push(
+          `策略组 "${g.name}" 绑定的订阅源 "${sub.name}" 未设 node_prefix,无法自动生成 filter`,
+        );
+        return g;
+      }
+      // Auto filter wins over any user-typed filter — the preset owns this
+      // field (the raw form would let them edit it after converting kind).
+      return {
+        ...g,
+        filter: `^${escapeRegex(sub.node_prefix)}`,
+        'include-all-proxies': true,
+      };
+    }
+
+    if (g.kind === 'collection-scope' && g.bound_collection_id) {
+      const col = colById.get(g.bound_collection_id);
+      if (!col) {
+        warnings.push(
+          `策略组 "${g.name}" 绑定的聚合订阅 ${g.bound_collection_id} 不存在,proxies 未自动生成`,
+        );
+        return g;
+      }
+      const members = resolveCollectionMemberSubs(col, subscriptions);
+      const nodes: string[] = [];
+      const seen = new Set<string>();
+      for (const sub of members) {
+        for (const n of nodesBySub.get(sub.name) ?? []) {
+          if (!seen.has(n)) {
+            seen.add(n);
+            nodes.push(n);
+          }
+        }
+      }
+      if (nodes.length === 0) {
+        warnings.push(
+          `策略组 "${g.name}" 绑定的聚合订阅 "${col.name}" 当前无可用节点(成员订阅源全部停用、为空或拉取失败)`,
+        );
+        return g;
+      }
+      return { ...g, proxies: nodes };
+    }
+
+    return g;
+  });
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function resolveCollectionMemberSubs(
   collection: Collection,
   subscriptions: Subscription[],
@@ -245,68 +368,62 @@ function resolveCollectionMemberSubs(
   return out;
 }
 
-function injectCollectionPools(
-  doc: ReturnType<typeof parseDocument>,
-  collections: Collection[],
-  subscriptions: Subscription[],
-  nodesBySub: Map<string, string[]>,
-): SnapshotPoolStatus[] {
-  if (collections.length === 0) return [];
-  const existingGroupNames = new Set(readGroupNames(doc));
-  const out: SnapshotPoolStatus[] = [];
+/* ─── proxy-group rendering ─────────────────────────────────────────── */
 
-  for (const col of collections) {
-    if (!col.enabled) {
-      out.push({
-        name: col.name,
-        type: col.type,
-        memberCount: 0,
-        skipped: true,
-        reason: 'collection 已停用',
-      });
+interface ProxyGroupBlockRender {
+  block: string;
+  count: number;
+}
+
+/**
+ * Build the `proxy-groups:` YAML block from the managed hash. Groups render
+ * in `rank` order; ties broken by name for determinism. Each group is
+ * merged underneath its optional template at emit time — see
+ * `mergeWithTemplate` for the merge contract.
+ *
+ * Empty hash → empty string (the marker just disappears). Unresolved
+ * template id → emit the group as-is and append a warning.
+ */
+function renderProxyGroupsBlock(
+  groups: ProxyGroup[],
+  templates: ProxyGroupTemplate[],
+  warnings: string[],
+): ProxyGroupBlockRender {
+  if (groups.length === 0) return { block: '', count: 0 };
+
+  const tplById = new Map(templates.map((t) => [t.id, t]));
+  const ordered = [...groups].sort((a, b) => {
+    if (a.rank !== b.rank) return a.rank - b.rank;
+    return a.name.localeCompare(b.name);
+  });
+
+  const seenName = new Set<string>();
+  const emitted: Record<string, unknown>[] = [];
+  for (const g of ordered) {
+    if (seenName.has(g.name)) {
+      // Duplicate names in the hash should already be blocked by the
+      // service layer; emit the first occurrence and warn.
+      warnings.push(`proxy-group 名称 "${g.name}" 在 hash 中重复,只渲染第一条`);
       continue;
     }
-    if (existingGroupNames.has(col.name)) {
-      out.push({
-        name: col.name,
-        type: col.type,
-        memberCount: 0,
-        skipped: true,
-        reason: `proxy-group 名称 "${col.name}" 已存在(base 手写或前面 collection 注入),跳过`,
-      });
-      continue;
-    }
+    seenName.add(g.name);
 
-    const members = resolveCollectionMemberSubs(col, subscriptions);
-    const nodeNames: string[] = [];
-    const seen = new Set<string>();
-    for (const sub of members) {
-      const subNodes = nodesBySub.get(sub.name) ?? [];
-      for (const n of subNodes) {
-        if (!seen.has(n)) {
-          seen.add(n);
-          nodeNames.push(n);
-        }
+    let template: ProxyGroupTemplate | null = null;
+    if (g.template_id) {
+      const tpl = tplById.get(g.template_id);
+      if (!tpl) {
+        warnings.push(
+          `策略组 "${g.name}" 引用模板 ${g.template_id} 不存在,按无模板渲染`,
+        );
+      } else {
+        template = tpl;
       }
     }
-
-    if (nodeNames.length === 0) {
-      out.push({
-        name: col.name,
-        type: col.type,
-        memberCount: 0,
-        skipped: true,
-        reason: '无可用节点(成员订阅源全部停用、为空或拉取失败)',
-      });
-      continue;
-    }
-
-    appendProxyGroup(doc, { name: col.name, type: col.type, proxies: nodeNames });
-    existingGroupNames.add(col.name);
-    out.push({ name: col.name, type: col.type, memberCount: nodeNames.length });
+    emitted.push(mergeWithTemplate(g, template));
   }
 
-  return out;
+  const block = stringifyYaml({ 'proxy-groups': emitted }).trimEnd();
+  return { block, count: emitted.length };
 }
 
 /* ─── Helpers ──────────────────────────────────────────────────────── */
@@ -343,30 +460,6 @@ function appendProxies(doc: ReturnType<typeof parseDocument>, items: unknown[]):
   }
   const seq = node as YAMLSeq;
   for (const item of items) seq.add(item);
-}
-
-function readGroupNames(doc: ReturnType<typeof parseDocument>): string[] {
-  const node = doc.get('proxy-groups', true);
-  if (!isSeq(node)) return [];
-  const out: string[] = [];
-  for (const item of node.items) {
-    if (!isMap(item)) continue;
-    const nameNode = (item as YAMLMap).get('name', true);
-    if (isScalar(nameNode) && typeof nameNode.value === 'string') out.push(nameNode.value);
-  }
-  return out;
-}
-
-function appendProxyGroup(
-  doc: ReturnType<typeof parseDocument>,
-  group: { name: string; type: string; proxies: string[] },
-): void {
-  let node = doc.get('proxy-groups', true);
-  if (!isSeq(node)) {
-    doc.set('proxy-groups', []);
-    node = doc.get('proxy-groups', true);
-  }
-  (node as YAMLSeq).add(group);
 }
 
 function extractProxies(yaml: string): Array<Record<string, unknown>> {

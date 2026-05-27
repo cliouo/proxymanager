@@ -14,6 +14,8 @@ import {
 } from '@/lib/ai/configAccess';
 import { resolveConfig } from '@/lib/engine/resolve';
 import { listCollections } from '@/lib/repos/collectionsRepo';
+import { listProxyGroups } from '@/lib/repos/proxyGroupsRepo';
+import { listProxyGroupTemplates } from '@/lib/repos/proxyGroupTemplatesRepo';
 import { listRules } from '@/lib/repos/rulesRepo';
 import { listRuleSets } from '@/lib/repos/ruleSetsRepo';
 import { listSubscriptions } from '@/lib/repos/subscriptionsRepo';
@@ -71,16 +73,20 @@ const getConfigFull = defineAction({
   input: z.object({}),
   risk: 'read',
   async run() {
-    const [content, rules, providers, subs, cols] = await Promise.all([
-      loadBaseContent(),
-      listRules(),
-      listRuleSets(),
-      listSubscriptions(),
-      listCollections(),
-    ]);
-    const resolved = await resolveConfig(content, rules, subs, cols, {
+    const [content, rules, providers, subs, proxyGroups, templates, collections] =
+      await Promise.all([
+        loadBaseContent(),
+        listRules(),
+        listRuleSets(),
+        listSubscriptions(),
+        listProxyGroups(),
+        listProxyGroupTemplates(),
+        listCollections(),
+      ]);
+    const resolved = await resolveConfig(content, rules, subs, proxyGroups, templates, {
       providers,
       ignoreFailedSubs: true,
+      collections,
       // The user-triggered config-full read shouldn't poison the production
       // snapshot if some sub is currently misbehaving — leave the snapshot to
       // /api/sub and /api/v1/preview.

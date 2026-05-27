@@ -1,13 +1,19 @@
 /**
  * `chained-proxy` — Mihomo proxy chaining via wrapper proxy-groups.
  *
- * Why groups not `dialer-proxy` on individual proxies: after P4 the
- * "real" proxies are merged in from collections at render time. They
- * don't have a literal entry in base.yaml's `proxies:` section that we
- * could attach a field to. Wrapper groups (which live in
- * `proxy-groups:` and reference the proxy by name) work regardless of
- * where the underlying proxy comes from — Mihomo resolves the
- * references against the fully-expanded config.
+ * Why groups not `dialer-proxy` on individual proxies: the "real" proxies
+ * are now injected at resolve time from subscriptions (see
+ * lib/engine/resolve.ts). They don't have a literal entry in base.yaml's
+ * `proxies:` section that we could attach a field to. Wrapper groups
+ * (which live in the proxy-groups hash and reference the proxy by name)
+ * work regardless of where the underlying proxy comes from — Mihomo
+ * resolves the references against the fully-expanded config.
+ *
+ * Post-E1 the proxy-groups live in Redis (`proxy-groups` hash), not in
+ * base.yaml. This scenario writes through the proxy-group service so
+ * its mutations participate in name-uniqueness, dialer-proxy cycle
+ * detection, rename cascade, and snapshot invalidation just like any
+ * UI-issued edit.
  *
  * Modes
  *   Fixed chain    one group with `proxies: [B], dialer-proxy: F`
@@ -22,12 +28,21 @@
  *
  * Each op carries enough state in before/after snapshots that the
  * matching inverse can undo via the existing /history pipeline. Cycle
- * detection refuses chains that would loop.
+ * detection in the service refuses chains that would loop.
  */
 
 import { z } from 'zod';
-import { isMap, isScalar, isSeq, type Document, type YAMLMap, type YAMLSeq } from 'yaml';
 import { ProblemDetailsError } from '@/lib/http/problem';
+import {
+  createProxyGroup,
+  createProxyGroups,
+  deleteProxyGroup,
+  deleteProxyGroupsByName,
+  getProxyGroupByName,
+  listProxyGroups,
+  patchProxyGroup,
+} from '@/lib/services/proxyGroupService';
+import type { ProxyGroup } from '@/schemas';
 import type {
   AuditEventInput,
   InverseHandler,
@@ -83,112 +98,29 @@ interface PoolChainSnapshot {
   backend: string;
 }
 
-/* ─── YAML AST helpers ──────────────────────────────────────────────── */
-
-function asString(node: unknown): string | undefined {
-  if (node && isScalar(node) && typeof node.value === 'string') return node.value;
-  return undefined;
-}
-
-function groupsSeq(doc: Document): YAMLSeq | null {
-  const n = doc.get('proxy-groups', true);
-  return isSeq(n) ? (n as YAMLSeq) : null;
-}
-
-function findGroupByName(doc: Document, name: string): YAMLMap | null {
-  const gs = groupsSeq(doc);
-  if (!gs) return null;
-  for (const item of gs.items) {
-    if (isMap(item) && asString((item as YAMLMap).get('name', true)) === name) {
-      return item as YAMLMap;
-    }
-  }
-  return null;
-}
-
-function findGroupIndex(doc: Document, name: string): number {
-  const gs = groupsSeq(doc);
-  if (!gs) return -1;
-  return gs.items.findIndex(
-    (i) => isMap(i) && asString((i as YAMLMap).get('name', true)) === name,
-  );
-}
-
-function getMembers(group: YAMLMap): string[] {
-  const node = group.get('proxies', true);
-  if (!isSeq(node)) return [];
-  const out: string[] = [];
-  for (const item of node.items) {
-    if (isScalar(item) && typeof item.value === 'string') out.push(item.value);
-  }
-  return out;
-}
-
-function setMembers(group: YAMLMap, members: string[]): void {
-  group.set('proxies', members);
-}
-
-function ensureGroupsSeq(doc: Document): YAMLSeq {
-  let gs = groupsSeq(doc);
-  if (!gs) {
-    doc.set('proxy-groups', []);
-    gs = groupsSeq(doc);
-    if (!gs) throw ProblemDetailsError.internal('Failed to materialise proxy-groups section.');
-  }
-  return gs;
-}
-
-function appendGroup(doc: Document, group: { name: string; type: string; proxies: string[]; 'dialer-proxy'?: string }): void {
-  ensureGroupsSeq(doc).add(group);
-}
-
-function deleteGroupByName(doc: Document, name: string): boolean {
-  const gs = groupsSeq(doc);
-  if (!gs) return false;
-  const idx = gs.items.findIndex(
-    (i) => isMap(i) && asString((i as YAMLMap).get('name', true)) === name,
-  );
-  if (idx < 0) return false;
-  gs.delete(idx);
-  return true;
-}
-
-/* ─── Validation ────────────────────────────────────────────────────── */
-
-function ensureGroupNameAvailable(doc: Document, name: string): void {
-  if (findGroupIndex(doc, name) >= 0) {
-    throw ProblemDetailsError.conflict(`proxy-group "${name}" already exists.`);
-  }
-}
+/* ─── Validation helpers ────────────────────────────────────────────── */
 
 /**
- * Walk the dialer-proxy edge set with the proposed new wrapper group
- * applied and refuse if any node revisits itself. References that point at
- * names not present in base.yaml (collection-supplied nodes) terminate the
- * walk — they're black-boxes from this scenario's perspective.
+ * Look up a chained-proxy "wrap" group by name and validate it has the
+ * single-backend + dialer-proxy shape this scenario emits. The detection
+ * is intentionally narrow — opening up to arbitrary user-edited groups
+ * would let `clear-chain` blow away non-chain groups that happen to fit.
  */
-function ensureNoCycle(doc: Document, newWrapper: { name: string; backend: string; dialerProxy: string }): void {
-  const edges = new Map<string, string>();
-  const gs = groupsSeq(doc);
-  if (gs) {
-    for (const item of gs.items) {
-      if (!isMap(item)) continue;
-      const n = asString((item as YAMLMap).get('name', true));
-      const dp = asString((item as YAMLMap).get('dialer-proxy', true));
-      if (n && dp) edges.set(n, dp);
-    }
+async function loadChainWrap(
+  chainName: string,
+): Promise<{ group: ProxyGroup; backend: string; front: string }> {
+  const group = await getProxyGroupByName(chainName);
+  if (!group) {
+    throw ProblemDetailsError.notFound(`Chain group "${chainName}" not found.`);
   }
-  edges.set(newWrapper.name, newWrapper.dialerProxy);
-
-  const visited = new Set<string>();
-  let cur: string | undefined = newWrapper.name;
-  while (cur) {
-    if (visited.has(cur)) {
-      throw ProblemDetailsError.unprocessable(`Cycle detected in chain graph at "${cur}".`);
-    }
-    visited.add(cur);
-    cur = edges.get(cur);
+  const front = group['dialer-proxy'];
+  const members = group.proxies ?? [];
+  if (!front || members.length !== 1) {
+    throw ProblemDetailsError.unprocessable(
+      `Group "${chainName}" doesn't look like a chained-proxy wrap (need dialer-proxy + exactly one member).`,
+    );
   }
+  return { group, backend: members[0], front };
 }
 
 /* ─── Naming helpers ────────────────────────────────────────────────── */
@@ -210,71 +142,56 @@ const setFixedChain: OpHandler = async (ctx, raw) => {
   if (backend === front) {
     throw ProblemDetailsError.unprocessable('backend and front must differ.');
   }
-
   const name = chainName ?? defaultFixedChainName(front, backend);
 
-  const { result: events } = await ctx.base.withDocument((doc) => {
-    ensureGroupNameAvailable(doc, name);
-    ensureNoCycle(doc, { name, backend, dialerProxy: front });
+  await createProxyGroup({
+    kind: 'raw',
+    name,
+    type: 'select',
+    proxies: [backend],
+    'dialer-proxy': front,
+    notes: 'chained-proxy: fixed chain',
+  });
 
-    appendGroup(doc, {
-      name,
-      type: 'select',
-      proxies: [backend],
-      'dialer-proxy': front,
-    });
-
-    const snap: FixedChainSnapshot = { chainName: name, backend, front };
-    return [
+  await ctx.taxonomy.set(name, { kind: 'custom' }).catch(() => undefined);
+  const snap: FixedChainSnapshot = { chainName: name, backend, front };
+  return {
+    data: { chainName: name, backend, front },
+    events: [
       {
         action: 'set-fixed-chain',
         target: { kind: 'proxy-group', name },
         after: snap,
       },
-    ] satisfies AuditEventInput[];
-  });
-
-  await ctx.taxonomy.set(name, { kind: 'custom' }).catch(() => undefined);
-  return { data: { chainName: name, backend, front }, events };
+    ] satisfies AuditEventInput[],
+  };
 };
 
 const clearChain: OpHandler = async (ctx, raw) => {
   const { chainName } = ClearChainPayload.parse(raw);
-
-  const { result } = await ctx.base.withDocument((doc) => {
-    const group = findGroupByName(doc, chainName);
-    if (!group) {
-      throw ProblemDetailsError.notFound(`Chain group "${chainName}" not found.`);
-    }
-    const front = asString(group.get('dialer-proxy', true));
-    const members = getMembers(group);
-    if (!front || members.length !== 1) {
-      throw ProblemDetailsError.unprocessable(
-        `Group "${chainName}" doesn't look like a fixed chain (need dialer-proxy + exactly one member).`,
-      );
-    }
-    deleteGroupByName(doc, chainName);
-
-    const snap: FixedChainSnapshot = { chainName, backend: members[0], front };
-    return {
-      data: { chainName, prev: snap },
-      events: [
-        {
-          action: 'clear-chain',
-          target: { kind: 'proxy-group', name: chainName },
-          before: snap,
-        },
-      ] satisfies AuditEventInput[],
-    };
-  });
-
+  const { group, backend, front } = await loadChainWrap(chainName);
+  await deleteProxyGroup(group.id);
   await ctx.taxonomy.delete(chainName).catch(() => undefined);
-  return { data: result.data, events: result.events };
+  const snap: FixedChainSnapshot = { chainName, backend, front };
+  return {
+    data: { chainName, prev: snap },
+    events: [
+      {
+        action: 'clear-chain',
+        target: { kind: 'proxy-group', name: chainName },
+        before: snap,
+      },
+    ] satisfies AuditEventInput[],
+  };
 };
 
 const createPoolChain: OpHandler = async (ctx, raw) => {
-  const { backend, fronts, poolName: poolNameOverride, chainName: chainNameOverride } =
-    CreatePoolChainPayload.parse(raw);
+  const {
+    backend,
+    fronts,
+    poolName: poolNameOverride,
+    chainName: chainNameOverride,
+  } = CreatePoolChainPayload.parse(raw);
 
   if (fronts.includes(backend)) {
     throw ProblemDetailsError.unprocessable(
@@ -288,117 +205,96 @@ const createPoolChain: OpHandler = async (ctx, raw) => {
   const poolName = poolNameOverride ?? defaultPoolName(backend);
   const chainName = chainNameOverride ?? defaultPoolChainName(backend);
 
-  const { result: events } = await ctx.base.withDocument((doc) => {
-    ensureGroupNameAvailable(doc, poolName);
-    ensureGroupNameAvailable(doc, chainName);
-    ensureNoCycle(doc, { name: chainName, backend, dialerProxy: poolName });
-
-    appendGroup(doc, { name: poolName, type: 'select', proxies: fronts });
-    appendGroup(doc, {
+  // Batch-create so name-uniqueness + cycle detection see both groups
+  // together; either both land or neither does (the helper pre-validates).
+  await createProxyGroups([
+    {
+      kind: 'raw',
+      name: poolName,
+      type: 'select',
+      proxies: fronts,
+      notes: 'chained-proxy: fronts pool',
+    },
+    {
+      kind: 'raw',
       name: chainName,
       type: 'select',
       proxies: [backend],
       'dialer-proxy': poolName,
-    });
+      notes: 'chained-proxy: pool-chain wrap',
+    },
+  ]);
 
-    const snap: PoolChainSnapshot = {
-      poolName,
-      poolMembers: fronts,
-      chainName,
-      backend,
-    };
-    return [
+  await ctx.taxonomy.set(poolName, { kind: 'custom' }).catch(() => undefined);
+  await ctx.taxonomy.set(chainName, { kind: 'custom' }).catch(() => undefined);
+
+  const snap: PoolChainSnapshot = { poolName, poolMembers: fronts, chainName, backend };
+  return {
+    data: { poolName, chainName, backend, fronts },
+    events: [
       {
         action: 'create-pool-chain',
         target: { kind: 'proxy-group', name: chainName },
         after: snap,
       },
-    ] satisfies AuditEventInput[];
-  });
-
-  await ctx.taxonomy.set(poolName, { kind: 'custom' }).catch(() => undefined);
-  await ctx.taxonomy.set(chainName, { kind: 'custom' }).catch(() => undefined);
-
-  return { data: { poolName, chainName, backend, fronts }, events };
+    ] satisfies AuditEventInput[],
+  };
 };
 
-const updatePoolMembers: OpHandler = async (ctx, raw) => {
+const updatePoolMembers: OpHandler = async (_ctx, raw) => {
   const { poolName, fronts } = UpdatePoolMembersPayload.parse(raw);
   if (new Set(fronts).size !== fronts.length) {
     throw ProblemDetailsError.unprocessable('Pool members must be unique.');
   }
-
-  const { result: events } = await ctx.base.withDocument((doc) => {
-    const group = findGroupByName(doc, poolName);
-    if (!group) {
-      throw ProblemDetailsError.notFound(`proxy-group "${poolName}" not found.`);
-    }
-    const prevMembers = getMembers(group);
-    setMembers(group, fronts);
-
-    return [
+  const group = await getProxyGroupByName(poolName);
+  if (!group) {
+    throw ProblemDetailsError.notFound(`proxy-group "${poolName}" not found.`);
+  }
+  const prevMembers = group.proxies ?? [];
+  await patchProxyGroup(group.id, { proxies: fronts });
+  return {
+    data: { poolName, fronts },
+    events: [
       {
         action: 'update-pool-members',
         target: { kind: 'proxy-group', name: poolName },
         before: { members: prevMembers },
         after: { members: fronts },
       },
-    ] satisfies AuditEventInput[];
-  });
-
-  return { data: { poolName, fronts }, events };
+    ] satisfies AuditEventInput[],
+  };
 };
 
 const deletePoolChain: OpHandler = async (ctx, raw) => {
   const { chainName } = DeletePoolChainPayload.parse(raw);
+  const { backend, front: poolName } = await loadChainWrap(chainName);
 
-  const { result } = await ctx.base.withDocument((doc) => {
-    const chainGroup = findGroupByName(doc, chainName);
-    if (!chainGroup) {
-      throw ProblemDetailsError.notFound(`Chain group "${chainName}" not found.`);
-    }
-    const poolName = asString(chainGroup.get('dialer-proxy', true));
-    const backendList = getMembers(chainGroup);
-    if (!poolName || backendList.length !== 1) {
-      throw ProblemDetailsError.unprocessable(
-        `Group "${chainName}" doesn't look like a pool chain.`,
-      );
-    }
-    const backend = backendList[0];
+  // The fronts pool — only delete if it's still around. We don't track
+  // ownership; if the user shares the pool across chains they'd be in
+  // trouble, but in practice each chain owns its own pool.
+  const poolGroup = await getProxyGroupByName(poolName);
+  const poolMembers = poolGroup?.proxies ?? [];
 
-    // The fronts pool — only delete if it's actually a group we own (i.e.
-    // referenced exclusively by this chain). We don't track ownership
-    // explicitly; for now we always delete it. If users share pools across
-    // multiple chains they'll need to recreate.
-    const poolGroup = findGroupByName(doc, poolName);
-    const poolMembers = poolGroup ? getMembers(poolGroup) : [];
-
-    deleteGroupByName(doc, chainName);
-    if (poolGroup) deleteGroupByName(doc, poolName);
-
-    const snap: PoolChainSnapshot = {
-      poolName,
-      poolMembers,
-      chainName,
-      backend,
-    };
-    return {
-      data: { chainName, poolName, backend },
-      events: [
-        {
-          action: 'delete-pool-chain',
-          target: { kind: 'proxy-group', name: chainName },
-          before: snap,
-        },
-      ] satisfies AuditEventInput[],
-    };
-  });
+  // Pre-validate together: if either is referenced by something outside the
+  // chained-proxy bundle, refuse the whole teardown.
+  const namesToDelete = poolGroup ? [chainName, poolName] : [chainName];
+  await deleteProxyGroupsByName(namesToDelete);
 
   await ctx.taxonomy.delete(chainName).catch(() => undefined);
   // Pool taxonomy is left alone — if the user previously tagged the pool
   // themselves we shouldn't blow that away.
 
-  return { data: result.data, events: result.events };
+  const snap: PoolChainSnapshot = { poolName, poolMembers, chainName, backend };
+  return {
+    data: { chainName, poolName, backend },
+    events: [
+      {
+        action: 'delete-pool-chain',
+        target: { kind: 'proxy-group', name: chainName },
+        before: snap,
+      },
+    ] satisfies AuditEventInput[],
+  };
 };
 
 /* ─── Inverses ──────────────────────────────────────────────────────── */
@@ -406,11 +302,11 @@ const deletePoolChain: OpHandler = async (ctx, raw) => {
 const inverseSetFixedChain: InverseHandler = async (ctx, event) => {
   const after = event.after as FixedChainSnapshot | undefined;
   if (!after) throw ProblemDetailsError.unprocessable('Missing after-state.');
-  await ctx.base.withDocument((doc) => {
-    if (!deleteGroupByName(doc, after.chainName)) {
-      throw ProblemDetailsError.conflict(`Chain "${after.chainName}" no longer exists.`);
-    }
-  });
+  const group = await getProxyGroupByName(after.chainName);
+  if (!group) {
+    throw ProblemDetailsError.conflict(`Chain "${after.chainName}" no longer exists.`);
+  }
+  await deleteProxyGroup(group.id);
   await ctx.taxonomy.delete(after.chainName).catch(() => undefined);
   return {
     data: null,
@@ -427,14 +323,13 @@ const inverseSetFixedChain: InverseHandler = async (ctx, event) => {
 const inverseClearChain: InverseHandler = async (ctx, event) => {
   const before = event.before as FixedChainSnapshot | undefined;
   if (!before) throw ProblemDetailsError.unprocessable('Missing before-state.');
-  await ctx.base.withDocument((doc) => {
-    ensureGroupNameAvailable(doc, before.chainName);
-    appendGroup(doc, {
-      name: before.chainName,
-      type: 'select',
-      proxies: [before.backend],
-      'dialer-proxy': before.front,
-    });
+  await createProxyGroup({
+    kind: 'raw',
+    name: before.chainName,
+    type: 'select',
+    proxies: [before.backend],
+    'dialer-proxy': before.front,
+    notes: 'chained-proxy: fixed chain (restored via undo)',
   });
   await ctx.taxonomy.set(before.chainName, { kind: 'custom' }).catch(() => undefined);
   return {
@@ -452,10 +347,7 @@ const inverseClearChain: InverseHandler = async (ctx, event) => {
 const inverseCreatePoolChain: InverseHandler = async (ctx, event) => {
   const after = event.after as PoolChainSnapshot | undefined;
   if (!after) throw ProblemDetailsError.unprocessable('Missing after-state.');
-  await ctx.base.withDocument((doc) => {
-    deleteGroupByName(doc, after.chainName);
-    deleteGroupByName(doc, after.poolName);
-  });
+  await deleteProxyGroupsByName([after.chainName, after.poolName]);
   await ctx.taxonomy.delete(after.chainName).catch(() => undefined);
   await ctx.taxonomy.delete(after.poolName).catch(() => undefined);
   return {
@@ -470,19 +362,17 @@ const inverseCreatePoolChain: InverseHandler = async (ctx, event) => {
   };
 };
 
-const inverseUpdatePoolMembers: InverseHandler = async (ctx, event) => {
+const inverseUpdatePoolMembers: InverseHandler = async (_ctx, event) => {
   const before = event.before as { members: string[] } | undefined;
   const target = event.target;
   if (!before || target?.kind !== 'proxy-group') {
     throw ProblemDetailsError.unprocessable('Missing before-state or target.');
   }
-  await ctx.base.withDocument((doc) => {
-    const group = findGroupByName(doc, target.name);
-    if (!group) {
-      throw ProblemDetailsError.conflict(`Pool "${target.name}" no longer exists.`);
-    }
-    setMembers(group, before.members);
-  });
+  const group = await getProxyGroupByName(target.name);
+  if (!group) {
+    throw ProblemDetailsError.conflict(`Pool "${target.name}" no longer exists.`);
+  }
+  await patchProxyGroup(group.id, { proxies: before.members });
   return {
     data: null,
     events: [
@@ -498,17 +388,23 @@ const inverseUpdatePoolMembers: InverseHandler = async (ctx, event) => {
 const inverseDeletePoolChain: InverseHandler = async (ctx, event) => {
   const before = event.before as PoolChainSnapshot | undefined;
   if (!before) throw ProblemDetailsError.unprocessable('Missing before-state.');
-  await ctx.base.withDocument((doc) => {
-    ensureGroupNameAvailable(doc, before.poolName);
-    ensureGroupNameAvailable(doc, before.chainName);
-    appendGroup(doc, { name: before.poolName, type: 'select', proxies: before.poolMembers });
-    appendGroup(doc, {
+  await createProxyGroups([
+    {
+      kind: 'raw',
+      name: before.poolName,
+      type: 'select',
+      proxies: before.poolMembers,
+      notes: 'chained-proxy: fronts pool (restored via undo)',
+    },
+    {
+      kind: 'raw',
       name: before.chainName,
       type: 'select',
       proxies: [before.backend],
       'dialer-proxy': before.poolName,
-    });
-  });
+      notes: 'chained-proxy: pool-chain wrap (restored via undo)',
+    },
+  ]);
   await ctx.taxonomy.set(before.poolName, { kind: 'custom' }).catch(() => undefined);
   await ctx.taxonomy.set(before.chainName, { kind: 'custom' }).catch(() => undefined);
   return {
@@ -523,6 +419,51 @@ const inverseDeletePoolChain: InverseHandler = async (ctx, event) => {
   };
 };
 
+/* ─── Diagnostic read (used by the page) ─────────────────────────────── */
+
+/**
+ * Enumerate the chained-proxy bundles currently in the hash. Recognises a
+ * wrap group by having both `dialer-proxy` and exactly one `proxies` entry.
+ * Pool chains are detected when the wrap's `dialer-proxy` points at another
+ * group (the pool); fixed chains when it points at a name we don't manage.
+ */
+export async function summariseChains(): Promise<{
+  fixedChains: { chainName: string; backend: string; front: string }[];
+  poolChains: {
+    poolName: string;
+    poolMembers: string[];
+    chainName: string;
+    backend: string;
+  }[];
+}> {
+  const all = await listProxyGroups();
+  const byName = new Map(all.map((g) => [g.name, g]));
+  const fixedChains: { chainName: string; backend: string; front: string }[] = [];
+  const poolChains: {
+    poolName: string;
+    poolMembers: string[];
+    chainName: string;
+    backend: string;
+  }[] = [];
+  for (const g of all) {
+    const front = g['dialer-proxy'];
+    const members = g.proxies ?? [];
+    if (!front || members.length !== 1) continue;
+    const pool = byName.get(front);
+    if (pool && (pool.proxies?.length ?? 0) > 0 && !pool['dialer-proxy']) {
+      poolChains.push({
+        poolName: pool.name,
+        poolMembers: pool.proxies ?? [],
+        chainName: g.name,
+        backend: members[0],
+      });
+    } else {
+      fixedChains.push({ chainName: g.name, backend: members[0], front });
+    }
+  }
+  return { fixedChains, poolChains };
+}
+
 /* ─── Export ────────────────────────────────────────────────────────── */
 
 export const chainedProxyScenario: Scenario = {
@@ -530,7 +471,7 @@ export const chainedProxyScenario: Scenario = {
     id: 'chained-proxy',
     title: 'Chained proxies',
     description:
-      'Wrap backends in proxy-groups with dialer-proxy so chains work even when the backend comes from a collection.',
+      'Wrap backends in proxy-groups with dialer-proxy so chains work even when the backend comes from a subscription.',
     navHref: '/scenarios/chained-proxy',
   },
   ops: {

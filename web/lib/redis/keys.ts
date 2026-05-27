@@ -37,6 +37,19 @@ export const REDIS_KEYS = {
    */
   collections: 'collections',
   /**
+   * Managed proxy-groups (策略组). Hash keyed by group id. Values include
+   * every native mihomo proxy-group field plus our metadata (kind/section/
+   * rank/template_id/notes). Migrated out of base.yaml's `proxy-groups:`
+   * block — base now only carries a `# === PROXY-GROUPS ===` marker.
+   */
+  proxyGroups: 'proxy-groups',
+  /**
+   * Shared-defaults templates for proxy-groups (the moral equivalent of the
+   * `&pr` YAML anchor). Hash keyed by template id; referenced by
+   * proxyGroups via `template_id`.
+   */
+  proxyGroupTemplates: 'proxy-group-templates',
+  /**
    * Cached summary of the most recent successful resolveConfig() — node
    * names, collisions, per-sub status. Readers (UI pickers, AI tools) that
    * only need the resolved node list can hit this instead of re-running the

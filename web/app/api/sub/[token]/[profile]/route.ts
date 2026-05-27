@@ -4,6 +4,8 @@ import { withProblemDetails } from '@/lib/http/handler';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { getBase } from '@/lib/repos/baseRepo';
 import { listCollections } from '@/lib/repos/collectionsRepo';
+import { listProxyGroups } from '@/lib/repos/proxyGroupsRepo';
+import { listProxyGroupTemplates } from '@/lib/repos/proxyGroupTemplatesRepo';
 import { listRules } from '@/lib/repos/rulesRepo';
 import { listRuleSets } from '@/lib/repos/ruleSetsRepo';
 import { listSubscriptions } from '@/lib/repos/subscriptionsRepo';
@@ -28,19 +30,29 @@ export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
   }
 
   const noCache = new URL(request.url).searchParams.get('noCache') === '1';
-  const [rules, providers, subscriptions, collections] = await Promise.all([
+  const [rules, providers, subscriptions, proxyGroups, templates, collections] = await Promise.all([
     listRules(),
     listRuleSets(),
     listSubscriptions(),
+    listProxyGroups(),
+    listProxyGroupTemplates(),
     listCollections(),
   ]);
   const origin = new URL(request.url).origin;
-  const resolved = await resolveConfig(base.content, rules, subscriptions, collections, {
-    providers,
-    providerUrlBase: `${origin}/api/rule-providers/${token}`,
-    ignoreFailedSubs: true,
-    noCache,
-  });
+  const resolved = await resolveConfig(
+    base.content,
+    rules,
+    subscriptions,
+    proxyGroups,
+    templates,
+    {
+      providers,
+      providerUrlBase: `${origin}/api/rule-providers/${token}`,
+      ignoreFailedSubs: true,
+      noCache,
+      collections,
+    },
+  );
 
   return new Response(resolved.content, {
     status: 200,

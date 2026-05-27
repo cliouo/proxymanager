@@ -36,26 +36,11 @@ export interface SnapshotSubStatus {
   error?: string;
 }
 
-export interface SnapshotPoolStatus {
-  /** Collection name = emitted proxy-group name. */
-  name: string;
-  /** proxy-group type (only `select` in MVP). */
-  type: string;
-  /** Number of node names that ended up in the group's `proxies:` list. */
-  memberCount: number;
-  /** When set, the pool wasn't emitted; reason explains why. */
-  skipped?: boolean;
-  /** Human-readable skip / warning reason. */
-  reason?: string;
-}
-
 export interface ResolvedSnapshot {
   /** Final node names in `proxies:`, in resolution order. */
   nodeNames: string[];
   collisions: SnapshotCollision[];
   subscriptions: SnapshotSubStatus[];
-  /** Per-collection pool-group injection status. */
-  pools: SnapshotPoolStatus[];
   /** Warnings carried forward, e.g. presence of the deprecated `pm-inline-collections` field. */
   warnings: string[];
   /** ms epoch when this snapshot was computed. */

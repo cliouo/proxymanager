@@ -12,3 +12,4 @@ export * from './batch';
 export * from './responses';
 export * from './audit';
 export * from './collection';
+export * from './proxyGroup';
