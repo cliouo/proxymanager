@@ -6,6 +6,7 @@ import { FormField } from '@/components/ui/FormField';
 import { Input, Select, Textarea } from '@/components/ui/Input';
 import type { ProxyGroup, ProxyGroupKind, ProxyGroupTemplate, ProxyGroupType } from '@/schemas';
 import {
+  COMMON_SECTIONS,
   escapeRegex,
   HEALTH_TYPES,
   KIND_DESCRIPTIONS,
@@ -15,11 +16,10 @@ import {
   TYPE_GLYPH,
   TYPE_LABELS,
   yamlPreview,
-  type CollectionLite,
   type FormState,
   type SubscriptionLite,
 } from '../_lib/model';
-import { groupNodesBySub, singleSubPreview } from '../_lib/useAvailableMembers';
+import { singleSubPreview } from '../_lib/useAvailableMembers';
 import { MemberComposer } from './MemberComposer';
 
 /** Reverse/forward reference summary for the editing group's current name. */
@@ -34,7 +34,6 @@ interface GroupEditorProps {
   setForm: (next: FormState) => void;
   templates: ProxyGroupTemplate[];
   subs: SubscriptionLite[];
-  collections: CollectionLite[];
   groups: ProxyGroup[];
   nodeNames: string[];
   previewError: string | null;
@@ -52,7 +51,6 @@ export function GroupEditor({
   setForm,
   templates,
   subs,
-  collections,
   groups,
   nodeNames,
   previewError,
@@ -74,17 +72,6 @@ export function GroupEditor({
     () => (mode === 'bound-sub' ? singleSubPreview(nodeNames, boundSub?.node_prefix) : []),
     [mode, nodeNames, boundSub],
   );
-  const boundCol = collections.find((c) => c.id === form.bound_collection_id) ?? null;
-  const colNodes = useMemo(() => {
-    if (mode !== 'bound-collection' || !boundCol) return [];
-    const members = subs.filter(
-      (s) =>
-        boundCol.subscription_ids.includes(s.id) ||
-        (s.tags ?? []).some((t) => boundCol.subscription_tags.includes(t)),
-    );
-    return groupNodesBySub(nodeNames, members).buckets.flatMap((b) => b.nodes);
-  }, [mode, boundCol, subs, nodeNames]);
-
   const tpl = form.template_id ? templates.find((t) => t.id === form.template_id) ?? null : null;
 
   // ── effective rendered fields for the YAML preview ────────────────
@@ -94,9 +81,8 @@ export function GroupEditor({
       p['include-all-proxies'] = true;
       p.filter = `^${escapeRegex(boundSub.node_prefix)}`;
     }
-    if (mode === 'bound-collection' && colNodes.length > 0) p.proxies = colNodes;
     return p;
-  }, [form, mode, boundSub, colNodes]);
+  }, [form, mode, boundSub]);
 
   function handleSave() {
     const renaming = !isCreate && originalName && form.name.trim() !== originalName;
@@ -137,10 +123,25 @@ export function GroupEditor({
         <p className="text-[12px] text-[var(--color-muted)]">{KIND_DESCRIPTIONS[form.kind]}</p>
       </div>
 
-      {/* Name */}
-      <FormField label="名称">
-        <Input value={form.name} onChange={(e) => set('name', e.target.value)} placeholder="策略组名称" />
-      </FormField>
+      {/* Name + section (用途) — section 是用户语义,不影响渲染,但驱动侧栏分段 */}
+      <div className="grid grid-cols-[1fr_240px] gap-3">
+        <FormField label="名称">
+          <Input value={form.name} onChange={(e) => set('name', e.target.value)} placeholder="策略组名称" />
+        </FormField>
+        <FormField label="用途 / 分段 (section)">
+          <Input
+            value={form.section}
+            onChange={(e) => set('section', e.target.value)}
+            placeholder="如 规则集 / 系统 / 地区"
+            list="proxy-group-sections"
+          />
+          <datalist id="proxy-group-sections">
+            {COMMON_SECTIONS.map((s) => (
+              <option key={s} value={s} />
+            ))}
+          </datalist>
+        </FormField>
+      </div>
 
       {/* Membership — varies by kind */}
       {mode === 'composer' && (
@@ -162,9 +163,14 @@ export function GroupEditor({
           subs={subs}
           groups={groups}
           previewError={previewError}
-          showAuto
-          showManual
-          emphasizeAuto={form.kind === 'region'}
+          // kind tunes the composer:
+          //   manual → only manual chips (auto hidden)
+          //   filter → emphasize filter; manual additions allowed
+          //   all    → emphasize the include-all toggle; manual hidden
+          //   raw    → both visible, no emphasis
+          showAuto={form.kind !== 'manual'}
+          showManual={form.kind !== 'all'}
+          emphasizeAuto={form.kind === 'filter' || form.kind === 'all'}
         />
       )}
 
@@ -200,47 +206,6 @@ export function GroupEditor({
               previewError={previewError}
             />
           )}
-        </div>
-      )}
-
-      {mode === 'bound-collection' && (
-        <div className="space-y-3">
-          <FormField label="绑定聚合订阅">
-            <Select
-              value={form.bound_collection_id}
-              onChange={(e) => set('bound_collection_id', e.target.value)}
-            >
-              <option value="">(请选择)</option>
-              {collections.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name} ({c.subscription_ids.length} 订阅源 + {c.subscription_tags.length} 标签)
-                </option>
-              ))}
-            </Select>
-          </FormField>
-          {boundCol && (
-            <ReadonlyMemberPreview
-              caption={<>渲染时 proxies 自动取该聚合订阅的成员节点</>}
-              nodes={colNodes}
-              previewError={previewError}
-            />
-          )}
-        </div>
-      )}
-
-      {mode === 'auto-pair' && isCreate && (
-        <div className="space-y-3">
-          <FormField label="自动选择组名(留空 → 名称-auto)">
-            <Input
-              value={form.autoPairName}
-              onChange={(e) => set('autoPairName', e.target.value)}
-              placeholder={form.name ? `${form.name}-auto` : '自动选择'}
-            />
-          </FormField>
-          <p className="text-[12px] text-[var(--color-muted)]">
-            提交会原子创建两个组:<strong>{form.name || '(名称)'}</strong>(select,指向下面的自动组)+{' '}
-            <strong>{form.autoPairName || `${form.name || '(名称)'}-auto`}</strong>(url-test,全部节点自动测速)。url/间隔在「健康检查」里。
-          </p>
         </div>
       )}
 
@@ -289,21 +254,16 @@ export function GroupEditor({
               ))}
             </Select>
           </FormField>
-          <div className="grid grid-cols-2 gap-3">
-            <FormField label="section(列表分段)">
-              <Input value={form.section} onChange={(e) => set('section', e.target.value)} placeholder="如 地区 / 服务" />
-            </FormField>
-            <FormField label="共享模板">
-              <Select value={form.template_id} onChange={(e) => set('template_id', e.target.value)}>
-                <option value="">(无)</option>
-                {templates.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name}
-                  </option>
-                ))}
-              </Select>
-            </FormField>
-          </div>
+          <FormField label="共享模板">
+            <Select value={form.template_id} onChange={(e) => set('template_id', e.target.value)}>
+              <option value="">(无)</option>
+              {templates.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </Select>
+          </FormField>
           <FormField label="备注">
             <Input value={form.notes} onChange={(e) => set('notes', e.target.value)} />
           </FormField>

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ApiError, api } from '@/lib/client/api';
 import type { ProxyGroup } from '@/schemas';
-import { escapeRegex, type CollectionLite, type SubscriptionLite } from './model';
+import { escapeRegex, type SubscriptionLite } from './model';
 
 /**
  * The only authoritative source of real node names is the resolved preview —
@@ -162,24 +162,11 @@ export function memberStat(
   group: ProxyGroup,
   nodeNames: string[],
   subs: SubscriptionLite[],
-  collections: CollectionLite[],
 ): MemberStat {
   if (group.kind === 'single-sub' && group.bound_subscription_id) {
     const sub = subs.find((s) => s.id === group.bound_subscription_id);
     const n = singleSubPreview(nodeNames, sub?.node_prefix).length;
     return { count: n, unit: '节点', summary: `单订阅「${sub?.name ?? '?'}」→ ${n} 节点` };
-  }
-  if (group.kind === 'collection-scope' && group.bound_collection_id) {
-    const col = collections.find((c) => c.id === group.bound_collection_id);
-    const members = col
-      ? subs.filter(
-          (s) =>
-            col.subscription_ids.includes(s.id) ||
-            (s.tags ?? []).some((t) => col.subscription_tags.includes(t)),
-        )
-      : [];
-    const n = groupNodesBySub(nodeNames, members).buckets.flatMap((b) => b.nodes).length;
-    return { count: n, unit: '节点', summary: `聚合订阅「${col?.name ?? '?'}」→ ${n} 节点` };
   }
   if (group['include-all-proxies'] || group['include-all'] || group['include-all-providers']) {
     if (group.filter && group.filter.trim()) {

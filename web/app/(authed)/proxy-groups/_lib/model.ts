@@ -38,39 +38,38 @@ export interface CollectionLite {
 
 /* ─── Kind metadata ──────────────────────────────────────────────────── */
 
+/**
+ * `kind` 编码"成员怎么来"(形态),只有 5 种。**用途**("规则集出口 / 系统兜底 /
+ * 地区池 / 入口")由 free-text `section` 字段单独承担——两个正交轴拆开就
+ * 不会再有"规则集策略组 vs 系统组 vs 手选组"这种 8 选 1 的歧义。
+ */
 export const KIND_LABELS: Record<ProxyGroupKind, string> = {
-  raw: '手选 / 自由',
-  region: '地区组',
+  manual: '手选组',
+  filter: '筛选组',
+  all: '全部节点',
   'single-sub': '单订阅组',
-  'collection-scope': '聚合订阅组',
-  'rule-set-policy': '规则集策略组',
-  service: '混合服务组',
-  'all-auto-pair': '全部 + 自动对',
-  system: '系统组',
+  raw: '自由编辑(raw)',
 };
 
 export const KIND_DESCRIPTIONS: Record<ProxyGroupKind, string> = {
-  raw: '点选内置 / 节点 / 其他策略组,自由组合成员',
-  region: '按地区把节点自动归类(HK / JP / US …),靠 filter 正则纳入',
-  'single-sub': '只用某一个订阅源的节点,渲染时 filter 从 node_prefix 自动生成',
-  'collection-scope': '绑定一个聚合订阅,proxies 渲染时自动取其成员节点',
-  'rule-set-policy': '某个规则集走指定的策略组,常共用一份 url-test 模板',
-  service: '混合策略:显式列几个出口 + filter 兜底过滤(Emby 形态)',
-  'all-auto-pair': '一键建两个组:全部节点(select)+ 自动选择(url-test)',
-  system: '默认 / DNS / 国内 / 兜底 / 其他 等系统组',
+  manual: '从清单点选成员(内置 / 节点 / 其他策略组)。规则集出口、系统兜底常用此型。',
+  filter: 'include-all-proxies + filter:按正则自动纳入节点(含地区快填)。',
+  all: 'include-all-proxies + 无 filter:把全部节点都纳入(总开关)。',
+  'single-sub': '绑定一个订阅源,渲染时 filter 从 node_prefix 自动生成。',
+  raw: '逐字段编辑 mihomo 原生 proxy-group(逃生口)。',
 };
 
-/** Order shown in the intent picker (presets first, raw last as the escape hatch). */
+/** Order shown in the intent picker (most-used first; raw last as the escape hatch). */
 export const KIND_ORDER: ProxyGroupKind[] = [
-  'region',
+  'manual',
+  'filter',
+  'all',
   'single-sub',
-  'collection-scope',
-  'service',
-  'all-auto-pair',
-  'rule-set-policy',
-  'system',
   'raw',
 ];
+
+/** Commonly-used `section` values shown as a datalist in the editor. Free text otherwise. */
+export const COMMON_SECTIONS = ['规则集', '系统', '地区', '入口', '服务', '订阅'] as const;
 
 /** Glyph + label per mihomo proxy-group type — used in the rail and badges. */
 export const TYPE_GLYPH: Record<ProxyGroupType, string> = {
@@ -114,19 +113,10 @@ export const REGIONS: { code: string; label: string; nameSuggestion: string; fil
  *   - 'bound-collection'→ pick one collection; members computed at render
  *   - 'auto-pair'       → bespoke create flow that emits two groups
  */
-export type MembershipMode = 'composer' | 'bound-sub' | 'bound-collection' | 'auto-pair';
+export type MembershipMode = 'composer' | 'bound-sub';
 
 export function membershipMode(kind: ProxyGroupKind): MembershipMode {
-  switch (kind) {
-    case 'single-sub':
-      return 'bound-sub';
-    case 'collection-scope':
-      return 'bound-collection';
-    case 'all-auto-pair':
-      return 'auto-pair';
-    default:
-      return 'composer';
-  }
+  return kind === 'single-sub' ? 'bound-sub' : 'composer';
 }
 
 /** Mirror of resolve.ts escapeRegex so the client preview matches the renderer. */
@@ -169,8 +159,6 @@ export type FormState = {
   'disable-udp': boolean;
   hidden: boolean;
   icon: string;
-  // create-only helper: the auto-pair url-test group name
-  autoPairName: string;
 };
 
 export const EMPTY_FORM: FormState = {
@@ -203,7 +191,6 @@ export const EMPTY_FORM: FormState = {
   'disable-udp': false,
   hidden: false,
   icon: '',
-  autoPairName: '',
 };
 
 export function fromGroup(g: ProxyGroup): FormState {
@@ -374,7 +361,7 @@ export function yamlPreview(payload: Record<string, unknown>): string {
 /** Preset-specific defaults applied when a kind is picked in the wizard. */
 export function presetDefaults(kind: ProxyGroupKind): Partial<FormState> {
   switch (kind) {
-    case 'region':
+    case 'filter':
       return {
         type: 'url-test',
         'include-all-proxies': true,
@@ -382,14 +369,13 @@ export function presetDefaults(kind: ProxyGroupKind): Partial<FormState> {
         interval: '600',
         tolerance: '50',
       };
-    case 'service':
-      return { type: 'select', 'include-all-proxies': true };
-    case 'all-auto-pair':
-      return { type: 'select', url: 'http://www.gstatic.com/generate_204', interval: '600' };
+    case 'all':
+      return {
+        type: 'select',
+        'include-all-proxies': true,
+      };
     case 'single-sub':
-    case 'collection-scope':
-    case 'rule-set-policy':
-    case 'system':
+    case 'manual':
       return { type: 'select' };
     case 'raw':
     default:

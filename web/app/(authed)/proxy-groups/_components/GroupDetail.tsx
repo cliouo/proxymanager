@@ -9,10 +9,9 @@ import {
   KIND_LABELS,
   TYPE_GLYPH,
   yamlPreview,
-  type CollectionLite,
   type SubscriptionLite,
 } from '../_lib/model';
-import { groupNodesBySub, memberStat } from '../_lib/useAvailableMembers';
+import { memberStat } from '../_lib/useAvailableMembers';
 import type { RefSummary } from './GroupEditor';
 
 export function GroupDetail({
@@ -20,7 +19,6 @@ export function GroupDetail({
   templates,
   nodeNames,
   subs,
-  collections,
   refSummary,
   busy,
   onEdit,
@@ -30,7 +28,6 @@ export function GroupDetail({
   templates: ProxyGroupTemplate[];
   nodeNames: string[];
   subs: SubscriptionLite[];
-  collections: CollectionLite[];
   refSummary: RefSummary | null;
   busy: boolean;
   onEdit: () => void;
@@ -38,8 +35,8 @@ export function GroupDetail({
 }) {
   const tpl = group.template_id ? templates.find((t) => t.id === group.template_id) ?? null : null;
   const stat = useMemo(
-    () => memberStat(group, nodeNames, subs, collections),
-    [group, nodeNames, subs, collections],
+    () => memberStat(group, nodeNames, subs),
+    [group, nodeNames, subs],
   );
 
   const effective = useMemo(() => {
@@ -51,20 +48,8 @@ export function GroupDetail({
         e.filter = `^${escapeRegex(sub.node_prefix)}`;
       }
     }
-    if (group.kind === 'collection-scope' && group.bound_collection_id) {
-      const col = collections.find((c) => c.id === group.bound_collection_id);
-      const members = col
-        ? subs.filter(
-            (s) =>
-              col.subscription_ids.includes(s.id) ||
-              (s.tags ?? []).some((t) => col.subscription_tags.includes(t)),
-          )
-        : [];
-      const nodes = groupNodesBySub(nodeNames, members).buckets.flatMap((b) => b.nodes);
-      if (nodes.length) e.proxies = nodes;
-    }
     return e;
-  }, [group, subs, collections, nodeNames]);
+  }, [group, subs]);
 
   return (
     <div className="space-y-6">

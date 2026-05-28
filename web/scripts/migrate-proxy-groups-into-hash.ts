@@ -77,10 +77,6 @@ const SYSTEM_NAMES = new Set([
   'FINAL',
 ]);
 
-/** Pattern that strongly suggests a regional filter (HK/JP/etc., either ascii or CJK). */
-const REGION_FILTER_HINT =
-  /\b(HK|JP|TW|US|SG|DE|UK|KR|FR|CA|AU)\b|香港|日本|台湾|美国|新加坡|德国|英国|韩国|法国|加拿大|澳洲|澳大利亚/i;
-
 function nowSeconds(): number {
   return Math.floor(Date.now() / 1000);
 }
@@ -173,20 +169,18 @@ function detectKind(src: GroupSource): ProxyGroupKind {
   const proxies = eff['proxies'];
   const includeAllProviders = eff['include-all-providers'] === true || eff['include-all'] === true;
 
-  if (src.anchorRef) return 'rule-set-policy';
-  if (SYSTEM_NAMES.has(name)) return 'system';
-
-  if (includeAllProviders && typeof filter === 'string' && !Array.isArray(proxies)) {
-    if (REGION_FILTER_HINT.test(filter)) return 'region';
+  // Historical migration: kind taxonomy was simplified to 5 form-shapes
+  // (manual / filter / all / single-sub / raw). The old structural buckets
+  // (rule-set-policy / region / service / system) are gone — their semantic
+  // "用途" moved to the free-text `section` field. The recategorize script
+  // (scripts/recategorize-proxy-groups.ts) does both passes; this script
+  // (already ran once) labels with the new form-shape values.
+  if (SYSTEM_NAMES.has(name) || src.anchorRef) return 'manual';
+  if (includeAllProviders && typeof filter === 'string') {
+    return 'filter';
   }
-  if (includeAllProviders && Array.isArray(proxies) && typeof filter === 'string') {
-    return 'service';
-  }
-  // A lone url-test-over-everything group is NOT an all-auto-pair: that kind
-  // describes the two-group UI preset (select「全部」+ url-test「自动」). Migration
-  // sees groups one at a time and can't tell a real pair from a standalone
-  // auto-test, so we label it the honest fallback — raw — and let the user
-  // re-tag it in the UI if they want.
+  if (includeAllProviders) return 'all';
+  if (Array.isArray(proxies)) return 'manual';
   return 'raw';
 }
 

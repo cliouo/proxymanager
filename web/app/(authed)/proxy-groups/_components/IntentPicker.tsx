@@ -5,14 +5,11 @@ import type { ProxyGroupKind } from '@/schemas';
 import { KIND_DESCRIPTIONS, KIND_LABELS, KIND_ORDER } from '../_lib/model';
 
 const KIND_ICON: Record<ProxyGroupKind, string> = {
-  region: '🌏',
+  manual: '✎',
+  filter: '🔍',
+  all: '⊞',
   'single-sub': '🔗',
-  'collection-scope': '📦',
-  service: '🧩',
-  'all-auto-pair': '⚡',
-  'rule-set-policy': '📑',
-  system: '⚙',
-  raw: '✎',
+  raw: '⚙',
 };
 
 /** Step 1 of create — pick the intent. Presets pre-fill the same editor. */

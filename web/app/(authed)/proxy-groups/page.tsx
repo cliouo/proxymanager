@@ -9,7 +9,6 @@ import {
   fromGroup,
   presetDefaults,
   toPayload,
-  type CollectionLite,
   type FormState,
   type SubscriptionLite,
 } from './_lib/model';
@@ -42,7 +41,6 @@ export default function ProxyGroupsPage() {
   const [groups, setGroups] = useState<ProxyGroup[]>([]);
   const [templates, setTemplates] = useState<ProxyGroupTemplate[]>([]);
   const [subs, setSubs] = useState<SubscriptionLite[]>([]);
-  const [collections, setCollections] = useState<CollectionLite[]>([]);
   const [rules, setRules] = useState<RuleLite[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [mode, setMode] = useState<'view' | 'edit' | 'create'>('view');
@@ -57,11 +55,10 @@ export default function ProxyGroupsPage() {
 
   const reload = useCallback(async () => {
     try {
-      const [gs, ts, ss, cs, rs] = await Promise.all([
+      const [gs, ts, ss, rs] = await Promise.all([
         api<{ data: ProxyGroup[] }>('/api/v1/proxy-groups'),
         api<{ data: ProxyGroupTemplate[] }>('/api/v1/proxy-group-templates'),
         api<{ data: SubscriptionLite[] }>('/api/v1/subscriptions'),
-        api<{ data: CollectionLite[] }>('/api/v1/collections'),
         api<{ data: RuleLite[] }>('/api/v1/rules'),
       ]);
       setGroups(gs.data);
@@ -73,15 +70,6 @@ export default function ProxyGroupsPage() {
           enabled: s.enabled,
           node_prefix: s.node_prefix,
           tags: s.tags ?? [],
-        })),
-      );
-      setCollections(
-        cs.data.map((c) => ({
-          id: c.id,
-          name: c.name,
-          enabled: c.enabled,
-          subscription_ids: c.subscription_ids ?? [],
-          subscription_tags: c.subscription_tags ?? [],
         })),
       );
       setRules(rs.data.map((r) => ({ id: r.id, policy: r.policy })));
@@ -130,8 +118,8 @@ export default function ProxyGroupsPage() {
   );
 
   const stat = useCallback(
-    (g: ProxyGroup) => memberStat(g, nodeNames, subs, collections),
-    [nodeNames, subs, collections],
+    (g: ProxyGroup) => memberStat(g, nodeNames, subs),
+    [nodeNames, subs],
   );
 
   function startCreate() {
@@ -164,37 +152,6 @@ export default function ProxyGroupsPage() {
     setBusy(true);
     setError(null);
     try {
-      if (mode === 'create' && form.kind === 'all-auto-pair') {
-        // Emits TWO groups atomically: a select that points at the url-test
-        // wrapper. The batch endpoint validates uniqueness + cycles in one go.
-        const autoName = form.autoPairName.trim() || `${form.name.trim()}-auto`;
-        const selectPayload = {
-          kind: 'all-auto-pair' as const,
-          name: form.name.trim(),
-          type: 'select' as const,
-          'include-all-proxies': true,
-          proxies: [autoName],
-          ...(form.template_id ? { template_id: form.template_id } : {}),
-        };
-        const autoPayload = {
-          kind: 'all-auto-pair' as const,
-          name: autoName,
-          type: 'url-test' as const,
-          'include-all-proxies': true,
-          ...(form.template_id ? { template_id: form.template_id } : {}),
-          ...(form.url.trim() ? { url: form.url.trim() } : {}),
-          ...(form.interval.trim() ? { interval: Number(form.interval) } : {}),
-        };
-        const res = await api<{ data: ProxyGroup[] }>('/api/v1/proxy-groups/batch', {
-          method: 'POST',
-          body: { groups: [selectPayload, autoPayload] },
-        });
-        await Promise.all([reload(), reloadPreview()]);
-        setSelectedId(res.data[0]?.id ?? null);
-        setMode('view');
-        return;
-      }
-
       const payload = toPayload(form);
       if (mode === 'create') {
         const res = await api<{ data: ProxyGroup }>('/api/v1/proxy-groups', {
@@ -274,7 +231,6 @@ export default function ProxyGroupsPage() {
               templates={templates}
               nodeNames={nodeNames}
               subs={subs}
-              collections={collections}
               refSummary={refSummaryFor(selected)}
               busy={busy}
               onEdit={startEdit}
@@ -297,7 +253,6 @@ export default function ProxyGroupsPage() {
               setForm={setForm}
               templates={templates}
               subs={subs}
-              collections={collections}
               groups={groups}
               nodeNames={nodeNames}
               previewError={previewError}

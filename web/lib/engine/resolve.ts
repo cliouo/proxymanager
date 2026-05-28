@@ -319,32 +319,26 @@ function applyKindBindings(
       };
     }
 
-    if (g.kind === 'collection-scope' && g.bound_collection_id) {
+    // collection-scope binding deprecated: any pre-migration `bound_collection_id`
+    // is still tolerated as data, but the kind enum no longer carries
+    // 'collection-scope' (schema preprocess maps it to 'manual'). Groups that
+    // still have a stale bound_collection_id render as-is — no auto-injection.
+    if (g.bound_collection_id) {
       const col = colById.get(g.bound_collection_id);
-      if (!col) {
-        warnings.push(
-          `策略组 "${g.name}" 绑定的聚合订阅 ${g.bound_collection_id} 不存在,proxies 未自动生成`,
-        );
-        return g;
-      }
-      const members = resolveCollectionMemberSubs(col, subscriptions);
-      const nodes: string[] = [];
-      const seen = new Set<string>();
-      for (const sub of members) {
-        for (const n of nodesBySub.get(sub.name) ?? []) {
-          if (!seen.has(n)) {
-            seen.add(n);
-            nodes.push(n);
+      if (col) {
+        const members = resolveCollectionMemberSubs(col, subscriptions);
+        const nodes: string[] = [];
+        const seen = new Set<string>();
+        for (const sub of members) {
+          for (const n of nodesBySub.get(sub.name) ?? []) {
+            if (!seen.has(n)) {
+              seen.add(n);
+              nodes.push(n);
+            }
           }
         }
+        if (nodes.length > 0) return { ...g, proxies: nodes };
       }
-      if (nodes.length === 0) {
-        warnings.push(
-          `策略组 "${g.name}" 绑定的聚合订阅 "${col.name}" 当前无可用节点(成员订阅源全部停用、为空或拉取失败)`,
-        );
-        return g;
-      }
-      return { ...g, proxies: nodes };
     }
 
     return g;

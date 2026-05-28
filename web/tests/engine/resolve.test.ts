@@ -438,7 +438,10 @@ describe('resolveConfig — managed proxy-groups', () => {
     expect(result.warnings.some((w) => w.includes('订阅源') && w.includes('不存在'))).toBe(true);
   });
 
-  it('collection-scope binding builds proxies from member-sub nodes', async () => {
+  // Legacy collection-scope kind is gone (kind taxonomy 砍到 5 个). A group
+  // that still carries a bound_collection_id (legacy data) keeps the binding
+  // honoured at render — verify that route still works.
+  it('legacy bound_collection_id auto-fills proxies from member-sub nodes', async () => {
     resolveSubMock
       .mockResolvedValueOnce({
         yaml: providerYaml([{ name: 'HK-01' }, { name: 'HK-02' }]),
@@ -457,7 +460,7 @@ describe('resolveConfig — managed proxy-groups', () => {
     } as Collection;
     const g = makeGroup({
       name: 'asia-scope',
-      kind: 'collection-scope',
+      kind: 'manual',
       bound_collection_id: col.id,
       type: 'select',
     });
@@ -469,36 +472,15 @@ describe('resolveConfig — managed proxy-groups', () => {
       [],
       { collections: [col] },
     );
-    // proxies list includes all member-sub survivors in member-sub order.
     expect(result.content).toMatch(/name: asia-scope[^]*proxies:[^]*HK-01[^]*HK-02[^]*JP-01/);
   });
 
-  it('collection-scope warns when bound collection has no nodes', async () => {
-    const col: Collection = {
-      id: crypto.randomUUID(),
-      name: 'empty',
-      enabled: true,
-      type: 'select',
-      subscription_ids: [],
-      subscription_tags: [],
-    } as Collection;
-    const g = makeGroup({
-      name: 'empty-scope',
-      kind: 'collection-scope',
-      bound_collection_id: col.id,
-    });
-    const result = await resolveConfig(BASE_WITH_MARKER, [], [], [g], [], {
-      collections: [col],
-    });
-    expect(result.warnings.some((w) => w.includes('无可用节点'))).toBe(true);
-  });
-
-  it('non-bound presets (region/system/service/...) render as raw fields', async () => {
+  it('non-bound presets (filter / manual / all) render their fields verbatim', async () => {
     // kind only labels the form intent — these groups render their explicit
     // fields verbatim, no special resolve-time transformation.
     const g = makeGroup({
       name: 'HK',
-      kind: 'region',
+      kind: 'filter',
       type: 'url-test',
       'include-all-proxies': true,
       filter: '^香港|HK',

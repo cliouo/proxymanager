@@ -20,6 +20,7 @@
     "dedupe:rules": "tsx --env-file=.env.local scripts/dedupe-rules.ts",
     "fix:substore-dedup": "tsx --env-file=.env.local scripts/fix-sub-store-dedup.ts",
     "init:default-profile": "tsx --env-file=.env.local scripts/init-default-profile.ts",
+    "recategorize:proxy-groups": "tsx --env-file=.env.local scripts/recategorize-proxy-groups.ts",
     "vercel:dev": "vercel dev",
     "vercel:link": "vercel link",
     "vercel:deploy": "vercel deploy",

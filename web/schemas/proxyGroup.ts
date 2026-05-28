@@ -99,24 +99,41 @@ const ProxyGroupNativeShape = {
   icon: z.string().optional(),
 };
 
-export const ProxyGroupKindSchema = z.enum([
-  /** Raw form — no preset shape claimed. */
-  'raw',
-  /** Country/region group — typically `include-all-proxies + filter` over a region regex. */
-  'region',
-  /** Single-subscription scope — filter via the sub's node_prefix. */
-  'single-sub',
-  /** Collection scope — proxies field listed from a Collection's member subs. */
-  'collection-scope',
-  /** Rule-set policy group — typically shares a `*pr` template across many groups. */
-  'rule-set-policy',
-  /** Service / mixed group — Emby-style explicit list + filter. */
-  'service',
-  /** All proxies + an auto-test wrapper — emits one group; the wrapper pair is two ProxyGroups. */
-  'all-auto-pair',
-  /** Default / DNS / fallback system group. */
-  'system',
-]);
+/**
+ * `kind` encodes the group's **form** — how its members are sourced —
+ * not its purpose. Purpose ("规则集出口 / 系统兜底 / 地区池 / 入口 …") lives
+ * on the free-text `section` field so a single 8-way enum doesn't conflate
+ * two orthogonal axes (the way the original taxonomy did).
+ *
+ *   - 'manual'     : 手选 — `proxies` list of named picks, no include-all
+ *   - 'filter'     : 筛选 — `include-all-proxies` + `filter`(可加 manual 补充)
+ *   - 'all'        : 全部 — `include-all-proxies`,无 filter
+ *   - 'single-sub' : 绑定一个订阅源,filter 渲染时按 node_prefix 自动生成
+ *   - 'raw'        : 逃生口
+ *
+ * Legacy values (`region`/`service`/`system`/`rule-set-policy`/`collection-scope`/
+ * `all-auto-pair`) are accepted at parse time and transparently mapped to
+ * the new form — so a brief data/schema deploy ordering can't drop records.
+ * `scripts/recategorize-proxy-groups.ts` rewrites storage to the new values
+ * and fills `section` from a rule reverse-lookup; after it runs no legacy
+ * value remains in Redis.
+ */
+const NEW_KIND_VALUES = ['raw', 'manual', 'filter', 'all', 'single-sub'] as const;
+const NewKindsEnum = z.enum(NEW_KIND_VALUES);
+
+const LEGACY_KIND_REMAP: Record<string, z.infer<typeof NewKindsEnum>> = {
+  region: 'filter',
+  service: 'filter',
+  system: 'manual',
+  'rule-set-policy': 'manual',
+  'collection-scope': 'manual',
+  'all-auto-pair': 'manual',
+};
+
+export const ProxyGroupKindSchema = z
+  .string()
+  .transform((s) => LEGACY_KIND_REMAP[s] ?? s)
+  .pipe(NewKindsEnum);
 
 export type ProxyGroupKind = z.infer<typeof ProxyGroupKindSchema>;
 export type ProxyGroupType = z.infer<typeof ProxyGroupTypeSchema>;
