@@ -4,11 +4,13 @@ import { resolveConfig } from '@/lib/engine/resolve';
 import { extractStructured } from '@/lib/engine/structured';
 import { getBase } from '@/lib/repos/baseRepo';
 import { listCollections } from '@/lib/repos/collectionsRepo';
+import { getProfileByName } from '@/lib/repos/profilesRepo';
 import { listProxyGroups } from '@/lib/repos/proxyGroupsRepo';
 import { listProxyGroupTemplates } from '@/lib/repos/proxyGroupTemplatesRepo';
 import { listRules } from '@/lib/repos/rulesRepo';
 import { listRuleSets } from '@/lib/repos/ruleSetsRepo';
 import { listSubscriptions } from '@/lib/repos/subscriptionsRepo';
+import { DEFAULT_PROFILE_NAME } from '@/schemas';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,14 +29,16 @@ export const GET = withProblemDetails(async () => {
   if (!base) {
     throw ProblemDetailsError.unprocessable('Base config has not been initialized.');
   }
-  const [rules, providers, subscriptions, proxyGroups, templates, collections] = await Promise.all([
-    listRules(),
-    listRuleSets(),
-    listSubscriptions(),
-    listProxyGroups(),
-    listProxyGroupTemplates(),
-    listCollections(),
-  ]);
+  const [rules, providers, subscriptions, proxyGroups, templates, collections, profileRecord] =
+    await Promise.all([
+      listRules(),
+      listRuleSets(),
+      listSubscriptions(),
+      listProxyGroups(),
+      listProxyGroupTemplates(),
+      listCollections(),
+      getProfileByName(DEFAULT_PROFILE_NAME),
+    ]);
   const resolved = await resolveConfig(
     base.content,
     rules,
@@ -45,6 +49,7 @@ export const GET = withProblemDetails(async () => {
       providers,
       ignoreFailedSubs: true,
       collections,
+      subscriptionIds: profileRecord?.subscription_ids,
     },
   );
   const structured = extractStructured(resolved.content);

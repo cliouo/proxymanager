@@ -71,6 +71,12 @@ export interface ResolveOptions extends RenderOptions {
    * collection id emit a warning and render with their existing fields.
    */
   collections?: Collection[];
+  /**
+   * Per-profile subscription binding: when non-empty, only subscriptions
+   * whose id is in this set are injected. Undefined or empty falls back to
+   * "every enabled subscription" — i.e. the pre-Profile behaviour.
+   */
+  subscriptionIds?: string[];
 }
 
 export interface ResolveResult extends RenderResult {
@@ -121,9 +127,15 @@ export async function resolveConfig(
 
   const candidates: InjectionCandidate[] = [];
   const subStatuses: SnapshotSubStatus[] = [];
+  // Profile binding: when non-empty, only the listed sub ids are eligible.
+  const subFilter =
+    opts.subscriptionIds && opts.subscriptionIds.length > 0
+      ? new Set(opts.subscriptionIds)
+      : null;
 
   for (const sub of subscriptions) {
     if (!sub.enabled) continue;
+    if (subFilter && !subFilter.has(sub.id)) continue;
     try {
       const result = await resolveSubscriptionContent(sub, { noCache: opts.noCache });
       const proxies = extractProxies(result.yaml);

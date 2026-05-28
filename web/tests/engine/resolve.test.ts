@@ -541,3 +541,43 @@ describe('resolveConfig — managed proxy-groups', () => {
     expect(result.content).toContain('dialer-proxy:');
   });
 });
+
+describe('resolveConfig — profile binding (subscriptionIds)', () => {
+  it('restricts injection to listed subs when subscriptionIds is non-empty', async () => {
+    // Only sub-a should be fetched; sub-b is filtered out before resolution.
+    resolveSubMock.mockResolvedValueOnce({
+      yaml: providerYaml([{ name: 'HK-A' }, { name: 'JP-A' }]),
+      proxyCount: 2,
+    });
+    const a = makeSub({ name: 'sub-a' });
+    const b = makeSub({ name: 'sub-b' });
+    const result = await resolveConfig(BASE_WITH_LITERAL, [], [a, b], [], [], {
+      subscriptionIds: [a.id],
+    });
+    expect(result.nodeNames).toEqual(['直连', 'HK-A', 'JP-A']);
+    expect(result.subscriptions.map((s) => s.name)).toEqual(['sub-a']);
+    expect(resolveSubMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls back to all enabled when subscriptionIds is empty', async () => {
+    resolveSubMock
+      .mockResolvedValueOnce({ yaml: providerYaml([{ name: 'HK' }]), proxyCount: 1 })
+      .mockResolvedValueOnce({ yaml: providerYaml([{ name: 'US' }]), proxyCount: 1 });
+    const a = makeSub({ name: 'sub-a' });
+    const b = makeSub({ name: 'sub-b' });
+    const result = await resolveConfig(BASE_WITH_LITERAL, [], [a, b], [], [], {
+      subscriptionIds: [],
+    });
+    expect(result.nodeNames).toEqual(['直连', 'HK', 'US']);
+  });
+
+  it('falls back to all enabled when subscriptionIds is undefined (pre-Profile callers)', async () => {
+    resolveSubMock
+      .mockResolvedValueOnce({ yaml: providerYaml([{ name: 'HK' }]), proxyCount: 1 })
+      .mockResolvedValueOnce({ yaml: providerYaml([{ name: 'US' }]), proxyCount: 1 });
+    const a = makeSub({ name: 'sub-a' });
+    const b = makeSub({ name: 'sub-b' });
+    const result = await resolveConfig(BASE_WITH_LITERAL, [], [a, b], [], [], {});
+    expect(result.nodeNames).toEqual(['直连', 'HK', 'US']);
+  });
+});

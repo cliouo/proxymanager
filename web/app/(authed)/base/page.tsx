@@ -6,6 +6,7 @@ import { Kbd } from '@/components/ui/Kbd';
 import { Placeholder } from '@/components/ui/Reveal';
 import { YamlEditor, type YamlEditorHandle } from '@/components/ui/YamlEditor';
 import { ApiError, api } from '@/lib/client/api';
+import { ProfileBindingBar } from './_components/ProfileBindingBar';
 
 interface BaseData {
   content: string;
@@ -174,6 +175,9 @@ export default function BasePage() {
       <div className="shrink-0 px-6 py-2 text-[12px] border-b border-[var(--color-border)] bg-[var(--color-primary-tint)] text-[var(--color-primary-hover)]">
         这里只编辑骨架（dns / 策略组 / 嗅探 / tun / 订阅源 / 规则集声明 等）。<code className="font-mono">rules:</code> 块只放锚点标记 —— 规则统一到「规则」页管理；保存时出现规则行会被拒绝。
       </div>
+
+      {/* Profile binding (Phase 1: subscription_ids on the default profile) */}
+      <ProfileBindingBar />
 
       {/* Status strip */}
       {(loadError || status) && (

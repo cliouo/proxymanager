@@ -50,6 +50,12 @@ export const REDIS_KEYS = {
    */
   proxyGroupTemplates: 'proxy-group-templates',
   /**
+   * Managed configuration profiles. Hash keyed by profile id; holds the
+   * subscription binding list (and, in Phase 2, per-profile base/rule/group
+   * overlays). `/api/v1/preview/[profile]` looks up by `name`.
+   */
+  profiles: 'profiles',
+  /**
    * Cached summary of the most recent successful resolveConfig() — node
    * names, collisions, per-sub status. Readers (UI pickers, AI tools) that
    * only need the resolved node list can hit this instead of re-running the

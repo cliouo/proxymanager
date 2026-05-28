@@ -19,6 +19,7 @@
     "migrate:providers": "tsx --env-file=.env.local scripts/migrate-providers-into-hash.ts",
     "dedupe:rules": "tsx --env-file=.env.local scripts/dedupe-rules.ts",
     "fix:substore-dedup": "tsx --env-file=.env.local scripts/fix-sub-store-dedup.ts",
+    "init:default-profile": "tsx --env-file=.env.local scripts/init-default-profile.ts",
     "vercel:dev": "vercel dev",
     "vercel:link": "vercel link",
     "vercel:deploy": "vercel deploy",

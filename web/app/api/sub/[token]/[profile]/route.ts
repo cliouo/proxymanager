@@ -4,6 +4,7 @@ import { withProblemDetails } from '@/lib/http/handler';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { getBase } from '@/lib/repos/baseRepo';
 import { listCollections } from '@/lib/repos/collectionsRepo';
+import { getProfileByName } from '@/lib/repos/profilesRepo';
 import { listProxyGroups } from '@/lib/repos/proxyGroupsRepo';
 import { listProxyGroupTemplates } from '@/lib/repos/proxyGroupTemplatesRepo';
 import { listRules } from '@/lib/repos/rulesRepo';
@@ -30,14 +31,16 @@ export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
   }
 
   const noCache = new URL(request.url).searchParams.get('noCache') === '1';
-  const [rules, providers, subscriptions, proxyGroups, templates, collections] = await Promise.all([
-    listRules(),
-    listRuleSets(),
-    listSubscriptions(),
-    listProxyGroups(),
-    listProxyGroupTemplates(),
-    listCollections(),
-  ]);
+  const [rules, providers, subscriptions, proxyGroups, templates, collections, profileRecord] =
+    await Promise.all([
+      listRules(),
+      listRuleSets(),
+      listSubscriptions(),
+      listProxyGroups(),
+      listProxyGroupTemplates(),
+      listCollections(),
+      getProfileByName(profile),
+    ]);
   const origin = new URL(request.url).origin;
   const resolved = await resolveConfig(
     base.content,
@@ -51,6 +54,7 @@ export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
       ignoreFailedSubs: true,
       noCache,
       collections,
+      subscriptionIds: profileRecord?.subscription_ids,
     },
   );
 
