@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { ApiError, api } from '@/lib/client/api';
+import { matchFilter, type FilterMatch } from '@/lib/proxies/filterMatch';
 import type { ProxyGroup } from '@/schemas';
 import { escapeRegex, type SubscriptionLite } from './model';
 
@@ -90,54 +91,8 @@ export function groupNodesBySub(
   return { buckets, unfiled };
 }
 
-export interface FilterMatch {
-  matched: string[];
-  error: string | null;
-}
-
-/**
- * Compute which node names a `filter` (+ optional `exclude-filter`) keeps,
- * mirroring mihomo: `filter` is an unanchored regex on the node name; matches
- * are kept, then `exclude-filter` matches are dropped. Returns an error string
- * for an invalid regex instead of throwing so the UI can show it inline.
- */
-export function matchFilter(
-  nodeNames: string[],
-  filter: string,
-  excludeFilter?: string,
-): FilterMatch {
-  let inc: RegExp | null = null;
-  let exc: RegExp | null = null;
-  try {
-    if (filter.trim()) inc = compileGoRegex(filter);
-    if (excludeFilter && excludeFilter.trim()) exc = compileGoRegex(excludeFilter);
-  } catch (e) {
-    return { matched: [], error: e instanceof Error ? e.message : '正则无效' };
-  }
-  const matched = nodeNames.filter((n) => {
-    if (inc && !inc.test(n)) return false;
-    if (exc && exc.test(n)) return false;
-    return true;
-  });
-  return { matched, error: null };
-}
-
-/**
- * Compile a mihomo (Go RE2) filter for use with JS RegExp. Go supports a
- * leading inline flag group like `(?i)` / `(?is)` that JS doesn't accept in
- * the pattern body — lift it into JS RegExp flags so the client preview
- * matches what mihomo computes. Unsupported Go-only flags are dropped.
- */
-function compileGoRegex(pattern: string): RegExp {
-  let body = pattern;
-  let flags = '';
-  const m = /^\(\?([a-zA-Z]+)\)/.exec(body);
-  if (m) {
-    for (const f of m[1]) if ('ism'.includes(f) && !flags.includes(f)) flags += f;
-    body = body.slice(m[0].length);
-  }
-  return new RegExp(body, flags);
-}
+export type { FilterMatch };
+export { matchFilter };
 
 /** Node names a single-sub binding would select: `^<escaped node_prefix>`. */
 export function singleSubPreview(nodeNames: string[], nodePrefix: string | undefined): string[] {
