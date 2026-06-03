@@ -36,6 +36,7 @@ const APP_NAV: { href: string; label: string; icon: string }[] = [
 ];
 
 const SYSTEM_NAV: { href: string; label: string; icon: string }[] = [
+  { href: '/assistant-settings', label: 'AI 配置', icon: '✦' },
   { href: '/history', label: '操作历史', icon: '⟲' },
   { href: '/docs', label: 'API 文档', icon: '❡' },
 ];

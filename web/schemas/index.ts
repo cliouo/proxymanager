@@ -14,3 +14,4 @@ export * from './audit';
 export * from './collection';
 export * from './proxyGroup';
 export * from './profile';
+export * from './assistant';

@@ -76,4 +76,11 @@ export const REDIS_KEYS = {
    * context the model already gathered. Standalone key with EX TTL.
    */
   assistantSession: (id: string): string => `assistant:session:${id}`,
+  /**
+   * Assistant runtime config — the user's own DeepSeek credentials + model
+   * knobs, set from the 「AI 配置」 page. A single JSON blob (one user). The
+   * browser caches it to localStorage on load and calls DeepSeek directly,
+   * so this is read once per page load rather than per turn.
+   */
+  assistantConfig: 'assistant:config',
 } as const;

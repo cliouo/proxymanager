@@ -10,6 +10,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
+import { loadAssistantConfig } from '@/lib/client/assistant-config';
 import { getAdminKey } from '@/lib/client/auth-storage';
 import { CollapsibleResult, ResultCard, type ConfirmResolution } from './cards';
 import { ErrorBanner } from './ErrorBanner';
@@ -142,6 +143,9 @@ export function AssistantPanel() {
       setMessages(p.messages);
     }
     setHydrated(true);
+    // Refresh the DeepSeek config cache from KV once per page load ("刷新即更新").
+    // The browser-side agent loop reads this cache per turn.
+    void loadAssistantConfig();
   }, []);
 
   useEffect(() => {
