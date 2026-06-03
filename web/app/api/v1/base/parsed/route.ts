@@ -49,7 +49,7 @@ export const GET = withProblemDetails(async () => {
       providers,
       ignoreFailedSubs: true,
       collections,
-      subscriptionIds: profileRecord?.subscription_ids,
+      boundSource: profileRecord?.source,
     },
   );
   const structured = extractStructured(resolved.content);

@@ -54,7 +54,7 @@ export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
       ignoreFailedSubs: true,
       noCache,
       collections,
-      subscriptionIds: profileRecord?.subscription_ids,
+      boundSource: profileRecord?.source,
     },
   );
 

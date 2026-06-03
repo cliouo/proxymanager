@@ -524,8 +524,8 @@ describe('resolveConfig — managed proxy-groups', () => {
   });
 });
 
-describe('resolveConfig — profile binding (subscriptionIds)', () => {
-  it('restricts injection to listed subs when subscriptionIds is non-empty', async () => {
+describe('resolveConfig — profile binding (boundSource)', () => {
+  it('restricts injection to one sub when source is { subscription }', async () => {
     // Only sub-a should be fetched; sub-b is filtered out before resolution.
     resolveSubMock.mockResolvedValueOnce({
       yaml: providerYaml([{ name: 'HK-A' }, { name: 'JP-A' }]),
@@ -534,26 +534,58 @@ describe('resolveConfig — profile binding (subscriptionIds)', () => {
     const a = makeSub({ name: 'sub-a' });
     const b = makeSub({ name: 'sub-b' });
     const result = await resolveConfig(BASE_WITH_LITERAL, [], [a, b], [], [], {
-      subscriptionIds: [a.id],
+      boundSource: { type: 'subscription', id: a.id },
     });
     expect(result.nodeNames).toEqual(['直连', 'HK-A', 'JP-A']);
     expect(result.subscriptions.map((s) => s.name)).toEqual(['sub-a']);
     expect(resolveSubMock).toHaveBeenCalledTimes(1);
   });
 
-  it('falls back to all enabled when subscriptionIds is empty', async () => {
+  it('expands a collection source to its member subs', async () => {
+    // Collection binds sub-a + sub-c; sub-b is excluded.
     resolveSubMock
-      .mockResolvedValueOnce({ yaml: providerYaml([{ name: 'HK' }]), proxyCount: 1 })
-      .mockResolvedValueOnce({ yaml: providerYaml([{ name: 'US' }]), proxyCount: 1 });
+      .mockResolvedValueOnce({ yaml: providerYaml([{ name: 'HK-A' }]), proxyCount: 1 })
+      .mockResolvedValueOnce({ yaml: providerYaml([{ name: 'US-C' }]), proxyCount: 1 });
+    const a = makeSub({ name: 'sub-a' });
+    const b = makeSub({ name: 'sub-b' });
+    const c = makeSub({ name: 'sub-c' });
+    const col = {
+      id: crypto.randomUUID(),
+      name: 'pool',
+      enabled: true,
+      type: 'select' as const,
+      subscription_ids: [a.id, c.id],
+      subscription_tags: [],
+    };
+    const result = await resolveConfig(BASE_WITH_LITERAL, [], [a, b, c], [], [], {
+      collections: [col],
+      boundSource: { type: 'collection', id: col.id },
+    });
+    expect(result.nodeNames).toEqual(['直连', 'HK-A', 'US-C']);
+    expect(result.subscriptions.map((s) => s.name)).toEqual(['sub-a', 'sub-c']);
+  });
+
+  it('a dangling collection source injects nothing and warns', async () => {
+    const a = makeSub({ name: 'sub-a' });
+    const result = await resolveConfig(BASE_WITH_LITERAL, [], [a], [], [], {
+      collections: [],
+      boundSource: { type: 'collection', id: crypto.randomUUID() },
+    });
+    expect(result.nodeNames).toEqual(['直连']);
+    expect(result.warnings.some((w) => w.includes('绑定的聚合订阅不存在'))).toBe(true);
+  });
+
+  it('injects nothing when source is { none } (unbound profile)', async () => {
     const a = makeSub({ name: 'sub-a' });
     const b = makeSub({ name: 'sub-b' });
     const result = await resolveConfig(BASE_WITH_LITERAL, [], [a, b], [], [], {
-      subscriptionIds: [],
+      boundSource: { type: 'none' },
     });
-    expect(result.nodeNames).toEqual(['直连', 'HK', 'US']);
+    expect(result.nodeNames).toEqual(['直连']);
+    expect(resolveSubMock).not.toHaveBeenCalled();
   });
 
-  it('falls back to all enabled when subscriptionIds is undefined (pre-Profile callers)', async () => {
+  it('falls back to all enabled when boundSource is undefined (pre-Profile callers)', async () => {
     resolveSubMock
       .mockResolvedValueOnce({ yaml: providerYaml([{ name: 'HK' }]), proxyCount: 1 })
       .mockResolvedValueOnce({ yaml: providerYaml([{ name: 'US' }]), proxyCount: 1 });

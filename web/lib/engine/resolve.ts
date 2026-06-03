@@ -39,6 +39,7 @@ import {
 import {
   mergeWithTemplate,
   type Collection,
+  type ProfileSource,
   type ProxyGroup,
   type ProxyGroupTemplate,
   type Rule,
@@ -72,11 +73,13 @@ export interface ResolveOptions extends RenderOptions {
    */
   collections?: Collection[];
   /**
-   * Per-profile subscription binding: when non-empty, only subscriptions
-   * whose id is in this set are injected. Undefined or empty falls back to
-   * "every enabled subscription" — i.e. the pre-Profile behaviour.
+   * Per-profile single-source binding. `undefined` (no profile record) keeps
+   * the pre-Profile behaviour of injecting every enabled subscription;
+   * `{type:'none'}` is an explicit unbound profile → inject nothing;
+   * `subscription` limits to one sub; `collection` expands to that 聚合订阅's
+   * members. A dangling collection id injects nothing and emits a warning.
    */
-  subscriptionIds?: string[];
+  boundSource?: ProfileSource;
 }
 
 export interface ResolveResult extends RenderResult {
@@ -127,11 +130,28 @@ export async function resolveConfig(
 
   const candidates: InjectionCandidate[] = [];
   const subStatuses: SnapshotSubStatus[] = [];
-  // Profile binding: when non-empty, only the listed sub ids are eligible.
-  const subFilter =
-    opts.subscriptionIds && opts.subscriptionIds.length > 0
-      ? new Set(opts.subscriptionIds)
-      : null;
+  // Profile binding: resolve the single-source into an eligible-sub-id set.
+  // `null` means "no filter" → every enabled subscription (only when there's
+  // no profile record at all). An explicit `{type:'none'}` injects nothing.
+  let subFilter: Set<string> | null = null;
+  const boundSource = opts.boundSource;
+  if (boundSource && boundSource.type === 'none') {
+    subFilter = new Set();
+  } else if (boundSource && boundSource.type === 'subscription') {
+    subFilter = new Set([boundSource.id]);
+  } else if (boundSource && boundSource.type === 'collection') {
+    const col = (opts.collections ?? []).find((c) => c.id === boundSource.id);
+    if (!col) {
+      warnings.push(
+        `profile 绑定的聚合订阅不存在 (${boundSource.id}); 未注入任何订阅节点。`,
+      );
+      subFilter = new Set();
+    } else {
+      subFilter = new Set(
+        resolveCollectionMemberSubs(col, subscriptions).map((s) => s.id),
+      );
+    }
+  }
 
   for (const sub of subscriptions) {
     if (!sub.enabled) continue;

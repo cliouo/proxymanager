@@ -90,7 +90,7 @@ const getConfigFull = defineAction({
       providers,
       ignoreFailedSubs: true,
       collections,
-      subscriptionIds: profileRecord?.subscription_ids,
+      boundSource: profileRecord?.source,
       // The user-triggered config-full read shouldn't poison the production
       // snapshot if some sub is currently misbehaving — leave the snapshot to
       // /api/sub and /api/v1/preview.

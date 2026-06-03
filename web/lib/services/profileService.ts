@@ -7,12 +7,14 @@ import {
   upsertProfile,
 } from '@/lib/repos/profilesRepo';
 import { invalidateResolvedSnapshot } from '@/lib/repos/resolvedRepo';
+import { listCollections } from '@/lib/repos/collectionsRepo';
 import { listSubscriptions } from '@/lib/repos/subscriptionsRepo';
 import {
   ProfileCreateSchema,
   ProfileUpdateSchema,
   type Profile,
   type ProfileCreate,
+  type ProfileSource,
   type ProfileUpdate,
 } from '@/schemas';
 
@@ -30,18 +32,23 @@ export function generateProfileId(): string {
 }
 
 /**
- * Confirm every subscription_id refers to a real sub. Wrong ids would render
- * to nothing at resolve time — silently surprising — so reject up front.
+ * Confirm a `source` binding points at something that exists. A dangling id
+ * would resolve to nothing — silently surprising — so reject up front. `none`
+ * (unbound) needs no check.
  */
-async function assertSubscriptionIdsExist(ids: string[] | undefined): Promise<void> {
-  if (!ids || ids.length === 0) return;
-  const subs = await listSubscriptions();
-  const known = new Set(subs.map((s) => s.id));
-  const missing = ids.filter((id) => !known.has(id));
-  if (missing.length > 0) {
-    throw ProblemDetailsError.unprocessable(
-      `subscription_ids 中包含未知订阅源: ${missing.join(', ')}`,
-    );
+async function assertSourceValid(source: ProfileSource | undefined): Promise<void> {
+  if (!source || source.type === 'none') return;
+  if (source.type === 'subscription') {
+    const subs = await listSubscriptions();
+    if (!subs.some((s) => s.id === source.id)) {
+      throw ProblemDetailsError.unprocessable(`绑定的订阅源不存在: ${source.id}`);
+    }
+    return;
+  }
+  // collection
+  const collections = await listCollections();
+  if (!collections.some((c) => c.id === source.id)) {
+    throw ProblemDetailsError.unprocessable(`绑定的聚合订阅不存在: ${source.id}`);
   }
 }
 
@@ -51,7 +58,7 @@ export async function createProfile(input: ProfileCreate): Promise<Profile> {
   if (dup) {
     throw ProblemDetailsError.conflict(`profile 名称 "${parsed.name}" 已存在。`);
   }
-  await assertSubscriptionIdsExist(parsed.subscription_ids);
+  await assertSourceValid(parsed.source);
   const now = nowSeconds();
   const profile: Profile = {
     ...parsed,
@@ -66,8 +73,8 @@ export async function createProfile(input: ProfileCreate): Promise<Profile> {
 
 /**
  * Patch a profile. `null` on a nullable optional field clears it (notes).
- * Any change to `subscription_ids` invalidates the resolved snapshot so the
- * next preview reflects the new binding.
+ * Any change to `source` invalidates the resolved snapshot so the next preview
+ * reflects the new binding.
  */
 export async function patchProfile(id: string, patch: ProfileUpdate): Promise<Profile> {
   const validated = ProfileUpdateSchema.parse(patch);
@@ -81,8 +88,8 @@ export async function patchProfile(id: string, patch: ProfileUpdate): Promise<Pr
       throw ProblemDetailsError.conflict(`profile 名称 "${validated.name}" 已存在。`);
     }
   }
-  if (validated.subscription_ids !== undefined) {
-    await assertSubscriptionIdsExist(validated.subscription_ids);
+  if (validated.source !== undefined) {
+    await assertSourceValid(validated.source);
   }
 
   const next: Profile = { ...current, updated_at: nowSeconds() };

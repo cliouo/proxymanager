@@ -10,8 +10,8 @@ import { clearAdminKey } from '@/lib/client/auth-storage';
  * The IA splits into three groups (E4):
  *   - 总览                      single entry point
  *   - 资源 (Resources)           reusable inputs that flow INTO the config
- *                              (订阅源 → proxies, 聚合订阅 → 一个 sub bundle,
- *                               规则集 → rule-providers)
+ *                              (订阅源 → proxies, 含「聚合订阅」tab → 一个
+ *                               可绑定的 sub bundle; 规则集 → rule-providers)
  *   - 应用 (Application)         what's actually rendered: policy (策略组 +
  *                              链式代理 + 规则), the skeleton, the final yaml.
  *   - 系统 (System)              operational/admin views.
@@ -24,7 +24,6 @@ const OVERVIEW_NAV: { href: string; label: string; icon: string }[] = [
 
 const RESOURCE_NAV: { href: string; label: string; icon: string }[] = [
   { href: '/subscriptions', label: '订阅源', icon: '⇣' },
-  { href: '/collections', label: '聚合订阅', icon: '⊞' },
   { href: '/rule-sets', label: '规则集', icon: '⊟' },
 ];
 

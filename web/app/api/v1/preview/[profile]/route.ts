@@ -52,7 +52,7 @@ export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
       collections,
       // Profile binding (Phase 1). When no profile record exists yet (pre-init),
       // falls through to "every enabled sub" — backward-compat.
-      subscriptionIds: profileRecord?.subscription_ids,
+      boundSource: profileRecord?.source,
     },
   );
 

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Profile, Subscription } from '@/schemas';
+import type { Collection, Profile, Subscription } from '@/schemas';
 
 const stores = new Map<string, Map<string, unknown>>();
 function bucket(key: string): Map<string, unknown> {
@@ -62,11 +62,25 @@ function seedSub(over: Partial<Subscription>): Subscription {
   return s;
 }
 
+function seedCollection(over: Partial<Collection>): Collection {
+  const c: Collection = {
+    id: crypto.randomUUID(),
+    name: 'pool-a',
+    enabled: true,
+    type: 'select',
+    subscription_ids: [],
+    subscription_tags: [],
+    ...over,
+  } as Collection;
+  bucket('collections').set(c.id, c);
+  return c;
+}
+
 function seedProfile(over: Partial<Profile>): Profile {
   const p: Profile = {
     id: crypto.randomUUID(),
     name: 'seeded',
-    subscription_ids: [],
+    source: { type: 'none' },
     updated_at: 1_700_000_000,
     ...over,
   } as Profile;
@@ -75,30 +89,47 @@ function seedProfile(over: Partial<Profile>): Profile {
 }
 
 describe('profileService — create', () => {
-  it('creates with auto id and default empty binding', async () => {
+  it('creates with auto id and defaults source to none (unbound)', async () => {
     const p = await svc.createProfile({ name: 'default' });
     expect(p.id).toMatch(/^[0-9a-f-]{36}$/);
     expect(p.name).toBe('default');
-    expect(p.subscription_ids).toEqual([]);
+    expect(p.source).toEqual({ type: 'none' });
   });
 
-  it('binds to existing subscriptions and persists order', async () => {
+  it('binds to a single subscription', async () => {
     const a = seedSub({ name: 'a' });
-    const b = seedSub({ name: 'b' });
     const p = await svc.createProfile({
       name: 'work',
-      subscription_ids: [b.id, a.id],
+      source: { type: 'subscription', id: a.id },
     });
-    expect(p.subscription_ids).toEqual([b.id, a.id]);
+    expect(p.source).toEqual({ type: 'subscription', id: a.id });
   });
 
-  it('refuses an unknown subscription_id', async () => {
+  it('binds to a collection', async () => {
+    const c = seedCollection({ name: 'pool' });
+    const p = await svc.createProfile({
+      name: 'agg',
+      source: { type: 'collection', id: c.id },
+    });
+    expect(p.source).toEqual({ type: 'collection', id: c.id });
+  });
+
+  it('refuses an unknown subscription source', async () => {
     await expect(
       svc.createProfile({
         name: 'broken',
-        subscription_ids: ['00000000-0000-0000-0000-000000000000'],
+        source: { type: 'subscription', id: '00000000-0000-0000-0000-000000000000' },
       }),
-    ).rejects.toThrow(/subscription_ids 中包含未知订阅源/);
+    ).rejects.toThrow(/绑定的订阅源不存在/);
+  });
+
+  it('refuses an unknown collection source', async () => {
+    await expect(
+      svc.createProfile({
+        name: 'broken',
+        source: { type: 'collection', id: '00000000-0000-0000-0000-000000000000' },
+      }),
+    ).rejects.toThrow(/绑定的聚合订阅不存在/);
   });
 
   it('refuses duplicate profile name', async () => {
@@ -108,12 +139,25 @@ describe('profileService — create', () => {
 });
 
 describe('profileService — patch', () => {
-  it('updates subscription_ids', async () => {
+  it('switches source to a single subscription', async () => {
     const a = seedSub({ name: 'a' });
-    const b = seedSub({ name: 'b' });
-    const p = seedProfile({ name: 'default', subscription_ids: [a.id] });
-    const next = await svc.patchProfile(p.id, { subscription_ids: [a.id, b.id] });
-    expect(next.subscription_ids).toEqual([a.id, b.id]);
+    const p = seedProfile({ name: 'default', source: { type: 'none' } });
+    const next = await svc.patchProfile(p.id, { source: { type: 'subscription', id: a.id } });
+    expect(next.source).toEqual({ type: 'subscription', id: a.id });
+  });
+
+  it('switches source to a collection', async () => {
+    const c = seedCollection({ name: 'pool' });
+    const p = seedProfile({ name: 'default', source: { type: 'none' } });
+    const next = await svc.patchProfile(p.id, { source: { type: 'collection', id: c.id } });
+    expect(next.source).toEqual({ type: 'collection', id: c.id });
+  });
+
+  it('resetting source to none (unbound) is legal', async () => {
+    const a = seedSub({ name: 'a' });
+    const p = seedProfile({ name: 'default', source: { type: 'subscription', id: a.id } });
+    const next = await svc.patchProfile(p.id, { source: { type: 'none' } });
+    expect(next.source).toEqual({ type: 'none' });
   });
 
   it('rejects rename to an existing name', async () => {
@@ -122,20 +166,13 @@ describe('profileService — patch', () => {
     await expect(svc.patchProfile(other.id, { name: 'default' })).rejects.toThrow(/已存在/);
   });
 
-  it('clearing subscription_ids to [] is legal (legacy fallback)', async () => {
-    const a = seedSub({ name: 'a' });
-    const p = seedProfile({ name: 'default', subscription_ids: [a.id] });
-    const next = await svc.patchProfile(p.id, { subscription_ids: [] });
-    expect(next.subscription_ids).toEqual([]);
-  });
-
-  it('rejects binding to an unknown subscription_id', async () => {
+  it('rejects binding to an unknown subscription', async () => {
     const p = seedProfile({ name: 'default' });
     await expect(
       svc.patchProfile(p.id, {
-        subscription_ids: ['00000000-0000-0000-0000-000000000000'],
+        source: { type: 'subscription', id: '00000000-0000-0000-0000-000000000000' },
       }),
-    ).rejects.toThrow(/subscription_ids 中包含未知订阅源/);
+    ).rejects.toThrow(/绑定的订阅源不存在/);
   });
 });
 

@@ -3,9 +3,8 @@
  * subscription binding starts working.
  *
  *   - Skips when a profile named "default" already exists.
- *   - Binds the new default profile to every currently `enabled` subscription
- *     so resolve behaviour stays identical post-migration; the user can then
- *     deselect any of them via the UI.
+ *   - Seeds the default profile unbound (`source: { type: 'none' }`); the user
+ *     picks a single sub or a 聚合订阅 via the UI before anything is injected.
  *
  *   Dry-run (default):  tsx --env-file=.env.local scripts/init-default-profile.ts
  *   Commit:             tsx --env-file=.env.local scripts/init-default-profile.ts --commit
@@ -18,7 +17,7 @@ import { getRedis } from '@/lib/redis/client';
 import { REDIS_KEYS } from '@/lib/redis/keys';
 import { invalidateResolvedSnapshot } from '@/lib/repos/resolvedRepo';
 import { listSubscriptions } from '@/lib/repos/subscriptionsRepo';
-import { DEFAULT_PROFILE_NAME, type Profile } from '@/schemas';
+import { DEFAULT_PROFILE_NAME, DEFAULT_PROFILE_SOURCE, type Profile } from '@/schemas';
 
 function nowSeconds(): number {
   return Math.floor(Date.now() / 1000);
@@ -44,26 +43,23 @@ async function main(): Promise<void> {
   }
 
   const subs = await listSubscriptions();
-  const enabledIds = subs.filter((s) => s.enabled).map((s) => s.id);
+  const enabledCount = subs.filter((s) => s.enabled).length;
   console.log(`订阅源总数               : ${subs.length}`);
-  console.log(`其中 enabled            : ${enabledIds.length}`);
-  console.log(`将绑定到 default profile : ${enabledIds.length} 个`);
-  for (const s of subs.filter((x) => x.enabled)) {
-    console.log(`  ${s.id}  ${s.name}`);
-  }
+  console.log(`其中 enabled            : ${enabledCount}`);
+  console.log(`将绑定 source           : ${JSON.stringify(DEFAULT_PROFILE_SOURCE)} (未绑定)`);
 
   const now = nowSeconds();
   const profile: Profile = {
     id: crypto.randomUUID(),
     name: DEFAULT_PROFILE_NAME,
-    subscription_ids: enabledIds,
+    source: DEFAULT_PROFILE_SOURCE,
     created_at: now,
     updated_at: now,
   };
   console.log(`\n— 新建 profile —`);
-  console.log(`  id   : ${profile.id}`);
-  console.log(`  name : ${profile.name}`);
-  console.log(`  subs : ${profile.subscription_ids.length} 个`);
+  console.log(`  id     : ${profile.id}`);
+  console.log(`  name   : ${profile.name}`);
+  console.log(`  source : ${JSON.stringify(profile.source)}`);
 
   if (!commit) {
     console.log('\nDRY-RUN 完成,未写入。确认无误后加 --commit 执行。\n');
@@ -81,7 +77,7 @@ async function main(): Promise<void> {
 
   console.log('\n✓ COMMIT 完成:');
   console.log(`  profile id  : ${profile.id}`);
-  console.log(`  绑定订阅源  : ${profile.subscription_ids.length} 个`);
+  console.log(`  source      : ${JSON.stringify(profile.source)}`);
   if (existing && existingCount > 0) {
     console.log(`  pre-existing 备份键: profiles:init:backup:${ts}`);
   }

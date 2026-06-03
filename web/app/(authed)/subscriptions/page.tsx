@@ -62,9 +62,10 @@ export default function SubscriptionsPage() {
   const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
   const [editingId, setEditingId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  const [collectionAdding, setCollectionAdding] = useState(false);
+  const [collectionEditingId, setCollectionEditingId] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('subs');
   const [loaded, setLoaded] = useState(false);
-  const router = useRouter();
   const tabsId = useId();
   const subsTabRef = useRef<HTMLButtonElement>(null);
   const collectionsTabRef = useRef<HTMLButtonElement>(null);
@@ -112,6 +113,8 @@ export default function SubscriptionsPage() {
   useEffect(() => {
     setEditingId(null);
     setAdding(false);
+    setCollectionAdding(false);
+    setCollectionEditingId(null);
   }, [tab]);
 
   const reload = useCallback(async () => {
@@ -193,6 +196,32 @@ export default function SubscriptionsPage() {
     }
   }
 
+  async function onCollectionCreate(input: Record<string, unknown>) {
+    await api('/api/v1/collections', { method: 'POST', body: input });
+    setCollectionAdding(false);
+    await reload();
+  }
+  async function onCollectionSave(id: string, input: Record<string, unknown>) {
+    await api(`/api/v1/collections/${id}`, { method: 'PATCH', body: input });
+    setCollectionEditingId(null);
+    await reload();
+  }
+  async function onCollectionDelete(id: string) {
+    if (!confirm('确定删除该聚合订阅？')) return;
+    try {
+      await api(`/api/v1/collections/${id}`, { method: 'DELETE' });
+      if (collectionEditingId === id) setCollectionEditingId(null);
+      await reload();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : String(err));
+    }
+  }
+
+  const editingCollection =
+    collectionEditingId !== null
+      ? collections.find((c) => c.id === collectionEditingId) ?? null
+      : null;
+
   return (
     <div className="space-y-5">
       <header className="flex items-baseline justify-between gap-4">
@@ -204,14 +233,19 @@ export default function SubscriptionsPage() {
             订阅源
           </h1>
           <p className="mt-1.5 text-[13px] text-[var(--color-muted)]">
-            {subs.length} 订阅源 · {collections.length} 聚合订阅 · 启用订阅源即注入 proxies;聚合订阅供策略组绑定
+            {subs.length} 订阅源 · {collections.length} 聚合订阅 · 启用订阅源即注入 proxies;聚合订阅把多条单订阅合并成一个可绑定来源
           </p>
         </div>
         {tab === 'subs' ? (
           <Button onClick={() => setAdding((v) => !v)}>{adding ? '取消' : '+ 新增订阅'}</Button>
         ) : (
-          <Button onClick={() => router.push('/collections?mode=create&from=subs')}>
-            + 新建聚合订阅
+          <Button
+            onClick={() => {
+              setCollectionEditingId(null);
+              setCollectionAdding((v) => !v);
+            }}
+          >
+            {collectionAdding ? '取消' : '+ 新建聚合订阅'}
           </Button>
         )}
       </header>
@@ -302,18 +336,46 @@ export default function SubscriptionsPage() {
           role="tabpanel"
           aria-labelledby={`${tabsId}-tab-collections`}
         >
+          {(collectionAdding || editingCollection) && (
+            <CollectionForm
+              key={editingCollection?.id ?? 'new'}
+              subs={subs}
+              initial={editingCollection ?? undefined}
+              onCancel={() => {
+                setCollectionAdding(false);
+                setCollectionEditingId(null);
+              }}
+              onSubmit={(input) =>
+                editingCollection
+                  ? onCollectionSave(editingCollection.id, input)
+                  : onCollectionCreate(input)
+              }
+            />
+          )}
           {!loaded ? (
-            <ul className="grid grid-cols-1 md:grid-cols-2 gap-2 items-start">
+            <ul className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-2 items-start">
               <SubSkeleton />
               <SubSkeleton />
             </ul>
           ) : collections.length === 0 ? (
-            <CollectionEmpty />
+            !collectionAdding && <CollectionEmpty onAdd={() => setCollectionAdding(true)} />
           ) : (
             <Reveal when={loaded}>
-              <ul className="grid grid-cols-1 md:grid-cols-2 gap-2 items-start">
+              <ul className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-2 items-start">
                 {collections.map((c, idx) => (
-                  <CollectionCard key={c.id} c={c} subs={subs} index={idx + 1} />
+                  <CollectionCard
+                    key={c.id}
+                    c={c}
+                    subs={subs}
+                    index={idx + 1}
+                    editing={collectionEditingId === c.id}
+                    anyEditing={collectionEditingId !== null || collectionAdding}
+                    onEdit={() => {
+                      setCollectionAdding(false);
+                      setCollectionEditingId(c.id);
+                    }}
+                    onDelete={() => onCollectionDelete(c.id)}
+                  />
                 ))}
               </ul>
             </Reveal>
@@ -373,8 +435,7 @@ function TabButton({
   );
 }
 
-function CollectionEmpty() {
-  const router = useRouter();
+function CollectionEmpty({ onAdd }: { onAdd: () => void }) {
   return (
     <div className="rounded-xl border border-dashed border-[var(--color-border-strong)] bg-[var(--color-bg-sunk)]/50 px-8 py-12 text-center">
       <p
@@ -384,12 +445,10 @@ function CollectionEmpty() {
         还没有聚合订阅
       </p>
       <p className="mt-1.5 text-[13px] text-[var(--color-muted)]">
-        聚合订阅是一组订阅源的标记。策略组用 kind: collection-scope 绑定它就能拿到这组订阅源的节点。
+        聚合订阅把多条单订阅合并成一个来源。在「结构骨架」页把配置文件的「节点来源」绑定到它,就会注入这组订阅的节点。
       </p>
       <div className="mt-5">
-        <Button onClick={() => router.push('/collections?mode=create&from=subs')}>
-          + 新建第一个聚合订阅
-        </Button>
+        <Button onClick={onAdd}>+ 新建第一个聚合订阅</Button>
       </div>
     </div>
   );
@@ -399,10 +458,18 @@ function CollectionCard({
   c,
   subs,
   index,
+  editing,
+  anyEditing,
+  onEdit,
+  onDelete,
 }: {
   c: Collection;
   subs: Subscription[];
   index: number;
+  editing: boolean;
+  anyEditing: boolean;
+  onEdit: () => void;
+  onDelete: () => void;
 }) {
   const subById = useMemo(() => new Map(subs.map((s) => [s.id, s])), [subs]);
   const members = useMemo(() => {
@@ -418,8 +485,13 @@ function CollectionCard({
   }, [c, subs, subById]);
 
   const hasDisabledMember = members.some((m) => !m.enabled);
+  const dimmed = anyEditing && !editing;
   return (
-    <li className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-card)] overflow-hidden grid grid-cols-[52px_1fr] lg:grid-cols-[60px_1fr] xl:grid-cols-[68px_1fr]">
+    <li
+      className={`rounded-lg border bg-[var(--color-surface)] shadow-[var(--shadow-card)] overflow-hidden grid grid-cols-[52px_1fr] lg:grid-cols-[60px_1fr] xl:grid-cols-[68px_1fr] transition-[border-color,opacity] duration-150 ease-out ${
+        editing ? 'border-[var(--color-primary)]/40' : 'border-[var(--color-border)]'
+      } ${dimmed ? 'opacity-50' : ''}`}
+    >
       {/* 左条：与 Dossier 对称，竖直居中单块（序号 + NO. + 状态点/聚合订阅），不撑高 */}
       <div className="border-r border-[var(--color-border)] bg-[var(--color-bg-sunk)] flex flex-col items-center justify-center gap-2 py-3">
         <div className="flex flex-col items-center leading-none">
@@ -456,10 +528,18 @@ function CollectionCard({
           </h2>
           <Badge tone="neutral">聚合订阅</Badge>
           <div className="flex items-center gap-0.5 shrink-0 ml-auto">
-            <IconLinkButton
-              href={`/collections?id=${encodeURIComponent(c.id)}&from=subs`}
-              title={`编辑聚合订阅 ${c.name}`}
+            <IconButton
+              onClick={onEdit}
+              disabled={anyEditing}
+              title="编辑"
               label="✎"
+            />
+            <IconButton
+              onClick={onDelete}
+              disabled={anyEditing}
+              title="删除"
+              label="✕"
+              tone="danger"
             />
           </div>
         </div>
@@ -495,8 +575,8 @@ function CollectionCard({
           </p>
         )}
         <div className="mt-auto flex items-center gap-2 pt-1.5 border-t border-[var(--color-border)] text-[10px] uppercase tracking-[0.06em] text-[var(--color-muted-strong)] font-mono">
-          <span className="truncate">
-            策略组 ↳ <code className="text-[var(--color-fg-soft)]">{c.name}</code>
+          <span className="truncate normal-case">
+            可在「结构骨架」绑定为节点来源
           </span>
           {c.updated_at && (
             <span className="ml-auto whitespace-nowrap shrink-0 text-[var(--color-muted)]">
@@ -539,27 +619,157 @@ function PipelineButton({
   );
 }
 
-/** Strip 内的链接型 IconButton，外观与 IconButton 一致但走 router.push。 */
-function IconLinkButton({
-  href,
-  title,
-  label,
+/** 聚合订阅的内联新建/编辑表单 —— 勾选单订阅成员 + 标签匹配，复用订阅源页。 */
+function CollectionForm({
+  subs,
+  initial,
+  onSubmit,
+  onCancel,
 }: {
-  href: string;
-  title: string;
-  label: string;
+  subs: Subscription[];
+  initial?: Collection;
+  onSubmit: (input: Record<string, unknown>) => Promise<void>;
+  onCancel: () => void;
 }) {
-  const router = useRouter();
+  const [name, setName] = useState(initial?.name ?? '');
+  const [enabled, setEnabled] = useState<boolean>(initial?.enabled ?? true);
+  const [selected, setSelected] = useState<Set<string>>(
+    new Set(initial?.subscription_ids ?? []),
+  );
+  const [tagsInput, setTagsInput] = useState(initial?.subscription_tags?.join(', ') ?? '');
+  const [notes, setNotes] = useState(initial?.notes ?? '');
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  function toggle(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!name) return;
+    setPending(true);
+    setError(null);
+    try {
+      const tags = tagsInput
+        .split(',')
+        .map((t) => t.trim())
+        .filter((t) => t.length > 0);
+      await onSubmit({
+        name: name.trim(),
+        enabled,
+        type: 'select',
+        subscription_ids: [...selected],
+        subscription_tags: tags,
+        notes: notes.trim() || undefined,
+      });
+    } catch (err) {
+      setError(err instanceof ApiError ? err.problem.detail ?? err.message : String(err));
+    } finally {
+      setPending(false);
+    }
+  }
+
   return (
-    <button
-      type="button"
-      onClick={() => router.push(href)}
-      title={title}
-      aria-label={title}
-      className="pm-focus-ring w-7 h-7 rounded inline-flex items-center justify-center text-[13px] leading-none transition-colors active:scale-[0.98] text-[var(--color-muted)] hover:text-[var(--color-fg)] hover:bg-[var(--color-surface)]"
+    <form
+      onSubmit={submit}
+      className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 space-y-5"
     >
-      <span aria-hidden>{label}</span>
-    </button>
+      <h2
+        className="font-serif text-[20px] font-medium leading-[1.25] tracking-[-0.01em] text-[var(--color-ink)]"
+        style={{ fontVariationSettings: '"opsz" 48, "SOFT" 50' }}
+      >
+        {initial ? `编辑「${initial.name}」` : '新建聚合订阅'}
+      </h2>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <FormField label="名称 (slug)">
+          <Input
+            placeholder="main-pool"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            pattern="[a-z0-9-]+"
+            disabled={!!initial}
+            required
+          />
+        </FormField>
+        <FormField label="标签匹配 — 命中任一标签的订阅自动加入">
+          <Input
+            placeholder="premium, asia"
+            value={tagsInput}
+            onChange={(e) => setTagsInput(e.target.value)}
+          />
+        </FormField>
+        <FormField label="状态">
+          <label className="flex items-center gap-2 h-9 px-2.5 text-[13px] text-[var(--color-fg-soft)] cursor-pointer">
+            <input
+              type="checkbox"
+              checked={enabled}
+              onChange={(e) => setEnabled(e.target.checked)}
+              className="accent-[var(--color-primary)] w-3.5 h-3.5"
+            />
+            {enabled ? '启用' : '停用'}
+          </label>
+        </FormField>
+      </div>
+
+      <FormField label="手动勾选订阅成员">
+        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-sunk)] p-2 max-h-56 overflow-y-auto grid grid-cols-1 md:grid-cols-2 gap-1">
+          {subs.length === 0 ? (
+            <p className="text-[12px] text-[var(--color-muted)] px-2 py-1">
+              还没有订阅源，请先到「单订阅」tab 新增。
+            </p>
+          ) : (
+            subs.map((s) => {
+              const checked = selected.has(s.id);
+              return (
+                <label
+                  key={s.id}
+                  className={`flex items-center gap-2 rounded-md px-2 py-1.5 cursor-pointer text-[12px] transition-colors ${
+                    checked
+                      ? 'bg-[var(--color-primary-soft)] text-[var(--color-primary-hover)]'
+                      : 'hover:bg-[var(--color-surface)]'
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => toggle(s.id)}
+                    className="accent-[var(--color-primary)] w-3.5 h-3.5"
+                  />
+                  <StatusDot tone={s.enabled ? 'on' : 'off'} />
+                  <span className="font-mono truncate flex-1">{s.name}</span>
+                </label>
+              );
+            })
+          )}
+        </div>
+      </FormField>
+
+      <FormField label="备注">
+        <Input placeholder="可选" value={notes} onChange={(e) => setNotes(e.target.value)} />
+      </FormField>
+
+      {error && (
+        <p className="text-[12px] text-[var(--color-danger)] bg-[#F4D8D2]/40 rounded-md px-3 py-2">
+          {error}
+        </p>
+      )}
+
+      <div className="flex items-center gap-2">
+        <Button type="submit" disabled={pending || !name}>
+          {pending ? '…' : initial ? '保存' : '创建'}
+        </Button>
+        <Button type="button" variant="ghost" onClick={onCancel}>
+          取消
+        </Button>
+      </div>
+    </form>
   );
 }
 
