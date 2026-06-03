@@ -2,16 +2,18 @@
 
 /**
  * Global assistant — a right-side drawer available on every authed page.
- * Streams /api/v1/assistant/chat over SSE and renders each step: tool-call
- * chips, prefab result cards (via ResultCard), the model's final Markdown,
- * and a friendly, retryable error banner on failure.
  *
- * Tier B is read-only; Tier C adds confirm-write cards to the same stream.
+ * The agent loop runs IN THE BROWSER (see lib/client/assistantAgent): it calls
+ * the model API directly (no Vercel function in the path → no 60s cap), runs
+ * tools in-browser or via the short /api/v1/assistant/tool endpoint, and
+ * streams each step here as a typed event — tool-call chips, prefab result
+ * cards, the model's streaming Markdown, and a retryable error banner.
  */
 
 import { useEffect, useRef, useState } from 'react';
+import type { ChatMessage } from '@/lib/ai/deepseek';
+import { AssistantNotConfiguredError, runAgentTurn } from '@/lib/client/assistantAgent';
 import { loadAssistantConfig } from '@/lib/client/assistant-config';
-import { getAdminKey } from '@/lib/client/auth-storage';
 import { CollapsibleResult, ResultCard, type ConfirmResolution } from './cards';
 import { ErrorBanner } from './ErrorBanner';
 import { Markdown } from './Markdown';
@@ -62,10 +64,11 @@ function newConversationId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `c-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-// Persist the current conversation so a refresh / reopen restores it. Gated to
-// the server session's TTL: within the window the Redis transcript is still
-// alive, so reattaching the same id keeps the model's full context; past it we
-// start fresh rather than show a conversation the model has actually dropped.
+// Persist the conversation so a refresh / reopen restores it. The browser now
+// OWNS the transcript (the agent loop runs client-side), so we store both the
+// rendered `messages` (UiMessage[]) and the raw model `convo` (ChatMessage[])
+// that future turns continue from. Bounded by a TTL so very old threads start
+// fresh rather than feed the model stale context.
 const STORE_KEY = 'pm.assistant.v1';
 const STORE_TTL_MS = 2 * 60 * 60 * 1000;
 const CID_RE = /^[A-Za-z0-9_-]{8,64}$/;
@@ -73,17 +76,24 @@ const CID_RE = /^[A-Za-z0-9_-]{8,64}$/;
 interface Persisted {
   conversationId: string;
   messages: UiMessage[];
+  convo?: ChatMessage[];
   savedAt: number;
 }
 
-function loadPersisted(): { conversationId: string; messages: UiMessage[] } | null {
+interface Restored {
+  conversationId: string;
+  messages: UiMessage[];
+  convo: ChatMessage[];
+}
+
+function loadPersisted(): Restored | null {
   if (typeof window === 'undefined') return null;
   try {
     const raw = window.localStorage.getItem(STORE_KEY);
     if (!raw) return null;
     const p = JSON.parse(raw) as Persisted;
     if (!p || !CID_RE.test(p.conversationId) || !Array.isArray(p.messages)) return null;
-    if (Date.now() - (p.savedAt ?? 0) > STORE_TTL_MS) return null; // server session expired
+    if (Date.now() - (p.savedAt ?? 0) > STORE_TTL_MS) return null; // thread too old
     // Settle any tool block left mid-flight by a refresh (no stuck spinner).
     const messages = p.messages.map((m) =>
       m.role === 'assistant'
@@ -95,25 +105,25 @@ function loadPersisted(): { conversationId: string; messages: UiMessage[] } | nu
           }
         : m,
     );
-    return { conversationId: p.conversationId, messages };
+    return { conversationId: p.conversationId, messages, convo: Array.isArray(p.convo) ? p.convo : [] };
   } catch {
     return null;
   }
 }
 
-function persist(conversationId: string, messages: UiMessage[]): void {
+function persist(conversationId: string, messages: UiMessage[], convo: ChatMessage[]): void {
   if (typeof window === 'undefined') return;
-  const write = (msgs: UiMessage[]) =>
+  const write = (msgs: UiMessage[], cv: ChatMessage[]) =>
     window.localStorage.setItem(
       STORE_KEY,
-      JSON.stringify({ conversationId, messages: msgs, savedAt: Date.now() } satisfies Persisted),
+      JSON.stringify({ conversationId, messages: msgs, convo: cv, savedAt: Date.now() } satisfies Persisted),
     );
   try {
-    write(messages);
+    write(messages, convo);
   } catch {
     // localStorage quota: keep only the most recent slice, else give up.
     try {
-      write(messages.slice(-12));
+      write(messages.slice(-12), convo.slice(-24));
     } catch {
       /* ignore */
     }
@@ -135,12 +145,16 @@ export function AssistantPanel() {
   // background and reopening shows its live state. We abort only on an explicit
   // 中断 click or when the tab unloads.
   const abortRef = useRef<AbortController | null>(null);
+  // The raw model transcript (system prompt excluded) the agent continues from.
+  // Owned by the browser now; persisted alongside the rendered messages.
+  const [convo, setConvo] = useState<ChatMessage[]>([]);
 
   useEffect(() => {
     const p = loadPersisted();
     if (p) {
       setConversationId(p.conversationId);
       setMessages(p.messages);
+      setConvo(p.convo);
     }
     setHydrated(true);
     // Refresh the DeepSeek config cache from KV once per page load ("刷新即更新").
@@ -150,8 +164,8 @@ export function AssistantPanel() {
 
   useEffect(() => {
     if (!hydrated) return; // don't clobber stored state before restore runs
-    persist(conversationId, messages);
-  }, [hydrated, conversationId, messages]);
+    persist(conversationId, messages, convo);
+  }, [hydrated, conversationId, messages, convo]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
@@ -232,8 +246,18 @@ export function AssistantPanel() {
           return copy;
         });
         break;
-      case 'message':
-        updateLastAssistant((b) => [...b, { type: 'text', content: String(ev.content) }]);
+      case 'assistant_delta':
+        // Stream the model's answer: append to the trailing text block, or
+        // open a new one (e.g. when text follows tool chips).
+        updateLastAssistant((b) => {
+          const last = b[b.length - 1];
+          if (last && last.type === 'text') {
+            const copy = b.slice();
+            copy[copy.length - 1] = { type: 'text', content: last.content + String(ev.content) };
+            return copy;
+          }
+          return [...b, { type: 'text', content: String(ev.content) }];
+        });
         break;
       case 'error':
         updateLastAssistant((b) => [...b, { type: 'error', message: String(ev.message) }]);
@@ -247,53 +271,29 @@ export function AssistantPanel() {
     abortRef.current = controller;
     setMessages((prev) => [...prev, { role: 'assistant', blocks: [] }]);
     try {
-      const key = getAdminKey();
-      const res = await fetch('/api/v1/assistant/chat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Source': 'ai_chat',
-          ...(key ? { Authorization: `Bearer ${key}` } : {}),
-        },
-        body: JSON.stringify({ conversationId, message }),
+      // The agent loop runs in the browser and calls the model directly. On
+      // success it returns the full transcript to continue from next turn; on
+      // error/abort it throws and we keep the prior transcript (so the failed
+      // turn isn't persisted and a resend is clean).
+      const next = await runAgentTurn({
+        priorMessages: convo,
+        userMessage: message,
         signal: controller.signal,
+        onEvent: handleEvent,
       });
-
-      if (!res.ok || !res.body) {
-        const detail = await res.text().catch(() => '');
+      setConvo(next);
+    } catch (err) {
+      if (err instanceof AssistantNotConfiguredError) {
         updateLastAssistant((b) => [
           ...b,
-          { type: 'error', message: `请求失败（${res.status}）${detail.slice(0, 300)}` },
+          {
+            type: 'error',
+            message:
+              '尚未配置 AI 凭证——请到左侧「AI 配置」页填入 DeepSeek 的 Base URL / 模型 / API Key 后再使用。',
+          },
         ]);
-        return;
-      }
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const parts = buffer.split('\n\n');
-        buffer = parts.pop() ?? '';
-        for (const part of parts) {
-          const line = part.trim();
-          if (!line.startsWith('data:')) continue;
-          const payload = line.slice(5).trim();
-          if (!payload) continue;
-          try {
-            handleEvent(JSON.parse(payload));
-          } catch {
-            /* ignore malformed frame */
-          }
-        }
-      }
-    } catch (err) {
-      const aborted = err instanceof DOMException && err.name === 'AbortError';
-      if (aborted) {
-        // User hit 中断 (server drops the un-persisted turn). Settle any running
-        // tool chip and leave a quiet marker so the transcript reads honestly.
+      } else if (err instanceof DOMException && err.name === 'AbortError') {
+        // User hit 中断 — settle any running tool chip and leave a quiet marker.
         updateLastAssistant((b) => {
           const settled = b.map((x) =>
             x.type === 'tool' && x.status === 'running' ? { ...x, status: 'done' as const } : x,
@@ -384,6 +384,7 @@ export function AssistantPanel() {
                 <button
                   onClick={() => {
                     setMessages([]);
+                    setConvo([]);
                     setConversationId(newConversationId());
                   }}
                   disabled={busy}
