@@ -283,12 +283,23 @@ kbd {
   animation: pm-slide-in-right 200ms ease-out both;
 }
 
+/* —— 执行中：细环旋转（中断按钮 / 后台运行角标用） —— */
+@keyframes pm-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.pm-spin {
+  animation: pm-spin 700ms linear infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .pm-slide-in-right,
   .pm-reveal,
   .pm-reveal-slow,
   .pm-route-progress::after,
-  .pm-pulse {
+  .pm-pulse,
+  .pm-spin {
     animation: none;
   }
 }
