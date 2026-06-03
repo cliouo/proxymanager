@@ -18,10 +18,12 @@ export const CollectionGroupTypeSchema = z.enum(['select']);
 
 export const CollectionSchema = z.object({
   id: z.uuid(),
-  name: z
-    .string()
-    .min(1)
-    .regex(/^[a-z0-9-]+$/, 'must contain only lowercase letters, digits, and dashes'),
+  /**
+   * Display label. Free text (Chinese welcome) — a collection is looked up by
+   * `id`, never by name, and its name is no longer emitted as a proxy-group
+   * identifier, so the old kebab-case slug rule is gone.
+   */
+  name: z.string().min(1, '名称不能为空'),
   /** When false, the collection's proxy-group is not emitted into the resolved config. */
   enabled: z.boolean().default(true),
   /** Mihomo proxy-group type. MVP supports `select` only; future phases may add url-test / fallback. */
@@ -36,10 +38,7 @@ export const CollectionSchema = z.object({
 });
 
 export const CollectionCreateSchema = z.object({
-  name: z
-    .string()
-    .min(1)
-    .regex(/^[a-z0-9-]+$/, 'must contain only lowercase letters, digits, and dashes'),
+  name: z.string().min(1, '名称不能为空'),
   enabled: z.boolean().default(true),
   type: CollectionGroupTypeSchema.default('select'),
   subscription_ids: z.array(z.uuid()).default([]),
@@ -48,11 +47,7 @@ export const CollectionCreateSchema = z.object({
 });
 
 export const CollectionUpdateSchema = z.object({
-  name: z
-    .string()
-    .min(1)
-    .regex(/^[a-z0-9-]+$/, 'must contain only lowercase letters, digits, and dashes')
-    .optional(),
+  name: z.string().min(1, '名称不能为空').optional(),
   enabled: z.boolean().optional(),
   type: CollectionGroupTypeSchema.optional(),
   subscription_ids: z.array(z.uuid()).optional(),

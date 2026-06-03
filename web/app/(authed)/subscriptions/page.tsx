@@ -688,12 +688,11 @@ function CollectionForm({
       </h2>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <FormField label="名称 (slug)">
+        <FormField label="名称">
           <Input
-            placeholder="main-pool"
+            placeholder="例如:聚合订阅1 / 主力机场"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            pattern="[a-z0-9-]+"
             disabled={!!initial}
             required
           />
