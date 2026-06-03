@@ -198,9 +198,11 @@ export const ProxyGroupUpdateSchema = z
     'include-all-providers': z.boolean().optional(),
     'include-all-proxies': z.boolean().optional(),
     'include-all': z.boolean().optional(),
-    filter: z.string().optional(),
-    'exclude-filter': z.string().optional(),
-    'exclude-type': z.string().optional(),
+    // String fields accept `null` to *clear* them — patchProxyGroup deletes the
+    // key on null. (Metadata fields below do the same.)
+    filter: z.string().nullable().optional(),
+    'exclude-filter': z.string().nullable().optional(),
+    'exclude-type': z.string().nullable().optional(),
     url: z.string().optional(),
     interval: z.number().int().positive().optional(),
     tolerance: z.number().int().nonnegative().optional(),
@@ -209,7 +211,7 @@ export const ProxyGroupUpdateSchema = z
     'max-failed-times': z.number().int().positive().optional(),
     timeout: z.number().int().positive().optional(),
     strategy: z.string().optional(),
-    'dialer-proxy': z.string().optional(),
+    'dialer-proxy': z.string().nullable().optional(),
     'routing-mark': z.number().int().optional(),
     'disable-udp': z.boolean().optional(),
     hidden: z.boolean().optional(),

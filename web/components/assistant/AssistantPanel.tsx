@@ -129,6 +129,11 @@ export function AssistantPanel() {
   // Restore from localStorage after mount (avoids SSR hydration mismatch).
   const [hydrated, setHydrated] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  // Aborts the in-flight turn. Tied to the (always-mounted) component, NOT to
+  // `open` — closing the drawer only hides UI; the stream keeps running in the
+  // background and reopening shows its live state. We abort only on an explicit
+  // 中断 click or when the tab unloads.
+  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     const p = loadPersisted();
@@ -234,6 +239,8 @@ export function AssistantPanel() {
 
   async function runTurn(message: string) {
     setBusy(true);
+    const controller = new AbortController();
+    abortRef.current = controller;
     setMessages((prev) => [...prev, { role: 'assistant', blocks: [] }]);
     try {
       const key = getAdminKey();
@@ -245,6 +252,7 @@ export function AssistantPanel() {
           ...(key ? { Authorization: `Bearer ${key}` } : {}),
         },
         body: JSON.stringify({ conversationId, message }),
+        signal: controller.signal,
       });
 
       if (!res.ok || !res.body) {
@@ -278,13 +286,31 @@ export function AssistantPanel() {
         }
       }
     } catch (err) {
-      updateLastAssistant((b) => [
-        ...b,
-        { type: 'error', message: err instanceof Error ? err.message : String(err) },
-      ]);
+      const aborted = err instanceof DOMException && err.name === 'AbortError';
+      if (aborted) {
+        // User hit 中断 (server drops the un-persisted turn). Settle any running
+        // tool chip and leave a quiet marker so the transcript reads honestly.
+        updateLastAssistant((b) => {
+          const settled = b.map((x) =>
+            x.type === 'tool' && x.status === 'running' ? { ...x, status: 'done' as const } : x,
+          );
+          return [...settled, { type: 'text', content: '_（已中断）_' }];
+        });
+      } else {
+        updateLastAssistant((b) => [
+          ...b,
+          { type: 'error', message: err instanceof Error ? err.message : String(err) },
+        ]);
+      }
     } finally {
+      abortRef.current = null;
       setBusy(false);
     }
+  }
+
+  /** User-initiated 中断 of the running turn. */
+  function stop() {
+    abortRef.current?.abort();
   }
 
   function sendText(text: string) {
@@ -321,10 +347,14 @@ export function AssistantPanel() {
         <button
           onClick={() => setOpen(true)}
           className="fixed bottom-6 right-6 z-40 flex h-12 items-center gap-2 rounded-full bg-[var(--color-primary)] px-5 text-[14px] font-medium text-[var(--color-on-primary)] shadow-[var(--shadow-card-lift)] transition-colors hover:bg-[var(--color-primary-hover)]"
-          aria-label="打开配置助手"
+          aria-label={busy ? '配置助手（后台执行中）' : '打开配置助手'}
         >
-          <span className="text-[16px] leading-none">✦</span>
-          配置助手
+          {busy ? (
+            <span className="pm-spin inline-block h-3.5 w-3.5 rounded-full border-2 border-current border-t-transparent" />
+          ) : (
+            <span className="text-[16px] leading-none">✦</span>
+          )}
+          {busy ? '执行中…' : '配置助手'}
         </button>
       )}
 
@@ -479,13 +509,25 @@ export function AssistantPanel() {
                 placeholder="问配置问题，Enter 发送…"
                 className="max-h-32 flex-1 resize-none rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-[14px] text-[var(--color-fg)] outline-none transition-colors focus:border-[var(--color-border-active)]"
               />
-              <button
-                onClick={send}
-                disabled={busy || !input.trim()}
-                className="h-9 rounded-lg bg-[var(--color-primary)] px-4 text-[14px] font-medium text-[var(--color-on-primary)] transition-colors hover:bg-[var(--color-primary-hover)] disabled:opacity-40"
-              >
-                发送
-              </button>
+              {busy ? (
+                <button
+                  onClick={stop}
+                  className="flex h-9 items-center gap-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3.5 text-[14px] font-medium text-[var(--color-fg)] transition-colors hover:bg-[var(--color-surface-hover)]"
+                  aria-label="中断执行"
+                  title="点击中断"
+                >
+                  <span className="pm-spin inline-block h-3.5 w-3.5 rounded-full border-2 border-[var(--color-muted)] border-t-transparent" />
+                  停止
+                </button>
+              ) : (
+                <button
+                  onClick={send}
+                  disabled={!input.trim()}
+                  className="h-9 rounded-lg bg-[var(--color-primary)] px-4 text-[14px] font-medium text-[var(--color-on-primary)] transition-colors hover:bg-[var(--color-primary-hover)] disabled:opacity-40"
+                >
+                  发送
+                </button>
+              )}
             </div>
           </div>
         </div>
