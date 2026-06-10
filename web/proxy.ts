@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
+import { safeEqual } from '@/lib/auth';
 import { problemResponse } from '@/lib/http/problem';
 
 const PUBLIC_API_PATHS = new Set(['/api/v1/health', '/api/v1/openapi.json']);
@@ -69,7 +70,7 @@ export function proxy(request: NextRequest): NextResponse {
 
   const authHeader = request.headers.get('authorization') ?? '';
   const match = /^Bearer\s+(.+)$/i.exec(authHeader);
-  if (!match || match[1] !== adminKey) {
+  if (!match || !safeEqual(match[1], adminKey)) {
     return unauthorized('Valid `Authorization: Bearer <ADMIN_KEY>` header is required.');
   }
 

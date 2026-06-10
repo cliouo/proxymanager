@@ -478,6 +478,77 @@ describe('parseProxyUriList per protocol', () => {
   });
 });
 
+describe('IPv6 hosts and port-hopping regressions', () => {
+  it('vless://: bracketed IPv6 host is emitted bare', () => {
+    const uri = 'vless://00000000-0000-0000-0000-000000000000@[2001:db8::1]:443?security=tls&sni=v6.example#V6';
+    const { proxies, errors } = parseProxyUriList(uri);
+    expect(errors).toHaveLength(0);
+    expect(proxies[0]).toMatchObject({ server: '2001:db8::1', port: 443 });
+  });
+
+  it('trojan://: bracketed IPv6 host is emitted bare', () => {
+    const uri = 'trojan://pwd@[2001:db8::2]:443#T6';
+    const { proxies, errors } = parseProxyUriList(uri);
+    expect(errors).toHaveLength(0);
+    expect(proxies[0]).toMatchObject({ server: '2001:db8::2', port: 443 });
+  });
+
+  it('ss:// SIP002: bracketed IPv6 host is emitted bare', () => {
+    const userinfo = Buffer.from('aes-256-gcm:pw', 'utf-8').toString('base64');
+    const uri = `ss://${userinfo}@[2001:db8::3]:8388#S6`;
+    const { proxies, errors } = parseProxyUriList(uri);
+    expect(errors).toHaveLength(0);
+    expect(proxies[0]).toMatchObject({ server: '2001:db8::3', port: 8388 });
+  });
+
+  it('ss:// legacy base64: IPv6 host parses', () => {
+    const payload = Buffer.from('aes-256-gcm:pw@[2001:db8::4]:8388', 'utf-8').toString('base64');
+    const { proxies, errors } = parseProxyUriList(`ss://${payload}#L6`);
+    expect(errors).toHaveLength(0);
+    expect(proxies[0]).toMatchObject({
+      cipher: 'aes-256-gcm',
+      password: 'pw',
+      server: '2001:db8::4',
+      port: 8388,
+    });
+  });
+
+  it('ssr://: IPv6 host parses via end-anchored split', () => {
+    const pw = Buffer.from('pw', 'utf-8').toString('base64');
+    const payload = Buffer.from(`2001:db8::5:8388:origin:aes-256-cfb:plain:${pw}`, 'utf-8').toString('base64');
+    const { proxies, errors } = parseProxyUriList(`ssr://${payload}`);
+    expect(errors).toHaveLength(0);
+    expect(proxies[0]).toMatchObject({
+      type: 'ssr',
+      server: '2001:db8::5',
+      port: 8388,
+      cipher: 'aes-256-cfb',
+      password: 'pw',
+    });
+  });
+
+  it('hysteria2://: bracketed IPv6 host parses and is emitted bare', () => {
+    const uri = 'hy2://pwd@[2001:db8::6]:8443?sni=h.example#H6';
+    const { proxies, errors } = parseProxyUriList(uri);
+    expect(errors).toHaveLength(0);
+    expect(proxies[0]).toMatchObject({ server: '2001:db8::6', port: 8443 });
+  });
+
+  it('hysteria2://: in-URI port-hopping wins over ?mport', () => {
+    const uri = 'hy2://pwd@h.com:443,8443-8500?mport=20000-30000#PHM';
+    const { proxies, errors } = parseProxyUriList(uri);
+    expect(errors).toHaveLength(0);
+    expect(proxies[0].ports).toBe('443,8443-8500');
+  });
+
+  it('tuic://: bracketed IPv6 host is emitted bare', () => {
+    const uri = 'tuic://00000000-0000-0000-0000-000000000000:pw@[2001:db8::7]:443#U6';
+    const { proxies, errors } = parseProxyUriList(uri);
+    expect(errors).toHaveLength(0);
+    expect(proxies[0]).toMatchObject({ server: '2001:db8::7', port: 443 });
+  });
+});
+
 describe('normaliseToClashProviderYaml — URI fallback', () => {
   it('accepts plain URI list', () => {
     const userinfo = Buffer.from('aes-256-gcm:s', 'utf-8').toString('base64');

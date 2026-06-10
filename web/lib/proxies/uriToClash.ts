@@ -144,12 +144,19 @@ function parseSS(uri: string): ClashProxy {
     // legacy form: whole main is base64-of(method:password@host:port)
     const decoded = tryBase64Decode(main);
     if (!decoded) throw new Error('invalid ss legacy base64');
-    const m = decoded.match(/^([^:]+):(.+)@([^:@]+):(\d+)$/);
-    if (!m) throw new Error('malformed ss legacy payload');
-    cipher = m[1];
-    password = m[2];
-    host = m[3];
-    port = parseInt(m[4], 10);
+    // Split from the ends rather than one regex: password may contain '@',
+    // and IPv6 hosts contain ':' which a [^:@]+ host group can't match.
+    const at = decoded.lastIndexOf('@');
+    if (at === -1) throw new Error('malformed ss legacy payload');
+    const userPart = decoded.slice(0, at);
+    const hostPort = decoded.slice(at + 1);
+    const colon = userPart.indexOf(':');
+    const portIdx = hostPort.lastIndexOf(':');
+    if (colon === -1 || portIdx === -1) throw new Error('malformed ss legacy payload');
+    cipher = userPart.slice(0, colon);
+    password = userPart.slice(colon + 1);
+    host = stripBrackets(hostPort.slice(0, portIdx));
+    port = parseInt(hostPort.slice(portIdx + 1), 10);
   } else {
     const userPart = main.slice(0, atIdx);
     let hostPart = main.slice(atIdx + 1);
@@ -162,7 +169,7 @@ function parseSS(uri: string): ClashProxy {
     password = decoded.slice(colon + 1);
     const portIdx = hostPart.lastIndexOf(':');
     if (portIdx === -1) throw new Error('missing port');
-    host = hostPart.slice(0, portIdx);
+    host = stripBrackets(hostPart.slice(0, portIdx));
     port = parseInt(hostPart.slice(portIdx + 1), 10);
   }
   if (!Number.isFinite(port) || port <= 0) throw new Error('invalid port');
@@ -339,9 +346,12 @@ function parseSSR(uri: string): ClashProxy {
   const qIdx = decoded.indexOf('/?');
   const main = qIdx === -1 ? decoded : decoded.slice(0, qIdx);
   const queryStr = qIdx === -1 ? '' : decoded.slice(qIdx + 2);
+  // Split from the end: the five trailing fields are colon-free, while an
+  // IPv6 host contains ':' and would break a plain six-way split.
   const parts = main.split(':');
   if (parts.length < 6) throw new Error('malformed ssr');
-  const [host, portStr, protocol, method, obfs, b64password] = parts;
+  const [portStr, protocol, method, obfs, b64password] = parts.slice(-5);
+  const host = stripBrackets(parts.slice(0, -5).join(':'));
   const password = tryBase64Decode(b64password) ?? b64password;
   const params = parseQueryString(queryStr);
   const remarks = params.remarks ? (tryBase64Decode(params.remarks) ?? '') : '';
@@ -371,7 +381,7 @@ function parseVMess(uri: string): ClashProxy {
     throw new Error('invalid vmess json payload');
   }
   const get = (k: string): string => (json[k] != null ? String(json[k]) : '');
-  const server = get('add');
+  const server = stripBrackets(get('add'));
   const port = parseInt(get('port'), 10);
   if (!server || !port) throw new Error('vmess missing add/port');
 
@@ -410,7 +420,7 @@ function parseVLESS(uri: string): ClashProxy {
   const u = safeUrl(uri);
   const uuid = safeDecode(u.username);
   if (!uuid) throw new Error('vless missing uuid');
-  const host = u.hostname;
+  const host = stripBrackets(u.hostname);
   const port = parseInt(u.port, 10);
   if (!host || !port) throw new Error('vless missing host/port');
   const params = paramsToRecord(u.searchParams);
@@ -462,7 +472,7 @@ function parseTrojan(uri: string): ClashProxy {
   const u = safeUrl(uri);
   const password = safeDecode(u.username);
   if (!password) throw new Error('trojan missing password');
-  const host = u.hostname;
+  const host = stripBrackets(u.hostname);
   const port = parseInt(u.port, 10) || 443;
   if (!host) throw new Error('trojan missing host');
   const params = paramsToRecord(u.searchParams);
@@ -499,7 +509,7 @@ function parseTrojan(uri: string): ClashProxy {
 
 function parseHysteria(uri: string): ClashProxy {
   const u = safeUrl(uri);
-  const host = u.hostname;
+  const host = stripBrackets(u.hostname);
   const port = parseInt(u.port, 10);
   if (!host || !port) throw new Error('hysteria missing host/port');
   const params = paramsToRecord(u.searchParams);
@@ -529,11 +539,13 @@ function parseHysteria2(uri: string): ClashProxy {
   // port-hopping syntax `host:443,8443-8500` which URL.port rejects as invalid.
   const body = uri.replace(/^(hysteria2|hy2):\/\//i, '');
   // password @ host (: port-or-port-set)? (/)? (? addons)? (# name)?
+  // Host is either a bracketed IPv6 literal or anything up to :/?#
   const re =
-    /^(.*?)@([^/?#:]+)(?::((?:\d+(?:-\d+)?)(?:[,;]\d+(?:-\d+)?)*))?\/?(?:\?([^#]*))?(?:#(.*))?$/;
+    /^(.*?)@(\[[^\]]+\]|[^/?#:]+)(?::((?:\d+(?:-\d+)?)(?:[,;]\d+(?:-\d+)?)*))?\/?(?:\?([^#]*))?(?:#(.*))?$/;
   const m = re.exec(body);
   if (!m) throw new Error('malformed hysteria2 URI');
-  const [, rawPassword, host, portSpec, query, frag] = m;
+  const [, rawPassword, rawHost, portSpec, query, frag] = m;
+  const host = stripBrackets(rawHost);
   if (!host) throw new Error('hysteria2 missing host');
 
   // Single port vs port-hopping list
@@ -570,7 +582,9 @@ function parseHysteria2(uri: string): ClashProxy {
   if (params.alpn) proxy.alpn = splitList(params.alpn);
   if (params.pinSHA256) proxy.fingerprint = params.pinSHA256;
   if (/^(1|true)$/i.test(params.fastopen ?? '')) proxy.tfo = true;
-  if (params.mport) proxy.ports = params.mport;
+  // ?mport is an alternative carrier for port-hopping; the in-URI port set
+  // is authoritative when both are present
+  if (params.mport && !ports) proxy.ports = params.mport;
   const hopInterval = params['hop-interval'] ?? params['hop_interval'];
   if (hopInterval) proxy['hop-interval'] = hopInterval;
   if (params.keepalive && /^\d+$/.test(params.keepalive))
@@ -582,7 +596,7 @@ function parseHysteria2(uri: string): ClashProxy {
 
 function parseTUIC(uri: string): ClashProxy {
   const u = safeUrl(uri);
-  const host = u.hostname;
+  const host = stripBrackets(u.hostname);
   const port = parseInt(u.port, 10);
   if (!host || !port) throw new Error('tuic missing host/port');
   const uuid = safeDecode(u.username);
@@ -610,7 +624,7 @@ function parseTUIC(uri: string): ClashProxy {
 
 function parseSnell(uri: string): ClashProxy {
   const u = safeUrl(uri);
-  const host = u.hostname;
+  const host = stripBrackets(u.hostname);
   const port = parseInt(u.port, 10);
   if (!host || !port) throw new Error('snell missing host/port');
   const psk = safeDecode(u.username);
@@ -634,7 +648,7 @@ function parseSnell(uri: string): ClashProxy {
 
 function parseSocks(uri: string): ClashProxy {
   const u = safeUrl(uri);
-  const host = u.hostname;
+  const host = stripBrackets(u.hostname);
   const port = parseInt(u.port, 10);
   if (!host || !port) throw new Error('socks missing host/port');
   let username = '';
@@ -667,7 +681,7 @@ function parseAnyTLS(uri: string): ClashProxy {
   const u = safeUrl(uri);
   const password = safeDecode(u.username);
   if (!password) throw new Error('anytls missing password');
-  const host = u.hostname;
+  const host = stripBrackets(u.hostname);
   if (!host) throw new Error('anytls missing host');
   const port = parseInt(u.port, 10) || 443;
   const params = paramsToRecord(u.searchParams);
@@ -703,7 +717,7 @@ function parseWireGuard(uri: string): ClashProxy {
   const u = safeUrl(normalized);
   const privateKey = safeDecode(u.username);
   if (!privateKey) throw new Error('wireguard missing private-key');
-  const host = u.hostname;
+  const host = stripBrackets(u.hostname);
   if (!host) throw new Error('wireguard missing host');
   const port = parseInt(u.port, 10) || 51820;
   const params = paramsToRecord(u.searchParams);
@@ -774,10 +788,11 @@ function parseHttp(uri: string): ClashProxy {
     throw new Error('http proxy URI must not include a path');
   }
   if (!u.port) throw new Error('http proxy requires explicit port');
+  const host = stripBrackets(u.hostname);
   const proxy: ClashProxy = {
-    name: safeDecode(u.hash.slice(1)) || `${u.hostname}:${u.port}`,
+    name: safeDecode(u.hash.slice(1)) || `${host}:${u.port}`,
     type: 'http',
-    server: u.hostname,
+    server: host,
     port: parseInt(u.port, 10),
   };
   if (u.username) proxy.username = safeDecode(u.username);
@@ -816,12 +831,6 @@ function splitTag(uri: string): { tag: string; body: string } {
   return { tag: safeDecode(uri.slice(idx + 1)), body: uri.slice(0, idx) };
 }
 
-function splitQuery(s: string): [string, string | null] {
-  const idx = s.indexOf('?');
-  if (idx === -1) return [s, null];
-  return [s.slice(0, idx), s.slice(idx + 1)];
-}
-
 function parseQueryString(qs: string): Record<string, string> {
   const out: Record<string, string> = {};
   if (!qs) return out;
@@ -847,6 +856,14 @@ function safeUrl(uri: string): URL {
   } catch (e) {
     throw new Error(`invalid URI: ${e instanceof Error ? e.message : String(e)}`);
   }
+}
+
+/**
+ * URL.hostname keeps the brackets around IPv6 literals (`[2001:db8::1]`),
+ * but Clash/mihomo expects a bare address in the `server` field.
+ */
+function stripBrackets(host: string): string {
+  return host.startsWith('[') && host.endsWith(']') ? host.slice(1, -1) : host;
 }
 
 function safeDecode(s: string): string {
