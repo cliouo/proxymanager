@@ -43,6 +43,10 @@ export interface ResolvedSnapshot {
   subscriptions: SnapshotSubStatus[];
   /** Warnings carried forward, e.g. presence of the deprecated `pm-inline-collections` field. */
   warnings: string[];
+  /** Anchors that had rules but no matching marker in base (renderBase 的 unmatchedAnchors)。旧快照无此字段。 */
+  unmatchedAnchors?: string[];
+  /** base 中实际存在的锚点注入位数量(renderBase 的 anchorsApplied.length)。旧快照无此字段。 */
+  anchorsApplied?: number;
   /** ms epoch when this snapshot was computed. */
   computedAt: number;
   /** Build id of the resolved config that produced this snapshot. */

@@ -35,12 +35,13 @@ interface SubStatus {
   error?: string;
 }
 
-interface Preview {
-  anchors_applied?: string[];
-  unmatched_anchors?: string[];
+/** /api/v1/resolved-snapshot 的形状(lib/repos/resolvedRepo.ts 的 ResolvedSnapshot 子集)。 */
+interface Snapshot {
   subscriptions?: SubStatus[];
-  inlined_proxy_count?: number;
   warnings?: string[];
+  unmatchedAnchors?: string[];
+  anchorsApplied?: number;
+  computedAt?: number;
 }
 
 interface AuditEvent {
@@ -120,7 +121,7 @@ export default function DashboardPage() {
   const [counts, setCounts] = useState<Counts | null>(null);
   const [groups, setGroups] = useState<ProxyGroup[]>([]);
   const [ruleSets, setRuleSets] = useState<RuleSet[]>([]);
-  const [preview, setPreview] = useState<Preview | null>(null);
+  const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -140,15 +141,16 @@ export default function DashboardPage() {
           api<{ data: AuditEvent[] }>('/api/v1/history?limit=5').catch(() => ({
             data: [] as AuditEvent[],
           })),
-          // preview powers the "real basis" alerts; may 404 before base init.
-          api<{ data: Preview }>('/api/v1/preview/default').catch(() => null),
+          // 告警/注入摘要读上次渲染的快照(1 次 Redis GET)——概览绝不触发
+          // 渲染管线与上游订阅拉取;新鲜产物只在真正使用时生成(/api/sub、最终配置)。
+          api<{ data: Snapshot | null }>('/api/v1/resolved-snapshot').catch(() => null),
         ]);
         if (cancelled) return;
         setMeta(metaRes.data);
         setGroups(pgs.data);
         setRuleSets(sets.data);
         setEvents(hist.data);
-        setPreview(prev?.data ?? null);
+        setSnapshot(prev?.data ?? null);
         setCounts({
           anchors: anchors.data.length,
           subscriptions: subs.meta.total,
@@ -180,13 +182,13 @@ export default function DashboardPage() {
     return [...by.entries()].map(([t, n]) => `${t} ×${n}`).join(' · ');
   })();
 
-  const anchorsApplied = preview?.anchors_applied?.length ?? 0;
+  const anchorsApplied = snapshot?.anchorsApplied ?? 0;
   const rulesDesc =
     counts && anchorsApplied > 0 ? `分布于 ${anchorsApplied} 个锚点` : 'base 锚点注入位';
-  const subsInjected = preview?.subscriptions?.reduce((s, x) => s + (x.injectedCount ?? 0), 0);
+  const subsInjected = snapshot?.subscriptions?.reduce((s, x) => s + (x.injectedCount ?? 0), 0);
 
   /* ---------- alerts (computed from real conditions) ---------- */
-  const alerts = buildAlerts(meta, preview, ruleSets);
+  const alerts = buildAlerts(meta, snapshot, ruleSets);
 
   return (
     <>
@@ -306,7 +308,7 @@ export default function DashboardPage() {
             <div className="v">{counts ? counts.subscriptions : '—'}</div>
             <div className="d">
               {subsInjected !== undefined
-                ? `本次渲染注入 ${subsInjected} 个节点`
+                ? `上次渲染注入 ${subsInjected} 个节点`
                 : '机场 / 自建订阅'}
             </div>
           </Link>
@@ -360,6 +362,11 @@ export default function DashboardPage() {
         <section className="panel">
           <div className="panel-head">
             <h2>需要注意</h2>
+            {snapshot?.computedAt ? (
+              <span className="crumb num" title="摘要来自上次成功渲染的快照">
+                截至 {fmtTime(snapshot.computedAt)}
+              </span>
+            ) : null}
           </div>
           <div className="panel-body">
             {alerts.length === 0 ? (
@@ -401,7 +408,7 @@ interface Alert {
   cta?: string;
 }
 
-function buildAlerts(meta: Meta | null, preview: Preview | null, ruleSets: RuleSet[]): Alert[] {
+function buildAlerts(meta: Meta | null, snapshot: Snapshot | null, ruleSets: RuleSet[]): Alert[] {
   const out: Alert[] = [];
 
   // 1) base 未初始化 — highest priority, blocks render.
@@ -419,8 +426,23 @@ function buildAlerts(meta: Meta | null, preview: Preview | null, ruleSets: RuleS
     });
   }
 
-  // 2) 订阅源拉取失败 / 沿用缓存 — from preview.subscriptions.
-  for (const s of preview?.subscriptions ?? []) {
+  // 1.5) 从未渲染过:快照缺失,如实提示(而不是替用户偷偷跑一次渲染)。
+  if (meta?.hasBase && !snapshot) {
+    out.push({
+      tone: 'acc',
+      tag: '未渲染',
+      body: (
+        <>
+          还没有渲染记录。打开「最终配置」或让客户端访问订阅地址后，这里会显示注入与告警摘要。
+        </>
+      ),
+      href: '/config',
+      cta: '去渲染 →',
+    });
+  }
+
+  // 2) 订阅源拉取失败 / 沿用缓存 — 来自上次渲染快照。
+  for (const s of snapshot?.subscriptions ?? []) {
     if (s.error) {
       out.push({
         tone: 'err',
@@ -448,8 +470,8 @@ function buildAlerts(meta: Meta | null, preview: Preview | null, ruleSets: RuleS
     }
   }
 
-  // 3) 未匹配锚点 — from preview.unmatched_anchors.
-  const unmatched = preview?.unmatched_anchors ?? [];
+  // 3) 未匹配锚点。
+  const unmatched = snapshot?.unmatchedAnchors ?? [];
   if (unmatched.length > 0) {
     out.push({
       tone: 'warn',
@@ -470,8 +492,8 @@ function buildAlerts(meta: Meta | null, preview: Preview | null, ruleSets: RuleS
     });
   }
 
-  // 4) preview 自带 warnings（如 deprecated 字段）。
-  for (const w of preview?.warnings ?? []) {
+  // 4) 渲染 warnings（如 deprecated 字段）。
+  for (const w of snapshot?.warnings ?? []) {
     out.push({
       tone: 'acc',
       tag: '提示',

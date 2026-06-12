@@ -313,6 +313,9 @@ export async function resolveConfig(
       collisions,
       subscriptions: subStatuses,
       warnings,
+      // 概览等轻读者靠这两个字段免跑渲染管线就能给出告警摘要。
+      unmatchedAnchors: rendered.unmatchedAnchors,
+      anchorsApplied: rendered.anchorsApplied.length,
       computedAt: Date.now(),
       buildId: rendered.buildId,
     };

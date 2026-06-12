@@ -394,3 +394,15 @@ registry.registerPath({
     404: { description: 'Base config has not been initialized' },
   },
 });
+
+registry.registerPath({
+  method: 'get',
+  path: '/api/v1/resolved-snapshot',
+  summary: 'Last render summary snapshot',
+  description:
+    'Summary of the most recent successful render (node names, collisions, per-subscription status, warnings, anchor stats). Read-only, one Redis GET — never triggers the render pipeline or upstream subscription fetches. `data` is null when nothing has been rendered yet.',
+  tags: ['base'],
+  responses: {
+    200: { description: 'Snapshot, or null when never rendered' },
+  },
+});
