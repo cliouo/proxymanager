@@ -15,7 +15,8 @@ export const POST = withProblemDetails(async (request: Request) => {
     data: {
       valid: validation.valid,
       anchors: parsedBase.anchors,
-      policies: parsedBase.policies,
+      // 合并后的策略全集(托管策略组 + base 字面)，Inspector 直接展示。
+      policies: validation.policies,
       orphans: validation.orphans,
     },
   });

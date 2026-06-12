@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { BaseOrphan, BaseValidationResult } from '@/schemas';
 import { BaseParseError, type ParsedBase, parseBase } from '@/lib/engine/parser';
 import { validateBase } from '@/lib/engine/validator';
+import { listProxyGroups } from '@/lib/repos/proxyGroupsRepo';
 import { listRules } from '@/lib/repos/rulesRepo';
 import { listRuleSets } from '@/lib/repos/ruleSetsRepo';
 import { ProblemDetailsError } from '@/lib/http/problem';
@@ -83,9 +84,20 @@ export async function parseAndValidate(content: string): Promise<ParseAndValidat
     }
     throw err;
   }
-  const [rules, providerSets] = await Promise.all([listRules(), listRuleSets()]);
+  const [rules, providerSets, proxyGroups] = await Promise.all([
+    listRules(),
+    listRuleSets(),
+    listProxyGroups(),
+  ]);
   const providerNames = new Set(providerSets.map((s) => s.name));
-  const validation = validateBase(parsedBase, rules, providerNames);
+  // 策略组在 hash 里、渲染时才注入 base——校验候选 base 内容时必须把它们
+  // 计入合法 policy 全集，否则指向托管组的规则全被误判孤立(保存必 422)。
+  const validation = validateBase(
+    parsedBase,
+    rules,
+    providerNames,
+    proxyGroups.map((g) => g.name),
+  );
   const blockViolations = [...rulesBlockViolations(content), ...ruleProvidersBlockViolations(content)];
   if (blockViolations.length > 0) {
     validation.orphans = [...validation.orphans, ...blockViolations];

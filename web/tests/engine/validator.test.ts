@@ -53,7 +53,7 @@ describe('validateBase', () => {
     const result = validateBase(PARSED, [makeRule({ id: 'r', anchor: 'manual', policy: '美国' })]);
     expect(result.valid).toBe(false);
     expect(result.orphans).toEqual([
-      { rule_id: 'r', reason: 'policy "美国" not present in proxy-groups' },
+      { rule_id: 'r', reason: 'policy "美国" 不存在——既不是策略组，也不是 base.yaml 里的节点/内建策略' },
     ]);
   });
 
@@ -63,7 +63,7 @@ describe('validateBase', () => {
     expect(result.orphans).toHaveLength(2);
     expect(result.orphans.map((o) => o.reason)).toEqual([
       'anchor "gone" not present in base.yaml',
-      'policy "美国" not present in proxy-groups',
+      'policy "美国" 不存在——既不是策略组，也不是 base.yaml 里的节点/内建策略',
     ]);
   });
 
@@ -90,6 +90,36 @@ describe('validateBase', () => {
     expect(result.orphans).toEqual([
       { rule_id: 'r', reason: 'RULE-SET 引用的规则集 "ghost" 不在规则集库中' },
     ]);
+  });
+
+  // —— 托管策略组(第 4 参)：策略组迁出 base.yaml 后的真实校验路径 ——
+
+  it('accepts a policy that only exists as a managed proxy-group', () => {
+    const result = validateBase(
+      PARSED,
+      [makeRule({ id: 'r', anchor: 'manual', policy: '美国' })],
+      undefined,
+      ['美国', '新加坡'],
+    );
+    expect(result.valid).toBe(true);
+    expect(result.orphans).toEqual([]);
+  });
+
+  it('merges managed groups first into the returned policies (deduped)', () => {
+    // 「香港」在 base 字面与托管组里都有——全集去重，托管组排前。
+    const result = validateBase(PARSED, [], undefined, ['美国', '香港']);
+    expect(result.policies).toEqual(['美国', '香港', '默认', '日本', '直连']);
+  });
+
+  it('still flags a policy missing from both base and managed groups', () => {
+    const result = validateBase(
+      PARSED,
+      [makeRule({ id: 'r', anchor: 'manual', policy: '不存在的组' })],
+      undefined,
+      ['美国'],
+    );
+    expect(result.valid).toBe(false);
+    expect(result.orphans).toHaveLength(1);
   });
 
   it('accepts a RULE-SET rule whose provider is in the library', () => {

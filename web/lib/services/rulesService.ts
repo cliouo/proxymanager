@@ -1,18 +1,33 @@
-import { parseBase, type ParsedBase } from '@/lib/engine/parser';
+import { mergePolicyUniverse, parseBase, type ParsedBase } from '@/lib/engine/parser';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { getBase } from '@/lib/repos/baseRepo';
+import { listProxyGroups } from '@/lib/repos/proxyGroupsRepo';
 import { listRules } from '@/lib/repos/rulesRepo';
 import { listRuleSets } from '@/lib/repos/ruleSetsRepo';
 import type { Rule } from '@/schemas';
 
+/**
+ * 解析存库的 base，返回**已合并策略全集**的 ParsedBase：`policies` =
+ * 托管策略组(hash，rank 序) + base 字面(残留组/手写节点/内建)。规则写入
+ * 校验(ensureValidAnchorAndPolicy 的全部调用方)与 AI 的 base 概览都吃
+ * 这里——策略组迁出 base.yaml 后，裸 parseBase 的 policies 不再是合法
+ * 目标全集，直接用会把指向托管组的规则误判孤立。
+ */
 export async function loadParsedBase(): Promise<ParsedBase> {
-  const base = await getBase();
+  const [base, groups] = await Promise.all([getBase(), listProxyGroups()]);
   if (!base) {
     throw ProblemDetailsError.unprocessable(
       'Base config has not been initialized. Set base before creating rules.',
     );
   }
-  return parseBase(base.content);
+  const parsed = parseBase(base.content);
+  return {
+    ...parsed,
+    policies: mergePolicyUniverse(
+      groups.map((g) => g.name),
+      parsed.policies,
+    ),
+  };
 }
 
 export function ensureValidAnchorAndPolicy(
@@ -24,7 +39,7 @@ export function ensureValidAnchorAndPolicy(
   }
   if (!parsed.policies.includes(rule.policy)) {
     throw ProblemDetailsError.unprocessable(
-      `policy "${rule.policy}" not present in base.yaml proxy-groups`,
+      `policy "${rule.policy}" 不存在——既不是策略组，也不是 base.yaml 里的节点/内建策略`,
     );
   }
 }

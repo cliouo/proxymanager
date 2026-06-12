@@ -87,6 +87,25 @@ function extractPolicies(doc: ReturnType<typeof parseDocument>): string[] {
   return out;
 }
 
+/**
+ * 合并"规则 policy 的合法目标全集"：托管策略组（hash，调用方按 rank 序传入）
+ * 优先，其后是 base 字面 policies（骨架里残留的组 / 手写节点 / 内建）。
+ * 策略组已迁出 base.yaml（只剩 # === PROXY-GROUPS === 标记），所以单看
+ * parseBase 的 policies 会把指向托管组的规则全部误判孤立——任何做引用
+ * 校验或喂选择器的地方都应使用本函数的结果，而非裸 parsed.policies。
+ */
+export function mergePolicyUniverse(managedGroupNames: string[], basePolicies: string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const name of [...managedGroupNames, ...basePolicies]) {
+    if (!seen.has(name)) {
+      seen.add(name);
+      out.push(name);
+    }
+  }
+  return out;
+}
+
 function collectNamesFromSeq(node: unknown): string[] {
   if (!isSeq(node)) return [];
   const names: string[] = [];

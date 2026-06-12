@@ -15,6 +15,7 @@ import { parseBase } from '@/lib/engine/parser';
 import { validateBase } from '@/lib/engine/validator';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { getBase } from '@/lib/repos/baseRepo';
+import { listProxyGroups } from '@/lib/repos/proxyGroupsRepo';
 import { listRules } from '@/lib/repos/rulesRepo';
 import { parsePath, type Segment } from './configPath';
 
@@ -100,8 +101,14 @@ export function deleteValueAt(doc: Document, segs: Segment[]): { before: unknown
 /** Refuse a mutation that would leave rules referencing a missing anchor/policy. */
 export async function validateReferences(doc: Document): Promise<void> {
   const parsed = parseBase(doc.toString());
-  const rules = await listRules();
-  const v = validateBase(parsed, rules);
+  const [rules, groups] = await Promise.all([listRules(), listProxyGroups()]);
+  // 托管策略组计入合法 policy 全集——它们在渲染时注入，不在 base 字面里。
+  const v = validateBase(
+    parsed,
+    rules,
+    undefined,
+    groups.map((g) => g.name),
+  );
   if (!v.valid) {
     const reasons = v.orphans
       .slice(0, 5)
