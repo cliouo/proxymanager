@@ -30,18 +30,33 @@ export async function getProxyGroupTemplateByName(
   return all.find((t) => t.name === name) ?? null;
 }
 
+// Writes bump config:version in the same multi() — templates are merged
+// underneath proxy-groups at render time, so edits change the output.
+
 export async function upsertProxyGroupTemplate(template: ProxyGroupTemplate): Promise<void> {
-  await getRedis().hset(REDIS_KEYS.proxyGroupTemplates, { [template.id]: template });
+  await getRedis()
+    .multi()
+    .hset(REDIS_KEYS.proxyGroupTemplates, { [template.id]: template })
+    .incr(REDIS_KEYS.configVersion)
+    .exec();
 }
 
 export async function upsertProxyGroupTemplates(templates: ProxyGroupTemplate[]): Promise<void> {
   if (templates.length === 0) return;
   const payload: Record<string, ProxyGroupTemplate> = {};
   for (const t of templates) payload[t.id] = t;
-  await getRedis().hset(REDIS_KEYS.proxyGroupTemplates, payload);
+  await getRedis()
+    .multi()
+    .hset(REDIS_KEYS.proxyGroupTemplates, payload)
+    .incr(REDIS_KEYS.configVersion)
+    .exec();
 }
 
 export async function deleteProxyGroupTemplate(id: string): Promise<boolean> {
-  const removed = await getRedis().hdel(REDIS_KEYS.proxyGroupTemplates, id);
+  const [removed] = await getRedis()
+    .multi()
+    .hdel(REDIS_KEYS.proxyGroupTemplates, id)
+    .incr(REDIS_KEYS.configVersion)
+    .exec<[number, number]>();
   return removed > 0;
 }

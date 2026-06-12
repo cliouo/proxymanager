@@ -30,11 +30,23 @@ export async function getProfileByName(name: string): Promise<Profile | null> {
   return all.find((p) => p.name === name) ?? null;
 }
 
+// Writes bump config:version in the same multi() — a profile's boundSource
+// decides which subscriptions get injected, so rebinding must invalidate
+// the render cache.
+
 export async function upsertProfile(profile: Profile): Promise<void> {
-  await getRedis().hset(REDIS_KEYS.profiles, { [profile.id]: profile });
+  await getRedis()
+    .multi()
+    .hset(REDIS_KEYS.profiles, { [profile.id]: profile })
+    .incr(REDIS_KEYS.configVersion)
+    .exec();
 }
 
 export async function deleteProfile(id: string): Promise<boolean> {
-  const removed = await getRedis().hdel(REDIS_KEYS.profiles, id);
+  const [removed] = await getRedis()
+    .multi()
+    .hdel(REDIS_KEYS.profiles, id)
+    .incr(REDIS_KEYS.configVersion)
+    .exec<[number, number]>();
   return removed > 0;
 }

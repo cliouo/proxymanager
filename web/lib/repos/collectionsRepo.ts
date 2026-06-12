@@ -28,11 +28,22 @@ export async function getCollectionByName(name: string): Promise<Collection | nu
   return all.find((c) => c.name === name) ?? null;
 }
 
+// Writes bump config:version in the same multi() — collections drive
+// collection-scope proxy-groups and profile bindings in the rendered config.
+
 export async function upsertCollection(col: Collection): Promise<void> {
-  await getRedis().hset(REDIS_KEYS.collections, { [col.id]: col });
+  await getRedis()
+    .multi()
+    .hset(REDIS_KEYS.collections, { [col.id]: col })
+    .incr(REDIS_KEYS.configVersion)
+    .exec();
 }
 
 export async function deleteCollection(id: string): Promise<boolean> {
-  const removed = await getRedis().hdel(REDIS_KEYS.collections, id);
+  const [removed] = await getRedis()
+    .multi()
+    .hdel(REDIS_KEYS.collections, id)
+    .incr(REDIS_KEYS.configVersion)
+    .exec<[number, number]>();
   return removed > 0;
 }

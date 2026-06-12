@@ -6,9 +6,10 @@
  *   1. Parse base.yaml as a YAML Document (comments + key order preserved).
  *   2. Strip the deprecated `pm-inline-collections` field if present and
  *      emit a warning — subscriptions now inject directly when enabled.
- *   3. For each enabled subscription: fetch (cache-aware, tolerate failures
- *      via stale-on-error), parse the `proxies:` list, optionally apply the
- *      sub's `node_prefix`, accumulate candidates with provenance.
+ *   3. For each enabled subscription: fetch in parallel (bounded concurrency,
+ *      cache-aware, tolerate failures via stale-on-error), then consume the
+ *      already-parsed proxy objects strictly in subscription order, optionally
+ *      apply the sub's `node_prefix`, accumulate candidates with provenance.
  *   4. Dedup candidates by `name` across subs and against base's literal
  *      proxies (first writer wins). Collisions are recorded — never silent.
  *   5. Append survivors to the `proxies:` sequence (creating it if missing).
@@ -27,7 +28,6 @@
  */
 
 import {
-  parse as parseYaml,
   parseDocument,
   stringify as stringifyYaml,
   isMap,
@@ -52,7 +52,7 @@ import {
   type SnapshotCollision,
   type SnapshotSubStatus,
 } from '@/lib/repos/resolvedRepo';
-import { resolveSubscriptionContent } from '@/lib/services/subscriptionFetcher';
+import { resolveSubscriptionProxies } from '@/lib/services/subscriptionFetcher';
 import { renderBase, type RenderOptions, type RenderResult } from './renderer';
 
 const LEGACY_INLINE_FIELD = 'pm-inline-collections';
@@ -101,6 +101,37 @@ interface InjectionCandidate {
   node: unknown;
   name: string;
   fromSub: string;
+}
+
+/** 同时在途的上游订阅 fetch 上限。 */
+const SUB_FETCH_CONCURRENCY = 8;
+
+/**
+ * 简易内联并发池:最多 `limit` 个 worker 抢占式消费 items,结果按输入下标
+ * 落位(PromiseSettledResult 形状),调用方可以按原序消费成功/失败——这正是
+ * 注入链路的确定性契约所需要的。单一用途,不值得为它引 p-limit 之类的依赖。
+ */
+async function settleWithConcurrency<T, R>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<PromiseSettledResult<R>[]> {
+  const results: PromiseSettledResult<R>[] = new Array(items.length);
+  let nextIndex = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    // JS 单线程:check + 自增之间没有 await,不存在两个 worker 抢到同一下标。
+    while (nextIndex < items.length) {
+      const i = nextIndex;
+      nextIndex += 1;
+      try {
+        results[i] = { status: 'fulfilled', value: await fn(items[i]) };
+      } catch (reason) {
+        results[i] = { status: 'rejected', reason };
+      }
+    }
+  });
+  await Promise.all(workers);
+  return results;
 }
 
 export async function resolveConfig(
@@ -153,34 +184,48 @@ export async function resolveConfig(
     }
   }
 
-  for (const sub of subscriptions) {
-    if (!sub.enabled) continue;
-    if (subFilter && !subFilter.has(sub.id)) continue;
-    try {
-      const result = await resolveSubscriptionContent(sub, { noCache: opts.noCache });
-      const proxies = extractProxies(result.yaml);
-      for (const item of proxies) {
-        const origName = (item as { name?: unknown }).name;
-        if (typeof origName !== 'string') continue;
-        const finalName = sub.node_prefix ? `${sub.node_prefix}${origName}` : origName;
-        const finalNode =
-          sub.node_prefix && finalName !== origName
-            ? { ...(item as object), name: finalName }
-            : item;
-        candidates.push({ node: finalNode, name: finalName, fromSub: sub.name });
-      }
-      subStatuses.push({
-        name: sub.name,
-        // injectedCount is adjusted to post-dedup below.
-        injectedCount: 0,
-        stale: result.stale,
-        staleReason: result.staleReason,
-      });
-    } catch (err) {
+  // 先按原数组顺序筛出待注入的订阅,再并行 fetch(限并发 8)。每次上游
+  // HTTP 最长 15s 超时,串行 N 个订阅最坏要 N×15s — 并行后整体耗时只由
+  // 最慢的一条决定。fetch 完全 settle 后再按原序消费,确定性不受影响。
+  const eligibleSubs = subscriptions.filter(
+    (sub) => sub.enabled && (!subFilter || subFilter.has(sub.id)),
+  );
+  const settled = await settleWithConcurrency(eligibleSubs, SUB_FETCH_CONCURRENCY, (sub) =>
+    resolveSubscriptionProxies(sub, { noCache: opts.noCache }),
+  );
+
+  // 严格按原订阅顺序处理结果:candidates 累积顺序、subStatuses 顺序、去重的
+  // first-writer-wins 都依赖这份顺序契约——必须与旧串行版逐项一致(有测试盯着)。
+  for (let i = 0; i < eligibleSubs.length; i++) {
+    const sub = eligibleSubs[i];
+    const outcome = settled[i];
+    if (outcome.status === 'rejected') {
+      const err = outcome.reason;
       const msg = err instanceof Error ? err.message : String(err);
       subStatuses.push({ name: sub.name, injectedCount: 0, error: msg });
+      // 不容忍失败时抛"按原顺序遇到的第一个失败"——并行下其余 fetch 的
+      // 结果直接丢弃,错误语义与串行版保持一致。
       if (!ignoreFailures) throw err;
+      continue;
     }
+    const result = outcome.value;
+    for (const item of result.proxies) {
+      const origName = (item as { name?: unknown }).name;
+      if (typeof origName !== 'string') continue;
+      const finalName = sub.node_prefix ? `${sub.node_prefix}${origName}` : origName;
+      const finalNode =
+        sub.node_prefix && finalName !== origName
+          ? { ...(item as object), name: finalName }
+          : item;
+      candidates.push({ node: finalNode, name: finalName, fromSub: sub.name });
+    }
+    subStatuses.push({
+      name: sub.name,
+      // injectedCount is adjusted to post-dedup below.
+      injectedCount: 0,
+      stale: result.stale,
+      staleReason: result.staleReason,
+    });
   }
 
   // Dedup across subs + base. First writer wins. Collisions never silent.
@@ -486,21 +531,6 @@ function appendProxies(doc: ReturnType<typeof parseDocument>, items: unknown[]):
   }
   const seq = node as YAMLSeq;
   for (const item of items) seq.add(item);
-}
-
-function extractProxies(yaml: string): Array<Record<string, unknown>> {
-  let parsed: unknown;
-  try {
-    parsed = parseYaml(yaml);
-  } catch {
-    return [];
-  }
-  if (!parsed || typeof parsed !== 'object') return [];
-  const proxies = (parsed as { proxies?: unknown }).proxies;
-  if (!Array.isArray(proxies)) return [];
-  return proxies.filter(
-    (p): p is Record<string, unknown> => p !== null && typeof p === 'object' && !Array.isArray(p),
-  );
 }
 
 /** Convenience re-export so callers can invalidate without importing the repo directly. */

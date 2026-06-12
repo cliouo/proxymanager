@@ -43,7 +43,14 @@ export async function setBase(
     }
   }
 
-  await redis.multi().set(REDIS_KEYS.base.content, content).set(REDIS_KEYS.base.meta, meta).exec();
+  // INCR rides the same multi() as the write — the render cache must never
+  // see new content under the old version (漏 bump = 保存后仍读到旧渲染).
+  await redis
+    .multi()
+    .set(REDIS_KEYS.base.content, content)
+    .set(REDIS_KEYS.base.meta, meta)
+    .incr(REDIS_KEYS.configVersion)
+    .exec();
 
   return { ok: true };
 }

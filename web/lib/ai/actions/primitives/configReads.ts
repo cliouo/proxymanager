@@ -12,14 +12,9 @@ import {
   getConfigSection,
   loadBaseContent,
 } from '@/lib/ai/configAccess';
-import { resolveConfig } from '@/lib/engine/resolve';
-import { listCollections } from '@/lib/repos/collectionsRepo';
-import { getProfileByName } from '@/lib/repos/profilesRepo';
-import { listProxyGroups } from '@/lib/repos/proxyGroupsRepo';
-import { listProxyGroupTemplates } from '@/lib/repos/proxyGroupTemplatesRepo';
+import { renderProfileConfig } from '@/lib/engine/renderCache';
+import { ProblemDetailsError } from '@/lib/http/problem';
 import { listRules } from '@/lib/repos/rulesRepo';
-import { listRuleSets } from '@/lib/repos/ruleSetsRepo';
-import { listSubscriptions } from '@/lib/repos/subscriptionsRepo';
 import { DEFAULT_PROFILE_NAME } from '@/schemas';
 import { defineAction } from '../types';
 
@@ -75,26 +70,17 @@ const getConfigFull = defineAction({
   input: z.object({}),
   risk: 'read',
   async run() {
-    const [content, rules, providers, subs, proxyGroups, templates, collections, profileRecord] =
-      await Promise.all([
-        loadBaseContent(),
-        listRules(),
-        listRuleSets(),
-        listSubscriptions(),
-        listProxyGroups(),
-        listProxyGroupTemplates(),
-        listCollections(),
-        getProfileByName(DEFAULT_PROFILE_NAME),
-      ]);
-    const resolved = await resolveConfig(content, rules, subs, proxyGroups, templates, {
-      providers,
-      ignoreFailedSubs: true,
-      collections,
-      boundSource: profileRecord?.source,
-      // The user-triggered config-full read shouldn't poison the production
-      // snapshot if some sub is currently misbehaving — leave the snapshot to
-      // /api/sub and /api/v1/preview.
-      persistSnapshot: false,
+    // 走渲染缓存:providerUrlBase 不传(= null 身份),与 /api/v1/base/parsed
+    // 共享同一条缓存,版本未变时这里只剩一次 Redis MGET,不再每问全量渲染。
+    //
+    // 有意变化:旧实现 resolveConfig(persistSnapshot:false)不写 resolved 快照;
+    // renderProfileConfig miss 时内部会写。快照本来就是「渲染成功后的产物」,
+    // AI 触发的渲染与 /api/sub、preview 路由触发的渲染产出同一份数据
+    // (ignoreFailedSubs:true 下失败订阅同样以 stale/warning 状态入列),
+    // 所以多写一次无害且让快照更新更及时。
+    const { resolved } = await renderProfileConfig(DEFAULT_PROFILE_NAME, {
+      // 与旧 loadBaseContent 的错误语义保持一致(422,而非默认 404)。
+      missingBaseError: () => ProblemDetailsError.unprocessable('base.yaml 尚未初始化。'),
     });
     return { kind: 'config-full', data: { yaml: fullRedactedYaml(resolved.content) } };
   },

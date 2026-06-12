@@ -1,8 +1,7 @@
-import { parse as parseYaml } from 'yaml';
 import { withProblemDetails } from '@/lib/http/handler';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { applyOperators, type ClashProxy } from '@/lib/proxies/operators';
-import { resolveSubscriptionContentRaw } from '@/lib/services/subscriptionFetcher';
+import { resolveSubscriptionProxiesRaw } from '@/lib/services/subscriptionFetcher';
 import { getSubscription } from '@/lib/services/subscriptionService';
 import { OperatorListSchema } from '@/schemas';
 
@@ -31,11 +30,10 @@ export const POST = withProblemDetails(async (request: Request, ctx: Ctx) => {
   const noCache = raw?.noCache === true;
 
   // Raw proxies = upstream fetched + normalised, pipeline NOT yet applied.
-  const { yaml } = await resolveSubscriptionContentRaw(sub, { noCache });
-  const parsed = parseYaml(yaml) as { proxies?: unknown };
-  const before: ClashProxy[] = Array.isArray(parsed?.proxies)
-    ? (parsed.proxies as ClashProxy[])
-    : [];
+  // Object-level entry point — no YAML stringify/parse round-trip just to
+  // hand applyOperators the very objects the fetcher already had.
+  const { proxies } = await resolveSubscriptionProxiesRaw(sub, { noCache });
+  const before = proxies as ClashProxy[];
 
   const { proxies: after, steps } = applyOperators(before, operators);
 

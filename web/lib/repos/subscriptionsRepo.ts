@@ -33,11 +33,24 @@ export async function getSubscriptionByName(name: string): Promise<Subscription 
   return all.find((s) => s.name === name) ?? null;
 }
 
+// Writes bump config:version in the same multi() — subscription records
+// (enabled/url/prefix/operators…) shape the rendered config. Note this also
+// fires for pure runtime-state updates (last_synced_at / last_traffic);
+// over-invalidation is safe, just an extra render.
+
 export async function upsertSubscription(sub: Subscription): Promise<void> {
-  await getRedis().hset(REDIS_KEYS.subscriptions, { [sub.id]: sub });
+  await getRedis()
+    .multi()
+    .hset(REDIS_KEYS.subscriptions, { [sub.id]: sub })
+    .incr(REDIS_KEYS.configVersion)
+    .exec();
 }
 
 export async function deleteSubscription(id: string): Promise<boolean> {
-  const removed = await getRedis().hdel(REDIS_KEYS.subscriptions, id);
+  const [removed] = await getRedis()
+    .multi()
+    .hdel(REDIS_KEYS.subscriptions, id)
+    .incr(REDIS_KEYS.configVersion)
+    .exec<[number, number]>();
   return removed > 0;
 }

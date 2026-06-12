@@ -6,6 +6,8 @@ import type { ProxyGroup, Rule } from '@/schemas';
  * operate on proxy-groups + templates + rules side-by-side just like prod.
  */
 const stores = new Map<string, Map<string, unknown>>();
+/** Plain-key counters (config:version INCRs land here). */
+const counters = new Map<string, number>();
 function bucket(key: string): Map<string, unknown> {
   let m = stores.get(key);
   if (!m) {
@@ -36,14 +38,46 @@ const fakeRedis = {
   del: async (key: string) => {
     stores.delete(key);
   },
-  multi: () => ({
-    set: () => undefined,
-    hset: () => undefined,
-    hdel: () => undefined,
-    exec: async () => undefined,
-  }),
+  incr: async (key: string) => {
+    const next = (counters.get(key) ?? 0) + 1;
+    counters.set(key, next);
+    return next;
+  },
+  // Chainable multi that actually applies ops on exec() — repos now bundle
+  // the config:version INCR into the same multi() as their writes.
+  multi: () => {
+    const ops: Array<() => Promise<unknown>> = [];
+    const tx = {
+      set: (key: string, value: unknown) => {
+        ops.push(() => fakeRedis.set(key, value));
+        return tx;
+      },
+      hset: (key: string, payload: Record<string, unknown>) => {
+        ops.push(() => fakeRedis.hset(key, payload));
+        return tx;
+      },
+      hdel: (key: string, ...ids: string[]) => {
+        ops.push(() => fakeRedis.hdel(key, ...ids));
+        return tx;
+      },
+      del: (key: string) => {
+        ops.push(() => fakeRedis.del(key));
+        return tx;
+      },
+      incr: (key: string) => {
+        ops.push(() => fakeRedis.incr(key));
+        return tx;
+      },
+      exec: async () => {
+        const out: unknown[] = [];
+        for (const op of ops) out.push(await op());
+        return out;
+      },
+    };
+    return tx;
+  },
   get: async () => null,
-  set: async () => undefined,
+  set: async (_key: string, _value: unknown) => undefined,
 };
 
 vi.mock('@/lib/redis/client', () => ({
@@ -60,6 +94,7 @@ let tplSvc: typeof import('@/lib/services/proxyGroupTemplateService');
 
 beforeEach(async () => {
   stores.clear();
+  counters.clear();
   svc = await import('@/lib/services/proxyGroupService');
   tplSvc = await import('@/lib/services/proxyGroupTemplateService');
 });

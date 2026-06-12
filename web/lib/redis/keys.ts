@@ -83,4 +83,32 @@ export const REDIS_KEYS = {
    * so this is read once per page load rather than per turn.
    */
   assistantConfig: 'assistant:config',
+  /**
+   * Global config version — a monotonically increasing counter (INCR) bumped
+   * by every repo write that can affect the rendered config (base / rules /
+   * rule-sets / subscriptions / collections / profiles / proxy-groups /
+   * templates). Read by the render cache to decide whether a cached render
+   * is still valid; one counter for everything keeps invalidation trivially
+   * correct at the cost of occasional over-invalidation.
+   */
+  configVersion: 'config:version',
+  /**
+   * Cached output of renderProfileConfig() — the full resolveConfig result
+   * plus the config version it was rendered at. Validated on read against
+   * `config:version`, the request's providerUrlBase and a freshness window
+   * derived from the participating subscriptions' ttl_ms. EX slightly above
+   * the freshness window acts as garbage collection.
+   */
+  renderCache: (profile: string): string => `render:${profile}`,
+  /**
+   * Rule-set content, split out of the `rule-sets` hash. The hash field keeps
+   * only the meta record (content stored as ''); the potentially huge body
+   * (thousands of lines for local rule-sets) lives here as a standalone key.
+   * Rationale: listRuleSets() HGETALLs the hash on every render, and the
+   * render path only needs name/behavior/format/url/interval/proxy/source to
+   * emit `rule-providers:` declarations — keeping content inline meant every
+   * render dragged the entire library body across the wire for nothing.
+   * Readers fall back to the legacy embedded `content` for unmigrated fields.
+   */
+  ruleSetContent: (id: string): string => `rule-set-content:${id}`,
 } as const;

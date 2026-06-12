@@ -10,6 +10,8 @@ import type { ProxyGroup } from '@/schemas';
  */
 
 const stores = new Map<string, Map<string, unknown>>();
+/** Plain-key counters (config:version INCRs land here). */
+const counters = new Map<string, number>();
 function bucket(key: string): Map<string, unknown> {
   let m = stores.get(key);
   if (!m) {
@@ -34,6 +36,36 @@ const fakeRedis = {
     let n = 0;
     for (const id of ids) if (m.delete(id)) n++;
     return n;
+  },
+  incr: async (key: string) => {
+    const next = (counters.get(key) ?? 0) + 1;
+    counters.set(key, next);
+    return next;
+  },
+  // Chainable multi — repos now bundle the config:version INCR into the
+  // same multi() as their writes.
+  multi: () => {
+    const ops: Array<() => Promise<unknown>> = [];
+    const tx = {
+      hset: (key: string, payload: Record<string, unknown>) => {
+        ops.push(() => fakeRedis.hset(key, payload));
+        return tx;
+      },
+      hdel: (key: string, ...ids: string[]) => {
+        ops.push(() => fakeRedis.hdel(key, ...ids));
+        return tx;
+      },
+      incr: (key: string) => {
+        ops.push(() => fakeRedis.incr(key));
+        return tx;
+      },
+      exec: async () => {
+        const out: unknown[] = [];
+        for (const op of ops) out.push(await op());
+        return out;
+      },
+    };
+    return tx;
   },
 };
 

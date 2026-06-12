@@ -20,6 +20,7 @@ import {
   RuleSchema,
   RuleSetCreateSchema,
   RuleSetListResponseSchema,
+  RuleSetMetaSchema,
   RuleSetResponseSchema,
   RuleSetSchema,
   RuleSetUpdateSchema,
@@ -46,6 +47,7 @@ registry.register('SubscriptionResponse', SubscriptionResponseSchema);
 registry.register('SubscriptionListResponse', SubscriptionListResponseSchema);
 registry.register('SubscriptionRefreshResponse', SubscriptionRefreshResponseSchema);
 registry.register('RuleSet', RuleSetSchema);
+registry.register('RuleSetMeta', RuleSetMetaSchema);
 registry.register('RuleSetCreate', RuleSetCreateSchema);
 registry.register('RuleSetUpdate', RuleSetUpdateSchema);
 registry.register('RuleSetResponse', RuleSetResponseSchema);
@@ -285,7 +287,7 @@ registry.registerPath({
   path: '/api/v1/rule-sets',
   summary: 'List rule sets',
   description:
-    'User-maintained rule-set files (the YAML blobs referenced by base.yaml `rule-providers`). MVP supports text/yaml content, served verbatim at /api/rule-providers/{token}/{name}.',
+    'User-maintained rule-set files (the YAML blobs referenced by base.yaml `rule-providers`). MVP supports text/yaml content, served verbatim at /api/rule-providers/{token}/{name}. List items are meta-only — `content` is returned by the {id} detail endpoint.',
   tags: ['rule-sets'],
   responses: {
     200: { content: { 'application/json': { schema: RuleSetListResponseSchema } }, description: 'Rule set list' },
@@ -380,8 +382,9 @@ registry.registerPath({
 registry.registerPath({
   method: 'get',
   path: '/api/v1/policies',
-  summary: 'List proxy-group names',
-  description: 'Proxy-group names (policies that rules may reference) extracted from base.yaml.',
+  summary: 'List valid rule policies',
+  description:
+    'Policies that rules may reference: managed proxy-groups (the hash, rank order) merged with base.yaml literals (leftover groups / hand-written proxies / built-ins).',
   tags: ['base'],
   responses: {
     200: {

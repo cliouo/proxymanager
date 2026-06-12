@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { BaseConfigSchema, BaseValidationResultSchema } from './base';
-import { RuleSetSchema } from './ruleSet';
+import { RuleSetMetaSchema, RuleSetSchema } from './ruleSet';
 import { SubscriptionSchema } from './subscription';
 
 export const BaseResponseSchema = z.object({ data: BaseConfigSchema });
@@ -18,8 +18,9 @@ export const SubscriptionRefreshResponseSchema = z.object({
 });
 
 export const RuleSetResponseSchema = z.object({ data: RuleSetSchema });
+// List responses carry meta only — `content` lives behind the [id] detail route.
 export const RuleSetListResponseSchema = z.object({
-  data: z.array(RuleSetSchema),
+  data: z.array(RuleSetMetaSchema),
   meta: z.object({ total: z.number().int().nonnegative() }),
 });
 

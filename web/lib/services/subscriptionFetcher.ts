@@ -1,6 +1,6 @@
 import { parse, stringify } from 'yaml';
 import { ProblemDetailsError } from '@/lib/http/problem';
-import { applyOperatorsToProviderYaml } from '@/lib/proxies/operators';
+import { applyOperators, type ClashProxy } from '@/lib/proxies/operators';
 import {
   looksLikeProxyUriList,
   parseProxyUriList,
@@ -39,6 +39,91 @@ export interface FetchSubscriptionResult {
   staleReason?: string;
 }
 
+/** Object-level twin of {@link FetchSubscriptionResult} — proxies as parsed objects, no YAML string. */
+export interface FetchSubscriptionProxiesResult {
+  /**
+   * Parsed Clash proxy objects. For {@link resolveSubscriptionProxies} the
+   * sub's operators are already applied; for
+   * {@link resolveSubscriptionProxiesRaw} they are the raw pre-operator list.
+   */
+  proxies: Record<string, unknown>[];
+  traffic?: SubscriptionTraffic;
+  proxyCount: number;
+  stale?: boolean;
+  staleReason?: string;
+}
+
+/**
+ * Internal dual-view of a raw (pre-operator) subscription resolution.
+ *
+ * 为什么不直接返回字符串:渲染主链路(resolve.ts)只需要对象数组,而
+ * sub-provider 输出端点只需要 YAML 字符串。让两侧各自惰性求值,谁都不为
+ * 对方多付一次 parse / stringify(800 节点一轮 parse ≈35ms,曾经三轮全浪费)。
+ *
+ *   - 来源是对象(local 内容 / 新鲜 fetch 刚 normalise 完)→ yaml 惰性 stringify
+ *   - 来源是缓存字符串(命中 / stale 回退)→ proxies 惰性 parse
+ *
+ * Both getters memoise, so repeated access costs nothing extra.
+ */
+interface RawResolved {
+  getYaml(): string;
+  getProxies(): Record<string, unknown>[];
+  traffic?: SubscriptionTraffic;
+  proxyCount: number;
+  stale?: boolean;
+  staleReason?: string;
+}
+
+interface RawMeta {
+  traffic?: SubscriptionTraffic;
+  proxyCount: number;
+  stale?: boolean;
+  staleReason?: string;
+}
+
+/** Build a {@link RawResolved} whose source of truth is a parsed proxy list. */
+function rawFromProxies(list: unknown[], meta: RawMeta): RawResolved {
+  let yaml: string | undefined;
+  let objects: Record<string, unknown>[] | undefined;
+  return {
+    // lineWidth: 0 keeps long vmess/ssr lines unwrapped — same bytes the old
+    // normaliseToClashProviderYaml produced, so the cache entry format 不变。
+    getYaml: () => (yaml ??= stringify({ proxies: list }, { lineWidth: 0 })),
+    getProxies: () => (objects ??= filterProxyObjects(list)),
+    ...meta,
+  };
+}
+
+/** Build a {@link RawResolved} whose source of truth is a provider-YAML string (cache entries). */
+function rawFromYaml(yamlText: string, meta: RawMeta): RawResolved {
+  let objects: Record<string, unknown>[] | undefined;
+  return {
+    getYaml: () => yamlText,
+    getProxies: () => (objects ??= extractProxyObjects(yamlText)),
+    ...meta,
+  };
+}
+
+/** Keep only plain-object entries — same guard resolve.ts's extractProxies used. */
+function filterProxyObjects(list: unknown[]): Record<string, unknown>[] {
+  return list.filter(
+    (p): p is Record<string, unknown> => p !== null && typeof p === 'object' && !Array.isArray(p),
+  );
+}
+
+function extractProxyObjects(yamlText: string): Record<string, unknown>[] {
+  let parsed: unknown;
+  try {
+    parsed = parse(yamlText);
+  } catch {
+    return [];
+  }
+  if (!parsed || typeof parsed !== 'object') return [];
+  const proxies = (parsed as { proxies?: unknown }).proxies;
+  if (!Array.isArray(proxies)) return [];
+  return filterProxyObjects(proxies);
+}
+
 /**
  * Resolve a subscription's current content — the single entry point used by
  * every other caller. Returns proxies with the sub's node-processing
@@ -52,13 +137,56 @@ export async function resolveSubscriptionContent(
   sub: Subscription,
   options: { noCache?: boolean; timeoutMs?: number } = {},
 ): Promise<FetchSubscriptionResult> {
-  const raw = await resolveSubscriptionContentRaw(sub, options);
-  if (!sub.operators || sub.operators.length === 0) return raw;
-  const { yaml, proxyCount } = applyOperatorsToProviderYaml(raw.yaml, sub.operators);
+  const raw = await resolveSubscriptionRaw(sub, options);
+  if (!sub.operators || sub.operators.length === 0) {
+    return {
+      yaml: raw.getYaml(),
+      traffic: raw.traffic,
+      proxyCount: raw.proxyCount,
+      stale: raw.stale,
+      staleReason: raw.staleReason,
+    };
+  }
+  // Object-level pipeline, then one stringify at the boundary — the old
+  // applyOperatorsToProviderYaml round-trip (parse→ops→stringify) parsed a
+  // string we had just produced ourselves.
+  const { proxies } = applyOperators(raw.getProxies() as ClashProxy[], sub.operators);
   return {
-    yaml,
+    yaml: stringify({ proxies }, { lineWidth: 0 }),
     traffic: raw.traffic,
-    proxyCount,
+    proxyCount: proxies.length,
+    stale: raw.stale,
+    staleReason: raw.staleReason,
+  };
+}
+
+/**
+ * Object-level entry point: same fetch/cache/operator semantics as
+ * {@link resolveSubscriptionContent}, but returns parsed proxy objects and
+ * never serialises to YAML. The render pipeline (engine/resolve.ts) consumes
+ * objects directly, so going through the string version would just be a
+ * stringify+parse round-trip per subscription per render.
+ */
+export async function resolveSubscriptionProxies(
+  sub: Subscription,
+  options: { noCache?: boolean; timeoutMs?: number } = {},
+): Promise<FetchSubscriptionProxiesResult> {
+  const raw = await resolveSubscriptionRaw(sub, options);
+  const base = raw.getProxies();
+  if (!sub.operators || sub.operators.length === 0) {
+    return {
+      proxies: base,
+      traffic: raw.traffic,
+      proxyCount: base.length,
+      stale: raw.stale,
+      staleReason: raw.staleReason,
+    };
+  }
+  const { proxies } = applyOperators(base as ClashProxy[], sub.operators);
+  return {
+    proxies: proxies as Record<string, unknown>[],
+    traffic: raw.traffic,
+    proxyCount: proxies.length,
     stale: raw.stale,
     staleReason: raw.staleReason,
   };
@@ -68,6 +196,49 @@ export async function resolveSubscriptionContent(
  * Resolve a subscription's *raw* content — fetch/normalise only, no
  * operator pipeline. Used by {@link resolveSubscriptionContent} and by the
  * preview endpoint (which applies an unsaved pipeline to these raw proxies).
+ * String-shaped wrapper over {@link resolveSubscriptionRaw}.
+ */
+export async function resolveSubscriptionContentRaw(
+  sub: Subscription,
+  options: { noCache?: boolean; timeoutMs?: number } = {},
+): Promise<FetchSubscriptionResult> {
+  const raw = await resolveSubscriptionRaw(sub, options);
+  return {
+    yaml: raw.getYaml(),
+    traffic: raw.traffic,
+    proxyCount: raw.proxyCount,
+    stale: raw.stale,
+    staleReason: raw.staleReason,
+  };
+}
+
+/**
+ * Object-level twin of {@link resolveSubscriptionContentRaw}: same raw
+ * (pre-operator, `sub.operators` NOT applied) resolution, but returns parsed
+ * proxy objects. The preview endpoint applies its *unsaved* pipeline to these
+ * raw proxies — going through the string version meant re-parsing a YAML
+ * string we had just produced (or had cached) ourselves.
+ *
+ * Note: unlike {@link resolveSubscriptionProxies}, `proxies` here is the raw
+ * list; `proxyCount` counts the original entries (string-path semantics),
+ * while `proxies` keeps only plain objects (same guard as the object path).
+ */
+export async function resolveSubscriptionProxiesRaw(
+  sub: Subscription,
+  options: { noCache?: boolean; timeoutMs?: number } = {},
+): Promise<FetchSubscriptionProxiesResult> {
+  const raw = await resolveSubscriptionRaw(sub, options);
+  return {
+    proxies: raw.getProxies(),
+    traffic: raw.traffic,
+    proxyCount: raw.proxyCount,
+    stale: raw.stale,
+    staleReason: raw.staleReason,
+  };
+}
+
+/**
+ * Core raw resolver (dual-view result, see {@link RawResolved}).
  *
  *   - kind=local → returns the inline content verbatim, normalised
  *   - kind=remote + !noCache + cache fresh (within ttl_ms) → returns cache
@@ -81,18 +252,18 @@ export async function resolveSubscriptionContent(
  * UA invalidates. Entries persist in Redis for `max(ttl_ms, STALE_TTL_MS)`
  * so the stale-on-error fallback has something to serve past expiry.
  */
-export async function resolveSubscriptionContentRaw(
+async function resolveSubscriptionRaw(
   sub: Subscription,
   options: { noCache?: boolean; timeoutMs?: number } = {},
-): Promise<FetchSubscriptionResult> {
+): Promise<RawResolved> {
   if (sub.kind === 'local') {
     if (!sub.content) {
       throw ProblemDetailsError.unprocessable(
         `Subscription "${sub.name}" is kind=local but has no content.`,
       );
     }
-    const { yaml, proxyCount } = normaliseToClashProviderYaml(sub.content);
-    return { yaml, proxyCount, traffic: undefined };
+    const { proxies, proxyCount } = normaliseToClashProxies(sub.content);
+    return rawFromProxies(proxies, { proxyCount, traffic: undefined });
   }
 
   if (!sub.url) {
@@ -110,7 +281,10 @@ export async function resolveSubscriptionContentRaw(
   // Read once up front — we may use it as fresh, or as the stale fallback.
   const cached = options.noCache ? null : await getFetchCache(cacheKey);
   if (cached && Date.now() - cached.fetched_at < sub.ttl_ms) {
-    return { yaml: cached.content, traffic: cached.traffic, proxyCount: cached.proxy_count };
+    return rawFromYaml(cached.content, {
+      traffic: cached.traffic,
+      proxyCount: cached.proxy_count,
+    });
   }
 
   try {
@@ -121,7 +295,9 @@ export async function resolveSubscriptionContentRaw(
     });
 
     const entry: FetchCacheEntry = {
-      content: fresh.yaml,
+      // The cache stores the provider-YAML string (entry format unchanged);
+      // getYaml() memoises, so a later string-shaped caller pays nothing.
+      content: fresh.getYaml(),
       traffic: fresh.traffic,
       proxy_count: fresh.proxyCount,
       fetched_at: Date.now(),
@@ -137,13 +313,12 @@ export async function resolveSubscriptionContentRaw(
       // Stale-on-error: upstream is unreachable but we have a prior fetch.
       // Better to serve last-known-good than fail the whole render.
       const reason = err instanceof Error ? err.message : String(err);
-      return {
-        yaml: cached.content,
+      return rawFromYaml(cached.content, {
         traffic: cached.traffic,
         proxyCount: cached.proxy_count,
         stale: true,
         staleReason: reason,
-      };
+      });
     }
     throw err;
   }
@@ -154,13 +329,14 @@ export async function fetchSubscription(
   url: string,
   options: { userAgent?: string; timeoutMs?: number } = {},
 ): Promise<FetchSubscriptionResult> {
-  return fetchSubscriptionInternal(url, options);
+  const raw = await fetchSubscriptionInternal(url, options);
+  return { yaml: raw.getYaml(), traffic: raw.traffic, proxyCount: raw.proxyCount };
 }
 
 async function fetchSubscriptionInternal(
   url: string,
   options: { userAgent?: string; timeoutMs?: number; customHeaders?: Record<string, string> } = {},
-): Promise<FetchSubscriptionResult> {
+): Promise<RawResolved> {
   const userAgent = options.userAgent ?? DEFAULT_UA;
   const timeoutMs = options.timeoutMs ?? FETCH_TIMEOUT_MS;
 
@@ -192,8 +368,8 @@ async function fetchSubscriptionInternal(
 
   const text = await response.text();
   const traffic = parseTrafficHeader(response.headers.get('subscription-userinfo'));
-  const { yaml, proxyCount } = normaliseToClashProviderYaml(text);
-  return { yaml, traffic, proxyCount };
+  const { proxies, proxyCount } = normaliseToClashProxies(text);
+  return rawFromProxies(proxies, { traffic, proxyCount });
 }
 
 export function parseTrafficHeader(value: string | null): SubscriptionTraffic | undefined {
@@ -225,8 +401,24 @@ export function parseTrafficHeader(value: string | null): SubscriptionTraffic | 
  *
  * Returns a minimal provider YAML containing only `proxies:`. Throws
  * ProblemDetailsError when no proxies can be recognised.
+ *
+ * Thin string wrapper over {@link normaliseToClashProxies} — kept for
+ * callers that genuinely need the YAML text.
  */
 export function normaliseToClashProviderYaml(text: string): { yaml: string; proxyCount: number } {
+  const { proxies, proxyCount } = normaliseToClashProxies(text);
+  return { yaml: stringify({ proxies }, { lineWidth: 0 }), proxyCount };
+}
+
+/**
+ * Object-level normaliser: same recognition rules as
+ * {@link normaliseToClashProviderYaml} but stops at the parsed proxy list —
+ * no stringify. The returned list is the *raw* parsed array (entries not
+ * type-narrowed); object consumers filter via {@link filterProxyObjects} so
+ * degenerate non-object entries still round-trip through the string path
+ * byte-identically.
+ */
+function normaliseToClashProxies(text: string): { proxies: unknown[]; proxyCount: number } {
   const cleaned = stripBom(text).trim();
   if (!cleaned) {
     throw ProblemDetailsError.badRequest('Empty subscription content');
@@ -235,8 +427,7 @@ export function normaliseToClashProviderYaml(text: string): { yaml: string; prox
   // 1) Clash YAML with a `proxies:` array
   const fromYaml = tryExtractProxiesFromYaml(cleaned);
   if (fromYaml) {
-    const yaml = stringify({ proxies: fromYaml }, { lineWidth: 0 });
-    return { yaml, proxyCount: fromYaml.length };
+    return { proxies: fromYaml, proxyCount: fromYaml.length };
   }
 
   // 2) Line-delimited proxy URIs — optionally wrapped in base64
@@ -248,8 +439,7 @@ export function normaliseToClashProviderYaml(text: string): { yaml: string; prox
   if (looksLikeProxyUriList(uriText)) {
     const { proxies, errors } = parseProxyUriList(uriText);
     if (proxies.length > 0) {
-      const yaml = stringify({ proxies }, { lineWidth: 0 });
-      return { yaml, proxyCount: proxies.length };
+      return { proxies, proxyCount: proxies.length };
     }
     if (errors.length > 0) {
       const sample = errors

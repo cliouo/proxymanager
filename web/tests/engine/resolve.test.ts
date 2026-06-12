@@ -18,14 +18,14 @@ vi.mock('@/lib/repos/resolvedRepo', () => ({
 }));
 
 vi.mock('@/lib/services/subscriptionFetcher', () => ({
-  resolveSubscriptionContent: vi.fn(),
+  resolveSubscriptionProxies: vi.fn(),
 }));
 
 import { resolveConfig } from '@/lib/engine/resolve';
-import { resolveSubscriptionContent } from '@/lib/services/subscriptionFetcher';
+import { resolveSubscriptionProxies } from '@/lib/services/subscriptionFetcher';
 import { setResolvedSnapshot } from '@/lib/repos/resolvedRepo';
 
-const resolveSubMock = resolveSubscriptionContent as unknown as ReturnType<typeof vi.fn>;
+const resolveSubMock = resolveSubscriptionProxies as unknown as ReturnType<typeof vi.fn>;
 const snapshotMock = setResolvedSnapshot as unknown as ReturnType<typeof vi.fn>;
 
 const BASE_WITH_LITERAL = `mixed-port: 7890
@@ -55,14 +55,18 @@ function makeSub(over: Partial<Subscription>): Subscription {
   } as Subscription;
 }
 
-function providerYaml(items: Array<{ name: string; server?: string }>): string {
-  return [
-    'proxies:',
-    ...items.map(
-      (i) => `  - { name: ${i.name}, type: ss, server: ${i.server ?? 'h.example'}, port: 8388, cipher: aes-128-gcm, password: p }`,
-    ),
-    '',
-  ].join('\n');
+/** Parsed proxy objects, matching what resolveSubscriptionProxies returns post-pipeline. */
+function providerProxies(
+  items: Array<{ name: string; server?: string }>,
+): Record<string, unknown>[] {
+  return items.map((i) => ({
+    name: i.name,
+    type: 'ss',
+    server: i.server ?? 'h.example',
+    port: 8388,
+    cipher: 'aes-128-gcm',
+    password: 'p',
+  }));
 }
 
 beforeEach(() => {
@@ -73,8 +77,8 @@ beforeEach(() => {
 describe('resolveConfig — subscription injection', () => {
   it('appends every enabled subscription\'s nodes into proxies', async () => {
     resolveSubMock
-      .mockResolvedValueOnce({ yaml: providerYaml([{ name: 'HK-01' }, { name: 'JP-02' }]), proxyCount: 2 })
-      .mockResolvedValueOnce({ yaml: providerYaml([{ name: 'US-01' }]), proxyCount: 1 });
+      .mockResolvedValueOnce({ proxies: providerProxies([{ name: 'HK-01' }, { name: 'JP-02' }]), proxyCount: 2 })
+      .mockResolvedValueOnce({ proxies: providerProxies([{ name: 'US-01' }]), proxyCount: 1 });
 
     const subs = [makeSub({ name: 'air-a' }), makeSub({ name: 'air-b' })];
     const result = await resolveConfig(BASE_WITH_LITERAL, [], subs, [], [], {});
@@ -90,7 +94,7 @@ describe('resolveConfig — subscription injection', () => {
   });
 
   it('skips disabled subscriptions entirely', async () => {
-    resolveSubMock.mockResolvedValueOnce({ yaml: providerYaml([{ name: 'HK-01' }]), proxyCount: 1 });
+    resolveSubMock.mockResolvedValueOnce({ proxies: providerProxies([{ name: 'HK-01' }]), proxyCount: 1 });
 
     const subs = [makeSub({ name: 'on' }), makeSub({ name: 'off', enabled: false })];
     const result = await resolveConfig(BASE_WITH_LITERAL, [], subs, [], [], {});
@@ -101,7 +105,7 @@ describe('resolveConfig — subscription injection', () => {
   });
 
   it('applies node_prefix and reflects it in the final names', async () => {
-    resolveSubMock.mockResolvedValueOnce({ yaml: providerYaml([{ name: 'HK-01' }]), proxyCount: 1 });
+    resolveSubMock.mockResolvedValueOnce({ proxies: providerProxies([{ name: 'HK-01' }]), proxyCount: 1 });
     const result = await resolveConfig(
       BASE_WITH_LITERAL,
       [],
@@ -116,8 +120,8 @@ describe('resolveConfig — subscription injection', () => {
 
   it('drops cross-source name collisions, keeps the first, reports them', async () => {
     resolveSubMock
-      .mockResolvedValueOnce({ yaml: providerYaml([{ name: 'HK-01', server: 'a.example' }]), proxyCount: 1 })
-      .mockResolvedValueOnce({ yaml: providerYaml([{ name: 'HK-01', server: 'b.example' }]), proxyCount: 1 });
+      .mockResolvedValueOnce({ proxies: providerProxies([{ name: 'HK-01', server: 'a.example' }]), proxyCount: 1 })
+      .mockResolvedValueOnce({ proxies: providerProxies([{ name: 'HK-01', server: 'b.example' }]), proxyCount: 1 });
 
     const result = await resolveConfig(
       BASE_WITH_LITERAL,
@@ -139,7 +143,7 @@ describe('resolveConfig — subscription injection', () => {
 
   it('drops a sub node whose name collides with a literal base proxy (keptFrom null)', async () => {
     resolveSubMock.mockResolvedValueOnce({
-      yaml: providerYaml([{ name: '直连' }, { name: 'HK-01' }]),
+      proxies: providerProxies([{ name: '直连' }, { name: 'HK-01' }]),
       proxyCount: 2,
     });
 
@@ -154,7 +158,7 @@ describe('resolveConfig — subscription injection', () => {
 
   it('strips deprecated pm-inline-collections and emits a warning', async () => {
     const baseWithLegacy = `${BASE_WITH_LITERAL}\npm-inline-collections:\n  - old-pool\n`;
-    resolveSubMock.mockResolvedValueOnce({ yaml: providerYaml([{ name: 'X' }]), proxyCount: 1 });
+    resolveSubMock.mockResolvedValueOnce({ proxies: providerProxies([{ name: 'X' }]), proxyCount: 1 });
 
     const result = await resolveConfig(baseWithLegacy, [], [makeSub({ name: 'a' })], [], [], {});
 
@@ -165,7 +169,7 @@ describe('resolveConfig — subscription injection', () => {
 
   it('tolerates a failed subscription when ignoreFailedSubs is on (default)', async () => {
     resolveSubMock
-      .mockResolvedValueOnce({ yaml: providerYaml([{ name: 'HK-01' }]), proxyCount: 1 })
+      .mockResolvedValueOnce({ proxies: providerProxies([{ name: 'HK-01' }]), proxyCount: 1 })
       .mockRejectedValueOnce(new Error('upstream 502'));
 
     const result = await resolveConfig(
@@ -184,7 +188,7 @@ describe('resolveConfig — subscription injection', () => {
 
   it('surfaces stale flag from the fetcher', async () => {
     resolveSubMock.mockResolvedValueOnce({
-      yaml: providerYaml([{ name: 'HK-01' }]),
+      proxies: providerProxies([{ name: 'HK-01' }]),
       proxyCount: 1,
       stale: true,
       staleReason: 'connect ECONNREFUSED',
@@ -198,7 +202,7 @@ describe('resolveConfig — subscription injection', () => {
   });
 
   it('still runs renderBase for rules + rule-providers', async () => {
-    resolveSubMock.mockResolvedValueOnce({ yaml: providerYaml([{ name: 'HK-01' }]), proxyCount: 1 });
+    resolveSubMock.mockResolvedValueOnce({ proxies: providerProxies([{ name: 'HK-01' }]), proxyCount: 1 });
 
     const rule: Rule = {
       id: 'r1',
@@ -226,7 +230,7 @@ describe('resolveConfig — subscription injection', () => {
   });
 
   it('writes the resolved snapshot by default', async () => {
-    resolveSubMock.mockResolvedValueOnce({ yaml: providerYaml([{ name: 'HK-01' }]), proxyCount: 1 });
+    resolveSubMock.mockResolvedValueOnce({ proxies: providerProxies([{ name: 'HK-01' }]), proxyCount: 1 });
     await resolveConfig(BASE_WITH_LITERAL, [], [makeSub({ name: 'a' })], [], [], {});
     expect(snapshotMock).toHaveBeenCalledTimes(1);
     const [snapshot] = snapshotMock.mock.calls[0];
@@ -234,7 +238,7 @@ describe('resolveConfig — subscription injection', () => {
   });
 
   it('skips snapshot persistence when persistSnapshot is false', async () => {
-    resolveSubMock.mockResolvedValueOnce({ yaml: providerYaml([{ name: 'HK-01' }]), proxyCount: 1 });
+    resolveSubMock.mockResolvedValueOnce({ proxies: providerProxies([{ name: 'HK-01' }]), proxyCount: 1 });
     await resolveConfig(BASE_WITH_LITERAL, [], [makeSub({ name: 'a' })], [], [], {
       persistSnapshot: false,
     });
@@ -283,7 +287,7 @@ function makeTemplate(over: Partial<ProxyGroupTemplate>): ProxyGroupTemplate {
 describe('resolveConfig — managed proxy-groups', () => {
   it('replaces the marker with the rendered proxy-groups block from the hash', async () => {
     resolveSubMock.mockResolvedValueOnce({
-      yaml: providerYaml([{ name: 'HK-01' }]),
+      proxies: providerProxies([{ name: 'HK-01' }]),
       proxyCount: 1,
     });
     const g1 = makeGroup({ name: '默认', type: 'select', proxies: ['HK-01', '直连'], rank: 10 });
@@ -391,7 +395,7 @@ describe('resolveConfig — managed proxy-groups', () => {
 
   it('single-sub binding builds filter from sub.node_prefix', async () => {
     resolveSubMock.mockResolvedValueOnce({
-      yaml: providerYaml([{ name: 'HK-01' }, { name: 'JP-01' }]),
+      proxies: providerProxies([{ name: 'HK-01' }, { name: 'JP-01' }]),
       proxyCount: 2,
     });
     const sub = makeSub({ name: 'air-a', node_prefix: '[A] ' });
@@ -413,7 +417,7 @@ describe('resolveConfig — managed proxy-groups', () => {
 
   it('single-sub warns when bound sub has no node_prefix', async () => {
     resolveSubMock.mockResolvedValueOnce({
-      yaml: providerYaml([{ name: 'X' }]),
+      proxies: providerProxies([{ name: 'X' }]),
       proxyCount: 1,
     });
     const sub = makeSub({ name: 'air-a' }); // no node_prefix
@@ -444,10 +448,10 @@ describe('resolveConfig — managed proxy-groups', () => {
   it('legacy bound_collection_id auto-fills proxies from member-sub nodes', async () => {
     resolveSubMock
       .mockResolvedValueOnce({
-        yaml: providerYaml([{ name: 'HK-01' }, { name: 'HK-02' }]),
+        proxies: providerProxies([{ name: 'HK-01' }, { name: 'HK-02' }]),
         proxyCount: 2,
       })
-      .mockResolvedValueOnce({ yaml: providerYaml([{ name: 'JP-01' }]), proxyCount: 1 });
+      .mockResolvedValueOnce({ proxies: providerProxies([{ name: 'JP-01' }]), proxyCount: 1 });
     const subA = makeSub({ name: 'air-a' });
     const subB = makeSub({ name: 'air-b' });
     const col: Collection = {
@@ -528,7 +532,7 @@ describe('resolveConfig — profile binding (boundSource)', () => {
   it('restricts injection to one sub when source is { subscription }', async () => {
     // Only sub-a should be fetched; sub-b is filtered out before resolution.
     resolveSubMock.mockResolvedValueOnce({
-      yaml: providerYaml([{ name: 'HK-A' }, { name: 'JP-A' }]),
+      proxies: providerProxies([{ name: 'HK-A' }, { name: 'JP-A' }]),
       proxyCount: 2,
     });
     const a = makeSub({ name: 'sub-a' });
@@ -544,8 +548,8 @@ describe('resolveConfig — profile binding (boundSource)', () => {
   it('expands a collection source to its member subs', async () => {
     // Collection binds sub-a + sub-c; sub-b is excluded.
     resolveSubMock
-      .mockResolvedValueOnce({ yaml: providerYaml([{ name: 'HK-A' }]), proxyCount: 1 })
-      .mockResolvedValueOnce({ yaml: providerYaml([{ name: 'US-C' }]), proxyCount: 1 });
+      .mockResolvedValueOnce({ proxies: providerProxies([{ name: 'HK-A' }]), proxyCount: 1 })
+      .mockResolvedValueOnce({ proxies: providerProxies([{ name: 'US-C' }]), proxyCount: 1 });
     const a = makeSub({ name: 'sub-a' });
     const b = makeSub({ name: 'sub-b' });
     const c = makeSub({ name: 'sub-c' });
@@ -587,8 +591,8 @@ describe('resolveConfig — profile binding (boundSource)', () => {
 
   it('falls back to all enabled when boundSource is undefined (pre-Profile callers)', async () => {
     resolveSubMock
-      .mockResolvedValueOnce({ yaml: providerYaml([{ name: 'HK' }]), proxyCount: 1 })
-      .mockResolvedValueOnce({ yaml: providerYaml([{ name: 'US' }]), proxyCount: 1 });
+      .mockResolvedValueOnce({ proxies: providerProxies([{ name: 'HK' }]), proxyCount: 1 })
+      .mockResolvedValueOnce({ proxies: providerProxies([{ name: 'US' }]), proxyCount: 1 });
     const a = makeSub({ name: 'sub-a' });
     const b = makeSub({ name: 'sub-b' });
     const result = await resolveConfig(BASE_WITH_LITERAL, [], [a, b], [], [], {});

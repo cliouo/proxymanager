@@ -1,15 +1,7 @@
 import { withProblemDetails } from '@/lib/http/handler';
 import { ProblemDetailsError } from '@/lib/http/problem';
-import { resolveConfig } from '@/lib/engine/resolve';
+import { renderProfileConfig } from '@/lib/engine/renderCache';
 import { extractStructured } from '@/lib/engine/structured';
-import { getBase } from '@/lib/repos/baseRepo';
-import { listCollections } from '@/lib/repos/collectionsRepo';
-import { getProfileByName } from '@/lib/repos/profilesRepo';
-import { listProxyGroups } from '@/lib/repos/proxyGroupsRepo';
-import { listProxyGroupTemplates } from '@/lib/repos/proxyGroupTemplatesRepo';
-import { listRules } from '@/lib/repos/rulesRepo';
-import { listRuleSets } from '@/lib/repos/ruleSetsRepo';
-import { listSubscriptions } from '@/lib/repos/subscriptionsRepo';
 import { DEFAULT_PROFILE_NAME } from '@/schemas';
 
 export const dynamic = 'force-dynamic';
@@ -25,48 +17,36 @@ export const dynamic = 'force-dynamic';
  * `pm-inline-collections` detected).
  */
 export const GET = withProblemDetails(async () => {
-  const base = await getBase();
-  if (!base) {
-    throw ProblemDetailsError.unprocessable('Base config has not been initialized.');
-  }
-  const [rules, providers, subscriptions, proxyGroups, templates, collections, profileRecord] =
-    await Promise.all([
-      listRules(),
-      listRuleSets(),
-      listSubscriptions(),
-      listProxyGroups(),
-      listProxyGroupTemplates(),
-      listCollections(),
-      getProfileByName(DEFAULT_PROFILE_NAME),
-    ]);
-  const resolved = await resolveConfig(
-    base.content,
-    rules,
-    subscriptions,
-    proxyGroups,
-    templates,
+  // No providerUrlBase here (matches the old direct resolveConfig call —
+  // the renderer falls back to its placeholder host). The render cache keys
+  // identity on that, so this route shares hits with other no-base renders.
+  const { resolved, baseEtag, baseUpdatedAt, cache } = await renderProfileConfig(
+    DEFAULT_PROFILE_NAME,
     {
-      providers,
-      ignoreFailedSubs: true,
-      collections,
-      boundSource: profileRecord?.source,
+      missingBaseError: () =>
+        ProblemDetailsError.unprocessable('Base config has not been initialized.'),
     },
   );
+  // extractStructured stays at the route layer — it's a cheap projection of
+  // the cached content, not worth bloating the cache entry with.
   const structured = extractStructured(resolved.content);
-  return Response.json({
-    data: {
-      ...structured,
-      etag: base.etag,
-      updated_at: base.updated_at,
-      resolve: {
-        buildId: resolved.buildId,
-        inlinedProxyCount: resolved.inlinedProxyCount,
-        proxyGroupCount: resolved.proxyGroupCount,
-        nodeNames: resolved.nodeNames,
-        collisions: resolved.collisions,
-        subscriptions: resolved.subscriptions,
-        warnings: resolved.warnings,
+  return Response.json(
+    {
+      data: {
+        ...structured,
+        etag: baseEtag,
+        updated_at: baseUpdatedAt,
+        resolve: {
+          buildId: resolved.buildId,
+          inlinedProxyCount: resolved.inlinedProxyCount,
+          proxyGroupCount: resolved.proxyGroupCount,
+          nodeNames: resolved.nodeNames,
+          collisions: resolved.collisions,
+          subscriptions: resolved.subscriptions,
+          warnings: resolved.warnings,
+        },
       },
     },
-  });
+    { headers: { 'X-Render-Cache': cache } },
+  );
 });

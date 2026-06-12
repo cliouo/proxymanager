@@ -8,8 +8,15 @@ import type { RuleSet } from '@/schemas';
 export const dynamic = 'force-dynamic';
 
 export const GET = withProblemDetails(async () => {
+  // Meta only — content lives in its own Redis key and is returned by the
+  // [id] detail route. Keeps the list payload small however big the bodies get.
   const sets = await listRuleSets();
-  return Response.json({ data: sets, meta: { total: sets.length } });
+  const data = sets.map((s) => {
+    const { content, ...meta } = s;
+    void content;
+    return meta;
+  });
+  return Response.json({ data, meta: { total: sets.length } });
 });
 
 export const POST = withProblemDetails(async (request: Request) => {

@@ -34,18 +34,33 @@ export async function getProxyGroupByName(name: string): Promise<ProxyGroup | nu
   return all.find((g) => g.name === name) ?? null;
 }
 
+// Writes bump config:version in the same multi() — proxy-groups are emitted
+// verbatim into the rendered config's PROXY-GROUPS block.
+
 export async function upsertProxyGroup(group: ProxyGroup): Promise<void> {
-  await getRedis().hset(REDIS_KEYS.proxyGroups, { [group.id]: group });
+  await getRedis()
+    .multi()
+    .hset(REDIS_KEYS.proxyGroups, { [group.id]: group })
+    .incr(REDIS_KEYS.configVersion)
+    .exec();
 }
 
 export async function upsertProxyGroups(groups: ProxyGroup[]): Promise<void> {
   if (groups.length === 0) return;
   const payload: Record<string, ProxyGroup> = {};
   for (const g of groups) payload[g.id] = g;
-  await getRedis().hset(REDIS_KEYS.proxyGroups, payload);
+  await getRedis()
+    .multi()
+    .hset(REDIS_KEYS.proxyGroups, payload)
+    .incr(REDIS_KEYS.configVersion)
+    .exec();
 }
 
 export async function deleteProxyGroup(id: string): Promise<boolean> {
-  const removed = await getRedis().hdel(REDIS_KEYS.proxyGroups, id);
+  const [removed] = await getRedis()
+    .multi()
+    .hdel(REDIS_KEYS.proxyGroups, id)
+    .incr(REDIS_KEYS.configVersion)
+    .exec<[number, number]>();
   return removed > 0;
 }

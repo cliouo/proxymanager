@@ -84,7 +84,15 @@ export const RuleSetCreateSchema = RuleSetSchema.omit({ id: true, updated_at: tr
 );
 export const RuleSetUpdateSchema = RuleSetSchema.omit({ id: true, updated_at: true }).partial();
 
+/**
+ * The list-view shape: everything except `content`. Content is stored in its
+ * own Redis key and only the `[id]` detail endpoint returns it — list payloads
+ * stay small no matter how big the hosted bodies grow.
+ */
+export const RuleSetMetaSchema = RuleSetSchema.omit({ content: true });
+
 export type RuleSet = z.infer<typeof RuleSetSchema>;
+export type RuleSetMeta = z.infer<typeof RuleSetMetaSchema>;
 export type RuleSetFormat = z.infer<typeof RuleSetFormatSchema>;
 export type RuleSetBehavior = z.infer<typeof RuleSetBehaviorSchema>;
 export type RuleSetSource = z.infer<typeof RuleSetSourceSchema>;
