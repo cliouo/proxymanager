@@ -9,6 +9,7 @@ import { ProfilesProvider } from '@/components/profile/ProfileContext';
 import { RouteProgress } from '@/components/RouteProgress';
 import { Sidebar } from '@/components/Sidebar';
 import { Topbar } from '@/components/Topbar';
+import { ToastProvider } from '@/components/ui/Toast';
 import { getAdminKey } from '@/lib/client/auth-storage';
 
 export default function AuthedLayout({ children }: { children: React.ReactNode }) {
@@ -63,6 +64,7 @@ export default function AuthedLayout({ children }: { children: React.ReactNode }
   return (
     <ProfilesProvider>
       <PageChromeProvider>
+        <ToastProvider>
         <AssistantProvider>
           <div className="app">
             <RouteProgress />
@@ -81,6 +83,7 @@ export default function AuthedLayout({ children }: { children: React.ReactNode }
             <AssistantPanel />
           </div>
         </AssistantProvider>
+        </ToastProvider>
       </PageChromeProvider>
     </ProfilesProvider>
   );

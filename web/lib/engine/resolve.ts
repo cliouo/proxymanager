@@ -111,7 +111,7 @@ const SUB_FETCH_CONCURRENCY = 8;
  * 落位(PromiseSettledResult 形状),调用方可以按原序消费成功/失败——这正是
  * 注入链路的确定性契约所需要的。单一用途,不值得为它引 p-limit 之类的依赖。
  */
-async function settleWithConcurrency<T, R>(
+export async function settleWithConcurrency<T, R>(
   items: readonly T[],
   limit: number,
   fn: (item: T) => Promise<R>,
@@ -417,7 +417,7 @@ function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function resolveCollectionMemberSubs(
+export function resolveCollectionMemberSubs(
   collection: Collection,
   subscriptions: Subscription[],
 ): Subscription[] {

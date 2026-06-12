@@ -10,6 +10,7 @@ import {
   useState,
   type RefObject,
 } from 'react';
+import { DistributeDrawer, type DistributeTarget } from '@/components/DistributeDrawer';
 import { PageTopbar } from '@/components/PageChrome';
 import { ScopePill } from '@/components/Topbar';
 import { CodeEditor } from '@/components/ui/CodeEditor';
@@ -44,6 +45,12 @@ interface Subscription {
 
 type Tab = 'subs' | 'collections';
 
+/** 抽屉只存引用,渲染时从最新列表派生展示数据 —— 抽屉里翻开关立即反映。 */
+interface DistRef {
+  kind: 'source' | 'collection';
+  id: string;
+}
+
 function fmtTime(s: number | undefined): string {
   if (!s) return '从未';
   const diff = Date.now() / 1000 - s;
@@ -65,6 +72,8 @@ export default function SubscriptionsPage() {
   const [tab, setTab] = useState<Tab>('subs');
   const [loaded, setLoaded] = useState(false);
   const [query, setQuery] = useState('');
+  const [subBase, setSubBase] = useState<string | null>(null);
+  const [dist, setDist] = useState<DistRef | null>(null);
   const tabsId = useId();
   const subsTabRef = useRef<HTMLButtonElement>(null);
   const collectionsTabRef = useRef<HTMLButtonElement>(null);
@@ -119,12 +128,15 @@ export default function SubscriptionsPage() {
   const reload = useCallback(async () => {
     setError(null);
     try {
-      const [list, cl] = await Promise.all([
+      const [list, cl, meta] = await Promise.all([
         api<{ data: Subscription[] }>('/api/v1/subscriptions'),
         api<{ data: Collection[] }>('/api/v1/collections'),
+        // 分发链接前缀(含 SUB_TOKEN)。失败不挡列表,抽屉里显示占位。
+        api<{ data: { subBase?: string } }>('/api/v1/meta').catch(() => null),
       ]);
       setSubs(list.data);
       setCollections(cl.data);
+      if (meta?.data.subBase) setSubBase(meta.data.subBase);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     } finally {
@@ -215,6 +227,66 @@ export default function SubscriptionsPage() {
       setError(err instanceof ApiError ? err.message : String(err));
     }
   }
+
+  async function onCollectionToggle(c: Collection) {
+    startBusy(c.id);
+    try {
+      const res = await api<{ data: Collection }>(`/api/v1/collections/${c.id}`, {
+        method: 'PATCH',
+        body: { enabled: !c.enabled },
+      });
+      setCollections((prev) => prev.map((x) => (x.id === c.id ? res.data : x)));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      endBusy(c.id);
+    }
+  }
+
+  // 抽屉展示数据从最新列表派生;资源被删时自动收起。
+  const distTarget = useMemo<DistributeTarget | null>(() => {
+    if (!dist) return null;
+    if (dist.kind === 'source') {
+      const s = subs.find((x) => x.id === dist.id);
+      if (!s) return null;
+      const kindLabel = s.kind === 'remote' ? '远程订阅' : '本地订阅';
+      const meta: { k: string; v: string }[] = [
+        { k: '类型', v: s.kind },
+        { k: '上次拉取', v: fmtTime(s.last_synced_at) },
+      ];
+      if (s.node_prefix) meta.push({ k: '前缀', v: s.node_prefix });
+      return {
+        kind: 'source',
+        name: s.name,
+        typeLabel: `${kindLabel} · ${!s.enabled ? '已停用' : s.last_error ? '缓存下发中' : '公开分发中'}`,
+        enabled: s.enabled,
+        meta,
+      };
+    }
+    const c = collections.find((x) => x.id === dist.id);
+    if (!c) return null;
+    return {
+      kind: 'collection',
+      name: c.name,
+      typeLabel: `聚合订阅 · ${c.enabled ? '公开分发中' : '已停用'}`,
+      enabled: c.enabled,
+      meta: [
+        { k: '成员', v: `${c.subscription_ids.length} 直接指定 + ${c.subscription_tags.length} 标签` },
+        { k: '更新', v: fmtTime(c.updated_at) },
+      ],
+    };
+  }, [dist, subs, collections]);
+
+  const onDistToggle = useMemo(() => {
+    if (!dist) return undefined;
+    if (dist.kind === 'source') {
+      const s = subs.find((x) => x.id === dist.id);
+      return s ? () => onToggle(s) : undefined;
+    }
+    const c = collections.find((x) => x.id === dist.id);
+    return c ? () => onCollectionToggle(c) : undefined;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dist, subs, collections]);
 
   const editingCollection =
     collectionEditingId !== null
@@ -322,7 +394,7 @@ export default function SubscriptionsPage() {
         >
           <div className={styles.lead}>
             订阅源是平台向上游机场拉取的<b>输入</b>；启用后处理并注入 proxies。
-            远程源按 <b>缓存 TTL</b> 定时拉取，本地源是内联 YAML / 节点链接。
+            处理后由平台中转下发的<b>公开节点链接</b>带令牌、属秘钥——点每行的「分发」按需查看与复制，不在列表明文展示。
             源站地址、UA 与节点处理流水线都在「编辑」里维护。
           </div>
 
@@ -364,6 +436,7 @@ export default function SubscriptionsPage() {
                   onEditStart={() => setEditingId(sub.id)}
                   onEditCancel={() => setEditingId(null)}
                   onEditSave={(patch) => onSaveEdit(sub.id, patch)}
+                  onDistribute={() => setDist({ kind: 'source', id: sub.id })}
                 />
               ))}
             </div>
@@ -376,7 +449,7 @@ export default function SubscriptionsPage() {
           aria-labelledby={`${tabsId}-tab-collections`}
         >
           <div className={styles.lead}>
-            聚合订阅把<b>多条单订阅合并成一个来源</b>，输出一条对外链接。
+            聚合订阅把<b>多条单订阅合并成一个来源</b>，输出一条对外的<b>公开节点链接</b>（点「分发」查看）——换/加成员都不影响它。
             在「结构骨架」页把配置文件的「节点来源」绑定到它，就会注入这组订阅去重后的节点。
             成员可手动勾选，也可按标签自动纳入。
           </div>
@@ -420,17 +493,27 @@ export default function SubscriptionsPage() {
                   subs={subs}
                   editing={collectionEditingId === c.id}
                   anyEditing={collectionEditingId !== null || collectionAdding}
+                  pending={busyIds.has(c.id)}
                   onEdit={() => {
                     setCollectionAdding(false);
                     setCollectionEditingId(c.id);
                   }}
                   onDelete={() => onCollectionDelete(c.id)}
+                  onToggle={() => onCollectionToggle(c)}
+                  onDistribute={() => setDist({ kind: 'collection', id: c.id })}
                 />
               ))}
             </div>
           )}
         </section>
       )}
+
+      <DistributeDrawer
+        target={distTarget}
+        subBase={subBase}
+        onClose={() => setDist(null)}
+        onToggleEnabled={onDistToggle && (() => onDistToggle())}
+      />
     </>
   );
 }
@@ -486,20 +569,52 @@ function CollectionEmpty({ onAdd }: { onAdd: () => void }) {
   );
 }
 
+/**
+ * 分发 chip(原型 .dist-chip):公开节点链接的入口,列表里只露掩码、
+ * 不明文展示令牌,点开抽屉再按需查看 / 复制。停用 = 未分发,仍可点开
+ * 抽屉查看说明并在里面启用。
+ */
+function DistChip({ enabled, onClick }: { enabled: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      className={`dist-chip${enabled ? '' : ' off'}`}
+      style={enabled ? undefined : { cursor: 'pointer' }}
+      onClick={onClick}
+      title={enabled ? '查看公开节点链接' : '已停用 · 点开可查看并启用'}
+    >
+      <span className="lk" />
+      {enabled ? (
+        <>
+          分发中 · <span className="mask">••••••••</span>
+        </>
+      ) : (
+        '未分发'
+      )}
+    </button>
+  );
+}
+
 function CollectionCard({
   c,
   subs,
   editing,
   anyEditing,
+  pending,
   onEdit,
   onDelete,
+  onToggle,
+  onDistribute,
 }: {
   c: Collection;
   subs: Subscription[];
   editing: boolean;
   anyEditing: boolean;
+  pending: boolean;
   onEdit: () => void;
   onDelete: () => void;
+  onToggle: () => void;
+  onDistribute: () => void;
 }) {
   const subById = useMemo(() => new Map(subs.map((s) => [s.id, s])), [subs]);
   const members = useMemo(() => {
@@ -584,6 +699,7 @@ function CollectionCard({
         )}
       </div>
       <div className={styles.right}>
+        <DistChip enabled={c.enabled} onClick={onDistribute} />
         <div className={styles.acts}>
           <button
             type="button"
@@ -593,6 +709,14 @@ function CollectionCard({
           >
             编辑
           </button>
+          <button
+            type="button"
+            className="switch"
+            aria-pressed={c.enabled}
+            onClick={onToggle}
+            disabled={pending || anyEditing}
+            title={c.enabled ? '停用' : '启用'}
+          />
           <button
             type="button"
             className="btn sm danger"
@@ -930,6 +1054,7 @@ function Dossier({
   onEditStart,
   onEditCancel,
   onEditSave,
+  onDistribute,
 }: {
   sub: Subscription;
   pending: boolean;
@@ -941,6 +1066,7 @@ function Dossier({
   onEditStart: () => void;
   onEditCancel: () => void;
   onEditSave: (patch: Record<string, unknown>) => Promise<void>;
+  onDistribute: () => void;
 }) {
   if (editing) {
     return (
@@ -1006,6 +1132,7 @@ function Dossier({
         {sub.last_traffic && sub.last_traffic.total > 0 && (
           <CompactTraffic traffic={sub.last_traffic} />
         )}
+        <DistChip enabled={sub.enabled} onClick={onDistribute} />
         <div className={styles.acts}>
           <button
             type="button"

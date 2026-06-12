@@ -284,6 +284,42 @@ registry.registerPath({
 
 registry.registerPath({
   method: 'get',
+  path: '/api/sub/{token}/source/{name}',
+  summary: 'Public node-only link for a single subscription',
+  description:
+    'Distribution endpoint: serves the subscription\'s processed nodes (operators pipeline + node_prefix + dedup) as a Clash provider YAML (`proxies:` block only). Usable directly as a mihomo proxy-provider `url:` or imported as a plain subscription — the upstream source URL is never exposed. Validates SUB_TOKEN; disabled subscriptions return 404. Sends `Subscription-Userinfo` when upstream traffic info is known, a content-addressed ETag (If-None-Match → 304), and `X-Stale: 1` when serving the stale-on-error cache. `?noCache=1` bypasses the fetch cache.',
+  tags: ['subscriptions'],
+  security: [],
+  request: { params: z.object({ token: z.string(), name: z.string() }) },
+  responses: {
+    200: { description: 'Provider YAML (`proxies:` only)' },
+    304: { description: 'ETag matched If-None-Match' },
+    401: { description: 'Bad token' },
+    404: { description: 'Unknown or disabled subscription' },
+  },
+});
+
+registry.registerPath({
+  method: 'get',
+  path: '/api/sub/{token}/collection/{name}',
+  summary: 'Public node-only link for a collection (聚合订阅)',
+  description:
+    'Distribution endpoint: merges the collection\'s enabled member subscriptions (explicit ids + tag matches, member order), applies each member\'s operators + node_prefix, dedups first-writer-wins, and serves the result as a Clash provider YAML. `{name}` matches the collection name first (URL-encoded CJK ok) and falls back to the collection id when it looks like a UUID. Failed members are skipped (`X-Skipped-Members`); the request only fails when every member fails. Disabled collections return 404.',
+  tags: ['subscriptions'],
+  security: [],
+  request: { params: z.object({ token: z.string(), name: z.string() }) },
+  responses: {
+    200: { description: 'Merged provider YAML (`proxies:` only)' },
+    304: { description: 'ETag matched If-None-Match' },
+    400: { description: 'Every member fetch failed' },
+    401: { description: 'Bad token' },
+    404: { description: 'Unknown or disabled collection' },
+    422: { description: 'Collection has no enabled members' },
+  },
+});
+
+registry.registerPath({
+  method: 'get',
   path: '/api/v1/rule-sets',
   summary: 'List rule sets',
   description:

@@ -16,6 +16,8 @@ export const GET = withProblemDetails(async (request: Request) => {
   return Response.json({
     data: {
       subscriptionUrl: `${origin}/api/sub/${token}/default`,
+      // 分发链接前缀:`{subBase}/source/{订阅名}`、`{subBase}/collection/{聚合名}`。
+      subBase: `${origin}/api/sub/${token}`,
       ruleProvidersBase: `${origin}/api/rule-providers/${token}`,
       buildId: base?.etag ?? null,
       hasBase: base !== null,

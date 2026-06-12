@@ -1,20 +1,12 @@
 import { requireSubToken } from '@/lib/auth';
 import { renderProfileConfig } from '@/lib/engine/renderCache';
+import { etagMatches } from '@/lib/http/etag';
 import { withProblemDetails } from '@/lib/http/handler';
 import { ProblemDetailsError } from '@/lib/http/problem';
 
 export const dynamic = 'force-dynamic';
 
 type Ctx = RouteContext<'/api/sub/[token]/[profile]'>;
-
-/** RFC 9110-ish If-None-Match check: exact entity-tag match in the list, or `*`. */
-function etagMatches(ifNoneMatch: string, etag: string): boolean {
-  if (ifNoneMatch.trim() === '*') return true;
-  return ifNoneMatch
-    .split(',')
-    .map((t) => t.trim())
-    .some((t) => t === etag || t === `W/${etag}`);
-}
 
 export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
   const { token, profile } = await ctx.params;
