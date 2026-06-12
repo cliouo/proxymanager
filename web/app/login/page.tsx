@@ -1,9 +1,9 @@
 'use client';
 
 import { useState } from 'react';
-import { Button } from '@/components/ui/Button';
-import { Input } from '@/components/ui/Input';
+import { ThemeToggle } from '@/components/theme/ThemeToggle';
 import { setAdminKey } from '@/lib/client/auth-storage';
+import styles from './login.module.css';
 
 export default function LoginPage() {
   const [key, setKey] = useState('');
@@ -12,7 +12,10 @@ export default function LoginPage() {
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!key.trim()) return;
+    if (!key.trim()) {
+      setError('密钥不能为空');
+      return;
+    }
     setPending(true);
     setError(null);
     try {
@@ -39,48 +42,53 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="min-h-screen flex items-center justify-center px-6 py-12 bg-[var(--color-bg)]">
-      <div className="w-full max-w-[360px] space-y-8">
-        <div className="text-center space-y-2">
-          <h1
-            className="font-serif text-[40px] font-medium leading-[1.1] tracking-[-0.02em] text-[var(--color-ink)]"
-            style={{ fontVariationSettings: '"opsz" 144, "SOFT" 30' }}
-          >
-            ProxyManager
-          </h1>
-          <p className="text-[11px] uppercase tracking-[0.08em] font-semibold text-[var(--color-muted)]">
-            代理订阅管家
-          </p>
-        </div>
-
-        <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-card)] px-6 py-6 space-y-4">
-          <form className="space-y-4" onSubmit={onSubmit}>
-            <div>
-              <label className="text-[11px] uppercase tracking-[0.08em] font-semibold text-[var(--color-muted)] mb-1.5 block">
-                管理密钥
-              </label>
-              <Input
-                type="password"
-                value={key}
-                onChange={(e) => setKey(e.target.value)}
-                autoFocus
-                placeholder="ADMIN_KEY"
-              />
-            </div>
-            {error && (
-              <p className="text-[12px] text-[var(--color-danger)] bg-[#F4D8D2] border border-[var(--color-danger)]/20 rounded-md px-3 py-2">
-                {error}
-              </p>
-            )}
-            <Button type="submit" disabled={pending || !key.trim()} className="w-full">
-              {pending ? '验证中…' : '登录'}
-            </Button>
-            <p className="text-[12px] text-[var(--color-muted)] leading-[1.55]">
-              密钥仅保存在当前标签页的 session storage 中，关闭标签页会自动登出。
-            </p>
-          </form>
-        </div>
+    <div className={styles.screen}>
+      <div className="theme-mount">
+        <ThemeToggle />
       </div>
-    </main>
+
+      <main className={styles.login}>
+        <div className={styles.mark}>PM</div>
+        <h1 className={styles.title}>ProxyManager</h1>
+        <div className={styles.sub}>个人代理配置工作台 · 自部署于 Vercel</div>
+
+        <form className="panel" style={{ padding: 22 }} onSubmit={onSubmit}>
+          <div className={`field${error ? ' invalid' : ''}`} style={{ marginBottom: 16 }}>
+            <label htmlFor="key">
+              管理密钥{' '}
+              <span style={{ color: 'var(--faint)', fontWeight: 400 }}>ADMIN_KEY</span>
+            </label>
+            <input
+              id="key"
+              className="input mono"
+              type="password"
+              autoComplete="off"
+              autoFocus
+              placeholder="••••••••••••••••"
+              value={key}
+              onChange={(e) => {
+                setKey(e.target.value);
+                if (error) setError(null);
+              }}
+            />
+            <div className="err-msg">{error ?? '密钥不能为空'}</div>
+          </div>
+          <button
+            type="submit"
+            className="btn primary"
+            style={{ width: '100%', height: 38 }}
+            disabled={pending}
+          >
+            {pending ? '验证中…' : '进入控制台'}
+          </button>
+        </form>
+
+        <div className={styles.footNote}>
+          密钥仅存于本浏览器 sessionStorage，关闭标签页即清除。
+          <br />
+          个人代理订阅与配置管理 · 自部署
+        </div>
+      </main>
+    </div>
   );
 }

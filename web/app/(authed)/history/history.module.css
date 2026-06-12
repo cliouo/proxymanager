@@ -1,0 +1,20 @@
+/* 操作历史 — topbar 内搜索框宽度（对齐 v2/history.html 的页内 <style>） */
+.search {
+  width: 220px;
+}
+@media (max-width: 1200px) {
+  .search {
+    width: 200px;
+  }
+}
+@media (max-width: 960px) {
+  .search {
+    width: 180px;
+  }
+}
+@media (max-width: 600px) {
+  .search {
+    width: 150px;
+    flex: none;
+  }
+}

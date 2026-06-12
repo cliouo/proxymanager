@@ -1,11 +1,11 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
-import { Badge } from '@/components/ui/Badge';
-import { Button } from '@/components/ui/Button';
-import { Placeholder } from '@/components/ui/Reveal';
-import { YamlEditor } from '@/components/ui/YamlEditor';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ApiError, api } from '@/lib/client/api';
+import { PageTopbar } from '@/components/PageChrome';
+import { ScopePill } from '@/components/Topbar';
+import { CodeView } from '@/components/ui/CodeView';
+import styles from './config.module.css';
 
 interface PreviewData {
   content: string;
@@ -20,6 +20,8 @@ interface Meta {
   hasBase: boolean;
 }
 
+type Tab = 'yaml' | 'summary';
+
 export default function ConfigPage() {
   const [preview, setPreview] = useState<PreviewData | null>(null);
   const [meta, setMeta] = useState<Meta | null>(null);
@@ -27,6 +29,8 @@ export default function ConfigPage() {
   const [loaded, setLoaded] = useState(false);
   const [copied, setCopied] = useState<'config' | 'url' | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [tab, setTab] = useState<Tab>('yaml');
+  const [inspOpen, setInspOpen] = useState(false);
 
   const load = useCallback(async (opts?: { silent?: boolean }) => {
     if (!opts?.silent) setLoadError(null);
@@ -41,7 +45,7 @@ export default function ConfigPage() {
     } catch (err) {
       if (err instanceof ApiError && err.status === 404) {
         setPreview(null);
-        setLoadError('尚未设置基础配置，先到「结构」页粘贴 base.yaml 并保存。');
+        setLoadError('尚未设置基础配置，先到「结构骨架」页粘贴 base.yaml 并保存。');
       } else {
         setLoadError(err instanceof Error ? err.message : String(err));
       }
@@ -54,7 +58,7 @@ export default function ConfigPage() {
     load();
   }, [load]);
 
-  // 实时反映：从规则页 / 结构页改完切回来时，自动拉最新渲染结果。
+  // 实时反映：从规则页 / 结构页改完切回来时自动拉最新渲染结果。
   useEffect(() => {
     function onFocus() {
       load({ silent: true });
@@ -70,8 +74,17 @@ export default function ConfigPage() {
   }, [load]);
 
   const content = preview?.content ?? '';
-  const lineCount = content ? content.split('\n').length : 0;
-  const byteLen = new TextEncoder().encode(content).length;
+  // 渲染产物可能几 MB —— 行数 / 字节数只在内容变化时算一次
+  const { lineCount, byteLen } = useMemo(
+    () => ({
+      lineCount: content ? content.split('\n').length : 0,
+      byteLen: new TextEncoder().encode(content).length,
+    }),
+    [content],
+  );
+  const anchors = preview?.anchors_applied ?? [];
+  const unmatched = preview?.unmatched_anchors ?? [];
+  const totalRules = anchors.reduce((sum, a) => sum + a.ruleCount, 0);
 
   async function copyConfig() {
     if (!content) return;
@@ -99,189 +112,153 @@ export default function ConfigPage() {
   }
 
   return (
-    <div className="-mx-8 -mt-8 -mb-12 flex flex-col h-[calc(100vh-0px)]">
-      {/* Toolbar */}
-      <header className="shrink-0 flex items-center justify-between gap-4 px-6 py-3 border-b border-[var(--color-border)] bg-[var(--color-surface)]">
-        <div className="flex items-baseline gap-3 min-w-0">
-          <h1
-            className="font-serif text-[22px] font-medium leading-[1.2] tracking-[-0.015em] text-[var(--color-ink)]"
-            style={{ fontVariationSettings: '"opsz" 96, "SOFT" 30' }}
-          >
-            最终配置
-          </h1>
-          <Badge tone="neutral">只读</Badge>
-          {preview?.build_id && (
-            <span className="text-[11px] uppercase tracking-[0.08em] font-mono text-[var(--color-muted)]">
-              build · {preview.build_id}
-            </span>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="text-[11px] text-[var(--color-muted)] font-mono tabular-nums hidden md:inline">
-            {lineCount} 行 · {byteLen.toLocaleString()} 字节
+    <div className={styles.workbench}>
+      {/* —— 页头注入共享 topbar(对齐 v2/config.html:标题 / pill / 渲染状态 /
+          crumb / 重新渲染 / 下载 / 复制全文 上提,视图条只留 tabs + 检查) —— */}
+      <PageTopbar>
+        <h1>最终配置</h1>
+        <ScopePill />
+        {loaded && preview && <span className="pill ok">渲染成功</span>}
+        {preview && (
+          <span className="crumb num">
+            build {preview.build_id.slice(0, 8)} · {lineCount} 行
           </span>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={refresh}
-            disabled={refreshing}
-            className="ml-2"
-          >
-            {refreshing ? '刷新中…' : '刷新'}
-          </Button>
-          <Button variant="secondary" size="sm" onClick={download} disabled={!content}>
-            下载
-          </Button>
-          <Button size="sm" onClick={copyConfig} disabled={!content}>
-            {copied === 'config' ? '已复制 ✓' : '复制全文'}
-          </Button>
+        )}
+        <div className="grow" />
+        <button className="btn" onClick={refresh} disabled={refreshing}>
+          {refreshing ? '渲染中…' : '重新渲染'}
+        </button>
+        <button className="btn" onClick={download} disabled={!content}>
+          下载
+        </button>
+        <button className="btn primary" onClick={copyConfig} disabled={!content}>
+          {copied === 'config' ? '已复制 ✓' : '复制全文'}
+        </button>
+      </PageTopbar>
+
+      <div className={styles.view}>
+        <div className={styles.bar}>
+          <div className="tabs">
+            <button
+              className={`tab${tab === 'yaml' ? ' on' : ''}`}
+              onClick={() => setTab('yaml')}
+            >
+              渲染产物
+            </button>
+            <button
+              className={`tab${tab === 'summary' ? ' on' : ''}`}
+              onClick={() => setTab('summary')}
+            >
+              渲染摘要
+            </button>
+          </div>
+          <div style={{ flex: 1 }} />
+          <span className={styles.note}>只读 · 由 base + 资源实时渲染</span>
+          <button className={`btn sm ${styles.inspBtn}`} onClick={() => setInspOpen(true)}>
+            注入 / 警告
+          </button>
         </div>
-      </header>
 
-      {/* Notice strip */}
-      <div className="shrink-0 px-6 py-2 text-[12px] border-b border-[var(--color-border)] bg-[var(--color-primary-tint)] text-[var(--color-primary-hover)]">
-        这是下发给 Mihomo / Clash 的完整渲染结果（骨架 + 全部规则）。所见即所得，要改请到「结构」或「规则」页，保存后这里实时刷新。
-      </div>
-
-      {loadError && (
-        <div className="shrink-0 px-6 py-2 text-[12px] border-b border-[var(--color-border)] bg-[#F4D8D2]/40 text-[var(--color-danger)]">
-          {loadError}
-        </div>
-      )}
-
-      {/* Rendered config + inspector */}
-      <div className="flex-1 min-h-0 grid grid-cols-1 xl:grid-cols-[1fr_280px]">
-        {loaded ? (
-          <>
-            <div className="pm-reveal min-h-0 border-r border-[var(--color-border)]">
-              <YamlEditor value={content} onChange={() => {}} readOnly />
-            </div>
-            <div className="pm-reveal min-h-0 hidden xl:flex">
-              <Inspector
-                preview={preview}
-                meta={meta}
-                onCopyUrl={copyUrl}
-                urlCopied={copied === 'url'}
-              />
-            </div>
-          </>
+        {tab === 'yaml' ? (
+          <div className={`codebox ${styles.code}`}>
+            {!loaded ? (
+              <pre className="cm-com">正在渲染最终配置 …</pre>
+            ) : loadError ? (
+              <pre style={{ color: 'var(--warn)' }}>{loadError}</pre>
+            ) : (
+              /* CodeMirror 只读视图：虚拟化渲染，几万行也只为可视行建 DOM */
+              <CodeView value={content} className={styles.cmFill} />
+            )}
+          </div>
         ) : (
-          <>
-            <div className="border-r border-[var(--color-border)] p-6 space-y-3">
-              <Placeholder rows={1} className="max-w-[180px]" />
-              <Placeholder rows={6} />
-              <Placeholder rows={4} />
-              <Placeholder rows={3} />
+          <div className={styles.summary}>
+            <div className="panel" style={{ maxWidth: 560 }}>
+              <div className="panel-body">
+                <div className={styles.sumRow}>
+                  <span>渲染产物</span>
+                  <span className="num">
+                    {lineCount} 行 · {byteLen.toLocaleString()} 字节
+                  </span>
+                </div>
+                {preview?.build_id && (
+                  <div className={styles.sumRow}>
+                    <span>构建标识</span>
+                    <span className="num">{preview.build_id}</span>
+                  </div>
+                )}
+                <div className={styles.sumRow}>
+                  <span>注入锚点</span>
+                  <span className="num">{anchors.length} 个</span>
+                </div>
+                <div className={styles.sumRow}>
+                  <span>注入规则</span>
+                  <span className="num">{totalRules} 条</span>
+                </div>
+                <div className={styles.sumRow}>
+                  <span>未匹配锚点</span>
+                  <span className="num">{unmatched.length} 个</span>
+                </div>
+                <div className={styles.sumRow}>
+                  <span>基础配置</span>
+                  <span className="num">{meta?.hasBase === false ? '未初始化' : '已就绪'}</span>
+                </div>
+              </div>
             </div>
-            <div className="hidden xl:block bg-[var(--color-bg)] p-5 space-y-4">
-              <Placeholder rows={1} className="max-w-[60px]" />
-              <Placeholder rows={3} />
-              <Placeholder rows={1} className="max-w-[60px]" />
-              <Placeholder rows={4} />
-            </div>
-          </>
+          </div>
         )}
       </div>
-    </div>
-  );
-}
 
-function Inspector({
-  preview,
-  meta,
-  onCopyUrl,
-  urlCopied,
-}: {
-  preview: PreviewData | null;
-  meta: Meta | null;
-  onCopyUrl: () => void;
-  urlCopied: boolean;
-}) {
-  const anchors = preview?.anchors_applied ?? [];
-  const unmatched = preview?.unmatched_anchors ?? [];
-  const totalRules = anchors.reduce((sum, a) => sum + a.ruleCount, 0);
+      <aside className={`${styles.inspector}${inspOpen ? ` ${styles.open}` : ''}`}>
+        <button className={`btn ghost sm ${styles.inspClose}`} onClick={() => setInspOpen(false)}>
+          关闭
+        </button>
 
-  return (
-    <aside className="flex flex-col flex-1 overflow-y-auto bg-[var(--color-bg)] text-[13px]">
-      <section className="px-5 py-4 border-b border-[var(--color-border)]">
-        <header className="flex items-baseline justify-between gap-2 mb-2">
-          <h2 className="text-[11px] uppercase tracking-[0.08em] font-semibold text-[var(--color-muted)]">
-            锚点注入
-          </h2>
-          <span className="text-[11px] tabular-nums text-[var(--color-muted)] font-mono">
-            {totalRules} 条规则
-          </span>
-        </header>
+        <div className={`${styles.inspH} ${styles.first}`}>锚点注入 · {totalRules} 条</div>
         {anchors.length === 0 ? (
-          <p className="text-[12px] text-[var(--color-muted)] italic">未注入任何规则</p>
+          <div style={{ fontSize: 12, color: 'var(--muted)', padding: '4px 8px' }}>
+            未注入任何规则
+          </div>
         ) : (
-          <ul className="space-y-1">
-            {anchors.map((a) => (
-              <li
-                key={a.anchor}
-                className="flex items-baseline justify-between gap-2 font-mono text-[12px]"
-              >
-                <span className="text-[var(--color-fg)] truncate" title={a.anchor}>
-                  <span className="text-[var(--color-primary)] mr-1">∎</span>
-                  {a.anchor}
-                </span>
-                <span className="tabular-nums text-[var(--color-muted)]">{a.ruleCount}</span>
-              </li>
-            ))}
-          </ul>
+          anchors.map((a) => (
+            <div className={styles.inj} key={a.anchor}>
+              <span>{a.anchor}</span>
+              <span className={styles.injN}>+{a.ruleCount}</span>
+            </div>
+          ))
         )}
-      </section>
 
-      {unmatched.length > 0 && (
-        <section className="px-5 py-4 border-b border-[var(--color-border)] bg-[#F4D8D2]/20">
-          <header className="flex items-baseline justify-between gap-2 mb-2">
-            <h2 className="text-[11px] uppercase tracking-[0.08em] font-semibold text-[var(--color-danger)]">
-              未匹配锚点
-            </h2>
-            <span className="text-[11px] tabular-nums text-[var(--color-danger)] font-mono">
-              {unmatched.length}
-            </span>
-          </header>
-          <p className="text-[11px] text-[var(--color-muted)] mb-2 leading-[1.5]">
-            这些锚点下有规则，但骨架里没有对应标记，规则未被注入。
-          </p>
-          <ul className="space-y-1 text-[11px] font-mono">
-            {unmatched.map((a) => (
-              <li key={a} className="text-[var(--color-danger)] break-all">
-                {a}
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      {meta?.subscriptionUrl && (
-        <section className="px-5 py-4 border-b border-[var(--color-border)]">
-          <h2 className="text-[11px] uppercase tracking-[0.08em] font-semibold text-[var(--color-muted)] mb-2">
-            订阅地址
-          </h2>
-          <code className="block font-mono text-[11px] leading-[1.5] text-[var(--color-fg-soft)] break-all mb-2">
-            {meta.subscriptionUrl}
-          </code>
-          <Button variant="secondary" size="sm" onClick={onCopyUrl} className="w-full">
-            {urlCopied ? '已复制 ✓' : '复制订阅 URL'}
-          </Button>
-          {meta.hasBase === false && (
-            <Badge tone="warn" className="mt-2">
-              基础配置尚未初始化
-            </Badge>
+        <div className={styles.inspH}>警告</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {unmatched.length > 0 ? (
+            unmatched.map((a) => (
+              <span className="pill warn" key={a}>
+                锚点 {a} 无对应标记
+              </span>
+            ))
+          ) : (
+            <span className="pill ok">所有锚点均已匹配</span>
           )}
-        </section>
-      )}
+        </div>
 
-      <section className="px-5 py-4 mt-auto">
-        <h2 className="text-[11px] uppercase tracking-[0.08em] font-semibold text-[var(--color-muted)] mb-2">
-          说明
-        </h2>
-        <p className="text-[12px] text-[var(--color-muted)] leading-[1.55]">
-          节点密码、订阅 token 等敏感字段在此页原样下发（仅你可见）。AI 助手读取时会脱敏。
-        </p>
-      </section>
-    </aside>
+        {meta?.subscriptionUrl && (
+          <>
+            <div className={styles.inspH}>订阅地址</div>
+            <div
+              style={{
+                font: '11.5px var(--font-mono)',
+                color: 'var(--fg-2)',
+                wordBreak: 'break-all',
+                marginBottom: 8,
+              }}
+            >
+              {meta.subscriptionUrl}
+            </div>
+            <button className="btn sm" style={{ width: '100%' }} onClick={copyUrl}>
+              {copied === 'url' ? '已复制 ✓' : '复制订阅 URL'}
+            </button>
+          </>
+        )}
+      </aside>
+    </div>
   );
 }

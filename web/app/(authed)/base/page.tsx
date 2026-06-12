@@ -1,12 +1,12 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { Button } from '@/components/ui/Button';
-import { Kbd } from '@/components/ui/Kbd';
-import { Placeholder } from '@/components/ui/Reveal';
-import { YamlEditor, type YamlEditorHandle } from '@/components/ui/YamlEditor';
+import { useCallback, useEffect, useState } from 'react';
 import { ApiError, api } from '@/lib/client/api';
+import { PageTopbar } from '@/components/PageChrome';
+import { ScopePill } from '@/components/Topbar';
+import { CodeEditor } from '@/components/ui/CodeEditor';
 import { ProfileBindingBar } from './_components/ProfileBindingBar';
+import styles from './base.module.css';
 
 interface BaseData {
   content: string;
@@ -32,7 +32,7 @@ export default function BasePage() {
   const [validation, setValidation] = useState<ValidationResult | null>(null);
   const [busy, setBusy] = useState<'save' | 'validate' | null>(null);
   const [loaded, setLoaded] = useState(false);
-  const editorRef = useRef<YamlEditorHandle>(null);
+  const [inspOpen, setInspOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoadError(null);
@@ -124,109 +124,104 @@ export default function BasePage() {
     }
   }, [content, etag, load]);
 
+  // ⌘S / Ctrl+S 保存 —— 由 CodeEditor 内部的 CodeMirror keymap 触发(Prec.high
+  // + preventDefault),页面不再挂自己的 keydown 监听,保证只触发一次;
+  // busy / dirty 守卫保持与旧 textarea 监听一致。
+  const onEditorSave = useCallback(() => {
+    if (busy === null && dirty) onSave();
+  }, [busy, dirty, onSave]);
+
   return (
-    <div className="-mx-8 -mt-8 -mb-12 flex flex-col h-[calc(100vh-0px)]">
-      {/* Toolbar */}
-      <header className="shrink-0 flex items-center justify-between gap-4 px-6 py-3 border-b border-[var(--color-border)] bg-[var(--color-surface)]">
-        <div className="flex items-baseline gap-3 min-w-0">
-          <h1
-            className="font-serif text-[22px] font-medium leading-[1.2] tracking-[-0.015em] text-[var(--color-ink)]"
-            style={{ fontVariationSettings: '"opsz" 96, "SOFT" 30' }}
+    <div className={styles.workbench}>
+      {/* —— 页头注入共享 topbar(对齐 v2/base.html:标题 / pill / 未保存点 /
+          crumb / 校验 / 保存 ⌘S 上提,编辑器内只留 etag·行字节·检查) —— */}
+      <PageTopbar>
+        <h1>结构 base</h1>
+        <ScopePill />
+        {dirty && (
+          <span className="is-dirty" style={{ display: 'inline-flex' }}>
+            <span className="unsaved-dot" title="有未保存修改" />
+          </span>
+        )}
+        <span className="crumb">
+          base.yaml
+          {loaded ? ` · ${lineCount} 行` : ''}
+        </span>
+        <div className="grow" />
+        <button className="btn" onClick={onValidate} disabled={busy !== null}>
+          {busy === 'validate' ? '校验中…' : '校验'}
+        </button>
+        <button className="btn primary" onClick={onSave} disabled={busy !== null || !dirty}>
+          {busy === 'save' ? '保存中…' : '保存'}{' '}
+          <span
+            className="kbd"
+            style={{ background: 'rgba(0,0,0,.2)', color: 'var(--accent-on)' }}
           >
-            结构
-          </h1>
-          {etag && (
-            <span className="text-[11px] uppercase tracking-[0.08em] font-mono text-[var(--color-muted)]">
-              etag · {etag.slice(0, 8)}
-            </span>
-          )}
-          {dirty && (
-            <span className="inline-flex items-center gap-1.5 text-[12px] text-[var(--color-warn)]">
-              <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-warn)]" />
-              未保存
-            </span>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="text-[11px] text-[var(--color-muted)] font-mono tabular-nums hidden md:inline">
+            ⌘S
+          </span>
+        </button>
+      </PageTopbar>
+
+      <div className={`${styles.shell}${dirty ? ' is-dirty' : ''}`}>
+        {/* toolbar: etag · 行/字节 · 锚点检查(校验 / 保存已上提 topbar) */}
+        <div className={styles.bar}>
+          {etag && <span className={styles.meta}>etag · {etag.slice(0, 8)}</span>}
+          <span className={styles.meta}>
             {lineCount} 行 · {byteLen.toLocaleString()} 字节
           </span>
-          <span className="hidden lg:inline-flex items-center gap-1 text-[11px] text-[var(--color-muted)] ml-2">
-            <Kbd>⌘</Kbd>
-            <Kbd>S</Kbd>
-            <span>保存</span>
-          </span>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={onValidate}
-            disabled={busy !== null}
-            className="ml-2"
+          <div style={{ flex: 1 }} />
+          <button
+            className={`btn sm ${styles.inspBtn}`}
+            onClick={() => setInspOpen(true)}
           >
-            {busy === 'validate' ? '校验中…' : '校验'}
-          </Button>
-          <Button size="sm" onClick={onSave} disabled={busy !== null || !dirty}>
-            {busy === 'save' ? '保存中…' : '保存'}
-          </Button>
+            锚点 / 检查
+          </button>
         </div>
-      </header>
 
-      {/* Role hint */}
-      <div className="shrink-0 px-6 py-2 text-[12px] border-b border-[var(--color-border)] bg-[var(--color-primary-tint)] text-[var(--color-primary-hover)]">
-        这里只编辑骨架（dns / 策略组 / 嗅探 / tun / 订阅源 / 规则集声明 等）。<code className="font-mono">rules:</code> 块只放锚点标记 —— 规则统一到「规则」页管理；保存时出现规则行会被拒绝。
-      </div>
-
-      {/* Profile binding (Phase 1: single-source `source` on the default profile) */}
-      <ProfileBindingBar />
-
-      {/* Status strip */}
-      {(loadError || status) && (
-        <div
-          className={`shrink-0 px-6 py-2 text-[12px] border-b border-[var(--color-border)] ${
-            (loadError || status?.kind === 'error')
-              ? 'bg-[#F4D8D2]/40 text-[var(--color-danger)]'
-              : status?.kind === 'success'
-                ? 'bg-[#E6EEDD]/40 text-[var(--color-success)]'
-                : 'bg-[var(--color-primary-tint)] text-[var(--color-primary-hover)]'
-          }`}
-        >
-          {loadError ?? status?.message}
+        {/* role hint */}
+        <div className={styles.hint}>
+          这里只编辑骨架(dns / 策略组 / 嗅探 / tun / 订阅源 / 规则集声明 等)。
+          <code>rules:</code> 块只放锚点标记 —— 规则统一到「规则」页管理;保存时出现规则行会被拒绝。
         </div>
-      )}
 
-      {/* Editor + inspector */}
-      <div className="flex-1 min-h-0 grid grid-cols-1 xl:grid-cols-[1fr_280px]">
-        {loaded ? (
-          <>
-            <div className="pm-reveal min-h-0 border-r border-[var(--color-border)]">
-              <YamlEditor
-                ref={editorRef}
-                value={content}
-                onChange={setContent}
-                onSave={onSave}
-              />
-            </div>
-            <div className="pm-reveal min-h-0 hidden xl:flex">
-              <Inspector data={data} validation={validation} />
-            </div>
-          </>
-        ) : (
-          <>
-            <div className="border-r border-[var(--color-border)] p-6 space-y-3">
-              <Placeholder rows={1} className="max-w-[180px]" />
-              <Placeholder rows={5} />
-              <Placeholder rows={4} />
-              <Placeholder rows={3} />
-            </div>
-            <div className="hidden xl:block bg-[var(--color-bg)] p-5 space-y-4">
-              <Placeholder rows={1} className="max-w-[60px]" />
-              <Placeholder rows={3} />
-              <Placeholder rows={1} className="max-w-[60px]" />
-              <Placeholder rows={4} />
-            </div>
-          </>
+        {/* per-profile node source binding */}
+        <ProfileBindingBar />
+
+        {/* status strip */}
+        {(loadError || status) && (
+          <div
+            className={`${styles.status} ${
+              loadError || status?.kind === 'error'
+                ? styles.err
+                : status?.kind === 'success'
+                  ? styles.ok
+                  : styles.info
+            }`}
+          >
+            {loadError ?? status?.message}
+          </div>
         )}
+
+        {/* full-bleed editor —— CodeMirror 虚拟化(只渲染可视行),
+            几万行 base.yaml 不再生成几万个 gutter DOM 节点 */}
+        <div className={styles.editorFill}>
+          <CodeEditor
+            value={content}
+            onChange={setContent}
+            onSave={onEditorSave}
+            dirty={dirty}
+            label={loaded ? 'base.yaml' : '加载中 …'}
+            minHeight={0}
+          />
+        </div>
       </div>
+
+      <Inspector
+        data={data}
+        validation={validation}
+        open={inspOpen}
+        onClose={() => setInspOpen(false)}
+      />
     </div>
   );
 }
@@ -234,114 +229,91 @@ export default function BasePage() {
 function Inspector({
   data,
   validation,
+  open,
+  onClose,
 }: {
   data: BaseData | null;
   validation: ValidationResult | null;
+  open: boolean;
+  onClose: () => void;
 }) {
   const anchors = validation?.anchors.length ? validation.anchors : data?.anchors ?? [];
   const policies = validation?.policies.length ? validation.policies : data?.policies ?? [];
   const orphans = validation?.orphans ?? [];
 
   return (
-    <aside className="flex flex-col flex-1 overflow-y-auto bg-[var(--color-bg)] text-[13px]">
-      <section className="px-5 py-4 border-b border-[var(--color-border)]">
-        <header className="flex items-baseline justify-between gap-2 mb-2">
-          <h2 className="text-[11px] uppercase tracking-[0.08em] font-semibold text-[var(--color-muted)]">
-            锚点
-          </h2>
-          <span className="text-[11px] tabular-nums text-[var(--color-muted)] font-mono">
-            {anchors.length}
-          </span>
-        </header>
-        {anchors.length === 0 ? (
-          <p className="text-[12px] text-[var(--color-muted)] italic">未发现锚点</p>
-        ) : (
-          <ul className="space-y-1">
-            {anchors.map((a) => (
-              <li
-                key={a}
-                className="font-mono text-[12px] text-[var(--color-fg)] truncate"
-                title={a}
-              >
-                <span className="text-[var(--color-primary)] mr-1">∎</span>
-                {a}
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+    <aside className={`${styles.inspector}${open ? ` ${styles.open}` : ''}`}>
+      <button className={`btn ghost sm ${styles.inspClose}`} onClick={onClose}>
+        关闭
+      </button>
 
-      <section className="px-5 py-4 border-b border-[var(--color-border)]">
-        <header className="flex items-baseline justify-between gap-2 mb-2">
-          <h2 className="text-[11px] uppercase tracking-[0.08em] font-semibold text-[var(--color-muted)]">
-            策略
-          </h2>
-          <span className="text-[11px] tabular-nums text-[var(--color-muted)] font-mono">
-            {policies.length}
-          </span>
-        </header>
-        {policies.length === 0 ? (
-          <p className="text-[12px] text-[var(--color-muted)] italic">未发现策略</p>
-        ) : (
-          <div className="flex flex-wrap gap-1">
-            {policies.slice(0, 30).map((p) => (
-              <span
-                key={p}
-                className="inline-flex items-center px-1.5 h-5 rounded bg-[var(--color-bg-strong)] text-[var(--color-fg-soft)] font-mono text-[11px]"
-              >
-                {p}
-              </span>
-            ))}
-            {policies.length > 30 && (
-              <span className="text-[11px] text-[var(--color-muted)]">+{policies.length - 30}</span>
-            )}
+      <div className={`${styles.inspH} ${styles.first}`}>
+        <span>锚点</span>
+        <span className={styles.n}>{anchors.length}</span>
+      </div>
+      {anchors.length === 0 ? (
+        <div className={styles.empty}>未发现锚点</div>
+      ) : (
+        anchors.map((a) => (
+          <div className={styles.anchorLi} key={a} title={a}>
+            <span className={styles.nm}>{a}</span>
           </div>
-        )}
-      </section>
-
-      {orphans.length > 0 && (
-        <section className="px-5 py-4 border-b border-[var(--color-border)] bg-[#F4D8D2]/20">
-          <header className="flex items-baseline justify-between gap-2 mb-2">
-            <h2 className="text-[11px] uppercase tracking-[0.08em] font-semibold text-[var(--color-danger)]">
-              孤立规则
-            </h2>
-            <span className="text-[11px] tabular-nums text-[var(--color-danger)] font-mono">
-              {orphans.length}
-            </span>
-          </header>
-          <ul className="space-y-1 text-[11px] font-mono">
-            {orphans.map((o, i) => (
-              <li key={i} className="text-[var(--color-danger)] break-all">
-                <code>{o.rule_id}</code>: {o.reason}
-              </li>
-            ))}
-          </ul>
-        </section>
+        ))
       )}
 
-      <section className="px-5 py-4 mt-auto">
-        <h2 className="text-[11px] uppercase tracking-[0.08em] font-semibold text-[var(--color-muted)] mb-2">
-          编辑器
-        </h2>
-        <dl className="space-y-1.5 text-[12px]">
-          <div className="flex justify-between gap-2">
-            <dt className="text-[var(--color-muted)]">Tab</dt>
-            <dd className="font-mono text-[var(--color-fg-soft)]">2 空格</dd>
+      <div className={styles.inspH}>
+        <span>策略组</span>
+        <span className={styles.n}>{policies.length}</span>
+      </div>
+      {policies.length === 0 ? (
+        <div className={styles.empty}>未发现策略</div>
+      ) : (
+        <div className={styles.polWrap}>
+          {policies.slice(0, 30).map((p) => (
+            <span className="tag" key={p}>
+              {p}
+            </span>
+          ))}
+          {policies.length > 30 && (
+            <span className={styles.empty}>+{policies.length - 30}</span>
+          )}
+        </div>
+      )}
+
+      {orphans.length > 0 && (
+        <>
+          <div className={styles.inspH}>
+            <span style={{ color: 'var(--danger)' }}>孤立规则</span>
+            <span className={styles.n} style={{ color: 'var(--danger)' }}>
+              {orphans.length}
+            </span>
           </div>
-          <div className="flex justify-between gap-2">
-            <dt className="text-[var(--color-muted)]">缩进</dt>
-            <dd className="font-mono text-[var(--color-fg-soft)]">自动</dd>
-          </div>
-          <div className="flex justify-between gap-2">
-            <dt className="text-[var(--color-muted)]">搜索</dt>
-            <dd>
-              <Kbd>⌘</Kbd>
-              <Kbd className="ml-0.5">F</Kbd>
-            </dd>
-          </div>
-        </dl>
-      </section>
+          {orphans.map((o, i) => (
+            <div className={styles.orphan} key={i}>
+              <code>{o.rule_id}</code>: {o.reason}
+            </div>
+          ))}
+        </>
+      )}
+
+      <div className={styles.inspH}>编辑器</div>
+      <div className={styles.kvRow}>
+        <span>Tab</span>
+        <span className={styles.v}>2 空格</span>
+      </div>
+      <div className={styles.kvRow}>
+        <span>缩进</span>
+        <span className={styles.v}>自动</span>
+      </div>
+      <div className={styles.kvRow}>
+        <span>搜索</span>
+        <span className={styles.v}>⌘F</span>
+      </div>
+
+      <div className={styles.inspH}>提示</div>
+      <div className={styles.tip}>
+        以 <code>@anchor</code> 注释声明注入位。保存使用 If-Match etag 防止并发覆盖。
+      </div>
     </aside>
   );
 }
-

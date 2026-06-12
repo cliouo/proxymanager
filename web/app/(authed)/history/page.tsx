@@ -1,11 +1,10 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Badge } from '@/components/ui/Badge';
-import { Button } from '@/components/ui/Button';
-import { Placeholder, Reveal } from '@/components/ui/Reveal';
-import { TimelineEvent, TimelineGroup } from '@/components/ui/Timeline';
 import { ApiError, api } from '@/lib/client/api';
+import { PageTopbar } from '@/components/PageChrome';
+import { ScopePill } from '@/components/Topbar';
+import styles from './history.module.css';
 
 interface RuleSnapshot {
   id: string;
@@ -24,8 +23,6 @@ type AuditTarget =
 interface AuditEvent {
   id: string;
   ts: number;
-  // Namespaced `<scenario>.<action>` (e.g. config-section.set-section), plus
-  // legacy `rule.create|update|delete`. Shape of before/after depends on op.
   op: string;
   actor: string;
   ruleId?: string;
@@ -38,7 +35,15 @@ interface AuditEvent {
 
 const PAGE_SIZE = 100;
 
-type Glyph = 'create' | 'update' | 'delete' | 'undo';
+type Glyph = 'create' | 'update' | 'delete' | 'undo' | 'ai';
+
+const GLYPH_SYM: Record<Glyph, string> = {
+  create: '●',
+  update: '◐',
+  delete: '●',
+  undo: '○',
+  ai: '✦',
+};
 
 /** The action is the op's last dotted segment; the scenario prefix is ignored. */
 function actionOf(op: string): string {
@@ -46,9 +51,6 @@ function actionOf(op: string): string {
   return i === -1 ? op : op.slice(i + 1);
 }
 
-// Maps every action verb the scenarios emit to a label + glyph. Unknown verbs
-// fall back to the raw verb with a neutral 'update' glyph rather than being
-// mislabelled "删除".
 const VERBS: Record<string, { label: string; glyph: Glyph }> = {
   create: { label: '新增', glyph: 'create' },
   'batch-create': { label: '批量新增', glyph: 'create' },
@@ -65,12 +67,17 @@ const VERBS: Record<string, { label: string; glyph: Glyph }> = {
   'clear-chain': { label: '清链', glyph: 'delete' },
 };
 
-function describeOp(op: string): { label: string; glyph: Glyph } {
-  const v = actionOf(op);
-  return VERBS[v] ?? { label: v, glyph: 'update' };
+/** AI-authored events get the purple ✦ glyph regardless of verb. */
+function isAiActor(actor: string): boolean {
+  return /ai|assistant|助手/i.test(actor);
 }
 
-/** Compact, one-line hint for a base-section value — never dumps a long block. */
+function describeOp(op: string, actor: string): { label: string; glyph: Glyph } {
+  const v = actionOf(op);
+  const base = VERBS[v] ?? { label: v, glyph: 'update' as Glyph };
+  return isAiActor(actor) ? { ...base, glyph: 'ai' } : base;
+}
+
 function valueHint(v: unknown): string {
   if (v === null || v === undefined) return '';
   if (typeof v === 'string') return v.length > 48 ? `${v.slice(0, 48)}…` : v;
@@ -83,7 +90,7 @@ function valueHint(v: unknown): string {
   return String(v);
 }
 
-/** Renders the event detail by target kind: rule chips, base field+hint, or proxy name. */
+/** Renders the event detail by target kind, in v2 chips/code idiom. */
 function EventBody({ e, undone }: { e: AuditEvent; undone: boolean }) {
   const kind = e.target?.kind ?? (e.ruleId ? 'rule' : undefined);
 
@@ -98,19 +105,26 @@ function EventBody({ e, undone }: { e: AuditEvent; undone: boolean }) {
         : null;
     return (
       <>
-        <Badge tone="neutral">{snap.anchor}</Badge>
-        <code className="font-mono text-[12px] text-[var(--color-muted)]">{snap.type}</code>
+        <span className="tag">{snap.anchor}</span>
+        <code className="mono" style={{ fontSize: 12, color: 'var(--muted)' }}>
+          {snap.type}
+        </code>
         <code
-          className={`font-mono text-[12px] ${
-            undone ? 'line-through text-[var(--color-muted)]' : 'text-[var(--color-fg)]'
-          }`}
+          className="mono"
+          style={{
+            fontSize: 12,
+            color: undone ? 'var(--faint)' : 'var(--fg)',
+            textDecoration: undone ? 'line-through' : undefined,
+          }}
         >
           {snap.value || '—'}
         </code>
-        <span className="text-[var(--color-muted)]">→</span>
-        <Badge tone={undone ? 'neutral' : 'accent'}>{snap.policy}</Badge>
+        <span style={{ color: 'var(--faint)' }}>→</span>
+        <span className={`pill plain ${undone ? 'idle' : 'acc'}`} style={{ height: 18 }}>
+          {snap.policy}
+        </span>
         {policyChange && (
-          <span className="ml-1 font-mono text-[11px] text-[var(--color-muted)]">
+          <span className="mono" style={{ fontSize: 11, color: 'var(--faint)' }}>
             ({policyChange})
           </span>
         )}
@@ -123,18 +137,22 @@ function EventBody({ e, undone }: { e: AuditEvent; undone: boolean }) {
     const hint = valueHint(e.after ?? e.before);
     return (
       <>
-        {field && <code className="font-mono text-[12px] text-[var(--color-fg)]">{field}</code>}
-        {hint && (
-          <span className="max-w-[280px] truncate text-[12px] text-[var(--color-muted)]">
-            {hint}
-          </span>
+        {field && (
+          <code className="mono" style={{ fontSize: 12, color: 'var(--fg)' }}>
+            {field}
+          </code>
         )}
+        {hint && <span style={{ fontSize: 12, color: 'var(--muted)' }}>{hint}</span>}
       </>
     );
   }
 
   if ((kind === 'proxy' || kind === 'proxy-group') && e.target && 'name' in e.target) {
-    return <code className="font-mono text-[12px] text-[var(--color-fg)]">{e.target.name}</code>;
+    return (
+      <code className="mono" style={{ fontSize: 12, color: 'var(--fg)' }}>
+        {e.target.name}
+      </code>
+    );
   }
 
   return null;
@@ -149,17 +167,40 @@ function dayLabel(ts: number): string {
   const d = new Date(ts);
   const now = new Date();
   const same = (a: Date, b: Date) =>
-    a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
-  if (same(d, now)) return '今天';
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate();
+  const md = d.toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' });
+  if (same(d, now)) return `今天 · ${md}`;
   const yesterday = new Date(now);
   yesterday.setDate(now.getDate() - 1);
-  if (same(d, yesterday)) return '昨天';
-  return d.toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' });
+  if (same(d, yesterday)) return `昨天 · ${md}`;
+  return md;
 }
 
 function timeLabel(ts: number): string {
   const d = new Date(ts);
   return d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
+/** 搜索匹配文本:op / actor / 目标名 / 字段 / 规则快照的值与策略。 */
+function eventHaystack(e: AuditEvent): string {
+  const parts: string[] = [e.op, e.actor];
+  const t = e.target;
+  if (t) {
+    if ('name' in t) parts.push(t.name);
+    if (t.kind === 'base' && t.field) parts.push(t.field);
+  }
+  for (const v of [e.before, e.after]) {
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      const r = v as Partial<RuleSnapshot>;
+      if (typeof r.anchor === 'string') parts.push(r.anchor);
+      if (typeof r.type === 'string') parts.push(r.type);
+      if (typeof r.value === 'string') parts.push(r.value);
+      if (typeof r.policy === 'string') parts.push(r.policy);
+    }
+  }
+  return parts.join(' ').toLowerCase();
 }
 
 export default function HistoryPage() {
@@ -169,6 +210,7 @@ export default function HistoryPage() {
   const [loaded, setLoaded] = useState(false);
   const [hasMore, setHasMore] = useState(false);
   const [undoing, setUndoing] = useState<Set<string>>(new Set());
+  const [query, setQuery] = useState('');
 
   const load = useCallback(async (beforeTs?: number) => {
     setLoading(true);
@@ -219,115 +261,135 @@ export default function HistoryPage() {
     [events],
   );
 
+  const q = query.trim().toLowerCase();
+  const filtered = useMemo(
+    () => (q ? events.filter((e) => eventHaystack(e).includes(q)) : events),
+    [events, q],
+  );
+
   const groups = useMemo(() => {
     const map = new Map<string, { label: string; events: AuditEvent[] }>();
-    for (const e of events) {
+    for (const e of filtered) {
       const k = dayKey(e.ts);
       if (!map.has(k)) map.set(k, { label: dayLabel(e.ts), events: [] });
       map.get(k)!.events.push(e);
     }
     return [...map.entries()].map(([key, val]) => ({ key, ...val }));
-  }, [events]);
+  }, [filtered]);
 
   return (
-    <div className="space-y-6">
-      <header className="flex items-baseline justify-between gap-4">
-        <div>
-          <h1
-            className="font-serif text-[28px] font-medium leading-[1.15] tracking-[-0.015em] text-[var(--color-ink)]"
-            style={{ fontVariationSettings: '"opsz" 96, "SOFT" 30' }}
-          >
-            操作历史
-          </h1>
-          <p className="mt-1.5 text-[13px] text-[var(--color-muted)]">
-            每次规则改动都会落库。点撤销可回滚，撤销本身也会被记录。
-          </p>
+    <>
+      <PageTopbar contentMaxWidth={860}>
+        <h1>操作历史</h1>
+        <ScopePill />
+        <span className="crumb">每次写操作都有快照 · 可撤销</span>
+        <div className="grow" />
+        <div className={`search ${styles.search}`}>
+          <input
+            className="input"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="搜索操作 / 对象…"
+          />
         </div>
-        <Button variant="secondary" onClick={() => load()} disabled={loading}>
+        <button className="btn sm" onClick={() => load()} disabled={loading}>
           {loading && events.length === 0 ? '加载中…' : '刷新'}
-        </Button>
-      </header>
+        </button>
+      </PageTopbar>
 
       {error && (
-        <div className="rounded-xl border border-[var(--color-danger)]/40 bg-[#F4D8D2]/30 px-4 py-3 text-[13px] text-[var(--color-danger)]">
+        <div
+          className="panel"
+          style={{
+            borderColor: 'color-mix(in srgb, var(--danger) 40%, transparent)',
+            background: 'var(--danger-dim)',
+            color: 'var(--danger)',
+            padding: '11px 14px',
+            fontSize: 13,
+            marginBottom: 16,
+          }}
+        >
           {error}
         </div>
       )}
 
       {!loaded ? (
-        <div className="space-y-6 pl-4">
-          <Placeholder rows={2} className="max-w-[160px]" />
-          <Placeholder rows={4} />
-          <Placeholder rows={3} />
+        <div
+          className="pm-pulse"
+          style={{ color: 'var(--faint)', fontSize: 13, padding: '8px 12px' }}
+        >
+          正在读取操作历史 …
         </div>
       ) : events.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-[var(--color-border-strong)] bg-[var(--color-bg-sunk)]/40 px-8 py-16 text-center">
-          <p
-            className="font-serif text-[20px] font-medium text-[var(--color-fg-soft)] leading-[1.25] tracking-[-0.01em]"
-            style={{ fontVariationSettings: '"opsz" 48, "SOFT" 50' }}
-          >
-            空白账本
-          </p>
-          <p className="mt-1.5 text-[13px] text-[var(--color-muted)]">
-            对规则做任何改动后会在这里看到。
-          </p>
+        <div
+          className="panel"
+          style={{ textAlign: 'center', padding: '56px 24px', borderStyle: 'dashed' }}
+        >
+          <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--fg-2)' }}>空白账本</div>
+          <div style={{ marginTop: 6, fontSize: 13, color: 'var(--muted)' }}>
+            对配置做任何写操作后会在这里看到。
+          </div>
         </div>
+      ) : filtered.length === 0 ? (
+        <p style={{ fontSize: 13, color: 'var(--muted)', padding: '8px 0' }}>无匹配。</p>
       ) : (
-        <Reveal when={loaded} className="space-y-8">
-          {groups.map((g) => (
-            <TimelineGroup key={g.key} label={g.label}>
-              {g.events.map((e) => {
-                const undone = !!e.undone_by;
-                const isUndo = !!e.undoes;
-                const { label, glyph } = describeOp(e.op);
-                return (
-                  <TimelineEvent
-                    key={e.id}
-                    glyph={isUndo ? 'undo' : glyph}
-                    time={timeLabel(e.ts)}
-                    actor={e.actor}
-                    faded={undone}
-                    action={
-                      !undone && !isUndo ? (
-                        <button
-                          type="button"
-                          onClick={() => onUndo(e)}
-                          disabled={undoing.has(e.id)}
-                          className="text-[12px] text-[var(--color-muted)] hover:text-[var(--color-primary)] transition-colors px-1.5 py-0.5 rounded active:scale-[0.96] disabled:opacity-30"
-                        >
-                          {undoing.has(e.id) ? '…' : '撤销'}
-                        </button>
-                      ) : undefined
-                    }
-                  >
-                    <span className="inline-flex items-center gap-1.5 flex-wrap">
-                      <span className="text-[var(--color-muted)] font-medium">{label}</span>
+        groups.map((g) => (
+          <div key={g.key}>
+            <div className="tl-day">{g.label}</div>
+            {g.events.map((e) => {
+              const undone = !!e.undone_by;
+              const isUndo = !!e.undoes;
+              const { label, glyph } = describeOp(e.op, e.actor);
+              const finalGlyph: Glyph = isUndo ? 'undo' : glyph;
+              return (
+                <div className="tl-item" key={e.id}>
+                  <span className="t num">{timeLabel(e.ts)}</span>
+                  <span className={`glyph ${finalGlyph}`}>{GLYPH_SYM[finalGlyph]}</span>
+                  <div className="body">
+                    <div
+                      className="op"
+                      style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}
+                    >
+                      <span style={{ color: 'var(--fg-2)', fontWeight: 500 }}>{label}</span>
                       <EventBody e={e} undone={undone} />
+                    </div>
+                    <div className="meta">
+                      <span>{e.op}</span>
+                      <span>{e.actor}</span>
                       {undone && (
-                        <span className="ml-1 text-[11px] text-[var(--color-plum)] italic">
-                          已撤销
+                        <span className="pill idle plain" style={{ height: 16 }}>
+                          已被撤销
                         </span>
                       )}
-                    </span>
-                  </TimelineEvent>
-                );
-              })}
-            </TimelineGroup>
-          ))}
-        </Reveal>
+                    </div>
+                  </div>
+                  {!undone && !isUndo && (
+                    <button
+                      className="btn sm undo-btn"
+                      onClick={() => onUndo(e)}
+                      disabled={undoing.has(e.id)}
+                    >
+                      {undoing.has(e.id) ? '…' : '撤销'}
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        ))
       )}
 
       {hasMore && (
-        <div className="flex justify-center pt-2">
-          <Button
-            variant="secondary"
+        <div style={{ textAlign: 'center', marginTop: 24 }}>
+          <button
+            className="btn"
             onClick={() => oldestTs !== undefined && load(oldestTs)}
             disabled={loading}
           >
-            {loading ? '加载中…' : '加载更早 ↓'}
-          </Button>
+            {loading ? '加载中…' : '加载更早'}
+          </button>
         </div>
       )}
-    </div>
+    </>
   );
 }

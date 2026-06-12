@@ -1,0 +1,156 @@
+.workbench {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr 290px;
+  min-height: 0;
+}
+.workbench > * {
+  min-width: 0;
+}
+
+.view {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--border);
+}
+.bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.note {
+  font: 11px var(--font-mono);
+  color: var(--faint);
+}
+
+/* applied alongside global .codebox to make it fill + edge-to-edge */
+.code {
+  flex: 1;
+  border: 0;
+  border-radius: 0;
+  overflow: auto;
+  /* CodeMirror 只读视图绝对定位铺满：高度不参与布局计算，
+     几万行也不会把 workbench / 整页撑高，滚动收在 .cm-scroller 内 */
+  position: relative;
+}
+.cmFill {
+  position: absolute;
+  inset: 0;
+}
+.code pre {
+  padding: 14px 16px;
+  margin: 0;
+}
+
+.summary {
+  padding: 20px;
+  overflow: auto;
+}
+
+.inspector {
+  overflow-y: auto;
+  padding: 16px;
+  background: var(--surface);
+}
+.inspH {
+  font: 10.5px var(--font-mono);
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--faint);
+  margin: 18px 0 8px;
+}
+.inspH.first {
+  margin-top: 0;
+}
+.inj {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font: 12px var(--font-mono);
+  color: var(--fg-2);
+}
+.inj:hover {
+  background: var(--surface-2);
+}
+.injN {
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+.sumRow {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  color: var(--fg-2);
+}
+.sumRow:last-child {
+  border: 0;
+}
+.sumRow .num {
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+
+.inspBtn,
+.inspClose {
+  display: none;
+}
+
+@media (max-width: 1200px) {
+  .workbench {
+    grid-template-columns: 1fr 260px;
+  }
+}
+
+@media (max-width: 960px) {
+  .workbench {
+    grid-template-columns: 1fr;
+  }
+  .view {
+    border-right: 0;
+  }
+  .inspector {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 115;
+    width: min(320px, 86vw);
+    border-left: 1px solid var(--border-2);
+    translate: 100% 0;
+    transition: translate 0.22s var(--ease);
+    box-shadow: -24px 0 64px rgba(0, 0, 0, 0.4);
+    padding-bottom: calc(16px + env(safe-area-inset-bottom, 0));
+  }
+  .inspector.open {
+    translate: 0 0;
+  }
+  .inspBtn {
+    display: inline-flex;
+  }
+  .inspClose {
+    display: inline-flex;
+    align-self: flex-end;
+    margin-bottom: 8px;
+  }
+}
+
+@media (max-width: 600px) {
+  .bar {
+    flex-wrap: wrap;
+    row-gap: 6px;
+    padding: 9px 12px;
+  }
+  .summary {
+    padding: 14px;
+  }
+}

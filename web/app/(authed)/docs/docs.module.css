@@ -1,0 +1,367 @@
+/* ============================================================
+   API 文档 · 应用内 OpenAPI 参考(Mintlify 式三栏)
+   左:端点导航(sticky) / 中:说明+参数+响应 / 右:cURL 示例
+   全部走 v2 token,深浅主题自动翻转。
+   ============================================================ */
+
+.loading {
+  padding: 40px 4px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: 218px minmax(0, 1fr);
+  gap: 26px;
+  align-items: start;
+}
+
+/* ---- 左栏:端点导航 ---- */
+.rail {
+  position: sticky;
+  top: 70px;
+  max-height: calc(100vh - 90px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-right: 6px;
+  scrollbar-width: thin;
+}
+.railGroup {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.railHead {
+  font: 10.5px var(--font-mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--faint);
+  padding: 0 9px 5px;
+}
+.railItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 9px;
+  border-radius: var(--r-sm);
+  font-size: 12.5px;
+  color: var(--muted);
+  text-decoration: none;
+  min-width: 0;
+  transition:
+    background 0.12s var(--ease),
+    color 0.12s var(--ease);
+}
+.railItem:hover {
+  background: var(--surface-2);
+  color: var(--fg);
+}
+.railItem.on {
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+.railLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- method 徽标 ---- */
+.m {
+  flex: none;
+  width: 34px;
+  text-align: center;
+  font: 600 9.5px var(--font-mono);
+  letter-spacing: 0.04em;
+  padding: 2px 0;
+  border-radius: 4px;
+}
+.mBig {
+  width: auto;
+  font-size: 11px;
+  padding: 3px 9px;
+  border-radius: 5px;
+}
+.m_get {
+  color: var(--accent);
+  background: var(--accent-dim);
+}
+.m_post {
+  color: var(--ok);
+  background: var(--ok-dim);
+}
+.m_put,
+.m_patch {
+  color: var(--warn);
+  background: var(--warn-dim);
+}
+.m_delete {
+  color: var(--danger);
+  background: var(--danger-dim);
+}
+
+/* ---- 主栏 ---- */
+.main {
+  min-width: 0;
+}
+.tagHead {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 26px 0 10px;
+  padding: 0 4px;
+  scroll-margin-top: 66px;
+}
+.tagHead b {
+  font: 11px var(--font-mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.tagHead span {
+  font: 11px var(--font-mono);
+  color: var(--faint);
+  opacity: 0.7;
+}
+.tagHead::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+  align-self: center;
+}
+
+.opCard {
+  margin-bottom: 14px;
+  scroll-margin-top: 66px;
+}
+.anchorLink {
+  font: 13px var(--font-mono);
+  color: var(--faint);
+  text-decoration: none;
+}
+.anchorLink:hover {
+  color: var(--accent);
+}
+
+/* 操作卡内部:说明 + 代码示例 两栏 */
+.opGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 380px);
+  gap: 20px;
+  align-items: start;
+}
+.opDoc {
+  min-width: 0;
+}
+.opCode {
+  min-width: 0;
+  position: sticky;
+  top: 66px;
+}
+
+.endpoint {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+.path {
+  font: 13px var(--font-mono);
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
+.opDesc {
+  margin: 0 0 6px;
+  font-size: 12.5px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.secHead {
+  font: 10.5px var(--font-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--faint);
+  margin: 16px 0 6px;
+}
+
+/* ---- 属性行 ---- */
+.prop {
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border);
+}
+.prop:last-child {
+  border-bottom: 0;
+}
+.propHead {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+.propName {
+  font: 550 12.5px var(--font-mono);
+  color: var(--fg);
+}
+.propType {
+  font: 11.5px var(--font-mono);
+  color: var(--faint);
+}
+.req {
+  font: 10.5px var(--font-mono);
+  color: var(--warn);
+}
+.deflt {
+  font: 10.5px var(--font-mono);
+  color: var(--faint);
+}
+.enums {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 5px;
+}
+.enums code {
+  font: 11px var(--font-mono);
+  color: var(--fg-2);
+  background: var(--surface-3);
+  padding: 1px 7px;
+  border-radius: 4px;
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+.propDesc {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+/* ---- 响应行 ---- */
+.resp {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  min-width: 0;
+}
+.respDesc {
+  font-size: 12.5px;
+  color: var(--muted);
+  min-width: 0;
+}
+.respType {
+  margin-left: auto;
+  font: 11px var(--font-mono);
+  color: var(--faint);
+  white-space: nowrap;
+}
+
+/* ---- 代码示例卡 ---- */
+.codeShell {
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  overflow: hidden;
+}
+.codeBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 12px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+  font: 11px var(--font-mono);
+  color: var(--faint);
+}
+.copyBtn {
+  background: none;
+  font: 11px var(--font-mono);
+  color: var(--muted);
+  cursor: pointer;
+}
+.copyBtn:hover {
+  color: var(--accent);
+}
+.codeShell :global(.codebox) pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ---- 介绍面板 ---- */
+.introDesc {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.65;
+}
+.kvRow {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 6px 0;
+  font-size: 12.5px;
+}
+.kvRow .k {
+  flex: none;
+  width: 64px;
+  font: 11px var(--font-mono);
+  color: var(--faint);
+}
+.kvRow .v {
+  color: var(--fg-2);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.kvRow .v code,
+.kvRow code {
+  font: 12px var(--font-mono);
+  color: var(--fg);
+  background: var(--surface-3);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+/* ---- 响应式 ---- */
+@media (max-width: 1100px) {
+  .opGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .opCode {
+    position: static;
+  }
+}
+@media (max-width: 960px) {
+  .grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .rail {
+    position: static;
+    max-height: none;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 0 0 6px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 14px;
+  }
+  .railGroup {
+    margin-top: 0;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .railHead {
+    display: none;
+  }
+  .railItem {
+    background: var(--surface-2);
+    box-shadow: inset 0 0 0 1px var(--border);
+  }
+}

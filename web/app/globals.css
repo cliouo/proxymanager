@@ -1,205 +1,234 @@
 @import 'tailwindcss';
+@import './styles/v2-components.css';
 
-/**
- * Heritage Atelier — 温润书卷气工作台
- * 暖米白纸张感打底，陶土点缀（占总面积 < 5%），dark micro-surface
- * 仅承载技术内容（代码 / URL / YAML 预览）。
- *
- * 设计哲学：边框 = 色阶提升一档的暖灰，不是墨线分隔。
- *           深度靠 tonal layers，不靠阴影堆叠。
- */
-@theme {
-  /* —— 暖白表面四阶 —— */
-  --color-bg: #faf9f5; /* 主背景：纸张暖米白 */
-  --color-bg-sunk: #f2f0e8; /* 下沉：sidebar、空状态、表格 hover */
-  --color-bg-strong: #e8e0d2; /* 强调：选中 band、当前 tab、置顶 */
-  --color-surface: #ffffff; /* 卡面纯白 */
-  --color-surface-hover: #fbfaf6; /* 卡面 hover */
+/* ============================================================
+   ProxyManager · Redesign v2 — "Signal Console"
+   深 / 浅双主题语义 token。默认浅色「Daylight Console」；
+   深色由 :root[data-theme="dark"] 覆盖（next-themes 写入 data-theme）。
+   组件类直接吃 var(--surface) 等翻转变量；Tailwind 工具类经下方
+   @theme inline 映射到同一组变量，bg-surface / text-fg-2 / border-border 随主题翻转。
+   ============================================================ */
 
-  /* —— Dark micro-surface（仅小处使用） —— */
+:root {
+  color-scheme: light;
+  --bg: #eef1f4;
+  --surface: #ffffff;
+  --surface-2: #f3f5f8;
+  --surface-3: #e7ebf0;
+  --fg: #161a1f;
+  --fg-2: #3b424c;
+  --muted: #646d7a;
+  --faint: #98a1ad;
+  --border: #e3e8ed;
+  --border-2: #d1d8e0;
+
+  --accent: #0c84c4;
+  --accent-dim: rgba(12, 132, 196, 0.12);
+  --accent-on: #ffffff;
+
+  --ok: #1a9d54;
+  --ok-dim: rgba(26, 157, 84, 0.13);
+  --warn: #b0791b;
+  --warn-dim: rgba(176, 121, 27, 0.14);
+  --danger: #d6453c;
+  --danger-dim: rgba(214, 69, 60, 0.12);
+  --ai: #7c5fd6;
+  --ai-dim: rgba(124, 95, 214, 0.12);
+
+  --code-bg: #f7f9fb;
+  --code-fg: #2b313a;
+  --code-gut: #b4bdc8;
+  --cm-key: #0a6aa8;
+  --cm-str: #1a7f3b;
+  --cm-num: #9c5410;
+  --cm-com: #99a2af;
+  --cm-punc: #66707c;
+  --scrim: rgba(22, 30, 40, 0.3);
+
+  /* ---------- 结构性 token（与主题无关） ---------- */
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', var(--font-noto-sc),
+    'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+  --font-mono:
+    var(--font-jetbrains), ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas,
+    'PingFang SC', monospace;
+
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --side-w: 228px;
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+
+  /* ---------- Legacy「Heritage Atelier」别名 → v2 等价值 ----------
+     过渡期让仍引用旧 token 名的内容页自动套上 v2 配色（随主题翻转）；
+     页面逐页迁到 v2 类名 / 工具类后，此块整体删除。 */
+  --color-bg-sunk: var(--surface-2);
+  --color-bg-strong: var(--surface-3);
+  --color-bg-tint: var(--surface-2);
+  --color-surface-hover: var(--surface-2);
+  --color-ink: var(--fg);
+  --color-fg-strong: var(--fg);
+  --color-fg-soft: var(--fg-2);
+  --color-muted-strong: var(--faint);
+  --color-on-primary: var(--accent-on);
+  --color-on-dark: #faf9f5;
+  --color-on-dark-soft: var(--faint);
+  --color-primary: var(--accent);
+  --color-primary-hover: color-mix(in srgb, var(--accent) 88%, black);
+  --color-primary-soft: var(--accent-dim);
+  --color-primary-tint: var(--accent-dim);
+  --color-accent-strong: var(--accent);
+  --color-accent-deep: var(--accent);
+  --color-plum: var(--ai);
+  --color-success: var(--ok);
+  --color-border-strong: var(--border-2);
+  --color-border-active: var(--accent);
   --color-surface-dark: #1f1e1b;
   --color-surface-dark-soft: #2a2823;
+  --color-dot-on: var(--ok);
+  --color-dot-warn: var(--warn);
+  --color-dot-off: var(--faint);
+  --color-dot-error: var(--danger);
+}
 
-  /* —— 边框：色阶提升一档的暖灰 —— */
-  --color-border: #e8e5dc;
-  --color-border-strong: #d4cfc2;
-  --color-border-active: #c8553d;
+/* ---------- dark theme — 深石墨「Signal Console」 ---------- */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #0c0e11;
+  --surface: #12151a;
+  --surface-2: #171b21;
+  --surface-3: #1d222a;
+  --fg: #e7eaee;
+  --fg-2: #bac1cb;
+  --muted: #8b93a0;
+  --faint: #5b626e;
+  --border: #21262e;
+  --border-2: #2c333d;
 
-  /* —— 前景六档 —— */
-  --color-ink: #141413; /* H1 与品牌字 */
-  --color-fg: #1f1e1b; /* 标题与关键正文 */
-  --color-fg-soft: #423f39; /* 常规正文 */
-  --color-muted: #6b6862; /* 辅助说明、时间戳、metadata */
-  --color-muted-strong: #8b867d; /* 占位、禁用文字 */
-  --color-on-primary: #ffffff;
-  --color-on-dark: #faf9f5;
-  --color-on-dark-soft: #a09d96;
+  --accent: #56d4ff;
+  --accent-dim: rgba(86, 212, 255, 0.12);
+  --accent-on: #07181f;
 
-  /* —— 互动主轴：陶土红 —— */
-  --color-primary: #c8553d;
-  --color-primary-hover: #b14a33;
-  --color-primary-soft: #f4dcd3;
-  --color-primary-tint: #fbf1ec;
+  --ok: #46d188;
+  --ok-dim: rgba(70, 209, 136, 0.13);
+  --warn: #e5b13c;
+  --warn-dim: rgba(229, 177, 60, 0.13);
+  --danger: #f0655a;
+  --danger-dim: rgba(240, 101, 90, 0.13);
+  --ai: #b095f5;
+  --ai-dim: rgba(176, 149, 245, 0.13);
 
-  /* —— 语义副色（仅表达状态） —— */
-  --color-plum: #6b4b5c;
-  --color-success: #6f8b5c;
-  --color-warn: #b98947;
-  --color-danger: #a8412e;
+  --code-bg: #0a0c0f;
+  --code-fg: #ccd5df;
+  --code-gut: #39414c;
+  --cm-key: #7ab8d9;
+  --cm-str: #a8c887;
+  --cm-num: #d9a76a;
+  --cm-com: #525a66;
+  --cm-punc: #6b7480;
+  --scrim: rgba(5, 7, 9, 0.5);
+}
 
-  /* —— 状态点 —— */
-  --color-dot-on: #6f8b5c;
-  --color-dot-warn: #b98947;
-  --color-dot-off: #b8b3a7;
-  --color-dot-error: #a8412e;
+/* ---------- Tailwind v4 token 映射 ----------
+   inline：把工具类直接内联到会翻转的 --bg/--surface… 变量，
+   使 bg-surface / text-fg-2 等随 data-theme 实时翻转。 */
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-fg: var(--fg);
+  --color-fg-2: var(--fg-2);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-border: var(--border);
+  --color-border-2: var(--border-2);
 
-  /* —— Legacy 别名（暂保留以让旧 className 工作；优先使用新 token） —— */
-  --color-bg-tint: #f2f0e8;
-  --color-surface-2: #ffffff;
-  --color-surface-3: #faf9f5;
-  --color-fg-strong: #141413;
-  --color-accent: #c8553d;
-  --color-accent-strong: #b14a33;
-  --color-accent-deep: #b14a33;
+  --color-accent: var(--accent);
+  --color-accent-dim: var(--accent-dim);
+  --color-accent-on: var(--accent-on);
 
-  /* —— 字体栈 —— */
-  --font-sans:
-    var(--font-inter), var(--font-noto-sc), -apple-system, BlinkMacSystemFont, 'PingFang SC',
-    'Hiragino Sans GB', 'Microsoft YaHei', system-ui, sans-serif;
-  --font-serif:
-    var(--font-fraunces), 'Iowan Old Style', 'Apple Garamond', 'Baskerville', 'Times New Roman',
-    'PingFang SC', 'Songti SC', 'Noto Serif SC', serif;
-  --font-mono:
-    var(--font-jetbrains), 'SF Mono', ui-monospace, 'Menlo', 'Consolas', 'PingFang SC', monospace;
+  --color-ok: var(--ok);
+  --color-ok-dim: var(--ok-dim);
+  --color-warn: var(--warn);
+  --color-warn-dim: var(--warn-dim);
+  --color-danger: var(--danger);
+  --color-danger-dim: var(--danger-dim);
+  --color-ai: var(--ai);
+  --color-ai-dim: var(--ai-dim);
 
-  /* —— 阴影：克制使用 —— */
-  --shadow-card: 0 1px 2px 0 rgba(20, 20, 19, 0.04);
-  --shadow-card-lift: 0 1px 2px 0 rgba(20, 20, 19, 0.04), 0 4px 12px -8px rgba(20, 20, 19, 0.08);
-  --shadow-modal: 0 1px 2px 0 rgba(20, 20, 19, 0.04), 0 12px 32px -12px rgba(20, 20, 19, 0.12);
+  --color-code-bg: var(--code-bg);
+  --color-code-fg: var(--code-fg);
+  --color-code-gut: var(--code-gut);
+
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+
+  --radius-sm: var(--r-sm);
+  --radius-md: var(--r-md);
+  --radius-lg: var(--r-lg);
+}
+
+/* ============================================================
+   base reset
+   ============================================================ */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
 }
 
 html,
 body {
   height: 100%;
-  background: var(--color-bg);
-  color: var(--color-fg-soft);
-  font-family: var(--font-sans);
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 14px/1.55 var(--font-sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11', 'ss01';
-  letter-spacing: -0.005em;
 }
-
-/* —— 滚动条预留位 —— 让滚动条出现/消失不挤压内容宽度。
-   关键：scrollbar-gutter 只对自身 overflow 元素生效，不会向下继承，
-   所以下面用属性选择器一次覆盖所有 Tailwind 写法的滚动容器。 */
-html {
-  scrollbar-gutter: stable;
-}
-main,
-[class~='overflow-auto'],
-[class~='overflow-y-auto'] {
-  scrollbar-gutter: stable;
-}
-/* dark micro-surface 内部不强制预留位（小代码块右侧留 10px 空白会很丑） */
-.surface-dark,
-.surface-dark [class~='overflow-auto'],
-.surface-dark [class~='overflow-y-auto'] {
-  scrollbar-gutter: auto;
-}
-
-* {
-  box-sizing: border-box;
-}
-
-/* —— 标题用 Fraunces，靠字号 + 负字距撑场 —— */
-h1,
-h2,
-h3,
-.font-serif {
-  font-family: var(--font-serif);
-  font-weight: 500;
-  font-variation-settings:
-    'opsz' 96,
-    'SOFT' 30;
-}
-
-/* a default color lives in @layer base so Tailwind utility classes
-   (e.g. text-[var(--color-on-primary)]) can override on individual links */
-@layer base {
-  a {
-    color: var(--color-primary);
-    text-decoration: none;
-    transition: color 0.15s ease;
-  }
-  a:hover {
-    color: var(--color-primary-hover);
-  }
-}
-
 ::selection {
-  background: var(--color-primary-soft);
-  color: var(--color-primary-hover);
+  background: var(--accent-dim);
 }
-
-/* —— 陶土双层 focus ring（DESIGN.md §Elevation.5 签名细节） ——
-   内 2px primary-tint 外晕 + 外 3px primary 实环。用 box-shadow 叠两层；
-   Tailwind ring utility 只能给一层，无法表达双环。 */
-.pm-focus-ring {
-  outline: none;
+a {
+  color: inherit;
+  text-decoration: none;
 }
-.pm-focus-ring:focus-visible {
-  outline: none;
-  /* DESIGN.md §Elevation.5 原文：2px tint + 3px primary。 */
-  box-shadow:
-    0 0 0 2px var(--color-primary-tint),
-    0 0 0 3px var(--color-primary);
+button {
+  font: inherit;
+  color: inherit;
 }
-
-/* —— 滚动条：暖灰，与边框同色相 —— */
-::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
 }
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-::-webkit-scrollbar-thumb {
-  background: var(--color-border-strong);
-  border-radius: 6px;
-  border: 2px solid transparent;
-  background-clip: padding-box;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: var(--color-muted-strong);
-  background-clip: padding-box;
-  border: 2px solid transparent;
-}
-
-/* —— 等宽体：关闭连字（工程师不想看到 => 变成箭头） —— */
 code,
 pre,
-.font-mono,
-kbd {
+kbd,
+.mono,
+.font-mono {
   font-family: var(--font-mono);
   font-feature-settings: 'liga' 0;
 }
-
-/* —— 表格数字成列 —— */
+.num,
 .tabular-nums {
   font-variant-numeric: tabular-nums;
 }
 
-/* —— Dark micro-surface 上的滚动条颜色覆盖 —— */
-.surface-dark ::-webkit-scrollbar-thumb {
-  background: #3a3833;
-  background-clip: padding-box;
+/* ---------- 全局滚动条预留位 ---------- */
+html {
+  scrollbar-gutter: stable;
 }
 
-/* —— 过渡：内容到达时的「纸张呈现」缓入 —— */
-/* 注意：这里只用 opacity，不用 transform。 transform 动画收尾时浏览器在
-   Retina / 非整数 DPR 屏会做亚像素重排，与父层滚动条出现/消失叠加会让
-   居中内容横向闪 1-2px。 仅 opacity 既不动布局也不动合成层。 */
+/* ============================================================
+   app-level 动效（React 外壳 / RouteProgress / AssistantPanel 在用，保留）
+   颜色改吃 v2 --accent。
+   ============================================================ */
 @keyframes pm-reveal {
   from {
     opacity: 0;
@@ -215,7 +244,6 @@ kbd {
   animation: pm-reveal 320ms ease-out both;
 }
 
-/* —— 路由切换顶部进度条 —— */
 @keyframes pm-progress-stage1 {
   0% {
     left: -30%;
@@ -247,14 +275,13 @@ kbd {
   bottom: 0;
   background: linear-gradient(
     90deg,
-    var(--color-primary-tint),
-    var(--color-primary),
-    var(--color-primary-hover)
+    var(--accent-dim),
+    var(--accent),
+    color-mix(in srgb, var(--accent) 70%, black)
   );
   animation: pm-progress-stage1 800ms cubic-bezier(0.4, 0, 0.2, 1) forwards;
 }
 
-/* —— 占位状态：温润脉动（不是骨架灰条） —— */
 @keyframes pm-pulse {
   0%,
   100% {
@@ -268,7 +295,6 @@ kbd {
   animation: pm-pulse 1400ms ease-in-out infinite;
 }
 
-/* —— 抽屉：从右侧轻滑入（fixed 覆盖层、自有合成层，不动页面布局） —— */
 @keyframes pm-slide-in-right {
   from {
     opacity: 0;
@@ -283,7 +309,6 @@ kbd {
   animation: pm-slide-in-right 200ms ease-out both;
 }
 
-/* —— 执行中：细环旋转（中断按钮 / 后台运行角标用） —— */
 @keyframes pm-spin {
   to {
     transform: rotate(360deg);

@@ -1,10 +1,10 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Button } from '@/components/ui/Button';
-import { ChainArrow, ChainNode, ChainPool, ChainRow } from '@/components/ui/ChainDiagram';
-import { Input, Select } from '@/components/ui/Input';
 import { ApiError, api } from '@/lib/client/api';
+import { PageTopbar } from '@/components/PageChrome';
+import { ScopePill } from '@/components/Topbar';
+import styles from './chainedProxy.module.css';
 
 interface ProxySummary {
   name: string;
@@ -63,62 +63,69 @@ export default function ChainedProxyPage() {
   const view = useMemo(() => classify(parsed), [parsed]);
 
   if (loading && !parsed) {
-    return <p className="text-sm text-[var(--color-muted)]">正在加载 base.yaml…</p>;
+    return <p className={styles.empty}>正在加载 base.yaml…</p>;
   }
   if (!parsed) {
-    return (
-      <div className="rounded-xl border border-[var(--color-danger)]/40 bg-[#F4D8D2]/30 px-4 py-3 text-[13px] text-[var(--color-danger)]">
-        {error ?? '无数据'}
-      </div>
-    );
+    return <div className={styles.errBox}>{error ?? '无数据'}</div>;
   }
 
   return (
-    <div className="space-y-8">
-      <header>
-        <h1
-          className="font-serif text-[28px] font-medium leading-[1.15] tracking-[-0.015em] text-[var(--color-ink)]"
-          style={{ fontVariationSettings: '"opsz" 96, "SOFT" 30' }}
-        >
-          链式代理
-        </h1>
-        <p className="mt-1.5 text-[13px] text-[var(--color-muted)] leading-[1.6] max-w-2xl">
-          把后端节点包装到带 <code className="font-mono text-[12px] text-[var(--color-primary)]">dialer-proxy</code>{' '}
-          的 <code className="font-mono text-[12px] text-[var(--color-primary)]">select</code> 组。链路组名直接写到规则里。
-        </p>
-      </header>
+    <>
+      {/* —— 页头注入共享 topbar(对齐 v2/chained-proxy.html;原型的「＋ 新建链路」
+          因本页有固定链路 / 链路池两条独立创建流程,保留在各自分区头,不上提) —— */}
+      <PageTopbar>
+        <h1>链式代理</h1>
+        <ScopePill />
+        <span className="crumb">
+          {view.fixedChains.length} 条固定链路 · {view.poolChains.length} 个链路池
+        </span>
+        <div className="grow" />
+      </PageTopbar>
 
-      {error && (
-        <div className="rounded-xl border border-[var(--color-danger)]/40 bg-[#F4D8D2]/30 px-4 py-3 text-[13px] text-[var(--color-danger)]">
-          {error}
-        </div>
-      )}
+      <p className={styles.intro}>
+        链式代理把出口节点的流量先<b>套进前置节点</b>发出（底层写{' '}
+        <code className="mono">dialer-proxy</code> 字段）。目标站点看到的始终是<b>落地出口</b>的 IP，
+        常用于解锁、防风控等需要落地 IP 固定的场景。下图从左到右就是一条数据包的真实路径。
+      </p>
+
+      <div className={styles.legend}>
+        <span>
+          <i className={`${styles.lg} ${styles.lgAccent}`} />
+          前置 · 入口
+        </span>
+        <span>
+          <i className={styles.lg} />
+          中继 · 链路组
+        </span>
+        <span>
+          <i className={`${styles.lg} ${styles.lgOk}`} />
+          落地 · 出口
+        </span>
+        <span>
+          <i className={`${styles.lg} ${styles.lgGhost}`} />
+          客户端 / 目标（示意）
+        </span>
+        <span>
+          <i className={styles.lgDot} />
+          流量方向
+        </span>
+      </div>
+
+      {error && <div className={styles.errBox}>{error}</div>}
 
       {/* Fixed chains section */}
       <section>
-        <header className="flex items-baseline justify-between mb-3 pb-2 border-b border-[var(--color-border)]">
-          <div className="flex items-baseline gap-2">
-            <h2
-              className="font-serif text-[20px] font-medium leading-[1.25] tracking-[-0.01em] text-[var(--color-ink)]"
-              style={{ fontVariationSettings: '"opsz" 48, "SOFT" 50' }}
-            >
-              固定链路
-            </h2>
-            <span className="text-[12px] tabular-nums text-[var(--color-muted)]">
-              {view.fixedChains.length}
-            </span>
-          </div>
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={() => setAddingFixed((v) => !v)}
-          >
-            {addingFixed ? '取消' : '+ 新建固定链路'}
-          </Button>
-        </header>
+        <div className={styles.sectionHead}>
+          <span className="eyebrow">固定链路</span>
+          <span className={styles.count}>{view.fixedChains.length}</span>
+          <div className="grow" style={{ flex: 1 }} />
+          <button className="btn sm" onClick={() => setAddingFixed((v) => !v)}>
+            {addingFixed ? '取消' : '＋ 新建固定链路'}
+          </button>
+        </div>
 
         {addingFixed && (
-          <div className="mb-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-sunk)] p-4">
+          <div className={styles.formPanel}>
             <FixedChainForm
               proxies={parsed.proxies}
               groups={parsed.proxyGroups}
@@ -137,48 +144,30 @@ export default function ChainedProxyPage() {
         )}
 
         {view.fixedChains.length === 0 ? (
-          <p className="text-[13px] text-[var(--color-muted)] italic px-1">
+          <p className={styles.empty}>
             暂无固定链路 — 一条固定链路只将一个前置节点 → 一个后端节点封装到一个 group。
           </p>
         ) : (
-          <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
-            {view.fixedChains.map((c) => (
-              <FixedRow
-                key={c.chainName}
-                chain={c}
-                onChanged={reload}
-                onError={setError}
-              />
-            ))}
-          </div>
+          view.fixedChains.map((c) => (
+            <FixedFlow key={c.chainName} chain={c} onChanged={reload} onError={setError} />
+          ))
         )}
       </section>
 
       {/* Pool chains section */}
-      <section>
-        <header className="flex items-baseline justify-between mb-3 pb-2 border-b border-[var(--color-border)]">
-          <div className="flex items-baseline gap-2">
-            <h2
-              className="font-serif text-[20px] font-medium leading-[1.25] tracking-[-0.01em] text-[var(--color-ink)]"
-              style={{ fontVariationSettings: '"opsz" 48, "SOFT" 50' }}
-            >
-              链路池
-            </h2>
-            <span className="text-[12px] tabular-nums text-[var(--color-muted)]">
-              {view.poolChains.length}
-            </span>
-          </div>
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={() => setAddingPool((v) => !v)}
-          >
-            {addingPool ? '取消' : '+ 新建链路池'}
-          </Button>
-        </header>
+      <section style={{ marginTop: 30 }}>
+        <div className={styles.sectionHead}>
+          <span className="eyebrow">链路池</span>
+          <span className={styles.eyebrowSub}>· 前置可在池内弹性切换</span>
+          <span className={styles.count}>{view.poolChains.length}</span>
+          <div className="grow" style={{ flex: 1 }} />
+          <button className="btn sm" onClick={() => setAddingPool((v) => !v)}>
+            {addingPool ? '取消' : '＋ 新建链路池'}
+          </button>
+        </div>
 
         {addingPool && (
-          <div className="mb-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-sunk)] p-4">
+          <div className={styles.formPanel}>
             <PoolChainForm
               proxies={parsed.proxies}
               groups={parsed.proxyGroups}
@@ -197,27 +186,25 @@ export default function ChainedProxyPage() {
         )}
 
         {view.poolChains.length === 0 ? (
-          <p className="text-[13px] text-[var(--color-muted)] italic px-1">
+          <p className={styles.empty}>
             暂无链路池 — 链路池 = 候选前置节点组 + 把流量落到后端的包装 group。
           </p>
         ) : (
-          <div className="space-y-3">
-            {view.poolChains.map((p) => (
-              <PoolBox
-                key={p.chainName}
-                pool={p}
-                proxies={parsed.proxies}
-                groups={parsed.proxyGroups}
-                editing={editingPool === p.chainName}
-                onEdit={(v) => setEditingPool(v ? p.chainName : null)}
-                onChanged={reload}
-                onError={setError}
-              />
-            ))}
-          </div>
+          view.poolChains.map((p) => (
+            <PoolFlow
+              key={p.chainName}
+              pool={p}
+              proxies={parsed.proxies}
+              groups={parsed.proxyGroups}
+              editing={editingPool === p.chainName}
+              onEdit={(v) => setEditingPool(v ? p.chainName : null)}
+              onChanged={reload}
+              onError={setError}
+            />
+          ))
         )}
       </section>
-    </div>
+    </>
   );
 }
 
@@ -261,7 +248,57 @@ async function runOp(op: string, payload: unknown): Promise<void> {
   });
 }
 
-function FixedRow({
+/* ---------- flow-lane station primitives ---------- */
+
+function Pipe({ delay, tag }: { delay: number; tag?: string }) {
+  return (
+    <div className={styles.pipe}>
+      {tag && <span className={styles.pipeTag}>{tag}</span>}
+      <i className={styles.packet} style={{ '--d': `${delay}s` } as React.CSSProperties} />
+    </div>
+  );
+}
+
+function GhostStation({ glyph, name, role }: { glyph: string; name: string; role: string }) {
+  return (
+    <div className={`${styles.station} ${styles.ghost}`}>
+      <div className={styles.stTop}>
+        <div className={styles.stGlyph}>{glyph}</div>
+      </div>
+      <div className={styles.stName}>{name}</div>
+      <div className={styles.stRole}>{role}</div>
+    </div>
+  );
+}
+
+function Station({
+  variant,
+  glyph,
+  name,
+  role,
+  className,
+}: {
+  variant?: 'entry' | 'exit';
+  glyph: string;
+  name: string;
+  role: string;
+  className?: string;
+}) {
+  const cls = [styles.station, variant ? styles[variant] : '', className ?? '']
+    .filter(Boolean)
+    .join(' ');
+  return (
+    <div className={cls}>
+      <div className={styles.stTop}>
+        <div className={styles.stGlyph}>{glyph}</div>
+      </div>
+      <div className={styles.stName}>{name}</div>
+      <div className={styles.stRole}>{role}</div>
+    </div>
+  );
+}
+
+function FixedFlow({
   chain,
   onChanged,
   onError,
@@ -284,24 +321,39 @@ function FixedRow({
       setPending(false);
     }
   }
+
   return (
-    <ChainRow
-      actions={
-        <Button size="sm" variant="ghost" onClick={clear} disabled={pending} className="text-[var(--color-danger)] hover:bg-[var(--color-danger)]/8">
+    <div className={styles.flowWrap}>
+      <div className={styles.flowHead}>
+        <b>{chain.chainName}</b>
+        <div style={{ flex: 1 }} />
+        <button className="btn sm danger" onClick={clear} disabled={pending}>
           {pending ? '…' : '删除'}
-        </Button>
-      }
-    >
-      <ChainNode label={chain.front} tone="front" />
-      <ChainArrow />
-      <ChainNode label={chain.chainName} tone="chain" />
-      <ChainArrow />
-      <ChainNode label={chain.backend} tone="backend" />
-    </ChainRow>
+        </button>
+      </div>
+
+      <div className={styles.flow}>
+        <GhostStation glyph="⌂" name="本机 / 客户端" role="起点" />
+        <Pipe delay={0} />
+        <Station variant="entry" glyph="⇡" name={chain.front} role="前置 · 入口" />
+        <Pipe delay={0.35} tag="dialer 套娃" />
+        <Station glyph="⇄" name={chain.chainName} role="中继 · 链路组" />
+        <Pipe delay={0.7} />
+        <Station variant="exit" glyph="⚑" name={chain.backend} role="落地 · 出口" />
+        <Pipe delay={1.05} />
+        <GhostStation glyph="◎" name="目标站点" role="看到落地出口 IP" />
+      </div>
+
+      <div className={styles.flowMeta}>
+        生成策略组 <code className="mono">{chain.chainName}</code> · 出口{' '}
+        <code className="mono">{chain.backend}</code> 写入{' '}
+        <code className="mono">dialer-proxy: {chain.front}</code>。
+      </div>
+    </div>
   );
 }
 
-function PoolBox({
+function PoolFlow({
   pool,
   proxies,
   groups,
@@ -335,35 +387,61 @@ function PoolBox({
   }
 
   return (
-    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
-      <div className="flex items-start gap-3 py-3 px-4 border-b border-[var(--color-border)]">
-        <div className="flex-1 min-w-0 flex flex-wrap items-start gap-2">
-          <ChainPool name={pool.poolName} members={pool.poolMembers} />
-          <div className="flex items-center gap-2 self-center">
-            <ChainArrow />
-            <ChainNode label={pool.chainName} tone="chain" />
-            <ChainArrow />
-            <ChainNode label={pool.backend} tone="backend" />
-          </div>
-        </div>
-        <div className="shrink-0 flex items-center gap-1.5">
-          <Button size="sm" variant="ghost" onClick={() => onEdit(!editing)} disabled={pending}>
-            {editing ? '取消' : '编辑'}
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={del}
-            disabled={pending}
-            className="text-[var(--color-danger)] hover:bg-[var(--color-danger)]/8"
-          >
-            {pending ? '…' : '删除'}
-          </Button>
-        </div>
+    <div className={styles.flowWrap}>
+      <div className={styles.flowHead}>
+        <b>{pool.chainName}</b>
+        <div style={{ flex: 1 }} />
+        <button className="btn sm" onClick={() => onEdit(!editing)} disabled={pending}>
+          {editing ? '取消' : '编辑'}
+        </button>
+        <button className="btn sm danger" onClick={del} disabled={pending}>
+          {pending ? '…' : '删除'}
+        </button>
+      </div>
+
+      <div className={styles.flow}>
+        <GhostStation glyph="⌂" name="本机 / 客户端" role="起点" />
+        <Pipe delay={0} />
+        <Station
+          variant="entry"
+          className={styles.pool}
+          glyph="⚖"
+          name={pool.poolName}
+          role="策略组 · 运行时择优"
+        />
+        <Pipe delay={0.4} tag="dialer 套娃" />
+        <Station glyph="⇄" name={pool.chainName} role="中继 · 链路组" />
+        <Pipe delay={0.8} />
+        <Station variant="exit" glyph="⚑" name={pool.backend} role="落地 · 出口" />
+        <Pipe delay={1.2} />
+        <GhostStation glyph="◎" name="目标站点" role="看到落地出口 IP" />
+      </div>
+
+      <div className={styles.candsLabel}>前置池成员 · 由 {pool.poolName} 组运行时择优</div>
+      <div className={styles.cands}>
+        {pool.poolMembers.length === 0 ? (
+          <span className={styles.cand}>
+            <i className={styles.dot} />
+            （空池）
+          </span>
+        ) : (
+          pool.poolMembers.map((m) => (
+            <span key={m} className={`${styles.cand} ${styles.candActive}`}>
+              <i className={styles.dot} />
+              {m}
+            </span>
+          ))
+        )}
+      </div>
+
+      <div className={styles.flowMeta}>
+        生成策略组 <code className="mono">{pool.chainName}</code> · 前置由{' '}
+        <code className="mono">{pool.poolName}</code> 组按其组规则在池内切换，落地出口固定为{' '}
+        <code className="mono">{pool.backend}</code>。
       </div>
 
       {editing && (
-        <div className="px-4 py-4 bg-[var(--color-bg-sunk)]">
+        <div className={styles.editZone}>
           <PoolChainForm
             proxies={proxies}
             groups={groups}
@@ -386,12 +464,18 @@ function PoolBox({
   );
 }
 
-function FormField({ label, children }: { label: React.ReactNode; children: React.ReactNode }) {
+function Field({
+  label,
+  children,
+  tight,
+}: {
+  label: React.ReactNode;
+  children: React.ReactNode;
+  tight?: boolean;
+}) {
   return (
-    <div>
-      <label className="block text-[11px] uppercase tracking-[0.08em] font-semibold text-[var(--color-muted)] mb-1.5">
-        {label}
-      </label>
+    <div className={`field ${tight ? styles.fieldTight : ''}`}>
+      <label>{label}</label>
       {children}
     </div>
   );
@@ -424,7 +508,6 @@ function FixedChainForm({
 
   return (
     <form
-      className="grid grid-cols-1 md:grid-cols-4 gap-3"
       onSubmit={async (e) => {
         e.preventDefault();
         if (!front || !backend || backend === front) return;
@@ -436,42 +519,59 @@ function FixedChainForm({
         }
       }}
     >
-      <FormField label="前置（入口）">
-        <Select value={front} onChange={(e) => setFront(e.target.value)} required>
-          <option value="">— 选择前置 —</option>
-          {allTargets.map((n) => (
-            <option key={n} value={n}>
-              {n}
-            </option>
-          ))}
-        </Select>
-      </FormField>
-      <FormField label="后端（出口）">
-        <Select value={backend} onChange={(e) => setBackend(e.target.value)} required>
-          <option value="">— 选择后端 —</option>
-          {proxyNames.map((n) => (
-            <option key={n} value={n}>
-              {n}
-            </option>
-          ))}
-        </Select>
-      </FormField>
-      <FormField label="链路名（可选）">
-        <Input
-          value={chainName}
-          onChange={(e) => setChainName(e.target.value)}
-          placeholder={front && backend ? `chain:${front}-to-${backend}` : '自动命名'}
-        />
-      </FormField>
-      <div className="flex items-end gap-2">
-        <Button type="submit" disabled={pending || !front || !backend || backend === front}>
-          {pending ? '…' : '创建'}
-        </Button>
-        {onCancel && (
-          <Button type="button" variant="ghost" onClick={onCancel}>
-            取消
-          </Button>
-        )}
+      <div className={styles.formGrid}>
+        <Field label="前置（入口）" tight>
+          <select
+            className="input mono"
+            value={front}
+            onChange={(e) => setFront(e.target.value)}
+            required
+          >
+            <option value="">— 选择前置 —</option>
+            {allTargets.map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="后端（出口）" tight>
+          <select
+            className="input mono"
+            value={backend}
+            onChange={(e) => setBackend(e.target.value)}
+            required
+          >
+            <option value="">— 选择后端 —</option>
+            {proxyNames.map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="链路名（可选）" tight>
+          <input
+            className="input mono"
+            value={chainName}
+            onChange={(e) => setChainName(e.target.value)}
+            placeholder={front && backend ? `chain:${front}-to-${backend}` : '自动命名'}
+          />
+        </Field>
+        <div className={styles.formActions}>
+          <button
+            className="btn primary"
+            type="submit"
+            disabled={pending || !front || !backend || backend === front}
+          >
+            {pending ? '…' : '创建'}
+          </button>
+          {onCancel && (
+            <button className="btn ghost" type="button" onClick={onCancel}>
+              取消
+            </button>
+          )}
+        </div>
       </div>
     </form>
   );
@@ -521,7 +621,6 @@ function PoolChainForm({
 
   return (
     <form
-      className="space-y-4"
       onSubmit={async (e) => {
         e.preventDefault();
         if (!initial && (!backend || selected.size === 0)) return;
@@ -539,68 +638,70 @@ function PoolChainForm({
       }}
     >
       {!initial && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <FormField label="后端（出口）">
-            <Select value={backend} onChange={(e) => setBackend(e.target.value)} required>
+        <div className={styles.formGrid3} style={{ marginBottom: 16 }}>
+          <Field label="后端（出口）" tight>
+            <select
+              className="input mono"
+              value={backend}
+              onChange={(e) => setBackend(e.target.value)}
+              required
+            >
               <option value="">— 选择后端 —</option>
               {proxyNames.map((n) => (
                 <option key={n} value={n}>
                   {n}
                 </option>
               ))}
-            </Select>
-          </FormField>
-          <FormField label="池名（可选）">
-            <Input
+            </select>
+          </Field>
+          <Field label="池名（可选）" tight>
+            <input
+              className="input mono"
               value={poolName}
               onChange={(e) => setPoolName(e.target.value)}
               placeholder={backend ? `pool:${backend}` : '自动命名'}
             />
-          </FormField>
-          <FormField label="链路名（可选）">
-            <Input
+          </Field>
+          <Field label="链路名（可选）" tight>
+            <input
+              className="input mono"
               value={chainName}
               onChange={(e) => setChainName(e.target.value)}
               placeholder={backend ? `chain:pool-to-${backend}` : '自动命名'}
             />
-          </FormField>
+          </Field>
         </div>
       )}
 
-      <FormField label="前置候选 — 至少选一个">
-        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-2 max-h-56 overflow-y-auto grid grid-cols-2 md:grid-cols-3 gap-1">
+      <Field label="前置候选 — 至少选一个">
+        <div className={styles.picker}>
           {allTargets.map((n) => {
             const checked = selected.has(n);
             return (
               <label
                 key={n}
-                className={`flex items-center gap-2 rounded-md px-2 py-1 cursor-pointer text-[12px] transition-colors ${
-                  checked
-                    ? 'bg-[var(--color-primary-soft)] text-[var(--color-primary-hover)]'
-                    : 'hover:bg-[var(--color-bg-sunk)]'
-                }`}
+                className={`${styles.pickItem} ${checked ? styles.pickItemOn : ''}`}
               >
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  onChange={() => toggle(n)}
-                  className="accent-[var(--color-primary)] w-3.5 h-3.5"
-                />
-                <span className="font-mono truncate">{n}</span>
+                <input type="checkbox" checked={checked} onChange={() => toggle(n)} />
+                <span className={styles.nm}>{n}</span>
               </label>
             );
           })}
         </div>
-      </FormField>
+      </Field>
 
-      <div className="flex gap-2">
-        <Button type="submit" disabled={pending || selected.size === 0 || (!initial && !backend)}>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button
+          className="btn primary"
+          type="submit"
+          disabled={pending || selected.size === 0 || (!initial && !backend)}
+        >
           {pending ? '…' : initial ? '保存成员' : '创建池'}
-        </Button>
+        </button>
         {onCancel && (
-          <Button type="button" variant="ghost" onClick={onCancel}>
+          <button className="btn ghost" type="button" onClick={onCancel}>
             取消
-          </Button>
+          </button>
         )}
       </div>
     </form>

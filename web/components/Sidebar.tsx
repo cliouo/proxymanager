@@ -2,49 +2,24 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/client/api';
 import { clearAdminKey } from '@/lib/client/auth-storage';
+import {
+  LIBRARY_NAV,
+  OVERVIEW_NAV,
+  PROFILE_NAV,
+  SYSTEM_NAV,
+  type NavItem,
+} from '@/components/nav';
+import {
+  isLiveProfile,
+  profileMark,
+  sourceLabel,
+  useProfiles,
+} from '@/components/profile/ProfileContext';
 
-/**
- * The IA splits into three groups (E4):
- *   - 总览                      single entry point
- *   - 资源 (Resources)           reusable inputs that flow INTO the config
- *                              (订阅源 → proxies, 含「聚合订阅」tab → 一个
- *                               可绑定的 sub bundle; 规则集 → rule-providers)
- *   - 应用 (Application)         what's actually rendered: policy (策略组 +
- *                              链式代理 + 规则), the skeleton, the final yaml.
- *   - 系统 (System)              operational/admin views.
- *
- * Auto-discovered scenarios + the docs link live under the FOOTER sections.
- */
-const OVERVIEW_NAV: { href: string; label: string; icon: string }[] = [
-  { href: '/', label: '总览', icon: '◐' },
-];
-
-const RESOURCE_NAV: { href: string; label: string; icon: string }[] = [
-  { href: '/subscriptions', label: '订阅源', icon: '⇣' },
-  { href: '/rule-sets', label: '规则集', icon: '⊟' },
-];
-
-const APP_NAV: { href: string; label: string; icon: string }[] = [
-  { href: '/proxy-groups', label: '策略组', icon: '⊕' },
-  { href: '/scenarios/chained-proxy', label: '链式代理', icon: '↻' },
-  { href: '/scenarios/rule-anchor-append', label: '规则', icon: '≡' },
-  { href: '/base', label: '结构骨架', icon: '⌬' },
-  { href: '/config', label: '最终配置', icon: '◉' },
-];
-
-const SYSTEM_NAV: { href: string; label: string; icon: string }[] = [
-  { href: '/assistant-settings', label: 'AI 配置', icon: '✦' },
-  { href: '/history', label: '操作历史', icon: '⟲' },
-  { href: '/docs', label: 'API 文档', icon: '❡' },
-];
-
-// Promoted into the dedicated CONFIG_NAV slot above, so they're hidden from
-// the auto "场景" list below.
 const PROMOTED_SCENARIOS = new Set(['rule-anchor-append', 'chained-proxy']);
-
 
 interface ScenarioDescriptor {
   id: string;
@@ -58,8 +33,16 @@ const SCENARIO_LABEL_OVERRIDES: Record<string, string> = {
   'dev-echo': 'Echo (调试)',
 };
 
-export function Sidebar() {
+/**
+ * v2「Signal Console」侧边栏 —— 固定 228px / 平板横屏图标轨 / 移动端抽屉。
+ * `open` 控制移动端抽屉显隐；点导航触发 `onClose` 收起抽屉。
+ *
+ * 顶部为配置文件切换器(ProfileSwitcher),其下导航按「当前配置文件 / 资源库 / 系统」
+ * 三段组织,对齐 v2 原型的 profile-centric IA。
+ */
+export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
   const pathname = usePathname();
+  const { current } = useProfiles();
   const [scenarios, setScenarios] = useState<ScenarioDescriptor[]>([]);
   const [buildId, setBuildId] = useState<string | null>(null);
 
@@ -82,154 +65,195 @@ export function Sidebar() {
     return pathname.startsWith(href);
   }
 
+  // 「绑定与设置」指向当前配置文件的设置页;无 current 时退到管理总览。
+  const profileSettingsHref = current ? `/profiles/${current.id}` : '/profiles';
+  const profileSettingsActive =
+    pathname === profileSettingsHref || (pathname.startsWith('/profiles/') && !!current);
+
   return (
-    <aside className="w-60 shrink-0 border-r border-[var(--color-border)] bg-[var(--color-bg-sunk)] flex flex-col">
-      <div className="px-5 py-5">
-        <Link href="/" className="group flex flex-col leading-tight">
-          <span
-            className="font-serif text-[22px] font-medium tracking-[-0.015em] text-[var(--color-ink)] transition-colors group-hover:text-[var(--color-primary)]"
-            style={{ fontVariationSettings: '"opsz" 96, "SOFT" 30' }}
-          >
-            ProxyManager
-          </span>
-          <span className="text-[10px] tracking-[0.08em] uppercase text-[var(--color-muted)] mt-0.5 flex items-baseline gap-1.5">
-            代理订阅管家
-            {buildId && (
-              <span className="font-mono normal-case tracking-normal text-[var(--color-muted-strong)]">
-                · {buildId.slice(0, 7)}
-              </span>
-            )}
-          </span>
+    <aside className={`side${open ? ' open' : ''}`}>
+      <div className="side-brand">
+        <Link href="/" className="logo" onClick={onClose} aria-label="ProxyManager">
+          PM
         </Link>
+        <div>
+          <b>ProxyManager</b>
+          <span>signal console</span>
+        </div>
       </div>
 
-      <nav className="flex-1 px-3 pb-3 space-y-0.5 overflow-y-auto">
-        {OVERVIEW_NAV.map((item) => (
-          <SidebarLink
-            key={item.href}
-            href={item.href}
-            label={item.label}
-            icon={item.icon}
-            active={isActive(item.href)}
-          />
-        ))}
+      <ProfileSwitcher onNavigate={onClose} />
 
-        <SectionLabel>资源</SectionLabel>
-        {RESOURCE_NAV.map((item) => (
-          <SidebarLink
-            key={item.href}
-            href={item.href}
-            label={item.label}
-            icon={item.icon}
-            active={isActive(item.href)}
-          />
-        ))}
+      <nav className="side-nav">
+        <div className="nav-group">
+          {OVERVIEW_NAV.map((item) => (
+            <NavLink key={item.href} item={item} active={isActive(item.href)} onClick={onClose} />
+          ))}
+        </div>
 
-        <SectionLabel>应用</SectionLabel>
-        {APP_NAV.map((item) => (
-          <SidebarLink
-            key={item.href}
-            href={item.href}
-            label={item.label}
-            icon={item.icon}
-            active={isActive(item.href)}
+        <div className="nav-group">
+          <div className="nav-label">当前配置文件</div>
+          {PROFILE_NAV.map((item) => (
+            <NavLink key={item.href} item={item} active={isActive(item.href)} onClick={onClose} />
+          ))}
+          <NavLink
+            item={{ href: profileSettingsHref, label: '绑定与设置', icon: '⚙' }}
+            active={profileSettingsActive}
+            onClick={onClose}
           />
-        ))}
+        </div>
 
-        <SectionLabel>系统</SectionLabel>
-        {SYSTEM_NAV.map((item) => (
-          <SidebarLink
-            key={item.href}
-            href={item.href}
-            label={item.label}
-            icon={item.icon}
-            active={isActive(item.href)}
-          />
-        ))}
+        <div className="nav-group">
+          <div className="nav-label">
+            资源库<span className="sh">· 共享</span>
+          </div>
+          {LIBRARY_NAV.map((item) => (
+            <NavLink key={item.href} item={item} active={isActive(item.href)} onClick={onClose} />
+          ))}
+        </div>
 
-        <SectionLabel>更多场景</SectionLabel>
-        <SidebarLink
-          href="/scenarios"
-          label="全部场景"
-          icon="✦"
-          active={
-            pathname === '/scenarios' ||
-            (pathname.startsWith('/scenarios/') &&
-              !scenarios.some((s) => s.navHref === pathname))
-          }
-        />
-        {scenarios.map((s) =>
-          s.navHref && !PROMOTED_SCENARIOS.has(s.id) ? (
-            <SidebarLink
-              key={s.id}
-              href={s.navHref}
-              label={SCENARIO_LABEL_OVERRIDES[s.id] ?? s.title}
-              active={pathname === s.navHref}
-              indent
+        <div className="nav-group">
+          <div className="nav-label">系统</div>
+          {SYSTEM_NAV.map((item) => (
+            <NavLink key={item.href} item={item} active={isActive(item.href)} onClick={onClose} />
+          ))}
+          <button type="button" className="nav-item" onClick={signOut}>
+            <span className="ic">⏻</span>退出登录
+          </button>
+        </div>
+
+        {scenarios.some((s) => s.navHref && !PROMOTED_SCENARIOS.has(s.id)) && (
+          <div className="nav-group">
+            <div className="nav-label">更多场景</div>
+            <NavLink
+              item={{ href: '/scenarios', label: '全部场景', icon: '✦' }}
+              active={
+                pathname === '/scenarios' ||
+                (pathname.startsWith('/scenarios/') &&
+                  !scenarios.some((s) => s.navHref === pathname))
+              }
+              onClick={onClose}
             />
-          ) : null,
+            {scenarios.map((s) =>
+              s.navHref && !PROMOTED_SCENARIOS.has(s.id) ? (
+                <NavLink
+                  key={s.id}
+                  item={{
+                    href: s.navHref,
+                    label: SCENARIO_LABEL_OVERRIDES[s.id] ?? s.title,
+                    icon: '·',
+                  }}
+                  active={pathname === s.navHref}
+                  onClick={onClose}
+                />
+              ) : null,
+            )}
+          </div>
         )}
       </nav>
 
-      <div className="p-3 border-t border-[var(--color-border)]">
-        <button
-          type="button"
-          onClick={signOut}
-          className="w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-[13px] text-[var(--color-muted)] hover:bg-[var(--color-surface)] hover:text-[var(--color-fg)] transition-colors text-left active:scale-[0.98]"
-        >
-          <span className="text-[14px] inline-flex w-4 justify-center">⏻</span>
-          <span>退出登录</span>
-        </button>
+      <div className="side-foot">
+        <span>{buildId ? buildId.slice(0, 7) : 'dev'}</span>
+        <span>signal console</span>
       </div>
     </aside>
   );
 }
 
-function SectionLabel({ children }: { children: React.ReactNode }) {
+/**
+ * 配置文件切换器。诚实边界:引擎当前只渲染名为 `default` 的配置文件,没有「一键切换全局」;
+ * 故列表项链接到各 profile 的设置页做管理,默认(生效)项标 on。
+ */
+function ProfileSwitcher({ onNavigate }: { onNavigate: () => void }) {
+  const { profiles, current } = useProfiles();
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDoc(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setOpen(false);
+    }
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  function go() {
+    setOpen(false);
+    onNavigate();
+  }
+
+  const name = current?.name ?? 'default';
+  const sub = current ? (isLiveProfile(current) ? '默认配置文件' : '配置文件') : '尚未初始化';
+
   return (
-    <div className="pt-5 pb-1 px-2.5 text-[11px] uppercase tracking-[0.08em] text-[var(--color-muted)] font-semibold">
-      {children}
+    <div className="side-switch" ref={ref}>
+      <button
+        type="button"
+        className="profile-switch"
+        aria-expanded={open}
+        aria-haspopup="true"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span className="pf-ic">{profileMark(name)}</span>
+        <span className="pf-txt">
+          <span className="pf-name">{name}</span>
+          <span className="pf-sub">{sub}</span>
+        </span>
+        <span className="caret">▾</span>
+      </button>
+      <div className={`profile-pop${open ? ' open' : ''}`}>
+        <div className="pp-label">配置文件 · {profiles.length}</div>
+        {profiles.length === 0 ? (
+          <div className="pp-li" style={{ color: 'var(--muted)', cursor: 'default' }}>
+            尚无配置文件记录
+          </div>
+        ) : (
+          profiles.map((p) => (
+            <Link
+              key={p.id}
+              className={`pp-li${isLiveProfile(p) ? ' on' : ''}`}
+              href={`/profiles/${p.id}`}
+              onClick={go}
+            >
+              <span className="dot" />
+              <span className="nm">{p.name}</span>
+              <span className="tail">{isLiveProfile(p) ? '生效' : sourceLabel(p)}</span>
+            </Link>
+          ))
+        )}
+        <div className="pp-sep" />
+        <Link className="pp-li pp-act" href="/profiles" onClick={go}>
+          <span className="ic">＋</span>新建配置文件
+        </Link>
+        <Link className="pp-li pp-act" href="/profiles" onClick={go}>
+          <span className="ic">⊞</span>管理全部配置文件
+        </Link>
+      </div>
     </div>
   );
 }
 
-function SidebarLink({
-  href,
-  label,
-  icon,
+function NavLink({
+  item,
   active,
-  indent,
+  onClick,
 }: {
-  href: string;
-  label: string;
-  icon?: string;
+  item: NavItem;
   active: boolean;
-  indent?: boolean;
+  onClick: () => void;
 }) {
   return (
-    <Link
-      href={href}
-      className={`relative flex items-center gap-2.5 rounded-lg py-1.5 text-[13px] transition-[background-color,color,transform] duration-150 ease-out active:scale-[0.98] ${
-        indent ? 'pl-9 pr-2.5 text-[12px]' : 'px-2.5'
-      } ${
-        active
-          ? 'bg-[var(--color-surface)] text-[var(--color-fg)] font-medium'
-          : 'text-[var(--color-fg-soft)] hover:bg-[var(--color-surface)] hover:text-[var(--color-fg)]'
-      }`}
-    >
-      {active && (
-        <span className="absolute left-0 top-1.5 bottom-1.5 w-[2px] rounded-full bg-[var(--color-primary)]" />
-      )}
-      {icon && !indent && (
-        <span
-          className={`inline-flex h-4 w-4 items-center justify-center text-[13px] ${
-            active ? 'text-[var(--color-primary)]' : 'text-[var(--color-muted)]'
-          }`}
-        >
-          {icon}
-        </span>
-      )}
-      <span className="flex-1 truncate">{label}</span>
+    <Link href={item.href} className={`nav-item${active ? ' on' : ''}`} onClick={onClick}>
+      <span className="ic">{item.icon}</span>
+      {item.label}
     </Link>
   );
 }

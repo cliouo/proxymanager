@@ -1,0 +1,92 @@
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  gap: 18px;
+  align-items: start;
+}
+
+.aside {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.toolLi {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 5px 0;
+  font: 11.5px var(--font-mono);
+  color: var(--muted);
+}
+.toolLi::before {
+  content: '⚙';
+  color: var(--faint);
+}
+.toolLi.write::before {
+  content: '✎';
+  color: var(--warn);
+}
+
+.toolNote {
+  font: 11px var(--font-mono);
+  color: var(--faint);
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.prose {
+  font-size: 12.5px;
+  color: var(--muted);
+  line-height: 1.7;
+}
+.prose b {
+  color: var(--fg);
+}
+
+.saveRow {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 20px;
+}
+.statusMsg {
+  align-self: center;
+  font-size: 13px;
+}
+.statusMsg.ok {
+  color: var(--ok);
+}
+.statusMsg.err {
+  color: var(--danger);
+}
+
+.keyRow {
+  display: flex;
+  gap: 8px;
+}
+.keyRow .input {
+  flex: 1;
+  min-width: 0;
+}
+
+@media (max-width: 1200px) {
+  .grid {
+    grid-template-columns: 1fr 280px;
+  }
+}
+@media (max-width: 960px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 600px) {
+  .grid {
+    gap: 14px;
+  }
+  .toolLi {
+    word-break: break-all;
+  }
+}

@@ -1,0 +1,166 @@
+/* ============================================================
+   Dashboard · 总览 — v2 "Signal Console"
+   Page-specific layout ported from prototype v2/dashboard.html <style>.
+   Shared vocabulary (.stat-row/.stat/.panel/.pill/.btn/.eyebrow) lives in
+   v2-components.css; only the subscription terminal card + column grid +
+   stat-band rhythm are page-local.
+   ============================================================ */
+
+.hero {
+  margin-bottom: 22px;
+}
+
+/* —— 订阅 URL 终端卡 —— */
+.subPanel {
+  background: var(--code-bg);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-lg);
+  padding: 20px 22px;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.subPanel::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(360px 130px at 100% 0%, var(--accent-dim), transparent 70%);
+}
+.subPanel > * {
+  position: relative;
+}
+.subStatus {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 10px 0 0;
+}
+.url {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0 14px;
+  font: 13px var(--font-mono);
+  color: var(--fg);
+  word-break: break-all;
+  line-height: 1.5;
+}
+.cursor {
+  display: inline-block;
+  width: 8px;
+  height: 16px;
+  background: var(--accent);
+  animation: blink 1.1s steps(1) infinite;
+  flex: none;
+}
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+.quick {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: auto;
+}
+.hint {
+  font: 11.5px var(--font-mono);
+  color: var(--faint);
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  line-height: 1.6;
+}
+
+/* —— 资源大数分组 —— */
+.statBand {
+  margin-bottom: 22px;
+}
+.bandHead {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+.bandHead .sh {
+  font: 10.5px var(--font-mono);
+  color: var(--faint);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+/* —— 双列：最近操作 + 告警 —— */
+.cols {
+  display: grid;
+  grid-template-columns: 1fr 340px;
+  gap: 18px;
+}
+@media (max-width: 1200px) {
+  .cols {
+    grid-template-columns: 1fr 300px;
+  }
+}
+@media (max-width: 960px) {
+  .cols {
+    grid-template-columns: 1fr;
+  }
+}
+
+.alerts {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.alert {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+.alert .txt {
+  font-size: 12.5px;
+  color: var(--fg-2);
+  line-height: 1.55;
+}
+.alert .txt a {
+  color: var(--accent);
+  text-decoration: none;
+  margin-left: 4px;
+}
+.alert .txt b {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.allOk {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 12.5px;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.empty {
+  font: 12px var(--font-mono);
+  color: var(--faint);
+  padding: 8px 4px;
+}
+
+/* —— 复制按钮反馈 —— */
+.copied {
+  color: var(--ok);
+}
+
+@media (max-width: 600px) {
+  .subPanel {
+    padding: 16px;
+  }
+  .url {
+    font-size: 12px;
+  }
+}

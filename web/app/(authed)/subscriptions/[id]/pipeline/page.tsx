@@ -2,12 +2,12 @@
 
 import { useParams, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Button } from '@/components/ui/Button';
-import { Input } from '@/components/ui/Input';
+import { PageTopbar } from '@/components/PageChrome';
 import { ApiError, api } from '@/lib/client/api';
 import type { OperatorStep } from '@/lib/proxies/operators';
 import { REGIONS } from '@/lib/proxies/regions';
 import { PROXY_TYPES, type Operator, type OperatorKind } from '@/schemas/operator';
+import styles from './pipeline.module.css';
 
 /* ─── meta ─────────────────────────────────────────────────────────── */
 
@@ -266,137 +266,122 @@ export default function PipelinePage() {
   }, [preview]);
 
   return (
-    <div className="-mx-8 -mt-8 -mb-12 flex flex-col h-screen">
-      {/* top bar */}
-      <header className="shrink-0 flex items-center justify-between gap-4 px-6 py-3 border-b border-[var(--color-border)] bg-[var(--color-surface)]">
-        <div className="flex items-baseline gap-3 min-w-0">
-          <button
-            type="button"
-            onClick={leave}
-            className="pm-focus-ring rounded text-[12px] text-[var(--color-muted)] hover:text-[var(--color-primary)] transition-colors -ml-1 mr-1 active:scale-[0.98]"
-            title="返回订阅源"
+    <div>
+      <PageTopbar>
+        <h1>节点处理流水线</h1>
+        <span className="crumb">
+          <a
+            className={styles.crumbLink}
+            href="/subscriptions"
+            onClick={(e) => {
+              e.preventDefault();
+              leave();
+            }}
           >
-            ← 订阅源
-          </button>
-          <h1
-            className="font-serif text-[22px] font-medium leading-[1.2] tracking-[-0.015em] text-[var(--color-ink)] truncate"
-            style={{ fontVariationSettings: '"opsz" 96, "SOFT" 30' }}
-          >
-            {sub?.name ?? '…'}
-          </h1>
-          <span className="text-[11px] uppercase tracking-[0.08em] font-mono text-[var(--color-muted)] shrink-0">
-            节点处理
+            订阅源
+          </a>{' '}
+          / {sub?.name ?? '…'}
+        </span>
+        {dirty ? (
+          <span className={styles.saveMark}>
+            <span className="dot" />
+            未保存
           </span>
-        </div>
-        <div className="flex items-center gap-3 shrink-0">
-          {dirty ? (
-            <span className="flex items-center gap-1.5 text-[11px] text-[var(--color-warn)]">
-              <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-warn)]" />
-              未保存
-            </span>
-          ) : (
-            loaded &&
-            !loadError && <span className="text-[11px] text-[var(--color-muted)]">已是最新</span>
-          )}
-          <Button variant="secondary" size="sm" onClick={() => runPreview(operators)} disabled={previewing}>
-            {previewing ? '预览中…' : '预览'}
-          </Button>
-          <Button
-            size="sm"
-            onClick={save}
-            disabled={saving || !dirty || incompleteCount > 0}
-            title={incompleteCount > 0 ? `有 ${incompleteCount} 个算子未填写完整` : undefined}
-          >
-            {saving ? '保存中…' : '保存'}
-          </Button>
-        </div>
-      </header>
+        ) : (
+          loaded &&
+          !loadError && <span className={`${styles.saveMark} ${styles.clean}`}>已是最新</span>
+        )}
+        <div className="grow" />
+        <button
+          type="button"
+          className="btn"
+          onClick={() => runPreview(operators)}
+          disabled={previewing}
+        >
+          {previewing ? '预览中…' : '预览结果'}
+        </button>
+        <button
+          type="button"
+          className="btn primary"
+          onClick={save}
+          disabled={saving || !dirty || incompleteCount > 0}
+          title={incompleteCount > 0 ? `有 ${incompleteCount} 个算子未填写完整` : undefined}
+        >
+          {saving ? '保存中…' : '保存流水线'}
+        </button>
+      </PageTopbar>
 
-      {loadError && (
-        <div className="shrink-0 px-6 py-2 text-[12px] bg-[#F4D8D2]/40 text-[var(--color-danger)] border-b border-[var(--color-border)]">
-          {loadError}
-        </div>
-      )}
+      <div className={styles.intro}>
+        <p>
+          拉取 <code className="mono">{sub?.name ?? '该订阅源'}</code>{' '}
+          的节点后，按以下顺序逐个应用算子，再并入最终配置。算子只在渲染时执行，不会改动上游内容。
+        </p>
+      </div>
 
-      {/* body: pipeline | preview */}
-      <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(320px,400px)]">
+      {loadError && <div className={styles.loadErr}>{loadError}</div>}
+
+      <div className="md-grid" style={{ gridTemplateColumns: '1fr 320px' }}>
         {/* ── left: pipeline ── */}
-        <section className="border-r border-[var(--color-border)] bg-[var(--color-bg-sunk)] overflow-y-auto">
-          <div className="sticky top-0 z-10 flex items-center justify-between px-5 py-3 bg-[var(--color-bg-sunk)]/95 backdrop-blur-sm border-b border-[var(--color-border)]">
-            <h2 className="text-[11px] uppercase tracking-[0.1em] font-semibold text-[var(--color-muted)]">
-              流水线
-              <span className="ml-2 tabular-nums font-mono text-[var(--color-fg-soft)]">
-                {operators.length}
-              </span>
-            </h2>
-            <div className="relative">
-              <Button variant="secondary" size="sm" onClick={() => setAddOpen((v) => !v)}>
-                + 算子
-              </Button>
-              {addOpen && (
-                <>
-                  <button
-                    type="button"
-                    aria-label="关闭菜单"
-                    className="fixed inset-0 z-20 cursor-default"
-                    onClick={() => setAddOpen(false)}
-                  />
-                  <div className="absolute right-0 mt-1.5 z-30 w-72 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-modal)] overflow-hidden py-1">
-                    {KIND_ORDER.map((kind, n) => (
-                      <button
-                        key={kind}
-                        type="button"
-                        onClick={() => addOp(kind)}
-                        className="pm-focus-ring w-full text-left px-3 py-2 flex items-baseline gap-2.5 hover:bg-[var(--color-bg-sunk)] transition-colors active:scale-[0.99]"
-                      >
-                        <span className="text-[10px] font-mono tabular-nums text-[var(--color-muted-strong)] w-4 shrink-0">
-                          {n + 1}
-                        </span>
-                        <span className="min-w-0">
-                          <span className="block text-[13px] text-[var(--color-fg)]">
-                            {KIND_META[kind].title}
-                          </span>
-                          <span className="block text-[11px] text-[var(--color-muted)] leading-snug">
-                            {KIND_META[kind].desc}
-                          </span>
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
-
-          <div className="p-4 space-y-2">
-            {operators.length === 0 ? (
-              <div className="rounded-lg border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface)]/40 px-6 py-10 text-center">
-                <p className="text-[13px] text-[var(--color-fg-soft)]">还没有算子</p>
-                <p className="mt-1 text-[12px] text-[var(--color-muted)]">
-                  点右上「+ 算子」添加第一个处理步骤，节点会按从上到下的顺序流过。
-                </p>
+        <div>
+          {operators.length === 0 ? (
+            <div className={styles.empty}>
+              <div className="t">还没有算子</div>
+              <div className="d">
+                点下方「＋ 添加算子」添加第一个处理步骤，节点会按从上到下的顺序流过。
               </div>
-            ) : (
-              operators.map((op, i) => (
-                <OperatorCard
-                  key={op.id}
-                  op={op}
-                  index={i}
-                  total={operators.length}
-                  step={stepById.get(op.id)}
-                  complete={isComplete(op)}
-                  expanded={expandedId === op.id}
-                  onToggleExpand={() => setExpandedId((cur) => (cur === op.id ? null : op.id))}
-                  onChange={(next) => updateOp(i, next)}
-                  onToggle={() => toggleOp(i)}
-                  onRemove={() => removeOp(i)}
-                  onMoveUp={() => moveOp(i, -1)}
-                  onMoveDown={() => moveOp(i, 1)}
+            </div>
+          ) : (
+            operators.map((op, i) => (
+              <OperatorCard
+                key={op.id}
+                op={op}
+                index={i}
+                total={operators.length}
+                step={stepById.get(op.id)}
+                complete={isComplete(op)}
+                expanded={expandedId === op.id}
+                onToggleExpand={() => setExpandedId((cur) => (cur === op.id ? null : op.id))}
+                onChange={(next) => updateOp(i, next)}
+                onToggle={() => toggleOp(i)}
+                onRemove={() => removeOp(i)}
+                onMoveUp={() => moveOp(i, -1)}
+                onMoveDown={() => moveOp(i, 1)}
+              />
+            ))
+          )}
+
+          <div className={styles.addWrap}>
+            <button type="button" className="btn" onClick={() => setAddOpen((v) => !v)}>
+              ＋ 添加算子
+            </button>
+            {addOpen && (
+              <>
+                <button
+                  type="button"
+                  aria-label="关闭菜单"
+                  className={styles.addScrim}
+                  onClick={() => setAddOpen(false)}
                 />
-              ))
+                <div className={styles.addMenu}>
+                  {KIND_ORDER.map((kind, n) => (
+                    <button
+                      key={kind}
+                      type="button"
+                      className={styles.addItem}
+                      onClick={() => addOp(kind)}
+                    >
+                      <span className="n">{n + 1}</span>
+                      <span>
+                        <span className="t">{KIND_META[kind].title}</span>
+                        <span className="d">{KIND_META[kind].desc}</span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </>
             )}
           </div>
-        </section>
+        </div>
 
         {/* ── right: preview ── */}
         <PreviewPane
@@ -440,174 +425,104 @@ function OperatorCard({
   onMoveDown: () => void;
 }) {
   const disabled = !!op.disabled;
+  const idxClass = !complete ? styles.bad : disabled ? styles.off : '';
+  const cardClass = [
+    styles.card,
+    !complete ? styles.bad : expanded ? styles.open : '',
+    disabled ? styles.disabled : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+
   return (
-    <div
-      className={`rounded-lg border bg-[var(--color-surface)] shadow-[var(--shadow-card)] overflow-hidden transition-[border-color,opacity] duration-150 ${
-        !complete
-          ? 'border-[var(--color-warn)]/50'
-          : expanded
-            ? 'border-[var(--color-primary)]/40'
-            : 'border-[var(--color-border)] hover:border-[var(--color-border-strong)]'
-      } ${disabled ? 'opacity-60' : ''}`}
-    >
-      <div className="flex items-center gap-2.5 pl-2.5 pr-2 py-2.5">
-        <ReorderStepper
-          onUp={onMoveUp}
-          onDown={onMoveDown}
-          upDisabled={index === 0}
-          downDisabled={index === total - 1}
-        />
-        <span className="font-mono text-[11px] tabular-nums text-[var(--color-muted-strong)] w-3.5 text-center shrink-0">
-          {index + 1}
-        </span>
-
-        {/* title + summary — whole block toggles expand */}
-        <button
-          type="button"
-          onClick={onToggleExpand}
-          aria-expanded={expanded}
-          className="pm-focus-ring rounded min-w-0 flex-1 text-left active:scale-[0.99]"
-        >
-          <span className="flex items-center gap-2 min-w-0">
-            <span className="text-[13px] font-semibold tracking-[-0.005em] text-[var(--color-fg)] truncate">
-              {KIND_META[op.kind].title}
-            </span>
-            {!complete && (
-              <span className="shrink-0 text-[10px] leading-none px-1.5 py-1 rounded-sm bg-[#F5E5C9] text-[var(--color-warn)]">
-                待填写
-              </span>
-            )}
-            {disabled && (
-              <span className="shrink-0 text-[10px] leading-none px-1.5 py-1 rounded-sm bg-[var(--color-bg-sunk)] text-[var(--color-muted)]">
-                已停用
-              </span>
-            )}
-          </span>
-          <span className="block text-[11px] text-[var(--color-muted)] font-mono truncate mt-1">
-            {summarize(op)}
-          </span>
-        </button>
-
-        <TraceChip step={step} disabled={disabled} />
-
-        <div className="flex items-center gap-0.5 shrink-0">
-          <IconBtn
-            label={disabled ? '▶' : '⏸'}
-            title={disabled ? '启用' : '停用'}
-            onClick={onToggle}
-          />
-          <IconBtn label="✕" title="删除" onClick={onRemove} tone="danger" />
-        </div>
-
-        {/* expand chevron */}
-        <button
-          type="button"
-          onClick={onToggleExpand}
-          aria-label={expanded ? '收起' : '展开'}
-          className="pm-focus-ring w-6 h-7 rounded inline-flex items-center justify-center text-[var(--color-muted-strong)] hover:text-[var(--color-fg)] transition-colors active:scale-[0.9] shrink-0"
-        >
-          <span
-            aria-hidden
-            className={`text-[10px] transition-transform duration-150 ease-out ${expanded ? 'rotate-90' : ''}`}
-          >
-            ▸
-          </span>
-        </button>
+    <div className={styles.step}>
+      <div className={styles.rail}>
+        <div className={`${styles.idx} ${idxClass}`}>{index + 1}</div>
+        {index < total - 1 && <div className={styles.line} />}
       </div>
 
-      {expanded && (
-        <div className="border-t border-[var(--color-border)] bg-[var(--color-bg-sunk)]/40 px-4 py-4">
-          <OperatorEditor op={op} onChange={onChange} />
+      <div className={cardClass}>
+        <div className={styles.head}>
+          <div className={styles.stepper}>
+            <button type="button" onClick={onMoveUp} disabled={index === 0} title="上移" aria-label="上移">
+              ⌃
+            </button>
+            <button
+              type="button"
+              onClick={onMoveDown}
+              disabled={index === total - 1}
+              title="下移"
+              aria-label="下移"
+            >
+              ⌄
+            </button>
+          </div>
+
+          <button
+            type="button"
+            className={styles.titleBtn}
+            onClick={onToggleExpand}
+            aria-expanded={expanded}
+          >
+            <b>{KIND_META[op.kind].title}</b>
+            {!complete && <span className="pill warn plain">待填写</span>}
+            {disabled && <span className="pill idle plain">已停用</span>}
+            <span className={styles.summary}>{summarize(op)}</span>
+          </button>
+
+          <TraceChip step={step} disabled={disabled} />
+
+          <div className={styles.tools}>
+            <button
+              type="button"
+              className={styles.iconBtn}
+              onClick={onToggle}
+              title={disabled ? '启用' : '停用'}
+              aria-label={disabled ? '启用' : '停用'}
+            >
+              {disabled ? '▶' : '⏸'}
+            </button>
+            <button
+              type="button"
+              className={`${styles.iconBtn} ${styles.danger}`}
+              onClick={onRemove}
+              title="删除"
+              aria-label="删除"
+            >
+              ✕
+            </button>
+            <button
+              type="button"
+              className={styles.iconBtn}
+              onClick={onToggleExpand}
+              aria-label={expanded ? '收起' : '展开'}
+            >
+              <span aria-hidden className={`${styles.chev} ${expanded ? styles.on : ''}`}>
+                ▸
+              </span>
+            </button>
+          </div>
         </div>
-      )}
+
+        {expanded && (
+          <div className={styles.editor}>
+            <OperatorEditor op={op} onChange={onChange} />
+          </div>
+        )}
+      </div>
     </div>
   );
 }
 
 function TraceChip({ step, disabled }: { step?: OperatorStep; disabled: boolean }) {
-  if (disabled) return null;
-  if (!step) return <span className="shrink-0 w-9" />; // reserve width for layout calm
-  if (!step.applied) return <span className="shrink-0 w-9" />;
+  if (disabled || !step || !step.applied) return <span className={styles.trace} />;
   if (step.dropped > 0) {
-    return (
-      <span className="shrink-0 text-[11px] font-mono tabular-nums px-1.5 py-0.5 rounded-sm bg-[#F4D8D2] text-[var(--color-danger)]">
-        −{step.dropped}
-      </span>
-    );
+    return <span className={`${styles.trace} ${styles.drop}`}>−{step.dropped}</span>;
   }
   if (step.changed > 0) {
-    return (
-      <span className="shrink-0 text-[11px] font-mono tabular-nums px-1.5 py-0.5 rounded-sm bg-[var(--color-primary-soft)] text-[var(--color-primary-hover)]">
-        ✎{step.changed}
-      </span>
-    );
+    return <span className={`${styles.trace} ${styles.change}`}>✎{step.changed}</span>;
   }
-  return <span className="shrink-0 w-9 text-center text-[11px] text-[var(--color-muted-strong)]">—</span>;
-}
-
-/** 28px icon action button — shares the Dossier card's IconButton vocabulary. */
-function IconBtn({
-  label,
-  title,
-  onClick,
-  disabled,
-  tone = 'neutral',
-}: {
-  label: string;
-  title: string;
-  onClick: () => void;
-  disabled?: boolean;
-  tone?: 'neutral' | 'danger';
-}) {
-  const color =
-    tone === 'danger'
-      ? 'text-[var(--color-muted)] hover:text-[var(--color-danger)] hover:bg-[var(--color-danger)]/8'
-      : 'text-[var(--color-muted)] hover:text-[var(--color-fg)] hover:bg-[var(--color-bg-sunk)]';
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      title={title}
-      aria-label={title}
-      className={`pm-focus-ring w-7 h-7 rounded inline-flex items-center justify-center text-[13px] leading-none transition-colors active:scale-[0.9] disabled:opacity-25 disabled:cursor-not-allowed ${color}`}
-    >
-      <span aria-hidden>{label}</span>
-    </button>
-  );
-}
-
-/** Vertical reorder stepper (⌃ / ⌄) — a deliberate control, not floating arrows. */
-function ReorderStepper({
-  onUp,
-  onDown,
-  upDisabled,
-  downDisabled,
-}: {
-  onUp: () => void;
-  onDown: () => void;
-  upDisabled: boolean;
-  downDisabled: boolean;
-}) {
-  const base =
-    'pm-focus-ring h-3.5 w-5 inline-flex items-center justify-center text-[9px] leading-none text-[var(--color-muted)] hover:text-[var(--color-fg)] hover:bg-[var(--color-bg-sunk)] disabled:opacity-25 disabled:cursor-not-allowed transition-colors active:scale-[0.9]';
-  return (
-    <div className="flex flex-col rounded-md border border-[var(--color-border)] overflow-hidden shrink-0 bg-[var(--color-surface)]">
-      <button type="button" onClick={onUp} disabled={upDisabled} title="上移" aria-label="上移" className={base}>
-        <span aria-hidden>⌃</span>
-      </button>
-      <button
-        type="button"
-        onClick={onDown}
-        disabled={downDisabled}
-        title="下移"
-        aria-label="下移"
-        className={`${base} border-t border-[var(--color-border)]`}
-      >
-        <span aria-hidden>⌄</span>
-      </button>
-    </div>
-  );
+  return <span className={styles.trace}>—</span>;
 }
 
 /* ─── operator editors ─────────────────────────────────────────────── */
@@ -616,7 +531,7 @@ function OperatorEditor({ op, onChange }: { op: Operator; onChange: (next: Opera
   switch (op.kind) {
     case 'filter-regex':
       return (
-        <div className="flex flex-col gap-3.5">
+        <div className={styles.fieldRow}>
           <EditorField label="模式">
             <Segmented
               value={op.mode}
@@ -628,11 +543,11 @@ function OperatorEditor({ op, onChange }: { op: Operator; onChange: (next: Opera
             />
           </EditorField>
           <EditorField label="正则表达式">
-            <Input
+            <input
+              className="input mono"
               value={op.pattern}
               onChange={(e) => onChange({ ...op, pattern: e.target.value })}
               placeholder="香港|HK|🇭🇰"
-              className="font-mono text-[12px]"
             />
           </EditorField>
           <FlagToggle flags={op.flags} onChange={(f) => onChange({ ...op, flags: f })} />
@@ -641,12 +556,13 @@ function OperatorEditor({ op, onChange }: { op: Operator; onChange: (next: Opera
 
     case 'filter-useless':
       return (
-        <div className="flex flex-col gap-3.5">
-          <p className="text-[11px] text-[var(--color-muted)] leading-relaxed">
+        <div className={styles.fieldRow}>
+          <p className={styles.note}>
             自动丢弃含「剩余流量 / 到期 / 重置 / 官网 / 续费 / 客服 / 群组 / 网址」等关键词的信息节点。
           </p>
           <EditorField label="额外关键词（逗号分隔）">
-            <Input
+            <input
+              className="input mono"
               value={op.extra.join(', ')}
               onChange={(e) =>
                 onChange({
@@ -658,7 +574,6 @@ function OperatorEditor({ op, onChange }: { op: Operator; onChange: (next: Opera
                 })
               }
               placeholder="可选，如 测试, 体验"
-              className="font-mono text-[12px]"
             />
           </EditorField>
         </div>
@@ -666,22 +581,22 @@ function OperatorEditor({ op, onChange }: { op: Operator; onChange: (next: Opera
 
     case 'rename-regex':
       return (
-        <div className="flex flex-col gap-3.5">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className={styles.fieldRow}>
+          <div className={styles.twoCol}>
             <EditorField label="匹配正则">
-              <Input
+              <input
+                className="input mono"
                 value={op.pattern}
                 onChange={(e) => onChange({ ...op, pattern: e.target.value })}
-                placeholder="\\[.*?\\]"
-                className="font-mono text-[12px]"
+                placeholder="\[.*?\]"
               />
             </EditorField>
             <EditorField label="替换为（留空 = 删除）">
-              <Input
+              <input
+                className="input mono"
                 value={op.replacement}
                 onChange={(e) => onChange({ ...op, replacement: e.target.value })}
                 placeholder=""
-                className="font-mono text-[12px]"
               />
             </EditorField>
           </div>
@@ -691,7 +606,7 @@ function OperatorEditor({ op, onChange }: { op: Operator; onChange: (next: Opera
 
     case 'flag-emoji':
       return (
-        <div className="flex flex-col gap-3.5">
+        <div className={styles.fieldRow}>
           <EditorField label="操作">
             <Segmented
               value={op.action}
@@ -719,7 +634,7 @@ function OperatorEditor({ op, onChange }: { op: Operator; onChange: (next: Opera
 
     case 'filter-type':
       return (
-        <div className="flex flex-col gap-3.5">
+        <div className={styles.fieldRow}>
           <EditorField label="模式">
             <Segmented
               value={op.mode}
@@ -731,7 +646,7 @@ function OperatorEditor({ op, onChange }: { op: Operator; onChange: (next: Opera
             />
           </EditorField>
           <EditorField label="协议类型">
-            <div className="flex flex-wrap gap-1.5">
+            <div className={styles.chips}>
               {PROXY_TYPES.map((t) => (
                 <ToggleChip
                   key={t}
@@ -755,10 +670,9 @@ function OperatorEditor({ op, onChange }: { op: Operator; onChange: (next: Opera
 
     case 'sort':
       return (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+        <div className={styles.twoCol}>
           <EditorField label="排序依据">
             <Segmented
-              compact
               value={op.by}
               onChange={(v) => onChange({ ...op, by: v as 'name' | 'type' | 'server' | 'region' })}
               options={[
@@ -767,7 +681,6 @@ function OperatorEditor({ op, onChange }: { op: Operator; onChange: (next: Opera
                 { value: 'type', label: '类型' },
                 { value: 'server', label: '服务器' },
               ]}
-              wrap
             />
           </EditorField>
           <EditorField label="顺序">
@@ -785,7 +698,7 @@ function OperatorEditor({ op, onChange }: { op: Operator; onChange: (next: Opera
 
     case 'set-prop':
       return (
-        <div className="flex flex-col gap-2.5">
+        <div className={styles.fieldRow}>
           <TriRow label="UDP" value={op.udp} onChange={(v) => onChange({ ...op, udp: v })} />
           <TriRow label="TCP Fast Open" value={op.tfo} onChange={(v) => onChange({ ...op, tfo: v })} />
           <TriRow
@@ -798,7 +711,7 @@ function OperatorEditor({ op, onChange }: { op: Operator; onChange: (next: Opera
 
     case 'dedup':
       return (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+        <div className={styles.twoCol}>
           <EditorField label="判定依据">
             <Segmented
               value={op.by}
@@ -824,7 +737,7 @@ function OperatorEditor({ op, onChange }: { op: Operator; onChange: (next: Opera
 
     case 'filter-region':
       return (
-        <div className="flex flex-col gap-3.5">
+        <div className={styles.fieldRow}>
           <EditorField label="模式">
             <Segmented
               value={op.mode}
@@ -836,7 +749,7 @@ function OperatorEditor({ op, onChange }: { op: Operator; onChange: (next: Opera
             />
           </EditorField>
           <EditorField label="地区">
-            <div className="flex flex-wrap gap-1.5">
+            <div className={styles.chips}>
               {REGIONS.map((r) => (
                 <ToggleChip
                   key={r.code}
@@ -850,7 +763,7 @@ function OperatorEditor({ op, onChange }: { op: Operator; onChange: (next: Opera
                     })
                   }
                 >
-                  <span className="mr-1">{r.emoji}</span>
+                  <span style={{ marginRight: 4 }}>{r.emoji}</span>
                   {r.zh}
                 </ToggleChip>
               ))}
@@ -865,48 +778,34 @@ function OperatorEditor({ op, onChange }: { op: Operator; onChange: (next: Opera
 function EditorField({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <span className="block text-[10px] uppercase tracking-[0.06em] text-[var(--color-muted)] mb-1.5">
-        {label}
-      </span>
+      <span className={styles.cap}>{label}</span>
       {children}
     </div>
   );
 }
 
+/** Segmented single-select — uses the shared .seg / .opt vocabulary. */
 function Segmented({
   value,
   onChange,
   options,
-  compact,
-  wrap,
 }: {
   value: string;
   onChange: (v: string) => void;
   options: { value: string; label: string }[];
-  compact?: boolean;
-  wrap?: boolean;
 }) {
   return (
-    <div
-      className={`inline-flex ${wrap ? 'flex-wrap' : ''} gap-1 p-0.5 rounded-lg bg-[var(--color-bg-sunk)] border border-[var(--color-border)]`}
-    >
-      {options.map((o) => {
-        const active = o.value === value;
-        return (
-          <button
-            key={o.value}
-            type="button"
-            onClick={() => onChange(o.value)}
-            className={`pm-focus-ring rounded-md ${compact ? 'px-2' : 'px-2.5'} py-1 text-[12px] transition-colors active:scale-[0.97] ${
-              active
-                ? 'bg-[var(--color-surface)] text-[var(--color-fg)] shadow-[var(--shadow-card)]'
-                : 'text-[var(--color-muted)] hover:text-[var(--color-fg)]'
-            }`}
-          >
-            {o.label}
-          </button>
-        );
-      })}
+    <div className="seg">
+      {options.map((o) => (
+        <button
+          key={o.value}
+          type="button"
+          className={`opt${o.value === value ? ' on' : ''}`}
+          onClick={() => onChange(o.value)}
+        >
+          {o.label}
+        </button>
+      ))}
     </div>
   );
 }
@@ -921,21 +820,16 @@ function FlagToggle({ flags, onChange }: { flags?: string; onChange: (f: string)
     onChange([...set].join(''));
   };
   return (
-    <label className="inline-flex items-center gap-2 cursor-pointer select-none w-fit">
-      <input
-        type="checkbox"
-        checked={ci}
-        onChange={toggle}
-        className="accent-[var(--color-primary)] w-4 h-4 shrink-0"
-      />
-      <span className="inline-flex items-baseline gap-1 text-[12px] leading-none text-[var(--color-fg-soft)]">
-        忽略大小写
-        <span className="font-mono text-[var(--color-muted)]">(i)</span>
+    <label className={styles.ci}>
+      <input type="checkbox" checked={ci} onChange={toggle} />
+      <span>
+        忽略大小写 <span className={styles.flag}>(i)</span>
       </span>
     </label>
   );
 }
 
+/** Multi-select toggle — uses the shared .chip vocabulary. */
 function ToggleChip({
   active,
   onClick,
@@ -946,15 +840,7 @@ function ToggleChip({
   children: React.ReactNode;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`pm-focus-ring rounded-md px-2 py-1 text-[12px] font-mono transition-colors active:scale-[0.97] border ${
-        active
-          ? 'bg-[var(--color-primary-soft)] text-[var(--color-primary-hover)] border-[var(--color-primary)]/30'
-          : 'bg-[var(--color-surface)] text-[var(--color-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)] hover:text-[var(--color-fg)]'
-      }`}
-    >
+    <button type="button" className={`chip${active ? ' on' : ''}`} onClick={onClick}>
       {children}
     </button>
   );
@@ -972,8 +858,8 @@ function TriRow({
 }) {
   const cur = value === undefined ? 'keep' : value ? 'on' : 'off';
   return (
-    <div className="flex items-center justify-between gap-3">
-      <span className="text-[12px] text-[var(--color-fg-soft)]">{label}</span>
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+      <span style={{ fontSize: 12.5, color: 'var(--fg-2)' }}>{label}</span>
       <Segmented
         value={cur}
         onChange={(v) => onChange(v === 'keep' ? undefined : v === 'on')}
@@ -1005,80 +891,72 @@ function PreviewPane({
   const delta = preview ? preview.after.count - preview.before.count : 0;
 
   return (
-    <section className="overflow-y-auto bg-[var(--color-bg)] flex flex-col">
-      <div className="sticky top-0 z-10 px-5 py-3 bg-[var(--color-bg)]/95 backdrop-blur-sm border-b border-[var(--color-border)]">
-        <div className="flex items-center justify-between">
-          <h2 className="text-[11px] uppercase tracking-[0.1em] font-semibold text-[var(--color-muted)]">
-            预览{previewing && <span className="ml-2 text-[var(--color-muted-strong)] normal-case tracking-normal">运行中…</span>}
-          </h2>
-          <Segmented
-            value={side}
-            onChange={(v) => setSide(v as 'after' | 'before')}
-            options={[
-              { value: 'after', label: '处理后' },
-              { value: 'before', label: '处理前' },
-            ]}
-            compact
-          />
+    <aside className="panel" style={{ position: 'sticky', top: 74 }}>
+      <div className="panel-head">
+        <h2>处理预览</h2>
+        {previewing && <span className="sub">运行中…</span>}
+        <div className="grow" />
+        <div className="seg">
+          <button
+            type="button"
+            className={`opt${side === 'after' ? ' on' : ''}`}
+            onClick={() => setSide('after')}
+          >
+            处理后
+          </button>
+          <button
+            type="button"
+            className={`opt${side === 'before' ? ' on' : ''}`}
+            onClick={() => setSide('before')}
+          >
+            处理前
+          </button>
         </div>
+      </div>
+
+      <div className="panel-body" style={{ padding: '14px 16px' }}>
         {preview && (
-          <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-[14px] font-mono tabular-nums text-[var(--color-muted)]">
-              {preview.before.count}
-            </span>
-            <span className="text-[var(--color-muted-strong)]">→</span>
-            <span
-              className="font-serif text-[26px] leading-none font-medium tabular-nums text-[var(--color-ink)]"
-              style={{ fontVariationSettings: '"opsz" 48, "SOFT" 40' }}
-            >
-              {preview.after.count}
-            </span>
-            <span className="text-[11px] text-[var(--color-muted)]">节点</span>
+          <div className={styles.delta}>
+            <span className="from">{preview.before.count}</span>
+            <span className="arrow">→</span>
+            <span className="to">{preview.after.count}</span>
+            <span className="unit">节点</span>
             {delta !== 0 && (
-              <span
-                className={`ml-1 text-[11px] font-mono tabular-nums px-1.5 py-0.5 rounded-sm ${
-                  delta < 0
-                    ? 'bg-[#F4D8D2] text-[var(--color-danger)]'
-                    : 'bg-[#E6EEDD] text-[var(--color-success)]'
-                }`}
-              >
+              <span className={delta < 0 ? styles.minus : styles.plus}>
                 {delta > 0 ? `+${delta}` : delta}
               </span>
             )}
           </div>
         )}
-      </div>
 
-      <div className="flex-1 px-5 py-4">
-        {error ? (
-          <div className="rounded-lg border border-[var(--color-danger)]/40 bg-[#F4D8D2]/30 px-4 py-3 text-[12px] text-[var(--color-danger)] break-words">
-            {error}
-          </div>
-        ) : !loaded || !list ? (
-          <p className="text-[13px] text-[var(--color-muted)]">加载中…</p>
-        ) : list.names.length === 0 ? (
-          <p className="text-[13px] text-[var(--color-muted)] italic">无节点</p>
-        ) : (
-          <ul className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)] overflow-hidden">
-            {list.names.map((name, i) => (
-              <li
-                key={`${i}-${name}`}
-                className="flex items-center gap-2.5 px-3 py-1.5 hover:bg-[var(--color-bg-sunk)] transition-colors"
-              >
-                <span className="text-[10px] font-mono tabular-nums text-[var(--color-muted-strong)] w-7 text-right shrink-0">
-                  {i + 1}
-                </span>
-                <span className="text-[12px] font-mono text-[var(--color-fg)] truncate">{name}</span>
-              </li>
-            ))}
-            {list.truncated && (
-              <li className="px-3 py-1.5 text-[11px] text-[var(--color-muted)] font-mono">
-                … 仅显示前 {list.names.length} 个，共 {list.count} 个
-              </li>
-            )}
-          </ul>
-        )}
+        <div style={{ marginTop: preview ? 12 : 0 }}>
+          {error ? (
+            <div className={styles.previewErr}>{error}</div>
+          ) : !loaded || !list ? (
+            <p className={styles.previewMuted}>加载中…</p>
+          ) : list.names.length === 0 ? (
+            <p className={styles.previewMuted} style={{ fontStyle: 'italic' }}>
+              无节点
+            </p>
+          ) : (
+            <>
+              <div className={styles.nodeList}>
+                {list.names.map((name, i) => (
+                  <div key={`${i}-${name}`} className={styles.nodeLi}>
+                    <span className="n">{i + 1}</span>
+                    <span className="name">{name}</span>
+                  </div>
+                ))}
+              </div>
+              {list.truncated && (
+                <div className={styles.previewMeta}>
+                  … 仅显示前 {list.names.length} 个，共 {list.count} 个
+                </div>
+              )}
+            </>
+          )}
+        </div>
       </div>
-    </section>
+    </aside>
   );
 }

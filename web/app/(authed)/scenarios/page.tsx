@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { ApiError, api } from '@/lib/client/api';
+import { PageTopbar } from '@/components/PageChrome';
 
 interface ScenarioDescriptor {
   id: string;
@@ -35,17 +36,14 @@ export default function ScenariosIndexPage() {
 
   return (
     <div className="max-w-3xl space-y-8">
-      <header>
-        <h1
-          className="font-serif text-[40px] font-medium leading-[1.1] tracking-[-0.02em] text-[var(--color-ink)]"
-          style={{ fontVariationSettings: '"opsz" 144, "SOFT" 30' }}
-        >
-          场景
-        </h1>
-        <p className="mt-2 text-[14px] text-[var(--color-muted)] leading-[1.6]">
-          每个场景聚焦 Clash 配置的一个切片。每个场景在 sidebar 里有独立入口。
-        </p>
-      </header>
+      <PageTopbar>
+        <h1>场景</h1>
+        <div className="grow" />
+      </PageTopbar>
+
+      <p className="text-[14px] text-[var(--color-muted)] leading-[1.6]">
+        每个场景聚焦 Clash 配置的一个切片。每个场景在 sidebar 里有独立入口。
+      </p>
 
       {error && (
         <div className="rounded-xl border border-[var(--color-danger)]/40 bg-[#F4D8D2]/30 px-4 py-3 text-[13px] text-[var(--color-danger)]">
@@ -59,7 +57,8 @@ export default function ScenariosIndexPage() {
           <code className="font-mono text-[12px] text-[var(--color-primary)]">
             web/lib/scenarios/
           </code>{' '}
-          下添加，并在 <code className="font-mono text-[12px] text-[var(--color-primary)]">registry.ts</code>{' '}
+          下添加，并在{' '}
+          <code className="font-mono text-[12px] text-[var(--color-primary)]">registry.ts</code>{' '}
           中注册。
         </p>
       ) : (

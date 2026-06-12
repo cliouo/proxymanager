@@ -10,15 +10,13 @@ import {
   useState,
   type RefObject,
 } from 'react';
-import { Badge } from '@/components/ui/Badge';
-import { Button } from '@/components/ui/Button';
-import { FormField } from '@/components/ui/FormField';
-import { Input, Select, Textarea } from '@/components/ui/Input';
-import { Placeholder, Reveal } from '@/components/ui/Reveal';
-import { StatusDot } from '@/components/ui/StatusDot';
+import { PageTopbar } from '@/components/PageChrome';
+import { ScopePill } from '@/components/Topbar';
+import { CodeEditor } from '@/components/ui/CodeEditor';
 import { ApiError, api } from '@/lib/client/api';
 import { type Collection } from '@/lib/types/collection';
 import type { Operator } from '@/schemas/operator';
+import styles from './subscriptions.module.css';
 
 const DEFAULT_TTL_MS = 10 * 60 * 1000;
 
@@ -66,6 +64,7 @@ export default function SubscriptionsPage() {
   const [collectionEditingId, setCollectionEditingId] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('subs');
   const [loaded, setLoaded] = useState(false);
+  const [query, setQuery] = useState('');
   const tabsId = useId();
   const subsTabRef = useRef<HTMLButtonElement>(null);
   const collectionsTabRef = useRef<HTMLButtonElement>(null);
@@ -222,77 +221,98 @@ export default function SubscriptionsPage() {
       ? collections.find((c) => c.id === collectionEditingId) ?? null
       : null;
 
+  const q = query.trim().toLowerCase();
+  const filteredSubs = useMemo(() => {
+    if (!q) return subs;
+    return subs.filter(
+      (s) =>
+        s.name.toLowerCase().includes(q) ||
+        s.tags.some((t) => t.toLowerCase().includes(q)),
+    );
+  }, [subs, q]);
+  const filteredCollections = useMemo(() => {
+    if (!q) return collections;
+    return collections.filter(
+      (c) =>
+        c.name.toLowerCase().includes(q) ||
+        c.subscription_tags.some((t) => t.toLowerCase().includes(q)),
+    );
+  }, [collections, q]);
+
   return (
-    <div className="space-y-5">
-      <header className="flex items-baseline justify-between gap-4">
-        <div>
-          <h1
-            className="font-serif text-[28px] font-medium leading-[1.15] tracking-[-0.015em] text-[var(--color-ink)]"
-            style={{ fontVariationSettings: '"opsz" 96, "SOFT" 30' }}
-          >
-            订阅源
-          </h1>
-          <p className="mt-1.5 text-[13px] text-[var(--color-muted)]">
-            {subs.length} 订阅源 · {collections.length} 聚合订阅 · 启用订阅源即注入 proxies;聚合订阅把多条单订阅合并成一个可绑定来源
-          </p>
-        </div>
+    <>
+      <PageTopbar>
+        <h1>订阅源</h1>
+        <ScopePill shared />
+        {loaded && (
+          <span className="crumb">
+            {subs.length} 单订阅 · {collections.length} 聚合
+          </span>
+        )}
+        <div className="grow" />
         {tab === 'subs' ? (
-          <Button onClick={() => setAdding((v) => !v)}>{adding ? '取消' : '+ 新增订阅'}</Button>
+          <button
+            type="button"
+            className="btn primary"
+            onClick={() => setAdding((v) => !v)}
+          >
+            {adding ? '取消' : '＋ 新建'}
+          </button>
         ) : (
-          <Button
+          <button
+            type="button"
+            className="btn primary"
             onClick={() => {
               setCollectionEditingId(null);
               setCollectionAdding((v) => !v);
             }}
           >
-            {collectionAdding ? '取消' : '+ 新建聚合订阅'}
-          </Button>
+            {collectionAdding ? '取消' : '＋ 新建聚合订阅'}
+          </button>
         )}
-      </header>
+      </PageTopbar>
 
-      {/* Tab bar */}
-      <div
-        role="tablist"
-        aria-label="订阅源类型"
-        onKeyDown={handleTablistKey}
-        className="flex gap-0 border-b border-[var(--color-border)] -mx-1 px-1"
-      >
-        <TabButton
-          ref={subsTabRef}
-          active={tab === 'subs'}
-          onClick={() => setTab('subs')}
-          count={subs.length}
-          controlsId={`${tabsId}-panel-subs`}
-          tabId={`${tabsId}-tab-subs`}
+      {/* tabs + 搜索 —— 原型把这行留在内容区首行（新建钮已上移 topbar） */}
+      <div className={styles.headRow}>
+        <div
+          role="tablist"
+          aria-label="订阅源类型"
+          onKeyDown={handleTablistKey}
+          className="tabs"
         >
-          单订阅
-        </TabButton>
-        <TabButton
-          ref={collectionsTabRef}
-          active={tab === 'collections'}
-          onClick={() => setTab('collections')}
-          count={collections.length}
-          controlsId={`${tabsId}-panel-collections`}
-          tabId={`${tabsId}-tab-collections`}
-        >
-          聚合订阅
-        </TabButton>
+          <TabButton
+            ref={subsTabRef}
+            active={tab === 'subs'}
+            onClick={() => setTab('subs')}
+            count={subs.length}
+            controlsId={`${tabsId}-panel-subs`}
+            tabId={`${tabsId}-tab-subs`}
+          >
+            单订阅
+          </TabButton>
+          <TabButton
+            ref={collectionsTabRef}
+            active={tab === 'collections'}
+            onClick={() => setTab('collections')}
+            count={collections.length}
+            controlsId={`${tabsId}-panel-collections`}
+            tabId={`${tabsId}-tab-collections`}
+          >
+            聚合订阅
+          </TabButton>
+        </div>
+        <div className={styles.grow} />
+        <div className="search" style={{ width: 220 }}>
+          <input
+            className="input"
+            placeholder="搜索名称 / 标签…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+        </div>
       </div>
 
-      {error && (
-        <div className="rounded-xl border border-[var(--color-danger)]/40 bg-[#F4D8D2]/30 px-4 py-3 text-[13px] text-[var(--color-danger)]">
-          {error}
-        </div>
-      )}
-
-      {tab === 'subs' && adding && (
-        <AddForm
-          onAdded={() => {
-            setAdding(false);
-            reload();
-          }}
-        />
-      )}
+      {error && <div className={styles.errBanner}>{error}</div>}
 
       {tab === 'subs' ? (
         <section
@@ -300,34 +320,53 @@ export default function SubscriptionsPage() {
           role="tabpanel"
           aria-labelledby={`${tabsId}-tab-subs`}
         >
+          <div className={styles.lead}>
+            订阅源是平台向上游机场拉取的<b>输入</b>；启用后处理并注入 proxies。
+            远程源按 <b>缓存 TTL</b> 定时拉取，本地源是内联 YAML / 节点链接。
+            源站地址、UA 与节点处理流水线都在「编辑」里维护。
+          </div>
+
+          {adding && (
+            <AddForm
+              onAdded={() => {
+                setAdding(false);
+                reload();
+              }}
+              onCancel={() => setAdding(false)}
+            />
+          )}
+
           {!loaded ? (
-            <ul className="grid grid-cols-1 md:grid-cols-2 gap-2 items-start">
+            <div className="panel">
               <SubSkeleton />
               <SubSkeleton />
-            </ul>
+            </div>
           ) : subs.length === 0 && !adding ? (
             <EmptyState onAdd={() => setAdding(true)} />
+          ) : filteredSubs.length === 0 ? (
+            <div className="panel">
+              <div className={styles.empty}>
+                <div className={styles.d}>没有匹配「{query}」的订阅源。</div>
+              </div>
+            </div>
           ) : (
-            <Reveal when={loaded}>
-              <ul className="grid grid-cols-1 md:grid-cols-2 gap-2 items-start">
-                {subs.map((sub, idx) => (
-                  <Dossier
-                    key={sub.id}
-                    sub={sub}
-                    index={idx + 1}
-                    pending={busyIds.has(sub.id)}
-                    editing={editingId === sub.id}
-                    anyEditing={editingId !== null}
-                    onRefresh={() => onRefresh(sub.id)}
-                    onDelete={() => onDelete(sub.id)}
-                    onToggle={() => onToggle(sub)}
-                    onEditStart={() => setEditingId(sub.id)}
-                    onEditCancel={() => setEditingId(null)}
-                    onEditSave={(patch) => onSaveEdit(sub.id, patch)}
-                  />
-                ))}
-              </ul>
-            </Reveal>
+            <div className="panel">
+              {filteredSubs.map((sub) => (
+                <Dossier
+                  key={sub.id}
+                  sub={sub}
+                  pending={busyIds.has(sub.id)}
+                  editing={editingId === sub.id}
+                  anyEditing={editingId !== null}
+                  onRefresh={() => onRefresh(sub.id)}
+                  onDelete={() => onDelete(sub.id)}
+                  onToggle={() => onToggle(sub)}
+                  onEditStart={() => setEditingId(sub.id)}
+                  onEditCancel={() => setEditingId(null)}
+                  onEditSave={(patch) => onSaveEdit(sub.id, patch)}
+                />
+              ))}
+            </div>
           )}
         </section>
       ) : (
@@ -336,6 +375,12 @@ export default function SubscriptionsPage() {
           role="tabpanel"
           aria-labelledby={`${tabsId}-tab-collections`}
         >
+          <div className={styles.lead}>
+            聚合订阅把<b>多条单订阅合并成一个来源</b>，输出一条对外链接。
+            在「结构骨架」页把配置文件的「节点来源」绑定到它，就会注入这组订阅去重后的节点。
+            成员可手动勾选，也可按标签自动纳入。
+          </div>
+
           {(collectionAdding || editingCollection) && (
             <CollectionForm
               key={editingCollection?.id ?? 'new'}
@@ -352,37 +397,41 @@ export default function SubscriptionsPage() {
               }
             />
           )}
+
           {!loaded ? (
-            <ul className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-2 items-start">
+            <div className="panel">
               <SubSkeleton />
               <SubSkeleton />
-            </ul>
+            </div>
           ) : collections.length === 0 ? (
             !collectionAdding && <CollectionEmpty onAdd={() => setCollectionAdding(true)} />
+          ) : filteredCollections.length === 0 ? (
+            <div className="panel">
+              <div className={styles.empty}>
+                <div className={styles.d}>没有匹配「{query}」的聚合订阅。</div>
+              </div>
+            </div>
           ) : (
-            <Reveal when={loaded}>
-              <ul className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-2 items-start">
-                {collections.map((c, idx) => (
-                  <CollectionCard
-                    key={c.id}
-                    c={c}
-                    subs={subs}
-                    index={idx + 1}
-                    editing={collectionEditingId === c.id}
-                    anyEditing={collectionEditingId !== null || collectionAdding}
-                    onEdit={() => {
-                      setCollectionAdding(false);
-                      setCollectionEditingId(c.id);
-                    }}
-                    onDelete={() => onCollectionDelete(c.id)}
-                  />
-                ))}
-              </ul>
-            </Reveal>
+            <div className="panel">
+              {filteredCollections.map((c) => (
+                <CollectionCard
+                  key={c.id}
+                  c={c}
+                  subs={subs}
+                  editing={collectionEditingId === c.id}
+                  anyEditing={collectionEditingId !== null || collectionAdding}
+                  onEdit={() => {
+                    setCollectionAdding(false);
+                    setCollectionEditingId(c.id);
+                  }}
+                  onDelete={() => onCollectionDelete(c.id)}
+                />
+              ))}
+            </div>
           )}
         </section>
       )}
-    </div>
+    </>
   );
 }
 
@@ -413,42 +462,25 @@ function TabButton({
       aria-controls={controlsId}
       tabIndex={active ? 0 : -1}
       onClick={onClick}
-      className={`pm-focus-ring relative px-4 py-2 text-[13px] font-medium leading-none transition-colors active:scale-[0.98] rounded-sm ${
-        active
-          ? 'text-[var(--color-ink)]'
-          : 'text-[var(--color-muted)] hover:text-[var(--color-fg)]'
-      }`}
+      className={`tab${active ? ' on' : ''}`}
     >
-      <span className="inline-flex items-baseline gap-2">
-        {children}
-        <span className="text-[11px] tabular-nums font-mono text-[var(--color-muted)]">
-          {count}
-        </span>
-      </span>
-      <span
-        aria-hidden
-        className={`absolute left-2 right-2 bottom-[-1px] h-[2px] bg-[var(--color-primary)] rounded-full transition-opacity duration-200 ease-out ${
-          active ? 'opacity-100' : 'opacity-0'
-        }`}
-      />
+      {children}
+      <span className="ct">{count}</span>
     </button>
   );
 }
 
 function CollectionEmpty({ onAdd }: { onAdd: () => void }) {
   return (
-    <div className="rounded-xl border border-dashed border-[var(--color-border-strong)] bg-[var(--color-bg-sunk)]/50 px-8 py-12 text-center">
-      <p
-        className="font-serif text-[20px] font-medium text-[var(--color-fg-soft)] leading-[1.25] tracking-[-0.01em]"
-        style={{ fontVariationSettings: '"opsz" 48, "SOFT" 50' }}
-      >
-        还没有聚合订阅
-      </p>
-      <p className="mt-1.5 text-[13px] text-[var(--color-muted)]">
-        聚合订阅把多条单订阅合并成一个来源。在「结构骨架」页把配置文件的「节点来源」绑定到它,就会注入这组订阅的节点。
-      </p>
-      <div className="mt-5">
-        <Button onClick={onAdd}>+ 新建第一个聚合订阅</Button>
+    <div className="panel">
+      <div className={styles.empty}>
+        <div className={styles.t}>还没有聚合订阅</div>
+        <div className={styles.d}>
+          聚合订阅把多条单订阅合并成一个来源。在「结构骨架」页把配置文件的「节点来源」绑定到它，就会注入这组订阅的节点。
+        </div>
+        <button type="button" className="btn primary" onClick={onAdd}>
+          ＋ 新建第一个聚合订阅
+        </button>
       </div>
     </div>
   );
@@ -457,7 +489,6 @@ function CollectionEmpty({ onAdd }: { onAdd: () => void }) {
 function CollectionCard({
   c,
   subs,
-  index,
   editing,
   anyEditing,
   onEdit,
@@ -465,7 +496,6 @@ function CollectionCard({
 }: {
   c: Collection;
   subs: Subscription[];
-  index: number;
   editing: boolean;
   anyEditing: boolean;
   onEdit: () => void;
@@ -485,141 +515,121 @@ function CollectionCard({
   }, [c, subs, subById]);
 
   const hasDisabledMember = members.some((m) => !m.enabled);
-  const dimmed = anyEditing && !editing;
-  return (
-    <li
-      className={`rounded-lg border bg-[var(--color-surface)] shadow-[var(--shadow-card)] overflow-hidden grid grid-cols-[52px_1fr] lg:grid-cols-[60px_1fr] xl:grid-cols-[68px_1fr] transition-[border-color,opacity] duration-150 ease-out ${
-        editing ? 'border-[var(--color-primary)]/40' : 'border-[var(--color-border)]'
-      } ${dimmed ? 'opacity-50' : ''}`}
-    >
-      {/* 左条：与 Dossier 对称，竖直居中单块（序号 + NO. + 状态点/聚合订阅），不撑高 */}
-      <div className="border-r border-[var(--color-border)] bg-[var(--color-bg-sunk)] flex flex-col items-center justify-center gap-2 py-3">
-        <div className="flex flex-col items-center leading-none">
-          <span
-            className="font-serif text-[20px] lg:text-[22px] xl:text-[24px] leading-none font-medium tabular-nums tracking-[-0.015em] text-[var(--color-ink)]"
-            style={{ fontVariationSettings: '"opsz" 48, "SOFT" 50' }}
-            aria-label={`聚合订阅 ${index}`}
-          >
-            {String(index).padStart(2, '0')}
-          </span>
-          <span
-            aria-hidden
-            className="mt-1 text-[9px] uppercase tracking-[0.1em] font-mono text-[var(--color-muted-strong)]"
-          >
-            NO.
-          </span>
-        </div>
-        <div className="flex flex-col items-center gap-1">
-          <StatusDot tone={!c.enabled ? 'off' : hasDisabledMember ? 'warn' : 'on'} />
-          <span className="text-[9px] uppercase tracking-[0.04em] font-mono text-[var(--color-muted)] leading-none whitespace-nowrap">
-            聚合订阅
-          </span>
-        </div>
-      </div>
+  const ledTone = !c.enabled ? 'off' : hasDisabledMember ? 'err' : 'ok';
+  const directMembers = members.filter((m) => c.subscription_ids.includes(m.id));
 
-      <div className="p-3 min-w-0 flex flex-col gap-2">
-        <div className="flex items-center gap-2 min-w-0">
-          <h2
-            className="font-serif text-[17px] font-medium leading-[1.25] tracking-[-0.01em] text-[var(--color-ink)] truncate"
-            style={{ fontVariationSettings: '"opsz" 48, "SOFT" 40' }}
-            title={c.name}
-          >
-            {c.name}
-          </h2>
-          <Badge tone="neutral">聚合订阅</Badge>
-          <div className="flex items-center gap-0.5 shrink-0 ml-auto">
-            <IconButton
-              onClick={onEdit}
-              disabled={anyEditing}
-              title="编辑"
-              label="✎"
-            />
-            <IconButton
-              onClick={onDelete}
-              disabled={anyEditing}
-              title="删除"
-              label="✕"
-              tone="danger"
-            />
-          </div>
+  return (
+    <div className={`${styles.subItem}${anyEditing && !editing ? ` ${styles.dimmed}` : ''}`}>
+      <span className={`${styles.led} ${styles[ledTone]}`} />
+      <div className={styles.subMain}>
+        <div className={styles.head}>
+          <b>{c.name}</b>
+          <span className="pill ai plain">collection</span>
+          <span className="pill idle plain">{c.enabled ? '已启用' : '已停用'}</span>
         </div>
-        <div className="text-[11px] text-[var(--color-muted)] font-mono tabular-nums">
-          {c.enabled ? '已启用' : '已停用'} · {c.type} · {members.length} 成员
+        <div className={styles.colLead}>
+          合并多个单订阅的节点，去重后输出一条对外链接——在「结构骨架」绑定为节点来源即可。
         </div>
-        {members.length > 0 && (
-          <div
-            className="text-[11px] text-[var(--color-fg-soft)] font-mono truncate"
-            title={members.map((m) => m.name).join(', ')}
-          >
-            {members.slice(0, 6).map((m) => m.name).join(' · ')}
-            {members.length > 6 && (
-              <span className="text-[var(--color-muted)]"> +{members.length - 6}</span>
+        {(directMembers.length > 0 || c.subscription_tags.length > 0) && (
+          <div className={styles.colMembers}>
+            {directMembers.length > 0 && (
+              <>
+                <span className={styles.mk}>直接指定</span>
+                {directMembers.slice(0, 6).map((m) => (
+                  <span key={m.id} className="tag">
+                    {m.name}
+                  </span>
+                ))}
+                {directMembers.length > 6 && (
+                  <span className={styles.mk}>+{directMembers.length - 6}</span>
+                )}
+              </>
+            )}
+            {c.subscription_tags.length > 0 && (
+              <>
+                <span className={styles.mk} style={{ marginLeft: 6 }}>
+                  标签匹配
+                </span>
+                {c.subscription_tags.map((t) => (
+                  <span key={t} className="chip on" style={{ pointerEvents: 'none' }}>
+                    tag: {t}
+                  </span>
+                ))}
+              </>
             )}
           </div>
         )}
-        {c.subscription_tags.length > 0 && (
-          <div className="flex flex-wrap gap-1">
-            {c.subscription_tags.map((t) => (
-              <Badge key={t} tone="neutral">
-                #{t}
-              </Badge>
-            ))}
-          </div>
-        )}
-        {c.notes && (
-          <p
-            className="text-[11px] text-[var(--color-muted)] leading-[1.5] line-clamp-1"
-            title={c.notes}
-          >
-            {c.notes}
-          </p>
-        )}
-        <div className="mt-auto flex items-center gap-2 pt-1.5 border-t border-[var(--color-border)] text-[10px] uppercase tracking-[0.06em] text-[var(--color-muted-strong)] font-mono">
-          <span className="truncate normal-case">
-            可在「结构骨架」绑定为节点来源
+        <div className={styles.meta}>
+          <span>
+            <span className={styles.k}>类型</span> {c.type}
+          </span>
+          <span>
+            <span className={styles.k}>命中成员</span> {members.length} 个
+            {hasDisabledMember && (
+              <span style={{ color: 'var(--warn)' }}> · 含停用</span>
+            )}
           </span>
           {c.updated_at && (
-            <span className="ml-auto whitespace-nowrap shrink-0 text-[var(--color-muted)]">
-              更新 · {fmtTime(c.updated_at)}
+            <span>
+              <span className={styles.k}>更新</span> {fmtTime(c.updated_at)}
             </span>
           )}
         </div>
+        {c.notes && (
+          <div className={styles.meta} title={c.notes}>
+            <span>
+              <span className={styles.k}>备注</span> {c.notes}
+            </span>
+          </div>
+        )}
       </div>
-    </li>
+      <div className={styles.right}>
+        <div className={styles.acts}>
+          <button
+            type="button"
+            className="btn sm"
+            onClick={onEdit}
+            disabled={anyEditing}
+          >
+            编辑
+          </button>
+          <button
+            type="button"
+            className="btn sm danger"
+            onClick={onDelete}
+            disabled={anyEditing}
+          >
+            删除
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
-/** 节点处理入口 —— 跳转全屏流水线工作台；有算子时右上角挂 accent 计数。 */
-function PipelineButton({
+/** 节点处理入口 —— 跳转全屏流水线工作台；有算子时挂 accent 计数。 */
+function PipelineLink({
   subId,
   count,
-  disabled,
 }: {
   subId: string;
   count: number;
-  disabled?: boolean;
 }) {
   const router = useRouter();
   return (
-    <button
-      type="button"
-      onClick={() => router.push(`/subscriptions/${subId}/pipeline`)}
-      disabled={disabled}
-      title={count > 0 ? `节点处理（${count} 个算子）` : '节点处理'}
-      aria-label={count > 0 ? `节点处理，${count} 个算子` : '节点处理'}
-      className="pm-focus-ring relative w-7 h-7 rounded inline-flex items-center justify-center text-[13px] leading-none transition-colors active:scale-[0.98] disabled:opacity-30 disabled:cursor-not-allowed text-[var(--color-muted)] hover:text-[var(--color-fg)] hover:bg-[var(--color-surface)]"
+    <a
+      href={`/subscriptions/${subId}/pipeline`}
+      onClick={(e) => {
+        e.preventDefault();
+        router.push(`/subscriptions/${subId}/pipeline`);
+      }}
     >
-      <span aria-hidden>⌗</span>
-      {count > 0 && (
-        <span className="absolute -top-1 -right-1 min-w-[14px] h-[14px] px-[3px] rounded-full bg-[var(--color-primary-soft)] text-[var(--color-primary-hover)] text-[9px] font-mono leading-[14px] tabular-nums text-center">
-          {count}
-        </span>
-      )}
-    </button>
+      处理流水线{count > 0 ? ` · ${count} 个算子` : ''} →
+    </a>
   );
 }
 
-/** 聚合订阅的内联新建/编辑表单 —— 勾选单订阅成员 + 标签匹配，复用订阅源页。 */
+/** 聚合订阅的内联新建/编辑表单 —— 勾选单订阅成员 + 标签匹配。 */
 function CollectionForm({
   subs,
   initial,
@@ -641,6 +651,15 @@ function CollectionForm({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const tagList = useMemo(
+    () =>
+      tagsInput
+        .split(',')
+        .map((t) => t.trim())
+        .filter((t) => t.length > 0),
+    [tagsInput],
+  );
+
   function toggle(id: string) {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -650,22 +669,33 @@ function CollectionForm({
     });
   }
 
+  // 合并预览：手选 + 标签命中，启用计数
+  const merge = useMemo(() => {
+    const ids = new Set(selected);
+    if (tagList.length > 0) {
+      for (const s of subs) {
+        if (s.tags?.some((t) => tagList.includes(t))) ids.add(s.id);
+      }
+    }
+    const members = [...ids]
+      .map((id) => subs.find((s) => s.id === id))
+      .filter((s): s is Subscription => !!s);
+    const active = members.filter((m) => m.enabled);
+    return { members, active };
+  }, [selected, tagList, subs]);
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!name) return;
     setPending(true);
     setError(null);
     try {
-      const tags = tagsInput
-        .split(',')
-        .map((t) => t.trim())
-        .filter((t) => t.length > 0);
       await onSubmit({
         name: name.trim(),
         enabled,
         type: 'select',
         subscription_ids: [...selected],
-        subscription_tags: tags,
+        subscription_tags: tagList,
         notes: notes.trim() || undefined,
       });
     } catch (err) {
@@ -676,97 +706,163 @@ function CollectionForm({
   }
 
   return (
-    <form
-      onSubmit={submit}
-      className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 space-y-5"
-    >
-      <h2
-        className="font-serif text-[20px] font-medium leading-[1.25] tracking-[-0.01em] text-[var(--color-ink)]"
-        style={{ fontVariationSettings: '"opsz" 48, "SOFT" 50' }}
-      >
-        {initial ? `编辑「${initial.name}」` : '新建聚合订阅'}
-      </h2>
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <FormField label="名称">
-          <Input
-            placeholder="例如:聚合订阅1 / 主力机场"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            disabled={!!initial}
-            required
-          />
-        </FormField>
-        <FormField label="标签匹配 — 命中任一标签的订阅自动加入">
-          <Input
-            placeholder="premium, asia"
-            value={tagsInput}
-            onChange={(e) => setTagsInput(e.target.value)}
-          />
-        </FormField>
-        <FormField label="状态">
-          <label className="flex items-center gap-2 h-9 px-2.5 text-[13px] text-[var(--color-fg-soft)] cursor-pointer">
-            <input
-              type="checkbox"
-              checked={enabled}
-              onChange={(e) => setEnabled(e.target.checked)}
-              className="accent-[var(--color-primary)] w-3.5 h-3.5"
-            />
-            {enabled ? '启用' : '停用'}
-          </label>
-        </FormField>
-      </div>
-
-      <FormField label="手动勾选订阅成员">
-        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-sunk)] p-2 max-h-56 overflow-y-auto grid grid-cols-1 md:grid-cols-2 gap-1">
-          {subs.length === 0 ? (
-            <p className="text-[12px] text-[var(--color-muted)] px-2 py-1">
-              还没有订阅源，请先到「单订阅」tab 新增。
-            </p>
-          ) : (
-            subs.map((s) => {
-              const checked = selected.has(s.id);
-              return (
-                <label
-                  key={s.id}
-                  className={`flex items-center gap-2 rounded-md px-2 py-1.5 cursor-pointer text-[12px] transition-colors ${
-                    checked
-                      ? 'bg-[var(--color-primary-soft)] text-[var(--color-primary-hover)]'
-                      : 'hover:bg-[var(--color-surface)]'
-                  }`}
-                >
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={() => toggle(s.id)}
-                    className="accent-[var(--color-primary)] w-3.5 h-3.5"
-                  />
-                  <StatusDot tone={s.enabled ? 'on' : 'off'} />
-                  <span className="font-mono truncate flex-1">{s.name}</span>
+    <form onSubmit={submit} style={{ marginBottom: 18 }}>
+      <div className={styles.editGrid}>
+        {/* 左列 */}
+        <div>
+          <section className={styles.sec}>
+            <div className={styles.secHead}>
+              <h2>{initial ? `编辑「${initial.name}」` : '新建聚合订阅'}</h2>
+              <span className={styles.n}>collection · 聚合</span>
+            </div>
+            <div className={styles.frm}>
+              <div className={styles.frmRow}>
+                <label>
+                  名称
+                  <span className="h">影响公开链接路径</span>
                 </label>
-              );
-            })
-          )}
+                <div className={styles.ctl}>
+                  <input
+                    className="input mono"
+                    placeholder="例如：聚合订阅1 / 主力机场"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    disabled={!!initial}
+                    required
+                  />
+                </div>
+              </div>
+              <div className={styles.frmRow}>
+                <label>
+                  标签匹配
+                  <span className="h">命中任一标签的订阅自动并入</span>
+                </label>
+                <div className={styles.ctl}>
+                  <input
+                    className="input mono"
+                    placeholder="premium, asia"
+                    value={tagsInput}
+                    onChange={(e) => setTagsInput(e.target.value)}
+                  />
+                </div>
+              </div>
+              <div className={styles.frmRow}>
+                <label>备注</label>
+                <div className={styles.ctl}>
+                  <input
+                    className="input"
+                    placeholder="可选"
+                    value={notes}
+                    onChange={(e) => setNotes(e.target.value)}
+                  />
+                </div>
+              </div>
+              <div className={styles.frmRow}>
+                <label>状态</label>
+                <div className={`${styles.ctl} ${styles.switchRow}`}>
+                  <button
+                    type="button"
+                    className="switch"
+                    aria-pressed={enabled}
+                    onClick={() => setEnabled((v) => !v)}
+                  />
+                  <span className={styles.swNote}>{enabled ? '启用' : '停用'}</span>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section className={styles.sec}>
+            <div className={styles.secHead}>
+              <h2>成员来源</h2>
+              <span className={styles.n}>手动勾选要并入的单订阅</span>
+            </div>
+            <div className={styles.memBlock}>
+              {subs.length === 0 ? (
+                <div className={styles.addLine} style={{ borderTop: 0 }}>
+                  <span className={styles.swNote}>
+                    还没有订阅源，请先到「单订阅」tab 新增。
+                  </span>
+                </div>
+              ) : (
+                subs.map((s) => {
+                  const checked = selected.has(s.id);
+                  return (
+                    <div
+                      key={s.id}
+                      className={`${styles.mem}${!s.enabled ? ` ${styles.isOff}` : ''}`}
+                      onClick={() => toggle(s.id)}
+                    >
+                      <span
+                        className={`${styles.memLed} ${s.enabled ? styles.ok : styles.off}`}
+                      />
+                      <div className={styles.grow}>
+                        <div className={styles.nm}>{s.name}</div>
+                        <div className={styles.sub}>
+                          {s.kind} · {s.enabled ? '已启用' : '已停用'}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="switch"
+                        aria-pressed={checked}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggle(s.id);
+                        }}
+                      />
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </section>
         </div>
-      </FormField>
 
-      <FormField label="备注">
-        <Input placeholder="可选" value={notes} onChange={(e) => setNotes(e.target.value)} />
-      </FormField>
+        {/* 右列：合并预览 */}
+        <div className={styles.sideStick}>
+          <section className="panel">
+            <div className="panel-head">
+              <h2>合并预览</h2>
+              <span className="sub num">{merge.active.length} 启用成员</span>
+            </div>
+            <div className="panel-body" style={{ padding: '12px 16px' }}>
+              {merge.members.length === 0 ? (
+                <div className={styles.mergeFoot}>勾选成员或填写标签后在此预览。</div>
+              ) : (
+                <>
+                  {merge.members.map((m) => (
+                    <div key={m.id} className={styles.mergeStat}>
+                      <div className="r">
+                        <span
+                          className="k"
+                          style={!m.enabled ? { color: 'var(--faint)' } : undefined}
+                        >
+                          {m.name}
+                          {!m.enabled && ' · 停用'}
+                        </span>
+                        <span className="v">{m.enabled ? '计入' : '0'}</span>
+                      </div>
+                    </div>
+                  ))}
+                  <div className={styles.mergeFoot}>
+                    {merge.active.length} 个启用成员合并、去重后对外下发
+                  </div>
+                </>
+              )}
+            </div>
+          </section>
 
-      {error && (
-        <p className="text-[12px] text-[var(--color-danger)] bg-[#F4D8D2]/40 rounded-md px-3 py-2">
-          {error}
-        </p>
-      )}
-
-      <div className="flex items-center gap-2">
-        <Button type="submit" disabled={pending || !name}>
-          {pending ? '…' : initial ? '保存' : '创建'}
-        </Button>
-        <Button type="button" variant="ghost" onClick={onCancel}>
-          取消
-        </Button>
+          <div className={styles.editActs}>
+            <button type="submit" className="btn primary" disabled={pending || !name}>
+              {pending ? '…' : initial ? '保存' : '创建'}
+            </button>
+            <button type="button" className="btn" onClick={onCancel} disabled={pending}>
+              取消
+            </button>
+          </div>
+          {error && <div className={styles.errBanner}>{error}</div>}
+        </div>
       </div>
     </form>
   );
@@ -774,15 +870,13 @@ function CollectionForm({
 
 function SubSkeleton() {
   return (
-    <li className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] grid grid-cols-[52px_1fr] lg:grid-cols-[60px_1fr] xl:grid-cols-[68px_1fr] overflow-hidden">
-      <div className="border-r border-[var(--color-border)] bg-[var(--color-bg-sunk)] flex items-center justify-center py-3">
-        <div className="pm-pulse h-4 w-5 rounded bg-[var(--color-border-strong)]" />
+    <div className={styles.subItem}>
+      <span className={`${styles.led} ${styles.off}`} />
+      <div className={styles.subMain}>
+        <div className={styles.skel} style={{ width: 180, marginBottom: 10 }} />
+        <div className={styles.skel} style={{ width: '70%' }} />
       </div>
-      <div className="p-3 space-y-2">
-        <Placeholder rows={1} className="max-w-[200px]" />
-        <Placeholder rows={2} />
-      </div>
-    </li>
+    </div>
   );
 }
 
@@ -793,29 +887,22 @@ function CompactTraffic({
 }) {
   const used = traffic.upload + traffic.download;
   const pct = traffic.total > 0 ? Math.min(100, (used / traffic.total) * 100) : 0;
-  const ulPct =
-    traffic.total > 0 ? Math.min(100, (traffic.upload / traffic.total) * 100) : 0;
-  const dlPct = Math.max(0, pct - ulPct);
+  const hot = pct >= 90;
   return (
-    <div className="flex items-center gap-3 text-[11px] tabular-nums">
-      <span className="text-[var(--color-muted)] font-mono shrink-0 whitespace-nowrap">
-        <span className="text-[var(--color-fg)]">↑</span> {fmtBytes(traffic.upload)} ·{' '}
-        <span className="text-[var(--color-fg)]">↓</span> {fmtBytes(traffic.download)} /{' '}
-        {fmtBytes(traffic.total)}
-      </span>
-      <div className="relative h-1.5 flex-1 rounded-full bg-[var(--color-bg-strong)] overflow-hidden min-w-[60px]">
-        <div
-          className="absolute left-0 top-0 bottom-0 bg-[var(--color-plum)]"
-          style={{ width: `${ulPct}%` }}
-        />
-        <div
-          className="absolute top-0 bottom-0 bg-[var(--color-primary)]"
-          style={{ left: `${ulPct}%`, width: `${dlPct}%` }}
-        />
+    <div className="traffic">
+      <div className="lbl">
+        <span>已用 {fmtBytes(used)}</span>
+        <span>共 {fmtBytes(traffic.total)}</span>
       </div>
-      <span className="font-mono text-[var(--color-fg)] shrink-0 tabular-nums">
-        {pct.toFixed(pct < 10 ? 1 : 0)}%
-      </span>
+      <div className="bar">
+        <i className={hot ? 'hot' : undefined} style={{ width: `${pct}%` }} />
+      </div>
+      <div className="lbl">
+        <span>
+          ↑ {fmtBytes(traffic.upload)} · ↓ {fmtBytes(traffic.download)}
+        </span>
+        <span>{pct.toFixed(pct < 10 ? 1 : 0)}%</span>
+      </div>
     </div>
   );
 }
@@ -834,7 +921,6 @@ function fmtBytes(n: number): string {
 
 function Dossier({
   sub,
-  index,
   pending,
   editing,
   anyEditing,
@@ -846,7 +932,6 @@ function Dossier({
   onEditSave,
 }: {
   sub: Subscription;
-  index: number;
   pending: boolean;
   editing: boolean;
   anyEditing: boolean;
@@ -857,193 +942,178 @@ function Dossier({
   onEditCancel: () => void;
   onEditSave: (patch: Record<string, unknown>) => Promise<void>;
 }) {
-  const tone = editing ? 'off' : sub.last_error ? 'error' : sub.enabled ? 'on' : 'off';
-  const statusLabel = editing
-    ? '编辑中'
-    : sub.last_error
-      ? '异常'
-      : sub.enabled
-        ? '已启用'
-        : '已停用';
-  const dimmed = anyEditing && !editing;
+  if (editing) {
+    return (
+      <div className={`${styles.subItem} ${styles.editing}`}>
+        <EditForm sub={sub} onCancel={onEditCancel} onSave={onEditSave} />
+      </div>
+    );
+  }
+
+  const ledTone = sub.last_error ? 'err' : sub.enabled ? 'ok' : 'off';
+  const opCount = sub.operators?.length ?? 0;
 
   return (
-    <li
-      className={`rounded-lg border bg-[var(--color-surface)] shadow-[var(--shadow-card)] overflow-hidden grid grid-cols-[52px_1fr] lg:grid-cols-[60px_1fr] xl:grid-cols-[68px_1fr] transition-[border-color,opacity] duration-150 ease-out ${
-        editing
-          ? 'border-[var(--color-primary)]/40'
-          : 'border-[var(--color-border)]'
-      } ${dimmed ? 'opacity-50' : ''}`}
-    >
-      {/* Left strip —— 竖直居中的单块：序号 + NO. 铭牌 + 状态点/文字。
-        不再撑高（无 mt-auto 图标列），卡片高度完全由右栏内容决定；编辑态下
-        strip 仍居中，自然跟随表单高度。 */}
-      <div className="border-r border-[var(--color-border)] bg-[var(--color-bg-sunk)] flex flex-col items-center justify-center gap-2 py-3">
-        <div className="flex flex-col items-center leading-none">
-          <span
-            className="font-serif text-[20px] lg:text-[22px] xl:text-[24px] leading-none font-medium tabular-nums tracking-[-0.015em] text-[var(--color-ink)]"
-            style={{ fontVariationSettings: '"opsz" 48, "SOFT" 50' }}
-            aria-label={`订阅 ${index} · ${statusLabel}`}
-          >
-            {String(index).padStart(2, '0')}
+    <div className={`${styles.subItem}${anyEditing ? ` ${styles.dimmed}` : ''}`}>
+      <span className={`${styles.led} ${styles[ledTone]}`} />
+      <div className={styles.subMain}>
+        <div className={styles.head}>
+          <b>{sub.name}</b>
+          <span className={`pill ${sub.kind === 'remote' ? 'acc' : 'idle'} plain`}>
+            {sub.kind}
           </span>
-          <span
-            aria-hidden
-            className="mt-1 text-[9px] uppercase tracking-[0.1em] font-mono text-[var(--color-muted-strong)]"
-          >
-            NO.
-          </span>
+          {sub.tags.map((t) => (
+            <span key={t} className="tag">
+              {t}
+            </span>
+          ))}
+          {sub.last_error && <span className="pill err">上次拉取失败</span>}
+          {!sub.enabled && <span className="pill idle">已停用</span>}
         </div>
-        <div className="flex flex-col items-center gap-1">
-          <StatusDot tone={tone} />
-          <span className="text-[9px] uppercase tracking-[0.04em] font-mono text-[var(--color-muted)] leading-none whitespace-nowrap">
-            {statusLabel}
-          </span>
-        </div>
-      </div>
 
-      {/* Right content */}
-      <div className="p-3 min-w-0 flex flex-col gap-2">
-        {editing ? (
-          <EditForm sub={sub} onCancel={onEditCancel} onSave={onEditSave} />
-        ) : (
-          <>
-            {/* Header row：名字 · 类型 · 标签 · 横排操作组 */}
-            <div className="flex items-center gap-2 min-w-0">
-              <h2
-                className="font-serif text-[17px] font-medium leading-[1.25] tracking-[-0.01em] text-[var(--color-ink)] truncate"
-                style={{ fontVariationSettings: '"opsz" 48, "SOFT" 40' }}
-                title={sub.name}
-              >
-                {sub.name}
-              </h2>
-              <Badge tone="neutral">{sub.kind === 'remote' ? '远程' : '本地'}</Badge>
-              {sub.tags.length > 0 && (
-                <span className="text-[11px] text-[var(--color-muted)] font-mono truncate hidden md:inline">
-                  {sub.tags.slice(0, 3).join(' · ')}
-                </span>
-              )}
-              <div className="flex items-center gap-0.5 shrink-0 ml-auto">
-                <PipelineButton
-                  subId={sub.id}
-                  count={sub.operators?.length ?? 0}
-                  disabled={anyEditing}
-                />
-                <IconButton
-                  onClick={onEditStart}
-                  disabled={pending || anyEditing}
-                  title="编辑"
-                  label="✎"
-                />
-                {sub.kind === 'remote' && (
-                  <IconButton
-                    onClick={onRefresh}
-                    disabled={pending || anyEditing || !sub.enabled}
-                    title="立即拉取"
-                    label="⟲"
-                  />
-                )}
-                <IconButton
-                  onClick={onToggle}
-                  disabled={pending || anyEditing}
-                  title={sub.enabled ? '停用' : '启用'}
-                  label={sub.enabled ? '⏸' : '▶'}
-                />
-                <IconButton
-                  onClick={onDelete}
-                  disabled={pending || anyEditing}
-                  title="删除"
-                  label="✕"
-                  tone="danger"
-                />
-              </div>
-            </div>
-
-            {/* Compact traffic line —— 单行：数字 · 条 · 百分比 */}
-            {sub.last_traffic && sub.last_traffic.total > 0 && (
-              <CompactTraffic traffic={sub.last_traffic} />
-            )}
-
-            {sub.last_error && (
-              <div className="rounded-md bg-[#F4D8D2]/30 border border-[var(--color-danger)]/30 px-2 py-1 text-[11px] text-[var(--color-danger)] break-words">
-                <span className="text-[10px] uppercase tracking-[0.08em] font-semibold mr-1.5">
-                  错误
-                </span>
-                {sub.last_error}
-              </div>
-            )}
-
-            {/* Footer 元数据 —— 填充底部，避免右下大片空白 */}
-            <div className="mt-auto flex items-center gap-2 pt-1.5 border-t border-[var(--color-border)] text-[10px] uppercase tracking-[0.06em] text-[var(--color-muted)] font-mono">
-              <span className="whitespace-nowrap">TTL · {Math.round(sub.ttl_ms / 1000)}s</span>
-              <span aria-hidden className="text-[var(--color-border-strong)]">·</span>
-              <span className="truncate">同步 · {fmtTime(sub.last_synced_at)}</span>
-              {sub.node_prefix && (
-                <>
-                  <span aria-hidden className="text-[var(--color-border-strong)]">·</span>
-                  <span className="truncate normal-case" title={`节点名前缀: ${sub.node_prefix}`}>
-                    前缀 · <span className="text-[var(--color-fg-soft)]">{sub.node_prefix}</span>
-                  </span>
-                </>
-              )}
-            </div>
-          </>
+        {sub.last_error && (
+          <div className={styles.errLine}>
+            {sub.last_error}
+            {sub.kind === 'remote' && ' · 公开链接仍以上次缓存对外下发'}
+          </div>
         )}
+
+        <div className={styles.meta}>
+          {sub.kind === 'remote' ? (
+            <span>
+              <span className={styles.k}>缓存 TTL</span> {Math.round(sub.ttl_ms / 1000)}s
+            </span>
+          ) : (
+            <span>
+              <span className={styles.k}>内容</span> 内联 YAML
+            </span>
+          )}
+          <span>
+            <span className={styles.k}>上次拉取</span> {fmtTime(sub.last_synced_at)}
+          </span>
+          {sub.node_prefix && (
+            <span>
+              <span className={styles.k}>前缀</span> {sub.node_prefix}
+            </span>
+          )}
+          <span>
+            <PipelineLink subId={sub.id} count={opCount} />
+          </span>
+        </div>
       </div>
-    </li>
-  );
-}
 
-function IconButton({
-  label,
-  onClick,
-  disabled,
-  title,
-  tone = 'neutral',
-}: {
-  label: string;
-  onClick: () => void;
-  disabled?: boolean;
-  title: string;
-  tone?: 'neutral' | 'danger';
-}) {
-  const colors =
-    tone === 'danger'
-      ? 'text-[var(--color-danger)] hover:bg-[var(--color-danger)]/8'
-      : 'text-[var(--color-muted)] hover:text-[var(--color-fg)] hover:bg-[var(--color-surface)]';
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      title={title}
-      aria-label={title}
-      className={`pm-focus-ring w-7 h-7 rounded inline-flex items-center justify-center text-[13px] leading-none transition-colors active:scale-[0.98] disabled:opacity-30 disabled:cursor-not-allowed ${colors}`}
-    >
-      <span aria-hidden>{label}</span>
-    </button>
-  );
-}
-
-function EmptyState({ onAdd }: { onAdd: () => void }) {
-  return (
-    <div className="rounded-xl border border-dashed border-[var(--color-border-strong)] bg-[var(--color-bg-sunk)]/50 px-8 py-16 text-center">
-      <p className="font-serif text-[20px] font-medium text-[var(--color-fg-soft)] leading-[1.25] tracking-[-0.01em]"
-        style={{ fontVariationSettings: '"opsz" 48, "SOFT" 50' }}
-      >
-        还没有订阅源
-      </p>
-      <p className="mt-1.5 text-[13px] text-[var(--color-muted)]">
-        添加远程订阅 URL 或本地 YAML 内容来开始。
-      </p>
-      <div className="mt-5">
-        <Button onClick={onAdd}>+ 添加第一个订阅</Button>
+      <div className={styles.right}>
+        {sub.last_traffic && sub.last_traffic.total > 0 && (
+          <CompactTraffic traffic={sub.last_traffic} />
+        )}
+        <div className={styles.acts}>
+          <button
+            type="button"
+            className="btn sm"
+            onClick={onEditStart}
+            disabled={pending || anyEditing}
+          >
+            编辑
+          </button>
+          {sub.kind === 'remote' && (
+            <button
+              type="button"
+              className="btn sm"
+              onClick={onRefresh}
+              disabled={pending || anyEditing || !sub.enabled}
+            >
+              刷新
+            </button>
+          )}
+          <button
+            type="button"
+            className="switch"
+            aria-pressed={sub.enabled}
+            onClick={onToggle}
+            disabled={pending || anyEditing}
+            title={sub.enabled ? '停用' : '启用'}
+          />
+          <button
+            type="button"
+            className="btn sm danger"
+            onClick={onDelete}
+            disabled={pending || anyEditing}
+          >
+            删除
+          </button>
+        </div>
       </div>
     </div>
   );
 }
 
-function AddForm({ onAdded }: { onAdded: () => void }) {
+function EmptyState({ onAdd }: { onAdd: () => void }) {
+  return (
+    <div className="panel">
+      <div className={styles.empty}>
+        <div className={styles.t}>还没有订阅源</div>
+        <div className={styles.d}>添加远程订阅 URL 或本地 YAML 内容来开始。</div>
+        <button type="button" className="btn primary" onClick={onAdd}>
+          ＋ 添加第一个订阅
+        </button>
+      </div>
+    </div>
+  );
+}
+
+const TTL_PRESETS: { label: string; sec: number }[] = [
+  { label: '1h', sec: 3600 },
+  { label: '3h', sec: 3 * 3600 },
+  { label: '6h', sec: 6 * 3600 },
+  { label: '12h', sec: 12 * 3600 },
+];
+
+function TtlSeg({
+  sec,
+  onChange,
+  disabled,
+}: {
+  sec: number;
+  onChange: (sec: number) => void;
+  disabled?: boolean;
+}) {
+  const matched = TTL_PRESETS.some((p) => p.sec === sec);
+  return (
+    <div className="seg">
+      {TTL_PRESETS.map((p) => (
+        <button
+          key={p.label}
+          type="button"
+          className={`opt${p.sec === sec ? ' on' : ''}`}
+          onClick={() => onChange(p.sec)}
+          disabled={disabled}
+        >
+          {p.label}
+        </button>
+      ))}
+      <input
+        type="number"
+        min={1}
+        className="input"
+        style={{ width: 96 }}
+        value={Math.round(sec)}
+        onChange={(e) => onChange(Math.max(1, Number(e.target.value) || 0))}
+        disabled={disabled}
+        title="自定义秒数"
+        aria-label="缓存 TTL（秒）"
+      />
+      {!matched && <span className={styles.swNote}>{Math.round(sec)}s</span>}
+    </div>
+  );
+}
+
+function AddForm({
+  onAdded,
+  onCancel,
+}: {
+  onAdded: () => void;
+  onCancel: () => void;
+}) {
   const [kind, setKind] = useState<'remote' | 'local'>('remote');
   const [name, setName] = useState('');
   const [url, setUrl] = useState('');
@@ -1089,131 +1159,163 @@ function AddForm({ onAdded }: { onAdded: () => void }) {
   }
 
   return (
-    <form
-      onSubmit={submit}
-      className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 space-y-5"
-    >
-      <h2
-        className="font-serif text-[20px] font-medium leading-[1.25] tracking-[-0.01em] text-[var(--color-ink)]"
-        style={{ fontVariationSettings: '"opsz" 48, "SOFT" 50' }}
-      >
-        新增订阅源
-      </h2>
-
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <FormField label="类型">
-          <Select value={kind} onChange={(e) => setKind(e.target.value as 'remote' | 'local')}>
-            <option value="remote">远程 (URL)</option>
-            <option value="local">本地 (内联 YAML)</option>
-          </Select>
-        </FormField>
-        <FormField label="名称 (slug)">
-          <Input
-            placeholder="airport-a"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            pattern="[a-z0-9-]+"
-            required
-          />
-        </FormField>
-        <FormField label="拉取 TTL (秒)">
-          <Input
-            type="number"
-            min={1}
-            value={ttlSec}
-            onChange={(e) => setTtlSec(Math.max(1, Number(e.target.value) || 0))}
-            disabled={kind === 'local'}
-          />
-        </FormField>
-        <FormField label="标签">
-          <Input
-            placeholder="premium, asia"
-            value={tagsInput}
-            onChange={(e) => setTagsInput(e.target.value)}
-          />
-        </FormField>
-      </div>
-
-      <FormField
-        label={
-          <span className="flex items-baseline gap-2">
-            <span>节点名前缀</span>
-            <span className="normal-case tracking-normal font-normal text-[10px] text-[var(--color-muted)]">
-              可选 · 给本订阅每个节点名前置命名空间，避免跨源同名被去重丢弃
-            </span>
-          </span>
-        }
-      >
-        <Input
-          placeholder="[Airport-A] "
-          value={nodePrefix}
-          onChange={(e) => setNodePrefix(e.target.value)}
-        />
-      </FormField>
-
-      {kind === 'remote' ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <FormField label="上游 URL">
-            <Input
-              type="url"
-              placeholder="https://airport/sub?token=…"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              required
-            />
-          </FormField>
-          <FormField label="UA 覆写">
-            <Input
-              placeholder="可选，如 clash.meta/1.18.0"
-              value={ua}
-              onChange={(e) => setUa(e.target.value)}
-            />
-          </FormField>
+    <form onSubmit={submit} style={{ marginBottom: 18 }}>
+      <section className={styles.sec}>
+        <div className={styles.secHead}>
+          <h2>新增订阅源</h2>
+          <span className={styles.n}>{kind}</span>
         </div>
-      ) : (
-        <FormField
-          label={
-            <span className="flex items-baseline gap-2">
-              <span>节点内容</span>
-              <span className="normal-case tracking-normal font-normal text-[10px] text-[var(--color-muted)]">
-                clash yaml · 或多行 ss:// vmess:// vless:// trojan:// hy2:// tuic:// anytls:// wireguard:// … · 或 base64
-              </span>
-            </span>
-          }
-        >
-          <Textarea
-            rows={8}
-            value={content}
-            onChange={(e) => setContent(e.target.value)}
-            placeholder={
-              'ss://YWVz…@host:8388#HK-01\nvmess://eyJ2…\nvless://uuid@host:443?type=ws&path=/#JP-02\ntrojan://pass@host:443?sni=foo#US-03\nanytls://pwd@host:8443?sni=h.com#AT-1\n\n# 也可以贴 Clash YAML：\n# proxies:\n#   - { name: my-node, type: ss, ... }'
-            }
-            required
-            className="text-[12px] font-mono"
-          />
-        </FormField>
-      )}
+        <div className={styles.frm}>
+          <div className={styles.frmRow}>
+            <label>类型</label>
+            <div className={styles.ctl}>
+              <div className="seg" data-seg="kind">
+                <button
+                  type="button"
+                  className={`opt${kind === 'remote' ? ' on' : ''}`}
+                  onClick={() => setKind('remote')}
+                >
+                  远程 URL
+                </button>
+                <button
+                  type="button"
+                  className={`opt${kind === 'local' ? ' on' : ''}`}
+                  onClick={() => setKind('local')}
+                >
+                  内联 YAML
+                </button>
+              </div>
+            </div>
+          </div>
 
-      <div className="flex items-center justify-between">
-        <label className="flex items-center gap-2 text-[13px] text-[var(--color-fg-soft)] cursor-pointer">
-          <input
-            type="checkbox"
-            checked={enabled}
-            onChange={(e) => setEnabled(e.target.checked)}
-            className="accent-[var(--color-primary)] w-3.5 h-3.5"
-          />
-          立即启用
-        </label>
-        <Button type="submit" disabled={pending || !name}>
+          <div className={styles.frmRow}>
+            <label>
+              名称
+              <span className="h">slug · 仅小写字母 / 数字 / -</span>
+            </label>
+            <div className={styles.ctl}>
+              <input
+                className="input mono"
+                placeholder="airport-a"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                pattern="[a-z0-9-]+"
+                required
+              />
+            </div>
+          </div>
+
+          {kind === 'remote' && (
+            <div className={styles.frmRow}>
+              <label>
+                缓存 TTL
+                <span className="h">拉取间隔</span>
+              </label>
+              <div className={styles.ctl}>
+                <TtlSeg sec={ttlSec} onChange={setTtlSec} />
+              </div>
+            </div>
+          )}
+
+          <div className={styles.frmRow}>
+            <label>标签</label>
+            <div className={styles.ctl}>
+              <input
+                className="input mono"
+                placeholder="premium, asia"
+                value={tagsInput}
+                onChange={(e) => setTagsInput(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className={styles.frmRow}>
+            <label>
+              节点名前缀
+              <span className="h">可选 · 避免跨源同名被去重丢弃</span>
+            </label>
+            <div className={styles.ctl}>
+              <input
+                className="input mono"
+                placeholder="[Airport-A] "
+                value={nodePrefix}
+                onChange={(e) => setNodePrefix(e.target.value)}
+              />
+            </div>
+          </div>
+
+          {kind === 'remote' ? (
+            <>
+              <div className={styles.frmRow}>
+                <label>
+                  上游 URL
+                  <span className="h">仅平台拉取</span>
+                </label>
+                <div className={styles.ctl}>
+                  <input
+                    className="input mono"
+                    type="url"
+                    placeholder="https://airport/sub?token=…"
+                    value={url}
+                    onChange={(e) => setUrl(e.target.value)}
+                    required
+                  />
+                </div>
+              </div>
+              <div className={styles.frmRow}>
+                <label>UA 覆写</label>
+                <div className={styles.ctl}>
+                  <input
+                    className="input mono"
+                    placeholder="可选，如 clash.meta/1.18.0"
+                    value={ua}
+                    onChange={(e) => setUa(e.target.value)}
+                  />
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className={styles.frmRow} style={{ alignItems: 'start' }}>
+              <label>
+                节点内容
+                <span className="h">clash yaml · 或多行 ss:// vmess:// vless:// trojan:// hy2:// … · 或 base64</span>
+              </label>
+              <div className={styles.ctl}>
+                <CodeEditor
+                  value={content}
+                  onChange={setContent}
+                  label="content · yaml / links"
+                  minHeight={200}
+                  hint="粘贴节点链接或 Clash YAML"
+                />
+              </div>
+            </div>
+          )}
+
+          <div className={styles.frmRow}>
+            <label>状态</label>
+            <div className={`${styles.ctl} ${styles.switchRow}`}>
+              <button
+                type="button"
+                className="switch"
+                aria-pressed={enabled}
+                onClick={() => setEnabled((v) => !v)}
+              />
+              <span className={styles.swNote}>{enabled ? '立即启用' : '创建后停用'}</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div className={styles.editActs}>
+        <button type="submit" className="btn primary" disabled={pending || !name}>
           {pending ? '提交中…' : '创建'}
-        </Button>
+        </button>
+        <button type="button" className="btn" onClick={onCancel} disabled={pending}>
+          取消
+        </button>
       </div>
-
-      {error && (
-        <p className="text-[12px] text-[var(--color-danger)] bg-[#F4D8D2]/40 rounded-md px-3 py-2">
-          {error}
-        </p>
-      )}
+      {error && <div className={styles.errBanner} style={{ marginTop: 12 }}>{error}</div>}
     </form>
   );
 }
@@ -1270,135 +1372,138 @@ function EditForm({
   }
 
   return (
-    <form onSubmit={submit} className="space-y-4">
-      <div className="flex items-baseline justify-between gap-3 flex-wrap">
-        <div className="flex items-baseline gap-2 min-w-0">
-          <h2
-            className="font-serif text-[22px] font-medium leading-[1.2] tracking-[-0.015em] text-[var(--color-ink)]"
-            style={{ fontVariationSettings: '"opsz" 96, "SOFT" 30' }}
-          >
-            编辑订阅源
-          </h2>
-          <Badge tone="neutral">{sub.kind === 'remote' ? '远程' : '本地'}</Badge>
-          <span className="text-[10px] uppercase tracking-[0.08em] font-mono text-[var(--color-muted)]">
-            类型不可改
-          </span>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            onClick={onCancel}
-            disabled={pending}
-          >
-            取消
-          </Button>
-          <Button type="submit" size="sm" disabled={pending || !name.trim()}>
-            {pending ? '保存中…' : '保存'}
-          </Button>
-        </div>
+    <form onSubmit={submit} style={{ width: '100%' }}>
+      <div className={styles.secHead}>
+        <h2>编辑订阅源</h2>
+        <span className={styles.n}>{sub.kind} · 类型不可改</span>
+        <span className={styles.grow} />
       </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <FormField label="名称 (slug)">
-          <Input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            pattern="[a-z0-9-]+"
-            required
-          />
-        </FormField>
-        <FormField label="拉取 TTL (秒)">
-          <Input
-            type="number"
-            min={1}
-            value={ttlSec}
-            onChange={(e) => setTtlSec(Math.max(1, Number(e.target.value) || 0))}
-            disabled={sub.kind === 'local'}
-          />
-        </FormField>
-        <FormField label="标签">
-          <Input
-            placeholder="premium, asia"
-            value={tagsInput}
-            onChange={(e) => setTagsInput(e.target.value)}
-          />
-        </FormField>
-      </div>
-
-      <FormField
-        label={
-          <span className="flex items-baseline gap-2">
-            <span>节点名前缀</span>
-            <span className="normal-case tracking-normal font-normal text-[10px] text-[var(--color-muted)]">
-              可选 · 给本订阅每个节点名前置命名空间，避免跨源同名被去重丢弃
-            </span>
-          </span>
-        }
-      >
-        <Input
-          placeholder="[Airport-A] "
-          value={nodePrefix}
-          onChange={(e) => setNodePrefix(e.target.value)}
-        />
-      </FormField>
-
-      {sub.kind === 'remote' ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <FormField label="上游 URL">
-            <Input
-              type="url"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
+      <div className={styles.frm}>
+        <div className={styles.frmRow}>
+          <label>
+            名称
+            <span className="h">slug</span>
+          </label>
+          <div className={styles.ctl}>
+            <input
+              className="input mono"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              pattern="[a-z0-9-]+"
               required
             />
-          </FormField>
-          <FormField label="UA 覆写">
-            <Input
-              placeholder="留空 = 不覆写"
-              value={ua}
-              onChange={(e) => setUa(e.target.value)}
-            />
-          </FormField>
+          </div>
         </div>
-      ) : (
-        <FormField
-          label={
-            <span className="flex items-baseline gap-2">
-              <span>节点内容</span>
-              <span className="normal-case tracking-normal font-normal text-[10px] text-[var(--color-muted)]">
-                clash yaml · 或多行 ss:// vmess:// vless:// anytls:// wireguard:// … · 或 base64
-              </span>
-            </span>
-          }
-        >
-          <Textarea
-            rows={8}
-            value={content}
-            onChange={(e) => setContent(e.target.value)}
-            required
-            className="text-[12px] font-mono"
-          />
-        </FormField>
-      )}
 
-      <div className="flex items-center justify-between gap-3 pt-3 border-t border-[var(--color-border)] flex-wrap">
-        <label className="flex items-center gap-2 text-[13px] text-[var(--color-fg-soft)] cursor-pointer">
-          <input
-            type="checkbox"
-            checked={enabled}
-            onChange={(e) => setEnabled(e.target.checked)}
-            className="accent-[var(--color-primary)] w-3.5 h-3.5"
-          />
-          启用
-        </label>
-        {error && (
-          <p className="text-[12px] text-[var(--color-danger)] bg-[#F4D8D2]/40 rounded-md px-3 py-1.5 max-w-full break-words">
-            {error}
-          </p>
+        {sub.kind === 'remote' && (
+          <div className={styles.frmRow}>
+            <label>
+              缓存 TTL
+              <span className="h">拉取间隔</span>
+            </label>
+            <div className={styles.ctl}>
+              <TtlSeg sec={ttlSec} onChange={setTtlSec} />
+            </div>
+          </div>
         )}
+
+        <div className={styles.frmRow}>
+          <label>标签</label>
+          <div className={styles.ctl}>
+            <input
+              className="input mono"
+              placeholder="premium, asia"
+              value={tagsInput}
+              onChange={(e) => setTagsInput(e.target.value)}
+            />
+          </div>
+        </div>
+
+        <div className={styles.frmRow}>
+          <label>
+            节点名前缀
+            <span className="h">可选 · 避免跨源同名被去重丢弃</span>
+          </label>
+          <div className={styles.ctl}>
+            <input
+              className="input mono"
+              placeholder="[Airport-A] "
+              value={nodePrefix}
+              onChange={(e) => setNodePrefix(e.target.value)}
+            />
+          </div>
+        </div>
+
+        {sub.kind === 'remote' ? (
+          <>
+            <div className={styles.frmRow}>
+              <label>
+                上游 URL
+                <span className="h">仅平台拉取</span>
+              </label>
+              <div className={styles.ctl}>
+                <input
+                  className="input mono"
+                  type="url"
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
+                  required
+                />
+              </div>
+            </div>
+            <div className={styles.frmRow}>
+              <label>UA 覆写</label>
+              <div className={styles.ctl}>
+                <input
+                  className="input mono"
+                  placeholder="留空 = 不覆写"
+                  value={ua}
+                  onChange={(e) => setUa(e.target.value)}
+                />
+              </div>
+            </div>
+          </>
+        ) : (
+          <div className={styles.frmRow} style={{ alignItems: 'start' }}>
+            <label>
+              节点内容
+              <span className="h">clash yaml · 或多行节点链接 · 或 base64</span>
+            </label>
+            <div className={styles.ctl}>
+              <CodeEditor
+                value={content}
+                onChange={setContent}
+                label="content · yaml / links"
+                minHeight={200}
+                hint="编辑节点链接或 Clash YAML"
+              />
+            </div>
+          </div>
+        )}
+
+        <div className={styles.frmRow}>
+          <label>状态</label>
+          <div className={`${styles.ctl} ${styles.switchRow}`}>
+            <button
+              type="button"
+              className="switch"
+              aria-pressed={enabled}
+              onClick={() => setEnabled((v) => !v)}
+            />
+            <span className={styles.swNote}>{enabled ? '启用' : '停用'}</span>
+          </div>
+        </div>
       </div>
+
+      <div className={styles.editActs} style={{ marginTop: 16 }}>
+        <button type="submit" className="btn primary" disabled={pending || !name.trim()}>
+          {pending ? '保存中…' : '保存'}
+        </button>
+        <button type="button" className="btn" onClick={onCancel} disabled={pending}>
+          取消
+        </button>
+      </div>
+      {error && <div className={styles.errBanner} style={{ marginTop: 12 }}>{error}</div>}
     </form>
   );
 }

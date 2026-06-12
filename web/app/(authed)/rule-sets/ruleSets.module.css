@@ -1,0 +1,63 @@
+.metaGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.metaGrid .cell {
+  background: var(--surface-2);
+  border-radius: var(--r-sm);
+  padding: 9px 12px;
+  min-width: 0;
+}
+.metaGrid .cell .k {
+  font: 10px var(--font-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.metaGrid .cell .v {
+  font: 550 12.5px var(--font-mono);
+  margin-top: 3px;
+  word-break: break-all;
+}
+
+.usedBy {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: -2px 0 14px;
+}
+.usedBy .ubK {
+  font: 10.5px var(--font-mono);
+  letter-spacing: 0.04em;
+  color: var(--faint);
+  margin-right: 2px;
+}
+
+.fields {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.fields .col {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.fields .col .lab {
+  font: 10px var(--font-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+@media (max-width: 600px) {
+  .metaGrid {
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+}

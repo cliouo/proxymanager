@@ -1,12 +1,11 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Button } from '@/components/ui/Button';
-import { FormField } from '@/components/ui/FormField';
-import { Input, Select } from '@/components/ui/Input';
 import { ApiError, api } from '@/lib/client/api';
+import { PageTopbar } from '@/components/PageChrome';
 import { loadAssistantConfig } from '@/lib/client/assistant-config';
 import type { AssistantConfig } from '@/schemas';
+import styles from './assistantSettings.module.css';
 
 const DEFAULTS = {
   baseUrl: 'https://api.deepseek.com',
@@ -15,6 +14,16 @@ const DEFAULTS = {
   reasoningEffort: 'high' as const,
   maxTokens: 8192,
 };
+
+const THINKING_OPTS: { value: AssistantConfig['thinking']; label: string }[] = [
+  { value: 'enabled', label: 'enabled' },
+  { value: 'disabled', label: 'disabled' },
+];
+const EFFORT_OPTS: { value: AssistantConfig['reasoningEffort']; label: string }[] = [
+  { value: 'low', label: 'low' },
+  { value: 'medium', label: 'medium' },
+  { value: 'high', label: 'high' },
+];
 
 /**
  * 「AI 配置」 — the user's own DeepSeek credentials. The assistant runs its
@@ -26,10 +35,12 @@ export default function AssistantSettingsPage() {
   const [baseUrl, setBaseUrl] = useState(DEFAULTS.baseUrl);
   const [model, setModel] = useState(DEFAULTS.model);
   const [apiKey, setApiKey] = useState('');
+  const [showKey, setShowKey] = useState(false);
   const [hasStoredKey, setHasStoredKey] = useState(false);
   const [thinking, setThinking] = useState<AssistantConfig['thinking']>(DEFAULTS.thinking);
-  const [reasoningEffort, setReasoningEffort] =
-    useState<AssistantConfig['reasoningEffort']>(DEFAULTS.reasoningEffort);
+  const [reasoningEffort, setReasoningEffort] = useState<AssistantConfig['reasoningEffort']>(
+    DEFAULTS.reasoningEffort,
+  );
   const [maxTokens, setMaxTokens] = useState<number>(DEFAULTS.maxTokens);
 
   const [loaded, setLoaded] = useState(false);
@@ -65,7 +76,13 @@ export default function AssistantSettingsPage() {
     setStatus(null);
     try {
       // Omit apiKey when left blank so we don't overwrite a stored key with "".
-      const body: Record<string, unknown> = { baseUrl, model, thinking, reasoningEffort, maxTokens };
+      const body: Record<string, unknown> = {
+        baseUrl,
+        model,
+        thinking,
+        reasoningEffort,
+        maxTokens,
+      };
       if (apiKey.trim()) body.apiKey = apiKey.trim();
       if (!apiKey.trim() && !hasStoredKey) {
         setStatus({ kind: 'error', message: '请填写 API Key。' });
@@ -78,7 +95,7 @@ export default function AssistantSettingsPage() {
       setHasStoredKey(true);
       setStatus({ kind: 'success', message: '已保存' });
     } catch (err) {
-      const detail = err instanceof ApiError ? err.problem.detail ?? err.message : String(err);
+      const detail = err instanceof ApiError ? (err.problem.detail ?? err.message) : String(err);
       setStatus({ kind: 'error', message: detail });
     } finally {
       setBusy(false);
@@ -86,105 +103,178 @@ export default function AssistantSettingsPage() {
   }
 
   return (
-    <div className="max-w-[640px]">
-      <header className="mb-6">
-        <h1
-          className="font-serif text-[24px] font-medium tracking-[-0.01em] text-[var(--color-ink)]"
-          style={{ fontVariationSettings: '"opsz" 48, "SOFT" 50' }}
-        >
-          AI 配置
-        </h1>
-        <p className="mt-1.5 text-[13px] leading-relaxed text-[var(--color-muted)]">
-          配置助手在你的浏览器里直连模型 API 运行,凭证存于本服务、仅你可见。填入 DeepSeek(或任意
-          OpenAI 兼容)的 Base URL、模型与 API Key 后即可使用。修改后刷新页面即同步到本地。
-        </p>
-      </header>
+    <>
+      <PageTopbar contentMaxWidth={1100}>
+        <h1>AI 配置</h1>
+        {loaded && hasStoredKey && <span className="pill ai">已启用</span>}
+        <div className="grow" />
+      </PageTopbar>
 
-      {loaded && (
-        <div className="flex flex-col gap-4">
-          <FormField label="Base URL">
-            <Input
-              value={baseUrl}
-              onChange={(e) => setBaseUrl(e.target.value)}
-              placeholder="https://api.deepseek.com"
-              spellCheck={false}
-            />
-          </FormField>
-
-          <FormField label="模型">
-            <Input
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              placeholder="deepseek-v4-pro"
-              spellCheck={false}
-            />
-          </FormField>
-
-          <FormField label={hasStoredKey ? 'API Key（已保存，留空则不变）' : 'API Key'}>
-            <Input
-              type="password"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder={hasStoredKey ? '••••••••（已保存）' : 'sk-…'}
-              autoComplete="off"
-              spellCheck={false}
-            />
-          </FormField>
-
-          <div className="flex gap-4">
-            <FormField label="思考模式">
-              <Select
-                value={thinking}
-                onChange={(e) => setThinking(e.target.value as AssistantConfig['thinking'])}
-              >
-                <option value="enabled">开启（reasoner）</option>
-                <option value="disabled">关闭（更快）</option>
-              </Select>
-            </FormField>
-
-            <FormField label="推理强度">
-              <Select
-                value={reasoningEffort}
-                onChange={(e) =>
-                  setReasoningEffort(e.target.value as AssistantConfig['reasoningEffort'])
-                }
-                disabled={thinking === 'disabled'}
-              >
-                <option value="low">low（最快）</option>
-                <option value="medium">medium</option>
-                <option value="high">high（最深）</option>
-              </Select>
-            </FormField>
-
-            <FormField label="max tokens">
-              <Input
-                type="number"
-                value={maxTokens}
-                onChange={(e) => setMaxTokens(Number(e.target.value) || DEFAULTS.maxTokens)}
-                min={256}
-                max={65536}
-              />
-            </FormField>
+      <div className={styles.grid}>
+        <section className="panel">
+          <div className="panel-head">
+            <h2>模型接入</h2>
+            <span className="sub">OpenAI 兼容协议 · 浏览器直连，无 60s 函数超时</span>
           </div>
+          <div className="panel-body">
+            {loaded ? (
+              <>
+                <div className="field">
+                  <label>Base URL</label>
+                  <input
+                    className="input mono"
+                    value={baseUrl}
+                    onChange={(e) => setBaseUrl(e.target.value)}
+                    placeholder="https://api.deepseek.com"
+                    spellCheck={false}
+                  />
+                  <div className="hint">
+                    任何 OpenAI 兼容端点均可（DeepSeek / 通义 / 本地 Ollama 网关…）
+                  </div>
+                </div>
 
-          <div className="mt-1 flex items-center gap-3">
-            <Button variant="primary" size="md" onClick={onSave} disabled={busy}>
-              {busy ? '保存中…' : '保存'}
-            </Button>
-            {status && (
-              <span
-                className={`text-[13px] ${
-                  status.kind === 'success'
-                    ? 'text-[var(--color-primary)]'
-                    : 'text-[var(--color-danger)]'
-                }`}
-              >
-                {status.message}
-              </span>
+                <div className="field">
+                  <label>模型</label>
+                  <input
+                    className="input mono"
+                    value={model}
+                    onChange={(e) => setModel(e.target.value)}
+                    placeholder="deepseek-v4-pro"
+                    spellCheck={false}
+                  />
+                </div>
+
+                <div className="field">
+                  <label>{hasStoredKey ? 'API Key（已保存，留空则不变）' : 'API Key'}</label>
+                  <div className={styles.keyRow}>
+                    <input
+                      className={`input mono ${styles.input}`}
+                      type={showKey ? 'text' : 'password'}
+                      value={apiKey}
+                      onChange={(e) => setApiKey(e.target.value)}
+                      placeholder={hasStoredKey ? '••••••••（已保存）' : 'sk-…'}
+                      autoComplete="off"
+                      spellCheck={false}
+                    />
+                    <button type="button" className="btn" onClick={() => setShowKey((v) => !v)}>
+                      {showKey ? '隐藏' : '显示'}
+                    </button>
+                  </div>
+                  <div className="hint">凭证存于本服务、仅你可见，只在浏览器内发起调用时使用。</div>
+                </div>
+
+                <div className="field">
+                  <label>思考模式 thinking</label>
+                  <div className="seg">
+                    {THINKING_OPTS.map((o) => (
+                      <button
+                        key={o.value}
+                        type="button"
+                        className={`opt${thinking === o.value ? ' on' : ''}`}
+                        onClick={() => setThinking(o.value)}
+                      >
+                        {o.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="field">
+                  <label>推理强度 reasoning_effort</label>
+                  <div className="seg">
+                    {EFFORT_OPTS.map((o) => (
+                      <button
+                        key={o.value}
+                        type="button"
+                        className={`opt${reasoningEffort === o.value ? ' on' : ''}`}
+                        onClick={() => setReasoningEffort(o.value)}
+                        disabled={thinking === 'disabled'}
+                      >
+                        {o.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="field">
+                  <label>最大生成 tokens</label>
+                  <input
+                    className="input mono num"
+                    type="number"
+                    value={maxTokens}
+                    onChange={(e) => setMaxTokens(Number(e.target.value) || DEFAULTS.maxTokens)}
+                    min={256}
+                    max={65536}
+                    style={{ maxWidth: 160 }}
+                  />
+                </div>
+
+                <div className={styles.saveRow}>
+                  <button className="btn primary" onClick={onSave} disabled={busy}>
+                    {busy ? '保存中…' : '保存配置'}
+                  </button>
+                  {status && (
+                    <span
+                      className={`${styles.statusMsg} ${
+                        status.kind === 'success' ? styles.ok : styles.err
+                      }`}
+                    >
+                      {status.message}
+                    </span>
+                  )}
+                </div>
+              </>
+            ) : (
+              <div className="hint">加载中…</div>
             )}
           </div>
-        </div>
-      )}
-    </div>
+        </section>
+
+        <aside className={styles.aside}>
+          <section className="panel">
+            <div className="panel-head">
+              <h2>助手能力</h2>
+            </div>
+            <div className="panel-body" style={{ padding: '12px 18px' }}>
+              <div className={styles.toolLi}>search_mihomo_docs · 查文档</div>
+              <div className={styles.toolLi}>get_base_overview · 读配置概览</div>
+              <div className={styles.toolLi}>list_rules / get_config_section · 读取</div>
+              <div className={styles.toolLi}>fetch_url · 抓取外部链接</div>
+              <div className={`${styles.toolLi} write`}>add / update / delete_rule</div>
+              <div className={`${styles.toolLi} write`}>create / update_rule_provider</div>
+              <div className={`${styles.toolLi} write`}>set_config_section</div>
+              <div className={styles.toolNote}>
+                ✎ 写操作一律先出 diff，经你确认后才执行，并写入操作历史。
+              </div>
+            </div>
+          </section>
+
+          <section className="panel">
+            <div className="panel-head">
+              <h2>作用域</h2>
+            </div>
+            <div className={`panel-body ${styles.prose}`}>
+              每次对话自动注入你<b>当前选中的配置文件</b>
+              作为默认作用域，助手据此判断「这份配置」指谁，写操作只动这一份。
+              <br />
+              需要批量时在指令里说明「<b>所有配置文件</b>」，助手会改全部并在确认 diff
+              里逐份列出（已存在的自动跳过）。
+              <br />
+              共享资源（订阅源 / 规则集）的改动天然影响所有引用方，助手会提示受影响的配置文件。
+            </div>
+          </section>
+
+          <section className="panel">
+            <div className="panel-head">
+              <h2>隐私</h2>
+            </div>
+            <div className={`panel-body ${styles.prose}`}>
+              发送给模型的上下文会做脱敏：订阅
+              URL、token、节点服务器地址以占位符替代，模型只见结构不见凭证。
+            </div>
+          </section>
+        </aside>
+      </div>
+    </>
   );
 }

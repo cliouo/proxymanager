@@ -1,0 +1,437 @@
+/* ============================================================
+   订阅源页面专属布局（v2 "Signal Console"）
+   全局组件类见 styles/v2-components.css；这里只放原型 <style> 里
+   页面级的清单卡 / 编辑栅格 / 算子流水线 / 合并预览。
+   ============================================================ */
+
+/* —— 页面头部动作行（共享 topbar 之下的内容内动作条） —— */
+.headRow {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 18px;
+  flex-wrap: wrap;
+}
+.headRow .grow {
+  flex: 1;
+}
+.lead {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.6;
+  padding: 11px 15px;
+  margin-bottom: 14px;
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+}
+.lead b {
+  color: var(--fg-2);
+}
+
+.errBanner {
+  font: 12px var(--font-mono);
+  color: var(--danger);
+  background: var(--danger-dim);
+  border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
+  border-radius: var(--r-sm);
+  padding: 9px 13px;
+  margin-bottom: 14px;
+  word-break: break-word;
+}
+
+/* —— 清单卡 —— */
+.subItem {
+  display: flex;
+  gap: 15px;
+  padding: 18px;
+  align-items: flex-start;
+}
+.subItem + .subItem {
+  border-top: 1px solid var(--border);
+}
+.subItem.dimmed {
+  opacity: 0.45;
+}
+.subItem.editing {
+  display: block;
+}
+.led {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-top: 6px;
+}
+.led.ok {
+  background: var(--ok);
+  box-shadow: 0 0 8px var(--ok-dim), 0 0 0 3px var(--ok-dim);
+}
+.led.err {
+  background: var(--danger);
+  box-shadow: 0 0 0 3px var(--danger-dim);
+}
+.led.off {
+  background: var(--faint);
+}
+.subMain {
+  flex: 1;
+  min-width: 0;
+}
+.head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+.head b {
+  font: 600 14.5px var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.meta {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-top: 9px;
+  font: 11.5px var(--font-mono);
+  color: var(--muted);
+}
+.meta .k {
+  color: var(--faint);
+}
+.meta a {
+  color: var(--accent);
+  text-decoration: none;
+}
+.errLine {
+  margin-top: 9px;
+  font: 11.5px var(--font-mono);
+  color: var(--danger);
+  background: var(--danger-dim);
+  border-radius: var(--r-sm);
+  padding: 6px 10px;
+  word-break: break-word;
+}
+.acts {
+  flex: none;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.right {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  align-items: flex-end;
+}
+.colMembers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+  align-items: center;
+}
+.colMembers .mk {
+  font: 10.5px var(--font-mono);
+  color: var(--faint);
+}
+.colLead {
+  font-size: 12.5px;
+  color: var(--muted);
+  margin-top: 8px;
+  line-height: 1.55;
+}
+
+.skel {
+  height: 12px;
+  border-radius: 4px;
+  background: var(--surface-3);
+  animation: skelPulse 1.2s ease-in-out infinite;
+}
+@keyframes skelPulse {
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.empty {
+  text-align: center;
+  padding: 56px 24px;
+}
+.empty .t {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--fg-2);
+}
+.empty .d {
+  font-size: 13px;
+  color: var(--muted);
+  margin: 8px 0 18px;
+  line-height: 1.6;
+}
+
+@media (max-width: 960px) {
+  .subItem {
+    flex-wrap: wrap;
+  }
+  .right {
+    align-items: flex-start;
+    width: 100%;
+    flex-direction: row;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+}
+@media (max-width: 600px) {
+  .subItem {
+    padding: 14px;
+    gap: 10px;
+  }
+  .right {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .right .traffic {
+    width: 100%;
+    min-width: 0;
+  }
+  .acts {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+  .head {
+    row-gap: 6px;
+  }
+}
+
+/* ============================================================
+   编辑栅格（单订阅 / 聚合订阅内联编辑）
+   ============================================================ */
+.editGrid {
+  display: grid;
+  grid-template-columns: 1fr 360px;
+  gap: 22px;
+  align-items: start;
+}
+.sec {
+  margin-bottom: 26px;
+}
+.secHead {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.secHead h2 {
+  font: 600 15px var(--font-sans, inherit);
+  margin: 0;
+}
+.secHead .n {
+  font: 11px var(--font-mono);
+  color: var(--faint);
+}
+.secHead .grow {
+  flex: 1;
+}
+
+.frm {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 4px 18px;
+}
+.frmRow {
+  display: grid;
+  grid-template-columns: 132px 1fr;
+  gap: 16px;
+  align-items: center;
+  padding: 14px 0;
+}
+.frmRow + .frmRow {
+  border-top: 1px solid var(--border);
+}
+.frmRow > label {
+  font-size: 12.5px;
+  color: var(--fg-2);
+}
+.frmRow > label .h {
+  display: block;
+  font: 10.5px var(--font-mono);
+  color: var(--faint);
+  margin-top: 3px;
+}
+.frmRow .ctl {
+  min-width: 0;
+}
+.tagsCtl {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.switchRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.switchRow .swNote {
+  font: 11.5px var(--font-mono);
+  color: var(--muted);
+}
+
+/* —— 聚合：成员管理 —— */
+.memBlock {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 4px 0;
+  margin-bottom: 14px;
+}
+.mbCap {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 13px 18px 9px;
+}
+.mbCap .t {
+  font: 600 12.5px var(--font-mono);
+}
+.mbCap .d {
+  font: 11px var(--font-mono);
+  color: var(--faint);
+}
+.mbCap .grow {
+  flex: 1;
+}
+.mem {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 18px;
+  border-top: 1px solid var(--border);
+  cursor: pointer;
+}
+.mem .memLed {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.mem .memLed.ok {
+  background: var(--ok);
+  box-shadow: 0 0 0 3px var(--ok-dim);
+}
+.mem .memLed.off {
+  background: var(--faint);
+}
+.mem .nm {
+  font: 600 13px var(--font-mono);
+}
+.mem .sub {
+  font: 11px var(--font-mono);
+  color: var(--muted);
+  margin-top: 2px;
+}
+.mem .grow {
+  flex: 1;
+  min-width: 0;
+}
+.mem .cnt {
+  font: 11.5px var(--font-mono);
+  color: var(--fg-2);
+}
+.mem .cnt.dim {
+  color: var(--faint);
+}
+.mem.isOff {
+  opacity: 0.55;
+}
+.chipRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding: 13px 18px;
+  border-top: 1px solid var(--border);
+  align-items: center;
+}
+.chipRow .ck {
+  font: 10.5px var(--font-mono);
+  color: var(--faint);
+  margin-right: 4px;
+}
+.addLine {
+  padding: 12px 18px;
+  border-top: 1px solid var(--border);
+}
+
+/* —— 右列：粘性预览 / 合并 —— */
+.sideStick {
+  position: sticky;
+  top: 74px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+.mergeStat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+.mergeStat:last-child {
+  border: 0;
+}
+.mergeStat .r {
+  display: flex;
+  justify-content: space-between;
+  font: 12px var(--font-mono);
+}
+.mergeStat .r .k {
+  color: var(--fg-2);
+}
+.mergeStat .r .v {
+  color: var(--faint);
+}
+.mergeFoot {
+  font: 11px var(--font-mono);
+  color: var(--faint);
+  padding-top: 10px;
+}
+
+.editActs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.editActs .grow {
+  flex: 1;
+}
+.dirty {
+  font: 11.5px var(--font-mono);
+  color: var(--warn);
+}
+
+@media (max-width: 1100px) {
+  .editGrid {
+    grid-template-columns: 1fr;
+  }
+  .sideStick {
+    position: static;
+  }
+}
+@media (max-width: 600px) {
+  .frmRow {
+    grid-template-columns: 1fr;
+    gap: 7px;
+  }
+  .mem {
+    flex-wrap: wrap;
+  }
+}

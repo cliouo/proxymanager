@@ -51,6 +51,15 @@ export const KIND_LABELS: Record<ProxyGroupKind, string> = {
   raw: '自由编辑(raw)',
 };
 
+/** 成员来源视角切换条的短标签(对齐原型 lensSeg:手选/正则筛选/全量/单订阅/原始字段)。 */
+export const KIND_SEG_LABELS: Record<ProxyGroupKind, string> = {
+  manual: '手选',
+  filter: '正则筛选',
+  all: '全量',
+  'single-sub': '单订阅',
+  raw: '原始字段',
+};
+
 export const KIND_DESCRIPTIONS: Record<ProxyGroupKind, string> = {
   manual: '从清单点选成员(内置 / 节点 / 其他策略组)。规则集出口、系统兜底常用此型。',
   filter: 'include-all-proxies + filter:按正则自动纳入节点(含地区快填)。',
@@ -131,6 +140,7 @@ export type FormState = {
   type: ProxyGroupType;
   kind: ProxyGroupKind;
   section: string;
+  rank: string;
   notes: string;
   template_id: string;
   bound_subscription_id: string;
@@ -166,6 +176,7 @@ export const EMPTY_FORM: FormState = {
   type: 'select',
   kind: 'raw',
   section: '',
+  rank: '',
   notes: '',
   template_id: '',
   bound_subscription_id: '',
@@ -200,6 +211,7 @@ export function fromGroup(g: ProxyGroup): FormState {
     type: g.type,
     kind: g.kind,
     section: g.section ?? '',
+    rank: String(g.rank),
     notes: g.notes ?? '',
     template_id: g.template_id ?? '',
     bound_subscription_id: g.bound_subscription_id ?? '',
@@ -256,6 +268,8 @@ export function toPayload(s: FormState): Record<string, unknown> {
     kind: s.kind,
   };
   if (s.section.trim()) out.section = s.section.trim();
+  const rank = num(s.rank);
+  if (rank !== undefined && rank >= 0) out.rank = rank;
   if (s.notes.trim()) out.notes = s.notes.trim();
   if (s.template_id) out.template_id = s.template_id;
   if (s.bound_subscription_id) out.bound_subscription_id = s.bound_subscription_id;

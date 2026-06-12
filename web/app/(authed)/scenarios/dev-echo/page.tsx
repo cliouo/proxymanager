@@ -4,6 +4,7 @@ import { useCallback, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { ShikiBlock } from '@/components/ui/ShikiBlock';
 import { ApiError, api } from '@/lib/client/api';
+import { PageTopbar } from '@/components/PageChrome';
 
 export default function EchoScenarioPage() {
   const [payload, setPayload] = useState('{\n  "hello": "world"\n}');
@@ -41,19 +42,18 @@ export default function EchoScenarioPage() {
 
   return (
     <div className="space-y-6">
-      <header>
-        <h1
-          className="font-serif text-[28px] font-medium leading-[1.15] tracking-[-0.015em] text-[var(--color-ink)]"
-          style={{ fontVariationSettings: '"opsz" 96, "SOFT" 30' }}
-        >
-          Echo（调试）
-        </h1>
-        <p className="mt-1.5 text-[13px] text-[var(--color-muted)] leading-[1.6] max-w-2xl">
-          端到端验证 scenario dispatcher。
-          <code className="font-mono text-[12px] text-[var(--color-primary)] mx-1">ping</code> 回显 payload，
-          <code className="font-mono text-[12px] text-[var(--color-primary)] mx-1">mark</code> 额外写一条审计事件。
-        </p>
-      </header>
+      <PageTopbar>
+        <h1>Echo（调试）</h1>
+        <div className="grow" />
+      </PageTopbar>
+
+      <p className="text-[13px] text-[var(--color-muted)] leading-[1.6] max-w-2xl">
+        端到端验证 scenario dispatcher。
+        <code className="font-mono text-[12px] text-[var(--color-primary)] mx-1">ping</code> 回显
+        payload，
+        <code className="font-mono text-[12px] text-[var(--color-primary)] mx-1">mark</code>{' '}
+        额外写一条审计事件。
+      </p>
 
       {/* Terminal input */}
       <section>

@@ -14,6 +14,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { ChatMessage } from '@/lib/ai/deepseek';
 import { AssistantNotConfiguredError, runAgentTurn } from '@/lib/client/assistantAgent';
 import { loadAssistantConfig } from '@/lib/client/assistant-config';
+import { useAssistant } from './AssistantContext';
 import { CollapsibleResult, ResultCard, type ConfirmResolution } from './cards';
 import { ErrorBanner } from './ErrorBanner';
 import { Markdown } from './Markdown';
@@ -131,7 +132,9 @@ function persist(conversationId: string, messages: UiMessage[], convo: ChatMessa
 }
 
 export function AssistantPanel() {
-  const [open, setOpen] = useState(false);
+  // Open state now lives in context so the topbar `.ai-fab` can toggle the
+  // drawer; the panel itself stays always-mounted (the stream survives close).
+  const { open, setOpen } = useAssistant();
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -345,198 +348,158 @@ export function AssistantPanel() {
     void runTurn(lastUser.content);
   }
 
+  // Always-mounted: closing only removes `.open` (slides off-screen) so an
+  // in-flight stream keeps running in the background. The trigger lives in the
+  // topbar (`.ai-fab`), wired through AssistantContext.
   return (
-    <>
-      {!open && (
-        <button
-          onClick={() => setOpen(true)}
-          className="fixed bottom-6 right-6 z-40 flex h-12 items-center gap-2 rounded-full bg-[var(--color-primary)] px-5 text-[14px] font-medium text-[var(--color-on-primary)] shadow-[var(--shadow-card-lift)] transition-colors hover:bg-[var(--color-primary-hover)]"
-          aria-label={busy ? '配置助手（后台执行中）' : '打开配置助手'}
-        >
-          {busy ? (
-            <span className="pm-spin inline-block h-3.5 w-3.5 rounded-full border-2 border-current border-t-transparent" />
-          ) : (
-            <span className="text-[16px] leading-none">✦</span>
-          )}
-          {busy ? '执行中…' : '配置助手'}
+    <aside className={`ai-drawer${open ? ' open' : ''}`} aria-hidden={!open}>
+      <div className="ai-head">
+        <div className="ident">✦</div>
+        <div>
+          <b>配置助手</b>
+          <span className="model">DeepSeek · 接 mihomo 官方文档 · 浏览器直连</span>
+        </div>
+        <div style={{ flex: 1 }} />
+        {messages.length > 0 && (
+          <button
+            className="btn ghost sm"
+            onClick={() => {
+              setMessages([]);
+              setConvo([]);
+              setConversationId(newConversationId());
+            }}
+            disabled={busy}
+          >
+            清空
+          </button>
+        )}
+        <button className="btn ghost sm" onClick={() => setOpen(false)} aria-label="关闭">
+          关闭
         </button>
-      )}
+      </div>
 
-      {open && (
-        <div className="pm-slide-in-right fixed inset-y-0 right-0 z-50 flex w-full max-w-[440px] flex-col border-l border-[var(--color-border)] bg-[var(--color-bg)] shadow-[var(--shadow-modal)]">
-          <header className="flex items-center justify-between border-b border-[var(--color-border)] px-5 py-3.5">
-            <div className="flex items-center gap-2.5">
-              <span className="text-[18px] leading-none text-[var(--color-primary)]">✦</span>
-              <div className="flex flex-col leading-tight">
-                <span
-                  className="font-serif text-[17px] font-medium text-[var(--color-ink)]"
-                  style={{ fontVariationSettings: '"opsz" 48, "SOFT" 50' }}
-                >
-                  配置助手
-                </span>
-                <span className="text-[11px] text-[var(--color-muted-strong)]">
-                  DeepSeek · 接 mihomo 官方文档
-                </span>
-              </div>
+      <div className="ai-body" ref={scrollRef}>
+        {messages.length === 0 ? (
+          <>
+            <div className="ai-msg bot">
+              <p>你好，我是配置助手。问我任何 mihomo / clash 配置问题，我会查官方文档、结合你当前配置作答。</p>
+              <p>写操作（增删改规则、规则集、配置区块）会先给出 diff 卡片，确认后才执行。</p>
             </div>
-            <div className="flex items-center gap-3 text-[13px]">
-              {messages.length > 0 && (
-                <button
-                  onClick={() => {
-                    setMessages([]);
-                    setConvo([]);
-                    setConversationId(newConversationId());
-                  }}
-                  disabled={busy}
-                  className="text-[var(--color-muted)] transition-colors hover:text-[var(--color-fg)] disabled:opacity-40"
-                >
-                  清空
+            <div className="ai-suggests">
+              {EXAMPLES.map((ex) => (
+                <button key={ex} className="chip" onClick={() => sendText(ex)}>
+                  {ex}
                 </button>
-              )}
-              <button
-                onClick={() => setOpen(false)}
-                className="text-[16px] text-[var(--color-muted)] transition-colors hover:text-[var(--color-fg)]"
-                aria-label="关闭"
-              >
-                ✕
-              </button>
+              ))}
             </div>
-          </header>
-
-          <div ref={scrollRef} className="flex-1 overflow-auto px-5 py-4">
-            {messages.length === 0 ? (
-              <div className="mt-8 flex flex-col items-center">
-                <div className="text-center text-[13px] leading-relaxed text-[var(--color-muted)]">
-                  问我任何 mihomo / clash 配置问题，
-                  <br />
-                  我会查官方文档、结合你当前配置作答。
+          </>
+        ) : (
+          <>
+            {messages.map((m, i) =>
+              m.role === 'user' ? (
+                <div key={i} className="ai-msg user">
+                  {m.content}
                 </div>
-                <div className="mt-5 flex w-full flex-col gap-2">
-                  {EXAMPLES.map((ex) => (
-                    <button
-                      key={ex}
-                      onClick={() => sendText(ex)}
-                      className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-left text-[13px] text-[var(--color-fg-soft)] transition-colors hover:border-[var(--color-border-strong)] hover:bg-[var(--color-surface-hover)]"
-                    >
-                      {ex}
-                    </button>
-                  ))}
+              ) : (
+                <div key={i} className="ai-msg bot">
+                  {m.blocks.map((b, j) => {
+                    if (b.type === 'tool') {
+                      if (b.status === 'running') {
+                        return (
+                          <div key={j} className="ai-tool">
+                            <span>⚙ {TOOL_LABELS[b.name] ?? b.name}</span>
+                            <span className="st run">running</span>
+                          </div>
+                        );
+                      }
+                      const kind = b.kind ?? 'error';
+                      // Interactive / actionable cards face the user directly;
+                      // read-data results are AI-facing, shown as a collapsed trace.
+                      if (
+                        kind === 'confirm-write' ||
+                        kind === 'confirm-cancelled' ||
+                        kind === 'write-result' ||
+                        kind === 'error'
+                      ) {
+                        return (
+                          <ResultCard
+                            key={j}
+                            kind={kind}
+                            data={b.data}
+                            onResolved={(r) => resolveConfirm(b.id, r)}
+                            onUndone={() => markBlockUndone(b.id)}
+                          />
+                        );
+                      }
+                      return (
+                        <CollapsibleResult
+                          key={j}
+                          label={TOOL_LABELS[b.name] ?? b.name}
+                          kind={kind}
+                          data={b.data}
+                        />
+                      );
+                    }
+                    if (b.type === 'error') {
+                      return (
+                        <ErrorBanner
+                          key={j}
+                          message={b.message}
+                          onRetry={!busy && i === messages.length - 1 ? retry : undefined}
+                        />
+                      );
+                    }
+                    return <Markdown key={j} content={b.content} />;
+                  })}
                 </div>
-              </div>
-            ) : (
-              <div className="flex flex-col gap-4">
-                {messages.map((m, i) =>
-                  m.role === 'user' ? (
-                    <div key={i} className="flex justify-end">
-                      <div className="max-w-[85%] rounded-2xl rounded-br-sm bg-[var(--color-primary-soft)] px-3.5 py-2 text-[13px] leading-relaxed text-[var(--color-fg)]">
-                        {m.content}
-                      </div>
-                    </div>
-                  ) : (
-                    <div key={i} className="flex flex-col gap-2">
-                      {m.blocks.map((b, j) => {
-                        if (b.type === 'tool') {
-                          if (b.status === 'running') {
-                            return (
-                              <div
-                                key={j}
-                                className="flex items-center gap-2 text-[12px] text-[var(--color-muted)]"
-                              >
-                                <span className="pm-pulse inline-block h-1.5 w-1.5 rounded-full bg-[var(--color-primary)]" />
-                                {TOOL_LABELS[b.name] ?? b.name} …
-                              </div>
-                            );
-                          }
-                          const kind = b.kind ?? 'error';
-                          // Interactive / actionable cards face the user directly;
-                          // read-data results are AI-facing, shown as a collapsed trace.
-                          if (
-                            kind === 'confirm-write' ||
-                            kind === 'confirm-cancelled' ||
-                            kind === 'write-result' ||
-                            kind === 'error'
-                          ) {
-                            return (
-                              <ResultCard
-                                key={j}
-                                kind={kind}
-                                data={b.data}
-                                onResolved={(r) => resolveConfirm(b.id, r)}
-                                onUndone={() => markBlockUndone(b.id)}
-                              />
-                            );
-                          }
-                          return (
-                            <CollapsibleResult
-                              key={j}
-                              label={TOOL_LABELS[b.name] ?? b.name}
-                              kind={kind}
-                              data={b.data}
-                            />
-                          );
-                        }
-                        if (b.type === 'error') {
-                          return (
-                            <ErrorBanner
-                              key={j}
-                              message={b.message}
-                              onRetry={!busy && i === messages.length - 1 ? retry : undefined}
-                            />
-                          );
-                        }
-                        return <Markdown key={j} content={b.content} />;
-                      })}
-                    </div>
-                  ),
-                )}
-                {busy && (
-                  <div className="flex items-center gap-2 text-[12px] text-[var(--color-muted)]">
-                    <span className="pm-pulse inline-block h-1.5 w-1.5 rounded-full bg-[var(--color-primary)]" />
-                    正在思考 …
-                  </div>
-                )}
+              ),
+            )}
+            {busy && (
+              <div className="ai-tool">
+                <span>正在思考</span>
+                <span className="st run">running</span>
               </div>
             )}
-          </div>
+          </>
+        )}
+      </div>
 
-          <div className="border-t border-[var(--color-border)] p-3">
-            <div className="flex items-end gap-2">
-              <textarea
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    send();
-                  }
-                }}
-                rows={1}
-                placeholder="问配置问题，Enter 发送…"
-                className="max-h-32 flex-1 resize-none rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-[14px] text-[var(--color-fg)] outline-none transition-colors focus:border-[var(--color-border-active)]"
-              />
-              {busy ? (
-                <button
-                  onClick={stop}
-                  className="flex h-9 items-center gap-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3.5 text-[14px] font-medium text-[var(--color-fg)] transition-colors hover:bg-[var(--color-surface-hover)]"
-                  aria-label="中断执行"
-                  title="点击中断"
-                >
-                  <span className="pm-spin inline-block h-3.5 w-3.5 rounded-full border-2 border-[var(--color-muted)] border-t-transparent" />
-                  停止
-                </button>
-              ) : (
-                <button
-                  onClick={send}
-                  disabled={!input.trim()}
-                  className="h-9 rounded-lg bg-[var(--color-primary)] px-4 text-[14px] font-medium text-[var(--color-on-primary)] transition-colors hover:bg-[var(--color-primary-hover)] disabled:opacity-40"
-                >
-                  发送
-                </button>
-              )}
-            </div>
-          </div>
+      <div className="ai-input">
+        <div className="box">
+          <textarea
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                send();
+              }
+            }}
+            rows={1}
+            placeholder="描述你想修改或查询的内容…"
+          />
+          {busy ? (
+            <button
+              className="send"
+              onClick={stop}
+              aria-label="中断执行"
+              title="点击中断"
+              style={{ background: 'var(--surface-3)', color: 'var(--fg)' }}
+            >
+              ■
+            </button>
+          ) : (
+            <button className="send" onClick={send} disabled={!input.trim()} aria-label="发送">
+              ↑
+            </button>
+          )}
         </div>
-      )}
-    </>
+        <div className="note">
+          <span>{busy ? '执行中 · 点 ■ 可中断' : '写操作需二次确认'}</span>
+          <span>·</span>
+          <span>对话不会离开浏览器</span>
+        </div>
+      </div>
+    </aside>
   );
 }

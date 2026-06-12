@@ -1,11 +1,10 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Badge } from '@/components/ui/Badge';
-import { Button } from '@/components/ui/Button';
-import { Input, Select } from '@/components/ui/Input';
-import { Placeholder } from '@/components/ui/Reveal';
 import { ApiError, api } from '@/lib/client/api';
+import { PageTopbar } from '@/components/PageChrome';
+import { ScopePill } from '@/components/Topbar';
+import styles from './rules.module.css';
 
 interface Rule {
   id: string;
@@ -41,6 +40,9 @@ const TYPES = [
   'NETWORK',
   'MATCH',
 ];
+
+/** Subset surfaced as quick chips (prototype parity); full list still in the form. */
+const TYPE_CHIPS = ['DOMAIN-SUFFIX', 'IP-CIDR', 'RULE-SET'];
 
 /** Types that take no value (rendered as `TYPE,policy`). */
 const NO_VALUE_TYPES = new Set(['MATCH']);
@@ -134,6 +136,13 @@ export default function RulesPage() {
   const counts = useMemo(() => {
     const active = rules.filter(isActive).length;
     return { total: rules.length, active, disabled: rules.length - active };
+  }, [rules]);
+
+  /** Per-anchor totals, for the anchor filter chips. */
+  const anchorCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const r of rules) m.set(r.anchor, (m.get(r.anchor) ?? 0) + 1);
+    return m;
   }, [rules]);
 
   /* ── mutations ──────────────────────────────────────────────── */
@@ -237,199 +246,218 @@ export default function RulesPage() {
   const filtersOn = filterAnchor || filterPolicy || filterType || query || !showDisabled;
 
   return (
-    <div className="-mx-8 -mt-8 -mb-12 flex flex-col h-[calc(100vh-0px)]">
-      <header className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface)]">
-        <div className="px-6 pt-3 pb-2 flex items-baseline justify-between gap-4">
-          <div className="flex items-baseline gap-3">
-            <h1
-              className="font-serif text-[22px] font-medium leading-[1.2] tracking-[-0.015em] text-[var(--color-ink)]"
-              style={{ fontVariationSettings: '"opsz" 96, "SOFT" 30' }}
+    <>
+      {/* —— 页头注入共享 topbar(对齐 v2/rules.html) —— */}
+      <PageTopbar>
+        <h1>规则</h1>
+        <ScopePill />
+        {loaded && (
+          <span className="crumb num">
+            {counts.active} 生效
+            {counts.disabled > 0 && ` · ${counts.disabled} 停用`}
+            {` · ${groups.length} 个锚点`}
+          </span>
+        )}
+        <div className="grow" />
+        <button
+          type="button"
+          className="btn primary"
+          onClick={() => {
+            setAdding((v) => !v);
+            setEditingId(null);
+          }}
+        >
+          {adding ? '取消' : '＋ 新增规则'}
+        </button>
+      </PageTopbar>
+
+      <div className={styles.ruleToolbar}>
+        <div className={styles.chipStrip}>
+          <span className={styles.chipLabel}>锚点</span>
+          {anchors.map((a) => (
+            <button
+              key={a}
+              type="button"
+              className={`chip${filterAnchor === a ? ' on' : ''}`}
+              onClick={() => setFilterAnchor((v) => (v === a ? '' : a))}
             >
-              规则
-            </h1>
-            <span className="text-[12px] tabular-nums text-[var(--color-muted)] font-mono">
-              {counts.active} 生效
-              {counts.disabled > 0 && ` · ${counts.disabled} 停用`}
-            </span>
-          </div>
-          <Button
-            size="sm"
+              {a} · {anchorCounts.get(a) ?? 0}
+            </button>
+          ))}
+          <span style={{ width: 10 }} />
+          <span className={styles.chipLabel}>类型</span>
+          {TYPE_CHIPS.map((t) => (
+            <button
+              key={t}
+              type="button"
+              className={`chip${filterType === t ? ' on' : ''}`}
+              onClick={() => setFilterType((v) => (v === t ? '' : t))}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+        <div className={styles.grow} />
+        <label className={styles.formCheck} title="筛选策略">
+          <select
+            className="input"
+            value={filterPolicy}
+            onChange={(e) => setFilterPolicy(e.target.value)}
+            style={{ width: 150 }}
+          >
+            <option value="">全部策略</option>
+            {policies.map((p) => (
+              <option key={p}>{p}</option>
+            ))}
+          </select>
+        </label>
+        <label className={styles.formCheck}>
+          <input
+            type="checkbox"
+            checked={showDisabled}
+            onChange={(e) => setShowDisabled(e.target.checked)}
+          />
+          显示停用
+        </label>
+        {filtersOn ? (
+          <button
+            type="button"
+            className="btn ghost sm"
             onClick={() => {
-              setAdding((v) => !v);
-              setEditingId(null);
+              setFilterAnchor('');
+              setFilterPolicy('');
+              setFilterType('');
+              setQuery('');
+              setShowDisabled(true);
             }}
           >
-            {adding ? '取消' : '+ 新增规则'}
-          </Button>
+            清空筛选
+          </button>
+        ) : null}
+        <div className="search" style={{ width: 240 }}>
+          <input
+            className="input"
+            placeholder="搜索值 / 备注 / 修饰符…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
         </div>
-        <div className="px-6 pb-3 flex items-center gap-2 flex-wrap">
-          <FilterChip>
-            <Select
-              value={filterAnchor}
-              onChange={(e) => setFilterAnchor(e.target.value)}
-              className="h-8 text-[12px] !pr-7 border-0 bg-transparent shadow-none focus:ring-0 focus:!border-0 !pl-0"
-            >
-              <option value="">全部锚点</option>
-              {anchors.map((a) => (
-                <option key={a}>{a}</option>
-              ))}
-            </Select>
-          </FilterChip>
-          <FilterChip>
-            <Select
-              value={filterPolicy}
-              onChange={(e) => setFilterPolicy(e.target.value)}
-              className="h-8 text-[12px] !pr-7 border-0 bg-transparent shadow-none focus:ring-0 focus:!border-0 !pl-0"
-            >
-              <option value="">全部策略</option>
-              {policies.map((p) => (
-                <option key={p}>{p}</option>
-              ))}
-            </Select>
-          </FilterChip>
-          <FilterChip>
-            <Select
-              value={filterType}
-              onChange={(e) => setFilterType(e.target.value)}
-              className="h-8 text-[12px] !pr-7 border-0 bg-transparent shadow-none focus:ring-0 focus:!border-0 !pl-0"
-            >
-              <option value="">全部类型</option>
-              {TYPES.map((t) => (
-                <option key={t}>{t}</option>
-              ))}
-            </Select>
-          </FilterChip>
-          <div className="flex-1 min-w-[160px] max-w-[260px]">
-            <Input
-              placeholder="搜索 value / 备注 / 修饰符…"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              className="h-8 text-[12px]"
-            />
-          </div>
-          <label className="inline-flex items-center gap-1.5 text-[12px] text-[var(--color-fg-soft)] cursor-pointer select-none px-1">
-            <input
-              type="checkbox"
-              checked={showDisabled}
-              onChange={(e) => setShowDisabled(e.target.checked)}
-              className="accent-[var(--color-primary)]"
-            />
-            显示停用
-          </label>
-          {filtersOn && (
-            <button
-              type="button"
-              onClick={() => {
-                setFilterAnchor('');
-                setFilterPolicy('');
-                setFilterType('');
-                setQuery('');
-                setShowDisabled(true);
-              }}
-              className="text-[11px] text-[var(--color-muted)] hover:text-[var(--color-primary)] transition-colors px-2 active:scale-[0.96]"
-            >
-              清空筛选
-            </button>
-          )}
-        </div>
-      </header>
+      </div>
 
-      {error && (
-        <div className="shrink-0 px-6 py-2 text-[12px] bg-[#F4D8D2]/40 text-[var(--color-danger)] border-b border-[var(--color-border)] flex items-center justify-between gap-3">
-          <span className="min-w-0 truncate">{error}</span>
-          <button type="button" onClick={() => setError(null)} className="shrink-0 opacity-70 hover:opacity-100">
+      {error ? (
+        <div className={styles.errBar}>
+          <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {error}
+          </span>
+          <button type="button" className={styles.x} onClick={() => setError(null)} aria-label="关闭">
             ✕
           </button>
         </div>
-      )}
+      ) : null}
 
-      {adding && (
-        <div className="shrink-0 px-6 py-3 bg-[var(--color-primary-tint)] border-b border-[var(--color-border)]">
-          <RuleForm
-            mode="create"
-            anchors={anchors}
-            policies={policies}
-            ruleSets={ruleSets}
-            onSubmit={onCreate}
-            onCancel={() => setAdding(false)}
-          />
+      {adding ? (
+        <div className="panel" style={{ marginBottom: 14 }}>
+          <div className="panel-body">
+            <RuleForm
+              mode="create"
+              anchors={anchors}
+              policies={policies}
+              ruleSets={ruleSets}
+              onSubmit={onCreate}
+              onCancel={() => setAdding(false)}
+            />
+          </div>
         </div>
-      )}
+      ) : null}
 
-      <div className="flex-1 min-h-0 overflow-auto bg-[var(--color-surface)]">
-        <table className="w-full text-[13px] border-collapse table-fixed">
+      <div className={styles.tblWrap}>
+        <table className="tbl" style={{ minWidth: 720 }}>
           <colgroup>
-            <col className="w-[64px]" />
-            <col className="w-[128px]" />
+            <col style={{ width: 56 }} />
+            <col style={{ width: 150 }} />
             <col />
-            <col className="w-[150px]" />
-            <col className="w-[78px]" />
-            <col className="w-[150px]" />
-            <col className="w-[64px]" />
+            <col style={{ width: 150 }} />
+            <col style={{ width: 78 }} />
+            <col style={{ width: 150 }} />
+            <col style={{ width: 70 }} />
           </colgroup>
-          <thead className="sticky top-0 z-10 bg-[var(--color-bg-sunk)] text-[11px] uppercase tracking-[0.08em] text-[var(--color-muted)] font-semibold">
+          <thead>
             <tr>
-              <Th className="text-center">序</Th>
-              <Th>类型</Th>
-              <Th>值 / 修饰符</Th>
-              <Th>策略</Th>
-              <Th className="text-center">状态</Th>
-              <Th>备注</Th>
-              <Th className="text-right" />
+              <th>序</th>
+              <th>类型</th>
+              <th>值 / 修饰符</th>
+              <th>策略</th>
+              <th>状态</th>
+              <th>备注</th>
+              <th />
             </tr>
           </thead>
           <tbody>
-            {!loaded &&
-              [0, 1, 2, 3, 4].map((i) => (
-                <tr key={`sk-${i}`} className="border-b border-[var(--color-border)]">
-                  <td colSpan={7} className="px-6 py-2">
-                    <Placeholder rows={1} className="max-w-[600px]" />
-                  </td>
-                </tr>
-              ))}
+            {!loaded
+              ? [0, 1, 2, 3, 4].map((i) => (
+                  <tr key={`sk-${i}`}>
+                    <td colSpan={7}>
+                      <div
+                        className="pm-pulse"
+                        style={{
+                          height: 14,
+                          maxWidth: 560,
+                          borderRadius: 4,
+                          background: 'var(--surface-3)',
+                        }}
+                      />
+                    </td>
+                  </tr>
+                ))
+              : null}
 
-            {loaded &&
-              groups.map(({ anchor, rules: groupRules }) => {
-                const allInAnchor = rules.filter((r) => r.anchor === anchor);
-                const activeN = allInAnchor.filter(isActive).length;
-                return (
-                  <GroupBody
-                    key={anchor}
-                    anchor={anchor}
-                    activeN={activeN}
-                    totalN={allInAnchor.length}
-                    groupRules={groupRules}
-                    siblings={allInAnchor.sort((a, b) => a.rank - b.rank)}
-                    policies={policies}
-                    anchors={anchors}
-                    ruleSets={ruleSets}
-                    busy={busy}
-                    editingId={editingId}
-                    onSetEditing={(id) => {
-                      setEditingId(id);
-                      setAdding(false);
-                    }}
-                    onMove={onMove}
-                    onToggle={onToggle}
-                    onPatch={onPatch}
-                    onDelete={onDelete}
-                    onNormalize={onNormalize}
-                    onEdit={onEdit}
-                  />
-                );
-              })}
+            {loaded
+              ? groups.map(({ anchor, rules: groupRules }) => {
+                  const allInAnchor = rules.filter((r) => r.anchor === anchor);
+                  const activeN = allInAnchor.filter(isActive).length;
+                  return (
+                    <GroupBody
+                      key={anchor}
+                      anchor={anchor}
+                      activeN={activeN}
+                      totalN={allInAnchor.length}
+                      groupRules={groupRules}
+                      siblings={allInAnchor.sort((a, b) => a.rank - b.rank)}
+                      policies={policies}
+                      anchors={anchors}
+                      ruleSets={ruleSets}
+                      busy={busy}
+                      editingId={editingId}
+                      onSetEditing={(id) => {
+                        setEditingId(id);
+                        setAdding(false);
+                      }}
+                      onMove={onMove}
+                      onToggle={onToggle}
+                      onPatch={onPatch}
+                      onDelete={onDelete}
+                      onNormalize={onNormalize}
+                      onEdit={onEdit}
+                    />
+                  );
+                })
+              : null}
 
-            {loaded && groups.length === 0 && (
+            {loaded && groups.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-3 py-16 text-center text-[13px] text-[var(--color-muted)]">
-                  没有匹配当前筛选条件的规则。
+                <td colSpan={7}>
+                  <div className={styles.empty}>没有匹配当前筛选条件的规则。</div>
                 </td>
               </tr>
-            )}
+            ) : null}
           </tbody>
         </table>
       </div>
-    </div>
+
+      <div className={styles.foot}>
+        共 {counts.total} 条 · {groups.length} 个锚点 · 点「编辑」修改规则，↑↓ 在同锚点内调整顺序
+      </div>
+    </>
   );
 }
 
@@ -474,21 +502,18 @@ function GroupBody({
 }) {
   return (
     <>
-      <tr className="sticky top-[33px] z-[5]">
-        <td
-          colSpan={7}
-          className="px-4 py-1.5 bg-[var(--color-bg-strong)] border-y border-[var(--color-border)]"
-        >
-          <div className="flex items-center gap-2">
-            <Badge tone="accent">{anchor}</Badge>
-            <span className="text-[11px] tabular-nums text-[var(--color-muted)] font-mono">
+      <tr className={styles.groupHead}>
+        <td colSpan={7}>
+          <div className={styles.inner}>
+            <span className={styles.anchorChip}>{anchor}</span>
+            <span className={styles.gmeta}>
               {activeN} 生效{totalN > activeN ? ` · ${totalN - activeN} 停用` : ''}
             </span>
             <button
               type="button"
+              className={styles.normalizeBtn}
               onClick={() => onNormalize(anchor)}
               disabled={busy}
-              className="ml-auto text-[11px] text-[var(--color-muted)] hover:text-[var(--color-primary)] transition-colors active:scale-[0.96]"
               title="把本锚点内的排序号重排为 10,20,30…"
             >
               整理排序
@@ -503,101 +528,95 @@ function GroupBody({
         const editing = editingId === r.id;
         return (
           <FragmentRow key={r.id}>
-            <tr
-              className={`border-b border-[var(--color-border)] hover:bg-[var(--color-bg-sunk)] transition-colors group ${
-                active ? '' : 'opacity-55'
-              }`}
-            >
-              <td className="px-1 py-1.5 text-center whitespace-nowrap">
+            <tr className={`${styles.ruleRow}${active ? '' : ` ${styles.disabled}`}`}>
+              <td style={{ whiteSpace: 'nowrap' }}>
                 <button
                   type="button"
+                  className={styles.move}
                   onClick={() => onMove(r, 'up')}
                   disabled={busy || i <= 0}
-                  className="text-[var(--color-muted)] hover:text-[var(--color-primary)] disabled:opacity-25 px-0.5 align-middle"
                   title="上移"
                 >
                   ↑
                 </button>
                 <button
                   type="button"
+                  className={styles.move}
                   onClick={() => onMove(r, 'down')}
                   disabled={busy || i < 0 || i >= siblings.length - 1}
-                  className="text-[var(--color-muted)] hover:text-[var(--color-primary)] disabled:opacity-25 px-0.5 align-middle"
                   title="下移"
                 >
                   ↓
                 </button>
               </td>
-              <td className="px-3 py-1.5 font-mono text-[12px] text-[var(--color-fg-soft)] truncate" title={r.type}>
+              <td className={styles.typeCell} title={r.type}>
                 {r.type}
               </td>
-              <td className="px-3 py-1.5 font-mono text-[12px] text-[var(--color-fg)]">
-                <div className="flex items-center gap-1.5 min-w-0">
-                  <span className="truncate" title={r.value}>
-                    {r.value || <span className="text-[var(--color-muted)]">—</span>}
+              <td className={styles.val}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                  <span
+                    style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                    title={r.value}
+                  >
+                    {r.value || <span style={{ color: 'var(--faint)' }}>—</span>}
                   </span>
                   {(r.options ?? []).map((o) => (
-                    <span
-                      key={o}
-                      className="shrink-0 inline-flex items-center h-4 px-1 rounded bg-[var(--color-bg-strong)] text-[10px] text-[var(--color-plum)] font-mono"
-                    >
+                    <span key={o} className={styles.opt}>
                       {o}
                     </span>
                   ))}
                 </div>
               </td>
-              <td className="px-3 py-1.5">
-                <Select
+              <td>
+                <select
+                  className="input mono"
                   value={r.policy}
                   onChange={(e) => onPatch(r.id, { policy: e.target.value })}
-                  className="h-6 text-[11px] !pr-6 min-w-0"
+                  style={{ height: 26, fontSize: 11.5 }}
                 >
                   {policies.includes(r.policy) ? null : <option>{r.policy}</option>}
                   {policies.map((p) => (
                     <option key={p}>{p}</option>
                   ))}
-                </Select>
+                </select>
               </td>
-              <td className="px-1 py-1.5 text-center">
+              <td>
                 <button
                   type="button"
+                  className={`${styles.stateBtn} ${active ? styles.on : styles.off}`}
                   onClick={() => onToggle(r)}
-                  className={`inline-flex items-center justify-center h-5 px-2 rounded-full text-[10px] font-medium transition-colors active:scale-[0.95] ${
-                    active
-                      ? 'bg-[#E6EEDD] text-[var(--color-success)]'
-                      : 'bg-[var(--color-bg-strong)] text-[var(--color-muted)]'
-                  }`}
                   title={active ? '点击停用' : '点击启用'}
                 >
                   {active ? '生效' : '停用'}
                 </button>
               </td>
-              <td className="px-3 py-1.5 text-[11px] text-[var(--color-muted)] truncate" title={r.note}>
+              <td style={{ color: 'var(--muted)', fontSize: 11.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.note}>
                 {r.note || ''}
               </td>
-              <td className="px-2 py-1.5 text-right whitespace-nowrap">
-                <button
-                  type="button"
-                  onClick={() => onSetEditing(editing ? null : r.id)}
-                  className="text-[var(--color-muted)] hover:text-[var(--color-primary)] transition-colors text-[12px] px-1 active:scale-[0.94]"
-                  title="编辑"
-                >
-                  {editing ? '收起' : '编辑'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onDelete(r.id)}
-                  disabled={busy}
-                  className="text-[var(--color-muted)] hover:text-[var(--color-danger)] transition-colors text-[14px] px-1 active:scale-[0.94] opacity-0 group-hover:opacity-100 focus:opacity-100"
-                  title="删除"
-                >
-                  ✕
-                </button>
+              <td>
+                <div className={styles.rowAct}>
+                  <button
+                    type="button"
+                    className="btn ghost sm"
+                    onClick={() => onSetEditing(editing ? null : r.id)}
+                  >
+                    {editing ? '收起' : '编辑'}
+                  </button>
+                  <button
+                    type="button"
+                    className={`btn ghost sm danger ${styles.rowDel}`}
+                    onClick={() => onDelete(r.id)}
+                    disabled={busy}
+                    title="删除"
+                  >
+                    删除
+                  </button>
+                </div>
               </td>
             </tr>
-            {editing && (
-              <tr className="border-b border-[var(--color-border)] bg-[var(--color-primary-tint)]">
-                <td colSpan={7} className="px-6 py-3">
+            {editing ? (
+              <tr className={styles.editRow}>
+                <td colSpan={7}>
                   <RuleForm
                     mode="edit"
                     anchors={anchors}
@@ -609,7 +628,7 @@ function GroupBody({
                   />
                 </td>
               </tr>
-            )}
+            ) : null}
           </FragmentRow>
         );
       })}
@@ -620,22 +639,6 @@ function GroupBody({
 // React fragment that can hold multiple <tr> with a key.
 function FragmentRow({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
-}
-
-function Th({ children, className = '' }: { children?: React.ReactNode; className?: string }) {
-  return (
-    <th className={`px-3 py-2 font-semibold border-b border-[var(--color-border)] text-left ${className}`}>
-      {children}
-    </th>
-  );
-}
-
-function FilterChip({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="inline-flex items-center pl-3 rounded-lg bg-[var(--color-bg-sunk)] border border-[var(--color-border)] hover:border-[var(--color-border-strong)] transition-colors">
-      {children}
-    </div>
-  );
 }
 
 /* ── shared add/edit form ────────────────────────────────────────── */
@@ -709,81 +712,78 @@ function RuleForm({
   }
 
   return (
-    <form onSubmit={submit} className="flex items-center gap-2 flex-wrap">
-      <Select value={anchor} onChange={(e) => setAnchor(e.target.value)} className="h-8 text-[12px] !pr-7 w-[110px]">
+    <form onSubmit={submit} className={styles.formBar}>
+      <select className="input mono" value={anchor} onChange={(e) => setAnchor(e.target.value)} style={{ width: 110 }}>
         {anchors.map((a) => (
           <option key={a}>{a}</option>
         ))}
-      </Select>
-      <Select value={type} onChange={(e) => setType(e.target.value)} className="h-8 text-[12px] !pr-7 w-[150px]">
+      </select>
+      <select className="input mono" value={type} onChange={(e) => setType(e.target.value)} style={{ width: 150 }}>
         {TYPES.map((t) => (
           <option key={t}>{t}</option>
         ))}
-      </Select>
+      </select>
       {isRuleSet ? (
-        <Select
+        <select
+          className="input mono"
           value={value}
           onChange={(e) => setValue(e.target.value)}
-          className="h-8 text-[12px] !pr-7 flex-1 min-w-[160px]"
+          style={{ flex: 1, minWidth: 160 }}
           title="引用规则集库中的条目（被引用的会注入到 rule-providers）"
         >
           <option value="">
             {ruleSets.length ? '选择规则集…' : '（暂无规则集，请先到「规则集」页创建）'}
           </option>
-          {value && !ruleSets.includes(value) ? (
-            <option value={value}>{value}（库中不存在）</option>
-          ) : null}
+          {value && !ruleSets.includes(value) ? <option value={value}>{value}（库中不存在）</option> : null}
           {ruleSets.map((n) => (
             <option key={n} value={n}>
               {n}
             </option>
           ))}
-        </Select>
+        </select>
       ) : (
-        <Input
+        <input
+          className="input mono"
           placeholder={noValue ? '（此类型无需值）' : '值（如 emby.media）'}
           value={noValue ? '' : value}
           onChange={(e) => setValue(e.target.value)}
           disabled={noValue}
-          className="h-8 text-[12px] flex-1 min-w-[160px]"
+          style={{ flex: 1, minWidth: 160 }}
           autoFocus={mode === 'create'}
         />
       )}
-      <Select value={policy} onChange={(e) => setPolicy(e.target.value)} className="h-8 text-[12px] !pr-7 w-[130px]">
+      <select className="input mono" value={policy} onChange={(e) => setPolicy(e.target.value)} style={{ width: 130 }}>
         {policy && !policies.includes(policy) ? <option>{policy}</option> : null}
         {policies.map((p) => (
           <option key={p}>{p}</option>
         ))}
-      </Select>
-      <Input
+      </select>
+      <input
+        className="input mono"
         placeholder="修饰符 no-resolve"
         value={optionsStr}
         onChange={(e) => setOptionsStr(e.target.value)}
-        className="h-8 text-[12px] w-[130px]"
+        style={{ width: 130 }}
         title="逗号/空格分隔，如 no-resolve"
       />
-      <Input
+      <input
+        className="input"
         placeholder="备注"
         value={note}
         onChange={(e) => setNote(e.target.value)}
-        className="h-8 text-[12px] w-[120px]"
+        style={{ width: 120 }}
       />
-      <label className="inline-flex items-center gap-1.5 text-[12px] text-[var(--color-fg-soft)] cursor-pointer select-none">
-        <input
-          type="checkbox"
-          checked={enabled}
-          onChange={(e) => setEnabled(e.target.checked)}
-          className="accent-[var(--color-primary)]"
-        />
+      <label className={styles.formCheck}>
+        <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
         启用
       </label>
-      <Button type="submit" size="sm" disabled={pending}>
+      <button type="submit" className="btn primary sm" disabled={pending}>
         {pending ? '…' : mode === 'create' ? '添加' : '保存'}
-      </Button>
-      <Button type="button" size="sm" variant="ghost" onClick={onCancel}>
+      </button>
+      <button type="button" className="btn ghost sm" onClick={onCancel}>
         取消
-      </Button>
-      {error && <p className="text-[11px] text-[var(--color-danger)] w-full">{error}</p>}
+      </button>
+      {error ? <p className={styles.formErr}>{error}</p> : null}
     </form>
   );
 }

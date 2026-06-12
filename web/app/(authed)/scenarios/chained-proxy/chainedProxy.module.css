@@ -1,0 +1,522 @@
+/* ===== signal flow diagram — page-scoped, ported from v2/chained-proxy.html <style> ===== */
+
+.intro {
+  font-size: 12.5px;
+  color: var(--muted);
+  margin-bottom: 18px;
+  max-width: 720px;
+  line-height: 1.7;
+}
+.intro code {
+  color: var(--fg-2);
+}
+
+/* legend */
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  align-items: center;
+  margin-bottom: 22px;
+  font: 11px var(--font-mono);
+  color: var(--muted);
+}
+.legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.lg {
+  width: 11px;
+  height: 11px;
+  border-radius: 4px;
+  border: 1px solid var(--border-2);
+  background: var(--surface-2);
+}
+.lgAccent {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: var(--accent-dim);
+}
+.lgOk {
+  border-color: color-mix(in srgb, var(--ok) 55%, transparent);
+  background: color-mix(in srgb, var(--ok) 16%, transparent);
+}
+.lgGhost {
+  border-style: dashed;
+  background: transparent;
+}
+.lgDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 6px 1px var(--accent);
+}
+
+/* card */
+.flowWrap {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 20px 20px 16px;
+  margin-bottom: 14px;
+}
+.flowHead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 24px;
+  flex-wrap: wrap;
+}
+.flowHead b {
+  font: 600 13.5px var(--font-mono);
+}
+.flowMeta {
+  font-size: 11.5px;
+  color: var(--faint);
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--border-2);
+  line-height: 1.7;
+}
+.flowMeta code {
+  color: var(--fg-2);
+}
+
+/* the flow lane */
+.flow {
+  display: flex;
+  align-items: stretch;
+  padding-top: 6px;
+}
+.station {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 13px 13px 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-2);
+  border-radius: 12px;
+}
+.stTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.stGlyph {
+  width: 32px;
+  height: 32px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  font-size: 15px;
+  line-height: 1;
+  background: var(--surface);
+  border: 1px solid var(--border-2);
+  color: var(--fg-2);
+}
+.stRegion {
+  font: 10px var(--font-mono);
+  letter-spacing: 0.06em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--border-2);
+  color: var(--muted);
+}
+.stName {
+  font: 600 12.5px var(--font-mono);
+  word-break: break-all;
+  line-height: 1.3;
+}
+.stRole {
+  font: 10.5px var(--font-mono);
+  color: var(--faint);
+  margin-top: -4px;
+}
+
+/* role variants */
+.entry {
+  border-color: color-mix(in srgb, var(--accent) 48%, transparent);
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface-2));
+}
+.entry .stGlyph {
+  color: var(--accent);
+  background: var(--accent-dim);
+  border-color: color-mix(in srgb, var(--accent) 42%, transparent);
+}
+.exit {
+  border-color: color-mix(in srgb, var(--ok) 48%, transparent);
+  background: color-mix(in srgb, var(--ok) 7%, var(--surface-2));
+}
+.exit .stGlyph {
+  color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 16%, transparent);
+  border-color: color-mix(in srgb, var(--ok) 42%, transparent);
+}
+.ghost {
+  background: transparent;
+  border-style: dashed;
+}
+.ghost .stName {
+  color: var(--muted);
+}
+.ghost .stGlyph {
+  background: transparent;
+  color: var(--muted);
+}
+
+/* stacked look for an elastic pool selector */
+.pool {
+  margin-right: 8px;
+}
+.pool::before,
+.pool::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border: 1px solid var(--border-2);
+  border-radius: 12px;
+  background: var(--surface-2);
+}
+.pool::before {
+  translate: 4px 5px;
+  opacity: 0.55;
+}
+.pool::after {
+  translate: 8px 10px;
+  opacity: 0.28;
+}
+
+/* connector pipe with a travelling packet */
+.pipe {
+  position: relative;
+  flex: 0 0 58px;
+  align-self: center;
+  height: 24px;
+}
+.pipe::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: -1px;
+  right: 6px;
+  height: 2px;
+  translate: 0 -50%;
+  background: repeating-linear-gradient(90deg, var(--border-2) 0 5px, transparent 5px 10px);
+}
+.pipe::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: 50%;
+  translate: 0 -50%;
+  border: 5px solid transparent;
+  border-left-color: var(--border-2);
+  border-right: 0;
+}
+.packet {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 6px 1px var(--accent);
+  translate: 0 -50%;
+  opacity: 0;
+  animation: pk 2.6s linear infinite;
+  animation-delay: var(--d, 0s);
+}
+@keyframes pk {
+  0% {
+    left: 0;
+    opacity: 0;
+  }
+  10% {
+    opacity: 1;
+  }
+  86% {
+    opacity: 1;
+  }
+  100% {
+    left: calc(100% - 6px);
+    opacity: 0;
+  }
+}
+.pipeTag {
+  position: absolute;
+  top: -15px;
+  left: 50%;
+  translate: -50% 0;
+  white-space: nowrap;
+  font: 9px var(--font-mono);
+  color: var(--accent);
+  letter-spacing: 0.03em;
+}
+
+/* candidate chips for a pool */
+.candsLabel {
+  font: 10px var(--font-mono);
+  color: var(--faint);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  margin: 18px 0 8px;
+}
+.cands {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+.cand {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font: 11px var(--font-mono);
+  padding: 5px 11px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-2);
+  color: var(--muted);
+}
+.candActive {
+  color: var(--fg-2);
+  border-color: color-mix(in srgb, var(--accent) 42%, transparent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface-2));
+}
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--faint);
+}
+.candActive .dot {
+  background: var(--ok);
+  box-shadow: 0 0 5px var(--ok);
+}
+
+/* section header (eyebrow row with count + action) */
+.sectionHead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 12px;
+}
+.sectionHead .eyebrowSub {
+  color: var(--faint);
+  letter-spacing: 0;
+  text-transform: none;
+  font: 10.5px var(--font-mono);
+}
+.count {
+  font: 11px var(--font-mono);
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+.empty {
+  font-size: 12.5px;
+  color: var(--muted);
+  padding: 14px 2px;
+  line-height: 1.7;
+}
+
+/* inline add/edit form panel */
+.formPanel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 16px 18px;
+  margin-bottom: 14px;
+}
+.formGrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+}
+.formGrid3 {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+}
+.formActions {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+.fieldTight {
+  margin-bottom: 0;
+}
+
+/* candidate picker (checkbox grid) */
+.picker {
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  padding: 8px;
+  max-height: 224px;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+}
+.pickItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 9px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  font: 12px var(--font-mono);
+  color: var(--fg-2);
+  transition: background 0.15s var(--ease);
+}
+.pickItem:hover {
+  background: var(--surface-3);
+}
+.pickItemOn {
+  color: var(--accent);
+  background: var(--accent-dim);
+}
+.pickItem input {
+  accent-color: var(--accent);
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+.nm {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.errBox {
+  background: var(--danger-dim);
+  border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
+  border-radius: var(--r-sm);
+  color: var(--danger);
+  padding: 10px 14px;
+  font-size: 12.5px;
+  margin-bottom: 14px;
+}
+
+/* pool box: flow card with its own edit zone */
+.editZone {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px dashed var(--border-2);
+}
+
+@media (max-width: 1200px) {
+  .flowWrap {
+    padding: 18px 16px 14px;
+  }
+}
+
+@media (max-width: 860px) {
+  .formGrid,
+  .formGrid3 {
+    grid-template-columns: 1fr 1fr;
+  }
+  .picker {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+/* phone / narrow tablet — flow turns vertical, packets fall downward */
+@media (max-width: 760px) {
+  .flow {
+    flex-direction: column;
+    align-items: stretch;
+    padding-top: 0;
+  }
+  .station {
+    width: 100%;
+  }
+  .pool {
+    margin-right: 0;
+    margin-bottom: 12px;
+  }
+  .pool::before {
+    translate: 5px 4px;
+  }
+  .pool::after {
+    translate: 10px 8px;
+  }
+  .pipe {
+    flex: 0 0 34px;
+    align-self: center;
+    width: 24px;
+    height: 34px;
+  }
+  .pipe::before {
+    top: 5px;
+    bottom: 5px;
+    left: 50%;
+    right: auto;
+    width: 2px;
+    height: auto;
+    translate: -50% 0;
+    background: repeating-linear-gradient(180deg, var(--border-2) 0 5px, transparent 5px 10px);
+  }
+  .pipe::after {
+    right: auto;
+    left: 50%;
+    top: auto;
+    bottom: -1px;
+    translate: -50% 0;
+    border: 5px solid transparent;
+    border-top-color: var(--border-2);
+    border-bottom: 0;
+  }
+  .packet {
+    left: calc(50% - 3px) !important;
+    top: 0;
+    animation-name: pkv;
+  }
+  @keyframes pkv {
+    0% {
+      top: 0;
+      opacity: 0;
+    }
+    10% {
+      opacity: 1;
+    }
+    86% {
+      opacity: 1;
+    }
+    100% {
+      top: calc(100% - 6px);
+      opacity: 0;
+    }
+  }
+  .pipeTag {
+    top: 50%;
+    left: auto;
+    right: -6px;
+    translate: 0 -50%;
+  }
+}
+
+@media (max-width: 600px) {
+  .formGrid,
+  .formGrid3,
+  .picker {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .packet {
+    animation: none;
+    opacity: 1;
+    left: calc(50% - 3px);
+  }
+}
