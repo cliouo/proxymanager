@@ -39,6 +39,16 @@ const MAX_FRESH_MS = 24 * 60 * 60 * 1000;
 /** Slack added to the Redis EX over the freshness window (GC, not validity). */
 const EX_SLACK_SECONDS = 60;
 
+/**
+ * Code-level cache epoch. `config:version` only bumps on data writes, so a pure
+ * change to render *logic* (e.g. which rule-providers get emitted) would keep
+ * serving stale entries until a freshness lapse or unrelated edit. Bump this on
+ * any deploy that changes render output so existing entries (which carry an old
+ * or absent epoch) miss and re-render immediately.
+ *   1 → +base `rule-set:` refs now emit their rule-providers declaration.
+ */
+const RENDER_CACHE_EPOCH = 1;
+
 export type RenderCacheStatus = 'hit' | 'miss' | 'bypass';
 
 /** The ResolveResult fields the routes consume — serialised as-is into Redis. */
@@ -58,6 +68,8 @@ export type CachedResolveOutput = Pick<
 >;
 
 export interface RenderCacheEntry extends CachedResolveOutput {
+  /** {@link RENDER_CACHE_EPOCH} the entry was produced under; mismatch ⇒ miss. */
+  epoch: number;
   /** config:version observed BEFORE loading data (see race note below). */
   version: number;
   /** Raw providerUrlBase string the render was produced with (null = none). */
@@ -116,6 +128,7 @@ export async function renderProfileConfig(
     version = rawVersion ?? 0;
     if (
       entry !== null &&
+      entry.epoch === RENDER_CACHE_EPOCH &&
       entry.version === version &&
       (entry.providerUrlBase ?? null) === providerUrlBase &&
       Date.now() - entry.renderedAt < entry.freshForMs
@@ -167,6 +180,7 @@ export async function renderProfileConfig(
   const freshForMs = Math.min(ttls.length > 0 ? Math.min(...ttls) : MAX_FRESH_MS, MAX_FRESH_MS);
 
   const entry: RenderCacheEntry = {
+    epoch: RENDER_CACHE_EPOCH,
     version,
     providerUrlBase,
     renderedAt: Date.now(),

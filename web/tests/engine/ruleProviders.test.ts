@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
-import { referencedProviderNames, renderBase } from '@/lib/engine/renderer';
+import {
+  referencedProviderNames,
+  referencedProviderNamesInText,
+  renderBase,
+} from '@/lib/engine/renderer';
 import { ruleProvidersBlockViolations } from '@/lib/services/baseService';
 import type { Rule, RuleSet } from '@/schemas';
 
@@ -46,7 +50,54 @@ describe('referencedProviderNames', () => {
   });
 });
 
+describe('referencedProviderNamesInText', () => {
+  it('extracts comma-joined rule-set names from DNS nameserver-policy keys', () => {
+    const text = [
+      'dns:',
+      '  nameserver-policy:',
+      '    "rule-set:cn_domain,private":',
+      '      - https://doh.pub/dns-query',
+      '    "rule-set:geolocation-!cn":',
+      '      - https://dns.google/dns-query',
+    ].join('\n');
+    expect([...referencedProviderNamesInText(text)].sort()).toEqual([
+      'cn_domain',
+      'geolocation-!cn',
+      'private',
+    ]);
+  });
+});
+
 describe('renderBase rule-providers injection', () => {
+  it('emits providers referenced only by a base `rule-set:` reference (e.g. DNS policy)', () => {
+    // Regression: mihomo `not found rule-set: private` — `private` is named only
+    // in a DNS nameserver-policy key, never by a RULE-SET rule, yet must still be
+    // declared under rule-providers.
+    const base = [
+      'mode: rule',
+      'dns:',
+      '  nameserver-policy:',
+      '    "rule-set:cn_domain,private":',
+      '      - https://doh.pub/dns-query',
+      '# === RULE-PROVIDERS ===',
+      'rules:',
+      '  # === ANCHOR: manual ===',
+    ].join('\n');
+    const providers = [
+      set({ name: 'cn_domain', source: 'remote', url: 'https://ext/cn.mrs', format: 'mrs', content: '' }),
+      set({ name: 'private', source: 'remote', url: 'https://ext/private.mrs', format: 'mrs', content: '' }),
+      set({ name: 'unref', source: 'remote', url: 'https://ext/x.mrs', format: 'mrs', content: '' }),
+    ];
+    // Only cn_domain has a RULE-SET rule; private is referenced solely by the DNS policy.
+    const rules = [rule({ type: 'RULE-SET', value: 'cn_domain', policy: '直连' })];
+    const res = renderBase(base, rules, { providers, providerUrlBase: URL_BASE });
+
+    expect(res.ruleProvidersApplied).toEqual(['cn_domain', 'private']);
+    const parsed = parse(res.content) as { 'rule-providers': Record<string, unknown> };
+    expect(Object.keys(parsed['rule-providers']).sort()).toEqual(['cn_domain', 'private']);
+  });
+
+
   it('emits only referenced + enabled providers, alphabetically', () => {
     const providers = [
       set({ name: 'cn_domain', source: 'local', behavior: 'domain' }),

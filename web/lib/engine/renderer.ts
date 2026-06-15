@@ -62,6 +62,27 @@ export function referencedProviderNames(rules: Rule[]): Set<string> {
 }
 
 /**
+ * Rule-set names referenced from within the base text itself — chiefly mihomo
+ * DNS `nameserver-policy` keys of the form `rule-set:foo,bar` (one key may name
+ * several comma-joined rule-sets). Such a reference needs a `rule-providers:`
+ * declaration just like a RULE-SET rule does, otherwise mihomo aborts at load
+ * with `not found rule-set: <name>`. The renderer is otherwise blind to the base
+ * body, so these references were silently dropped. Spurious matches are harmless:
+ * {@link renderRuleProviders} only emits names that exist in the library.
+ */
+const RULE_SET_REF_PATTERN = /rule-set:([A-Za-z0-9_.!-]+(?:,[A-Za-z0-9_.!-]+)*)/g;
+
+export function referencedProviderNamesInText(text: string): Set<string> {
+  const refs = new Set<string>();
+  for (const match of text.matchAll(RULE_SET_REF_PATTERN)) {
+    for (const name of match[1].split(',')) {
+      if (name) refs.add(name);
+    }
+  }
+  return refs;
+}
+
+/**
  * Build the `rule-providers:` YAML block for the subset of `providers` that are
  * referenced by `refs` (an enabled RULE-SET rule points at them). A rule-set is
  * "off" simply by having no enabled rule reference it. Returns '' when empty.
@@ -117,9 +138,12 @@ export function renderBase(
     },
   );
 
-  // Inject the managed rule-providers block at its marker — only the providers
-  // an enabled RULE-SET rule actually references make it into the output.
+  // Inject the managed rule-providers block at its marker — every rule-set the
+  // final config references must be declared here. That's both the enabled
+  // RULE-SET rules and any `rule-set:` reference baked into the base body (e.g.
+  // DNS nameserver-policy keys), or mihomo aborts with `not found rule-set: …`.
   const refs = referencedProviderNames(active);
+  for (const name of referencedProviderNamesInText(baseContent)) refs.add(name);
   const { block, applied } = renderRuleProviders(
     opts.providers ?? [],
     refs,
