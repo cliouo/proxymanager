@@ -5,7 +5,6 @@ import { useMemo, useState, type ReactNode } from 'react';
 import type { ProxyGroup, ProxyGroupKind, ProxyGroupTemplate, ProxyGroupType } from '@/schemas';
 import {
   COMMON_SECTIONS,
-  escapeRegex,
   HEALTH_TYPES,
   KIND_SEG_LABELS,
   membershipMode,
@@ -15,7 +14,7 @@ import {
   type FormState,
   type SubscriptionLite,
 } from '../_lib/model';
-import { singleSubPreview } from '../_lib/useAvailableMembers';
+import { singleSubPreview, type NodesBySub } from '../_lib/useAvailableMembers';
 import { MemberComposer } from './MemberComposer';
 import styles from '../proxyGroups.module.css';
 
@@ -41,6 +40,7 @@ interface GroupEditorProps {
   subs: SubscriptionLite[];
   groups: ProxyGroup[];
   nodeNames: string[];
+  nodesBySub: NodesBySub;
   previewError: string | null;
   isCreate: boolean;
   originalName: string;
@@ -61,6 +61,7 @@ export function GroupEditor({
   subs,
   groups,
   nodeNames,
+  nodesBySub,
   previewError,
   isCreate,
   originalName,
@@ -78,20 +79,20 @@ export function GroupEditor({
   // ── bound-kind previews ───────────────────────────────────────────
   const boundSub = subs.find((s) => s.id === form.bound_subscription_id) ?? null;
   const subNodes = useMemo(
-    () => (mode === 'bound-sub' ? singleSubPreview(nodeNames, boundSub?.node_prefix) : []),
-    [mode, nodeNames, boundSub],
+    () => (mode === 'bound-sub' ? singleSubPreview(nodesBySub, boundSub?.name) : []),
+    [mode, nodesBySub, boundSub],
   );
-  const tpl = form.template_id ? templates.find((t) => t.id === form.template_id) ?? null : null;
+  const tpl = form.template_id ? (templates.find((t) => t.id === form.template_id) ?? null) : null;
 
   // ── effective rendered fields for the YAML preview ────────────────
   const effective = useMemo(() => {
     const p = toPayload(form) as Record<string, unknown>;
-    if (mode === 'bound-sub' && boundSub?.node_prefix) {
-      p['include-all-proxies'] = true;
-      p.filter = `^${escapeRegex(boundSub.node_prefix)}`;
+    if (mode === 'bound-sub' && boundSub) {
+      // 渲染时成员 = 该订阅源处理后的全部节点(去前缀后按真实节点名直接列出)。
+      p.proxies = subNodes;
     }
     return p;
-  }, [form, mode, boundSub]);
+  }, [form, mode, boundSub, subNodes]);
 
   const referenced =
     !!refSummary &&
@@ -206,7 +207,8 @@ export function GroupEditor({
             {form.type === 'select' && (
               <div className={styles.lensNote} style={{ marginTop: 14, marginBottom: 0 }}>
                 <span className="ic">ⓘ</span>
-                select 无额外参数。成员的可用性与延迟由客户端运行时测定 — 本工作台只组装配置,不做测速。
+                select 无额外参数。成员的可用性与延迟由客户端运行时测定 —
+                本工作台只组装配置,不做测速。
               </div>
             )}
 
@@ -339,7 +341,8 @@ export function GroupEditor({
           <div className="panel-body">
             <div className={styles.lensNote}>
               <span className="ic">ⓘ</span>
-              这只是编辑视角,不锁定字段 — 切换视角不会丢失已有数据,所有原生字段始终可在「高级」里直接编辑。
+              这只是编辑视角,不锁定字段 —
+              切换视角不会丢失已有数据,所有原生字段始终可在「高级」里直接编辑。
             </div>
 
             {mode === 'composer' && (
@@ -350,7 +353,9 @@ export function GroupEditor({
                 excludeFilter={form['exclude-filter']}
                 includeAllProxies={form['include-all-proxies']}
                 autoActive={
-                  form['include-all-proxies'] || form['include-all-providers'] || form['include-all']
+                  form['include-all-proxies'] ||
+                  form['include-all-providers'] ||
+                  form['include-all']
                 }
                 onProxies={(next) => set('proxies', next)}
                 onFilter={(v) => set('filter', v)}
@@ -360,6 +365,7 @@ export function GroupEditor({
                   setForm({ ...form, filter, name: form.name || nameSuggestion })
                 }
                 nodeNames={nodeNames}
+                nodesBySub={nodesBySub}
                 subs={subs}
                 groups={groups}
                 previewError={previewError}
@@ -381,27 +387,17 @@ export function GroupEditor({
                     <option value="">(请选择)</option>
                     {subs.map((s) => (
                       <option key={s.id} value={s.id}>
-                        {s.name} {s.node_prefix ? `[${s.node_prefix.trim()}]` : '(无 node_prefix)'}
+                        {s.display_name ? `${s.display_name} · ${s.name}` : s.name}
                       </option>
                     ))}
                   </select>
                 </div>
-                {boundSub && !boundSub.node_prefix && (
-                  <p style={{ fontSize: 12, color: 'var(--warn)' }}>
-                    该订阅源未设 node_prefix,渲染时无法自动生成 filter。先到「订阅源」页设好再回来。
-                  </p>
-                )}
-                {boundSub?.node_prefix && (
+                {boundSub && (
                   <div className="field" style={{ marginBottom: 0 }}>
                     <label>
-                      渲染时自动生成{' '}
-                      <span className={styles.lockTip}>🔒 由绑定接管,覆盖手动 filter</span>
+                      渲染时成员{' '}
+                      <span className={styles.lockTip}>🔒 由绑定接管 = 该源处理后的全部节点</span>
                     </label>
-                    <div className="codebox">
-                      <pre>
-                        {`include-all-proxies: true\nfilter: "^${escapeRegex(boundSub.node_prefix)}"  # 取自订阅 node_prefix,自动转义`}
-                      </pre>
-                    </div>
                     <ReadonlyMemberPreview nodes={subNodes} previewError={previewError} />
                   </div>
                 )}
@@ -456,7 +452,9 @@ export function GroupEditor({
             <div className="field span2" style={{ gridColumn: '1 / -1' }}>
               <label>
                 icon{' '}
-                <span style={{ color: 'var(--faint)', fontWeight: 400 }}>URL,部分客户端面板显示</span>
+                <span style={{ color: 'var(--faint)', fontWeight: 400 }}>
+                  URL,部分客户端面板显示
+                </span>
               </label>
               <input
                 className="input mono"

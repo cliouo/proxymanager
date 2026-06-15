@@ -1,11 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type {
-  Collection,
-  ProxyGroup,
-  ProxyGroupTemplate,
-  Rule,
-  Subscription,
-} from '@/schemas';
+import type { Collection, ProxyGroup, ProxyGroupTemplate, Rule, Subscription } from '@/schemas';
 
 /**
  * The repo modules read process.env at import time via getRedis(); short-
@@ -75,9 +69,12 @@ beforeEach(() => {
 });
 
 describe('resolveConfig — subscription injection', () => {
-  it('appends every enabled subscription\'s nodes into proxies', async () => {
+  it("appends every enabled subscription's nodes into proxies", async () => {
     resolveSubMock
-      .mockResolvedValueOnce({ proxies: providerProxies([{ name: 'HK-01' }, { name: 'JP-02' }]), proxyCount: 2 })
+      .mockResolvedValueOnce({
+        proxies: providerProxies([{ name: 'HK-01' }, { name: 'JP-02' }]),
+        proxyCount: 2,
+      })
       .mockResolvedValueOnce({ proxies: providerProxies([{ name: 'US-01' }]), proxyCount: 1 });
 
     const subs = [makeSub({ name: 'air-a' }), makeSub({ name: 'air-b' })];
@@ -94,7 +91,10 @@ describe('resolveConfig — subscription injection', () => {
   });
 
   it('skips disabled subscriptions entirely', async () => {
-    resolveSubMock.mockResolvedValueOnce({ proxies: providerProxies([{ name: 'HK-01' }]), proxyCount: 1 });
+    resolveSubMock.mockResolvedValueOnce({
+      proxies: providerProxies([{ name: 'HK-01' }]),
+      proxyCount: 1,
+    });
 
     const subs = [makeSub({ name: 'on' }), makeSub({ name: 'off', enabled: false })];
     const result = await resolveConfig(BASE_WITH_LITERAL, [], subs, [], [], {});
@@ -104,24 +104,28 @@ describe('resolveConfig — subscription injection', () => {
     expect(result.inlinedProxyCount).toBe(1);
   });
 
-  it('applies node_prefix and reflects it in the final names', async () => {
-    resolveSubMock.mockResolvedValueOnce({ proxies: providerProxies([{ name: 'HK-01' }]), proxyCount: 1 });
-    const result = await resolveConfig(
-      BASE_WITH_LITERAL,
-      [],
-      [makeSub({ name: 'a', node_prefix: '[A] ' })],
-      [],
-      [],
-      {},
-    );
-    expect(result.nodeNames).toContain('[A] HK-01');
-    expect(result.content).toContain('[A] HK-01');
+  it('injects subscription nodes under their original (unprefixed) names', async () => {
+    resolveSubMock.mockResolvedValueOnce({
+      proxies: providerProxies([{ name: 'HK-01' }]),
+      proxyCount: 1,
+    });
+    const result = await resolveConfig(BASE_WITH_LITERAL, [], [makeSub({ name: 'a' })], [], [], {});
+    expect(result.nodeNames).toContain('HK-01');
+    expect(result.content).toContain('HK-01');
+    // node_prefix is gone — no bracketed prefix is ever prepended.
+    expect(result.content).not.toContain('[A] HK-01');
   });
 
   it('drops cross-source name collisions, keeps the first, reports them', async () => {
     resolveSubMock
-      .mockResolvedValueOnce({ proxies: providerProxies([{ name: 'HK-01', server: 'a.example' }]), proxyCount: 1 })
-      .mockResolvedValueOnce({ proxies: providerProxies([{ name: 'HK-01', server: 'b.example' }]), proxyCount: 1 });
+      .mockResolvedValueOnce({
+        proxies: providerProxies([{ name: 'HK-01', server: 'a.example' }]),
+        proxyCount: 1,
+      })
+      .mockResolvedValueOnce({
+        proxies: providerProxies([{ name: 'HK-01', server: 'b.example' }]),
+        proxyCount: 1,
+      });
 
     const result = await resolveConfig(
       BASE_WITH_LITERAL,
@@ -149,16 +153,17 @@ describe('resolveConfig — subscription injection', () => {
 
     const result = await resolveConfig(BASE_WITH_LITERAL, [], [makeSub({ name: 'a' })], [], [], {});
 
-    expect(result.collisions).toEqual([
-      { name: '直连', keptFrom: null, droppedFrom: ['a'] },
-    ]);
+    expect(result.collisions).toEqual([{ name: '直连', keptFrom: null, droppedFrom: ['a'] }]);
     expect(result.inlinedProxyCount).toBe(1);
     expect(result.nodeNames).toEqual(['直连', 'HK-01']);
   });
 
   it('strips deprecated pm-inline-collections and emits a warning', async () => {
     const baseWithLegacy = `${BASE_WITH_LITERAL}\npm-inline-collections:\n  - old-pool\n`;
-    resolveSubMock.mockResolvedValueOnce({ proxies: providerProxies([{ name: 'X' }]), proxyCount: 1 });
+    resolveSubMock.mockResolvedValueOnce({
+      proxies: providerProxies([{ name: 'X' }]),
+      proxyCount: 1,
+    });
 
     const result = await resolveConfig(baseWithLegacy, [], [makeSub({ name: 'a' })], [], [], {});
 
@@ -202,7 +207,10 @@ describe('resolveConfig — subscription injection', () => {
   });
 
   it('still runs renderBase for rules + rule-providers', async () => {
-    resolveSubMock.mockResolvedValueOnce({ proxies: providerProxies([{ name: 'HK-01' }]), proxyCount: 1 });
+    resolveSubMock.mockResolvedValueOnce({
+      proxies: providerProxies([{ name: 'HK-01' }]),
+      proxyCount: 1,
+    });
 
     const rule: Rule = {
       id: 'r1',
@@ -230,7 +238,10 @@ describe('resolveConfig — subscription injection', () => {
   });
 
   it('writes the resolved snapshot by default', async () => {
-    resolveSubMock.mockResolvedValueOnce({ proxies: providerProxies([{ name: 'HK-01' }]), proxyCount: 1 });
+    resolveSubMock.mockResolvedValueOnce({
+      proxies: providerProxies([{ name: 'HK-01' }]),
+      proxyCount: 1,
+    });
     await resolveConfig(BASE_WITH_LITERAL, [], [makeSub({ name: 'a' })], [], [], {});
     expect(snapshotMock).toHaveBeenCalledTimes(1);
     const [snapshot] = snapshotMock.mock.calls[0];
@@ -238,7 +249,10 @@ describe('resolveConfig — subscription injection', () => {
   });
 
   it('skips snapshot persistence when persistSnapshot is false', async () => {
-    resolveSubMock.mockResolvedValueOnce({ proxies: providerProxies([{ name: 'HK-01' }]), proxyCount: 1 });
+    resolveSubMock.mockResolvedValueOnce({
+      proxies: providerProxies([{ name: 'HK-01' }]),
+      proxyCount: 1,
+    });
     await resolveConfig(BASE_WITH_LITERAL, [], [makeSub({ name: 'a' })], [], [], {
       persistSnapshot: false,
     });
@@ -393,12 +407,12 @@ describe('resolveConfig — managed proxy-groups', () => {
     expect(result.content).not.toContain('proxy-groups:');
   });
 
-  it('single-sub binding builds filter from sub.node_prefix', async () => {
+  it("single-sub binding lists the bound sub's nodes as proxies", async () => {
     resolveSubMock.mockResolvedValueOnce({
       proxies: providerProxies([{ name: 'HK-01' }, { name: 'JP-01' }]),
       proxyCount: 2,
     });
-    const sub = makeSub({ name: 'air-a', node_prefix: '[A] ' });
+    const sub = makeSub({ name: 'air-a' });
     const g = makeGroup({
       name: 'air-a-only',
       kind: 'single-sub',
@@ -406,30 +420,33 @@ describe('resolveConfig — managed proxy-groups', () => {
       type: 'select',
     });
     const result = await resolveConfig(BASE_WITH_MARKER, [], [sub], [g], [], {});
-    // Filter generated from the prefix, regex-escaped for the bracket.
-    // yaml.stringify double-quotes strings with backslashes and doubles them;
-    // the rendered literal bytes are: filter: "^\\[A\\] "
-    expect(result.content).toContain('filter: "^\\\\[A\\\\] "');
-    expect(result.content).toContain('include-all-proxies: true');
-    // Sub nodes still land in proxies:.
-    expect(result.content).toContain('[A] HK-01');
+    // The bound sub's surviving node names are listed directly as proxies —
+    // no prefix-derived filter, no include-all-proxies.
+    expect(result.content).toMatch(/name: air-a-only[^]*proxies:[^]*HK-01[^]*JP-01/);
+    expect(result.content).not.toContain('include-all-proxies: true');
+    expect(result.content).not.toMatch(/filter: \^/);
   });
 
-  it('single-sub warns when bound sub has no node_prefix', async () => {
+  it('single-sub warns when the bound sub has no surviving nodes', async () => {
+    // Bound to a sub that injects nothing → group left without injected proxies.
     resolveSubMock.mockResolvedValueOnce({
-      proxies: providerProxies([{ name: 'X' }]),
-      proxyCount: 1,
+      proxies: [],
+      proxyCount: 0,
     });
-    const sub = makeSub({ name: 'air-a' }); // no node_prefix
+    const sub = makeSub({ name: 'air-empty' });
     const g = makeGroup({
-      name: 'sub-no-prefix',
+      name: 'sub-empty',
       kind: 'single-sub',
       bound_subscription_id: sub.id,
       type: 'select',
     });
     const result = await resolveConfig(BASE_WITH_MARKER, [], [sub], [g], [], {});
-    expect(result.warnings.some((w) => w.includes('node_prefix'))).toBe(true);
-    expect(result.content).not.toMatch(/filter: \^/);
+    expect(result.warnings.some((w) => w.includes('air-empty') && w.includes('无可用节点'))).toBe(
+      true,
+    );
+    // Group rendered but with no injected proxies list.
+    expect(result.content).toContain('name: sub-empty');
+    expect(result.content).not.toMatch(/name: sub-empty[^]*proxies:/);
   });
 
   it('single-sub warns when bound subscription id is dangling', async () => {
@@ -440,6 +457,32 @@ describe('resolveConfig — managed proxy-groups', () => {
     });
     const result = await resolveConfig(BASE_WITH_MARKER, [], [], [g], [], {});
     expect(result.warnings.some((w) => w.includes('订阅源') && w.includes('不存在'))).toBe(true);
+  });
+
+  it("single-sub group proxies equal exactly the bound sub's injected node names, order preserved", async () => {
+    resolveSubMock.mockResolvedValueOnce({
+      proxies: providerProxies([{ name: 'N-1' }, { name: 'N-2' }, { name: 'N-3' }]),
+      proxyCount: 3,
+    });
+    const sub = makeSub({ name: 'ordered' });
+    const g = makeGroup({
+      name: 'ordered-only',
+      kind: 'single-sub',
+      bound_subscription_id: sub.id,
+      type: 'select',
+    });
+    const result = await resolveConfig(BASE_WITH_MARKER, [], [sub], [g], [], {});
+    // nodesBySub is the authoritative per-sub attribution the binding reads from.
+    expect(result.nodesBySub['ordered']).toEqual(['N-1', 'N-2', 'N-3']);
+    // The rendered group's proxies are exactly that list, in order.
+    const m = result.content.match(
+      /name: ordered-only[^]*?proxies:\n([^]*?)(?:\n  - name:|\nrules:|\n[a-z])/,
+    );
+    expect(m).not.toBeNull();
+    const order = ['N-1', 'N-2', 'N-3'].map((n) => result.content.indexOf(`- ${n}`));
+    expect(order[0]).toBeGreaterThan(-1);
+    expect(order[0]).toBeLessThan(order[1]);
+    expect(order[1]).toBeLessThan(order[2]);
   });
 
   // Legacy collection-scope kind is gone (kind taxonomy 砍到 5 个). A group
@@ -457,10 +500,12 @@ describe('resolveConfig — managed proxy-groups', () => {
     const col: Collection = {
       id: crypto.randomUUID(),
       name: 'asia',
+      slug: 'asia',
       enabled: true,
       type: 'select',
       subscription_ids: [subA.id, subB.id],
       subscription_tags: [],
+      operators: [],
     } as Collection;
     const g = makeGroup({
       name: 'asia-scope',
@@ -468,14 +513,9 @@ describe('resolveConfig — managed proxy-groups', () => {
       bound_collection_id: col.id,
       type: 'select',
     });
-    const result = await resolveConfig(
-      BASE_WITH_MARKER,
-      [],
-      [subA, subB],
-      [g],
-      [],
-      { collections: [col] },
-    );
+    const result = await resolveConfig(BASE_WITH_MARKER, [], [subA, subB], [g], [], {
+      collections: [col],
+    });
     expect(result.content).toMatch(/name: asia-scope[^]*proxies:[^]*HK-01[^]*HK-02[^]*JP-01/);
   });
 
@@ -556,10 +596,12 @@ describe('resolveConfig — profile binding (boundSource)', () => {
     const col = {
       id: crypto.randomUUID(),
       name: 'pool',
+      slug: 'pool',
       enabled: true,
       type: 'select' as const,
       subscription_ids: [a.id, c.id],
       subscription_tags: [],
+      operators: [],
     };
     const result = await resolveConfig(BASE_WITH_LITERAL, [], [a, b, c], [], [], {
       collections: [col],
@@ -567,6 +609,46 @@ describe('resolveConfig — profile binding (boundSource)', () => {
     });
     expect(result.nodeNames).toEqual(['直连', 'HK-A', 'US-C']);
     expect(result.subscriptions.map((s) => s.name)).toEqual(['sub-a', 'sub-c']);
+  });
+
+  it("applies the bound collection's operators to the merged member union", async () => {
+    // Collection binds sub-a + sub-c; a drop filter removes every US-* node,
+    // and a rename rewrites HK- → 香港-, applied over the merged union.
+    resolveSubMock
+      .mockResolvedValueOnce({
+        proxies: providerProxies([{ name: 'HK-A' }, { name: 'US-A' }]),
+        proxyCount: 2,
+      })
+      .mockResolvedValueOnce({ proxies: providerProxies([{ name: 'US-C' }]), proxyCount: 1 });
+    const a = makeSub({ name: 'sub-a' });
+    const c = makeSub({ name: 'sub-c' });
+    const col = {
+      id: crypto.randomUUID(),
+      name: 'pool',
+      slug: 'pool',
+      enabled: true,
+      type: 'select' as const,
+      subscription_ids: [a.id, c.id],
+      subscription_tags: [],
+      operators: [
+        { kind: 'filter-regex' as const, id: 'op-drop-us', mode: 'drop' as const, pattern: '^US-' },
+        {
+          kind: 'rename-regex' as const,
+          id: 'op-rename-hk',
+          pattern: '^HK-',
+          replacement: '香港-',
+        },
+      ],
+    };
+    const result = await resolveConfig(BASE_WITH_LITERAL, [], [a, c], [], [], {
+      collections: [col],
+      boundSource: { type: 'collection', id: col.id },
+    });
+    // US-A and US-C dropped; HK-A renamed to 香港-A.
+    expect(result.nodeNames).toEqual(['直连', '香港-A']);
+    expect(result.content).toContain('香港-A');
+    expect(result.content).not.toContain('US-A');
+    expect(result.content).not.toContain('US-C');
   });
 
   it('a dangling collection source injects nothing and warns', async () => {

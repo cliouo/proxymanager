@@ -8,8 +8,10 @@
  *      emit a warning — subscriptions now inject directly when enabled.
  *   3. For each enabled subscription: fetch in parallel (bounded concurrency,
  *      cache-aware, tolerate failures via stale-on-error), then consume the
- *      already-parsed proxy objects strictly in subscription order, optionally
- *      apply the sub's `node_prefix`, accumulate candidates with provenance.
+ *      already-parsed proxy objects strictly in subscription order, accumulate
+ *      candidates with provenance (each sub's own operator pipeline already ran
+ *      at fetch). When the profile is bound to a 聚合订阅 that has its own
+ *      operators, run them over the merged member candidates.
  *   4. Dedup candidates by `name` across subs and against base's literal
  *      proxies (first writer wins). Collisions are recorded — never silent.
  *   5. Append survivors to the `proxies:` sequence (creating it if missing).
@@ -53,6 +55,8 @@ import {
   type SnapshotSubStatus,
 } from '@/lib/repos/resolvedRepo';
 import { resolveSubscriptionProxies } from '@/lib/services/subscriptionFetcher';
+import { applyOperators, type ClashProxy } from '@/lib/proxies/operators';
+import type { Operator } from '@/schemas';
 import { renderBase, type RenderOptions, type RenderResult } from './renderer';
 
 const LEGACY_INLINE_FIELD = 'pm-inline-collections';
@@ -89,6 +93,12 @@ export interface ResolveResult extends RenderResult {
   collisions: SnapshotCollision[];
   /** Final node names in `proxies:` in resolution order (base first, then sub-injected survivors). */
   nodeNames: string[];
+  /**
+   * Surviving (post-dedup) node names grouped by the subscription that
+   * injected them, keyed by `sub.name`. Authoritative per-sub attribution for
+   * single-sub group bindings and the member picker (replaces prefix-guessing).
+   */
+  nodesBySub: Record<string, string[]>;
   /** Warnings, e.g. `pm-inline-collections` legacy field detected, missing marker, unresolved template id. */
   warnings: string[];
   /** Count of subscription nodes appended to `proxies:` (post-dedup). */
@@ -159,7 +169,7 @@ export async function resolveConfig(
   const baseProxyNames = new Set(readProxyNames(doc));
   const ignoreFailures = opts.ignoreFailedSubs !== false;
 
-  const candidates: InjectionCandidate[] = [];
+  let candidates: InjectionCandidate[] = [];
   const subStatuses: SnapshotSubStatus[] = [];
   // Profile binding: resolve the single-source into an eligible-sub-id set.
   // `null` means "no filter" → every enabled subscription (only when there's
@@ -173,14 +183,10 @@ export async function resolveConfig(
   } else if (boundSource && boundSource.type === 'collection') {
     const col = (opts.collections ?? []).find((c) => c.id === boundSource.id);
     if (!col) {
-      warnings.push(
-        `profile 绑定的聚合订阅不存在 (${boundSource.id}); 未注入任何订阅节点。`,
-      );
+      warnings.push(`profile 绑定的聚合订阅不存在 (${boundSource.id}); 未注入任何订阅节点。`);
       subFilter = new Set();
     } else {
-      subFilter = new Set(
-        resolveCollectionMemberSubs(col, subscriptions).map((s) => s.id),
-      );
+      subFilter = new Set(resolveCollectionMemberSubs(col, subscriptions).map((s) => s.id));
     }
   }
 
@@ -210,14 +216,9 @@ export async function resolveConfig(
     }
     const result = outcome.value;
     for (const item of result.proxies) {
-      const origName = (item as { name?: unknown }).name;
-      if (typeof origName !== 'string') continue;
-      const finalName = sub.node_prefix ? `${sub.node_prefix}${origName}` : origName;
-      const finalNode =
-        sub.node_prefix && finalName !== origName
-          ? { ...(item as object), name: finalName }
-          : item;
-      candidates.push({ node: finalNode, name: finalName, fromSub: sub.name });
+      const name = (item as { name?: unknown }).name;
+      if (typeof name !== 'string') continue;
+      candidates.push({ node: item, name, fromSub: sub.name });
     }
     subStatuses.push({
       name: sub.name,
@@ -226,6 +227,16 @@ export async function resolveConfig(
       stale: result.stale,
       staleReason: result.staleReason,
     });
+  }
+
+  // 聚合订阅级 operators:当整份配置绑定到某个 collection 时,合并完成员节点
+  // 后,对这批节点整体再跑一遍该聚合自己的处理流水线(与单订阅同一套算子,
+  // 只是作用在并集上)。renamed 节点的来源归属按处理前的名字尽力还原。
+  if (boundSource?.type === 'collection') {
+    const col = (opts.collections ?? []).find((c) => c.id === boundSource.id);
+    if (col && col.operators.length > 0 && candidates.length > 0) {
+      candidates = applyOperatorsToCandidates(candidates, col.operators);
+    }
   }
 
   // Dedup across subs + base. First writer wins. Collisions never silent.
@@ -269,14 +280,17 @@ export async function resolveConfig(
   }
 
   if (survivors.length > 0) {
-    appendProxies(doc, survivors.map((s) => s.node));
+    appendProxies(
+      doc,
+      survivors.map((s) => s.node),
+    );
   }
 
   let expandedContent = doc.toString();
 
-  // Apply kind-driven bindings BEFORE rendering. single-sub builds `filter`
-  // from the bound sub's node_prefix; collection-scope builds `proxies`
-  // from the bound collection's member nodes. Bindings transform groups
+  // Apply kind-driven bindings BEFORE rendering. single-sub and
+  // collection-scope both build `proxies` from the bound resource's member
+  // nodes (computed this render in `nodesBySub`). Bindings transform groups
   // in-memory only — the hash is never rewritten by resolveConfig.
   const transformedGroups = applyKindBindings(
     proxyGroups,
@@ -327,6 +341,7 @@ export async function resolveConfig(
     subscriptions: subStatuses,
     collisions,
     nodeNames,
+    nodesBySub: Object.fromEntries(nodesBySub),
     warnings,
     inlinedProxyCount: survivors.length,
     proxyGroupCount: proxyGroupRender.count,
@@ -340,17 +355,17 @@ export async function resolveConfig(
  * Two presets need render-time resolution; the other six produce ProxyGroup
  * records whose mihomo fields already encode their intent:
  *
- *   - `kind: single-sub` + `bound_subscription_id` → set `filter` to
- *     `^<escaped node_prefix>` and `include-all-proxies: true`. The user
- *     never has to keep the regex in sync with the sub's prefix.
+ *   - `kind: single-sub` + `bound_subscription_id` → set `proxies` to the
+ *     bound sub's surviving node names (computed this render in `nodesBySub`).
+ *     The user never has to maintain a regex; membership tracks the real set.
  *   - `kind: collection-scope` + `bound_collection_id` → set `proxies` to
  *     the surviving node names of the collection's member subs (in member
  *     sub order, then sub-internal order; deduped).
  *
  * Bindings that resolve to nothing (missing sub/collection, sub with no
- * prefix, collection with no nodes) emit a warning and leave the group's
- * fields untouched so the user can still see the group render — better
- * than a silent omission.
+ * surviving nodes, collection with no nodes) emit a warning and leave the
+ * group's fields untouched so the user can still see the group render —
+ * better than a silent omission.
  */
 function applyKindBindings(
   groups: ProxyGroup[],
@@ -368,23 +383,18 @@ function applyKindBindings(
       const sub = subById.get(g.bound_subscription_id);
       if (!sub) {
         warnings.push(
-          `策略组 "${g.name}" 绑定的订阅源 ${g.bound_subscription_id} 不存在,filter 未自动生成`,
+          `策略组 "${g.name}" 绑定的订阅源 ${g.bound_subscription_id} 不存在,成员未自动生成`,
         );
         return g;
       }
-      if (!sub.node_prefix) {
-        warnings.push(
-          `策略组 "${g.name}" 绑定的订阅源 "${sub.name}" 未设 node_prefix,无法自动生成 filter`,
-        );
+      // 直接列出该订阅源注入存活的节点名(去前缀后,名字不再带可过滤的统一
+      // 前缀,改用渲染时算出的真实成员集)。空集时给告警、保留原字段。
+      const nodes = nodesBySub.get(sub.name) ?? [];
+      if (nodes.length === 0) {
+        warnings.push(`策略组 "${g.name}" 绑定的订阅源 "${sub.name}" 当前无可用节点,成员为空`);
         return g;
       }
-      // Auto filter wins over any user-typed filter — the preset owns this
-      // field (the raw form would let them edit it after converting kind).
-      return {
-        ...g,
-        filter: `^${escapeRegex(sub.node_prefix)}`,
-        'include-all-proxies': true,
-      };
+      return { ...g, proxies: nodes };
     }
 
     // collection-scope binding deprecated: any pre-migration `bound_collection_id`
@@ -413,8 +423,31 @@ function applyKindBindings(
   });
 }
 
-function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/**
+ * Run a 聚合订阅's operator pipeline over its merged member candidates. The
+ * pipeline may rename / drop / reorder nodes, so per-sub provenance (`fromSub`,
+ * which feeds single-sub group bindings + the picker) is restored best-effort:
+ * by matching each surviving node's name back to its pre-pipeline source, with
+ * renamed/new nodes attributed to the first member so counts still add up.
+ */
+function applyOperatorsToCandidates(
+  candidates: InjectionCandidate[],
+  operators: Operator[],
+): InjectionCandidate[] {
+  const nameToSub = new Map<string, string>();
+  for (const c of candidates) if (!nameToSub.has(c.name)) nameToSub.set(c.name, c.fromSub);
+  const fallbackSub = candidates[0]?.fromSub ?? '';
+  const { proxies } = applyOperators(
+    candidates.map((c) => c.node as ClashProxy),
+    operators,
+  );
+  const out: InjectionCandidate[] = [];
+  for (const node of proxies) {
+    const name = (node as { name?: unknown }).name;
+    if (typeof name !== 'string') continue;
+    out.push({ node, name, fromSub: nameToSub.get(name) ?? fallbackSub });
+  }
+  return out;
 }
 
 export function resolveCollectionMemberSubs(
@@ -486,9 +519,7 @@ function renderProxyGroupsBlock(
     if (g.template_id) {
       const tpl = tplById.get(g.template_id);
       if (!tpl) {
-        warnings.push(
-          `策略组 "${g.name}" 引用模板 ${g.template_id} 不存在,按无模板渲染`,
-        );
+        warnings.push(`策略组 "${g.name}" 引用模板 ${g.template_id} 不存在,按无模板渲染`);
       } else {
         template = tpl;
       }

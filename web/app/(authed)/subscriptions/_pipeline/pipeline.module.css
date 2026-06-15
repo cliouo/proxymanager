@@ -471,6 +471,29 @@
   word-break: break-word;
 }
 
+/* member fetch failures (collection preview) */
+.memberWarn {
+  margin-top: 12px;
+  border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent);
+  background: var(--warn-dim);
+  color: var(--warn);
+  border-radius: var(--r-md);
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.memberWarn .t {
+  font-weight: 600;
+}
+.memberWarn ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+.memberWarn li {
+  font: 11px var(--font-mono);
+  word-break: break-word;
+}
+
 /* ---------- responsive (mirrors prototype) ---------- */
 @media (max-width: 1200px) {
   .grid {

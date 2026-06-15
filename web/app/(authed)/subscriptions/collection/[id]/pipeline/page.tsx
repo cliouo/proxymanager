@@ -1,11 +1,11 @@
 'use client';
 
 import { useParams } from 'next/navigation';
-import { OperatorWorkbench } from '../../_pipeline/OperatorWorkbench';
+import { OperatorWorkbench } from '../../../_pipeline/OperatorWorkbench';
 
-export default function PipelinePage() {
+export default function CollectionPipelinePage() {
   const { id } = useParams<{ id: string }>();
-  const loadPath = `/api/v1/subscriptions/${id}`;
+  const loadPath = `/api/v1/collections/${id}`;
   return (
     <OperatorWorkbench
       entityId={id}
@@ -13,9 +13,9 @@ export default function PipelinePage() {
       previewPath={`${loadPath}/preview`}
       savePath={loadPath}
       backHref="/subscriptions"
-      crumbPrefix="订阅源"
-      introNoun="订阅源"
-      pickLabel={(d) => d.display_name || d.name || ''}
+      crumbPrefix="订阅源 / 聚合订阅"
+      introNoun="聚合订阅"
+      pickLabel={(d) => d.name ?? ''}
     />
   );
 }

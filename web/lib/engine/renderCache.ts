@@ -46,8 +46,10 @@ const EX_SLACK_SECONDS = 60;
  * any deploy that changes render output so existing entries (which carry an old
  * or absent epoch) miss and re-render immediately.
  *   1 → +base `rule-set:` refs now emit their rule-providers declaration.
+ *   2 → dropped node_prefix (names no longer prefixed) + single-sub groups now
+ *       emit `proxies` from member nodes instead of a `^prefix` filter.
  */
-const RENDER_CACHE_EPOCH = 1;
+const RENDER_CACHE_EPOCH = 2;
 
 export type RenderCacheStatus = 'hit' | 'miss' | 'bypass';
 
@@ -62,6 +64,7 @@ export type CachedResolveOutput = Pick<
   | 'subscriptions'
   | 'collisions'
   | 'nodeNames'
+  | 'nodesBySub'
   | 'warnings'
   | 'inlinedProxyCount'
   | 'proxyGroupCount'
@@ -146,17 +149,25 @@ export async function renderProfileConfig(
   }
 
   // Miss / bypass — the data loading the three routes used to duplicate.
-  const [base, rules, providers, subscriptions, proxyGroups, templates, collections, profileRecord] =
-    await Promise.all([
-      getBase(),
-      listRules(),
-      listRuleSets(),
-      listSubscriptions(),
-      listProxyGroups(),
-      listProxyGroupTemplates(),
-      listCollections(),
-      getProfileByName(profileName),
-    ]);
+  const [
+    base,
+    rules,
+    providers,
+    subscriptions,
+    proxyGroups,
+    templates,
+    collections,
+    profileRecord,
+  ] = await Promise.all([
+    getBase(),
+    listRules(),
+    listRuleSets(),
+    listSubscriptions(),
+    listProxyGroups(),
+    listProxyGroupTemplates(),
+    listCollections(),
+    getProfileByName(profileName),
+  ]);
   if (!base) {
     throw (opts.missingBaseError ?? defaultMissingBaseError)();
   }
@@ -195,6 +206,7 @@ export async function renderProfileConfig(
     subscriptions: resolved.subscriptions,
     collisions: resolved.collisions,
     nodeNames: resolved.nodeNames,
+    nodesBySub: resolved.nodesBySub,
     warnings: resolved.warnings,
     inlinedProxyCount: resolved.inlinedProxyCount,
     proxyGroupCount: resolved.proxyGroupCount,

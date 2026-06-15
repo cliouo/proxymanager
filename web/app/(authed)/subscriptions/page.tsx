@@ -1,15 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import {
-  useCallback,
-  useEffect,
-  useId,
-  useMemo,
-  useRef,
-  useState,
-  type RefObject,
-} from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type RefObject } from 'react';
 import { DistributeDrawer, type DistributeTarget } from '@/components/DistributeDrawer';
 import { PageTopbar } from '@/components/PageChrome';
 import { ScopePill } from '@/components/Topbar';
@@ -24,6 +16,7 @@ const DEFAULT_TTL_MS = 10 * 60 * 1000;
 interface Subscription {
   id: string;
   name: string;
+  display_name?: string;
   kind: 'remote' | 'local';
   enabled: boolean;
   url?: string;
@@ -31,7 +24,6 @@ interface Subscription {
   ttl_ms: number;
   content?: string;
   tags: string[];
-  node_prefix?: string;
   last_synced_at?: number;
   last_traffic?: {
     upload: number;
@@ -154,7 +146,7 @@ export default function SubscriptionsPage() {
       await api(`/api/v1/subscriptions/${id}/refresh`, { method: 'POST' });
       await reload();
     } catch (err) {
-      setError(err instanceof ApiError ? err.problem.detail ?? err.message : String(err));
+      setError(err instanceof ApiError ? (err.problem.detail ?? err.message) : String(err));
     } finally {
       endBusy(id);
     }
@@ -198,8 +190,7 @@ export default function SubscriptionsPage() {
       setSubs((prev) => prev.map((s) => (s.id === id ? res.data : s)));
       setEditingId(null);
     } catch (err) {
-      const msg =
-        err instanceof ApiError ? err.problem.detail ?? err.message : String(err);
+      const msg = err instanceof ApiError ? (err.problem.detail ?? err.message) : String(err);
       setError(msg);
       throw err; // EditForm 内 catch 仍可显示 inline 错误
     } finally {
@@ -254,10 +245,10 @@ export default function SubscriptionsPage() {
         { k: '类型', v: s.kind },
         { k: '上次拉取', v: fmtTime(s.last_synced_at) },
       ];
-      if (s.node_prefix) meta.push({ k: '前缀', v: s.node_prefix });
       return {
         kind: 'source',
-        name: s.name,
+        name: s.display_name || s.name,
+        pathSeg: s.name,
         typeLabel: `${kindLabel} · ${!s.enabled ? '已停用' : s.last_error ? '缓存下发中' : '公开分发中'}`,
         enabled: s.enabled,
         meta,
@@ -268,10 +259,14 @@ export default function SubscriptionsPage() {
     return {
       kind: 'collection',
       name: c.name,
+      pathSeg: c.slug ?? c.id,
       typeLabel: `聚合订阅 · ${c.enabled ? '公开分发中' : '已停用'}`,
       enabled: c.enabled,
       meta: [
-        { k: '成员', v: `${c.subscription_ids.length} 直接指定 + ${c.subscription_tags.length} 标签` },
+        {
+          k: '成员',
+          v: `${c.subscription_ids.length} 直接指定 + ${c.subscription_tags.length} 标签`,
+        },
         { k: '更新', v: fmtTime(c.updated_at) },
       ],
     };
@@ -290,16 +285,14 @@ export default function SubscriptionsPage() {
 
   const editingCollection =
     collectionEditingId !== null
-      ? collections.find((c) => c.id === collectionEditingId) ?? null
+      ? (collections.find((c) => c.id === collectionEditingId) ?? null)
       : null;
 
   const q = query.trim().toLowerCase();
   const filteredSubs = useMemo(() => {
     if (!q) return subs;
     return subs.filter(
-      (s) =>
-        s.name.toLowerCase().includes(q) ||
-        s.tags.some((t) => t.toLowerCase().includes(q)),
+      (s) => s.name.toLowerCase().includes(q) || s.tags.some((t) => t.toLowerCase().includes(q)),
     );
   }, [subs, q]);
   const filteredCollections = useMemo(() => {
@@ -323,11 +316,7 @@ export default function SubscriptionsPage() {
         )}
         <div className="grow" />
         {tab === 'subs' ? (
-          <button
-            type="button"
-            className="btn primary"
-            onClick={() => setAdding((v) => !v)}
-          >
+          <button type="button" className="btn primary" onClick={() => setAdding((v) => !v)}>
             {adding ? '取消' : '＋ 新建'}
           </button>
         ) : (
@@ -346,12 +335,7 @@ export default function SubscriptionsPage() {
 
       {/* tabs + 搜索 —— 原型把这行留在内容区首行（新建钮已上移 topbar） */}
       <div className={styles.headRow}>
-        <div
-          role="tablist"
-          aria-label="订阅源类型"
-          onKeyDown={handleTablistKey}
-          className="tabs"
-        >
+        <div role="tablist" aria-label="订阅源类型" onKeyDown={handleTablistKey} className="tabs">
           <TabButton
             ref={subsTabRef}
             active={tab === 'subs'}
@@ -387,15 +371,12 @@ export default function SubscriptionsPage() {
       {error && <div className={styles.errBanner}>{error}</div>}
 
       {tab === 'subs' ? (
-        <section
-          id={`${tabsId}-panel-subs`}
-          role="tabpanel"
-          aria-labelledby={`${tabsId}-tab-subs`}
-        >
+        <section id={`${tabsId}-panel-subs`} role="tabpanel" aria-labelledby={`${tabsId}-tab-subs`}>
           <div className={styles.lead}>
             订阅源是平台向上游机场拉取的<b>输入</b>；启用后处理并注入 proxies。
-            处理后由平台中转下发的<b>公开节点链接</b>带令牌、属秘钥——点每行的「分发」按需查看与复制，不在列表明文展示。
-            源站地址、UA 与节点处理流水线都在「编辑」里维护。
+            处理后由平台中转下发的<b>公开节点链接</b>
+            带令牌、属秘钥——点每行的「分发」按需查看与复制，不在列表明文展示。 源站地址、UA
+            与节点处理都在「编辑」里维护。
           </div>
 
           {adding && (
@@ -449,7 +430,8 @@ export default function SubscriptionsPage() {
           aria-labelledby={`${tabsId}-tab-collections`}
         >
           <div className={styles.lead}>
-            聚合订阅把<b>多条单订阅合并成一个来源</b>，输出一条对外的<b>公开节点链接</b>（点「分发」查看）——换/加成员都不影响它。
+            聚合订阅把<b>多条单订阅合并成一个来源</b>，输出一条对外的<b>公开节点链接</b>
+            （点「分发」查看）——换/加成员都不影响它。
             在「结构骨架」页把配置文件的「节点来源」绑定到它，就会注入这组订阅去重后的节点。
             成员可手动勾选，也可按标签自动纳入。
           </div>
@@ -624,9 +606,7 @@ function CollectionCard({
         if (s.tags?.some((t) => c.subscription_tags.includes(t))) ids.add(s.id);
       }
     }
-    return [...ids]
-      .map((id) => subById.get(id))
-      .filter((s): s is Subscription => !!s);
+    return [...ids].map((id) => subById.get(id)).filter((s): s is Subscription => !!s);
   }, [c, subs, subById]);
 
   const hasDisabledMember = members.some((m) => !m.enabled);
@@ -639,7 +619,8 @@ function CollectionCard({
       <div className={styles.subMain}>
         <div className={styles.head}>
           <b>{c.name}</b>
-          <span className="pill ai plain">collection</span>
+          {c.slug && <span className="pill plain mono">{c.slug}</span>}
+          <span className="pill ai plain">聚合</span>
           <span className="pill idle plain">{c.enabled ? '已启用' : '已停用'}</span>
         </div>
         <div className={styles.colLead}>
@@ -652,7 +633,7 @@ function CollectionCard({
                 <span className={styles.mk}>直接指定</span>
                 {directMembers.slice(0, 6).map((m) => (
                   <span key={m.id} className="tag">
-                    {m.name}
+                    {m.display_name || m.name}
                   </span>
                 ))}
                 {directMembers.length > 6 && (
@@ -680,15 +661,19 @@ function CollectionCard({
           </span>
           <span>
             <span className={styles.k}>命中成员</span> {members.length} 个
-            {hasDisabledMember && (
-              <span style={{ color: 'var(--warn)' }}> · 含停用</span>
-            )}
+            {hasDisabledMember && <span style={{ color: 'var(--warn)' }}> · 含停用</span>}
           </span>
           {c.updated_at && (
             <span>
               <span className={styles.k}>更新</span> {fmtTime(c.updated_at)}
             </span>
           )}
+          <span>
+            <PipelineLink
+              href={`/subscriptions/collection/${c.id}/pipeline`}
+              count={c.operators?.length ?? 0}
+            />
+          </span>
         </div>
         {c.notes && (
           <div className={styles.meta} title={c.notes}>
@@ -701,12 +686,7 @@ function CollectionCard({
       <div className={styles.right}>
         <DistChip enabled={c.enabled} onClick={onDistribute} />
         <div className={styles.acts}>
-          <button
-            type="button"
-            className="btn sm"
-            onClick={onEdit}
-            disabled={anyEditing}
-          >
+          <button type="button" className="btn sm" onClick={onEdit} disabled={anyEditing}>
             编辑
           </button>
           <button
@@ -717,12 +697,7 @@ function CollectionCard({
             disabled={pending || anyEditing}
             title={c.enabled ? '停用' : '启用'}
           />
-          <button
-            type="button"
-            className="btn sm danger"
-            onClick={onDelete}
-            disabled={anyEditing}
-          >
+          <button type="button" className="btn sm danger" onClick={onDelete} disabled={anyEditing}>
             删除
           </button>
         </div>
@@ -731,24 +706,18 @@ function CollectionCard({
   );
 }
 
-/** 节点处理入口 —— 跳转全屏流水线工作台；有算子时挂 accent 计数。 */
-function PipelineLink({
-  subId,
-  count,
-}: {
-  subId: string;
-  count: number;
-}) {
+/** 节点处理入口 —— 跳转全屏工作台；有处理步骤时挂 accent 计数。 */
+function PipelineLink({ href, count }: { href: string; count: number }) {
   const router = useRouter();
   return (
     <a
-      href={`/subscriptions/${subId}/pipeline`}
+      href={href}
       onClick={(e) => {
         e.preventDefault();
-        router.push(`/subscriptions/${subId}/pipeline`);
+        router.push(href);
       }}
     >
-      处理流水线{count > 0 ? ` · ${count} 个算子` : ''} →
+      节点处理{count > 0 ? ` · ${count} 步` : ''} →
     </a>
   );
 }
@@ -766,10 +735,9 @@ function CollectionForm({
   onCancel: () => void;
 }) {
   const [name, setName] = useState(initial?.name ?? '');
+  const [slug, setSlug] = useState(initial?.slug ?? '');
   const [enabled, setEnabled] = useState<boolean>(initial?.enabled ?? true);
-  const [selected, setSelected] = useState<Set<string>>(
-    new Set(initial?.subscription_ids ?? []),
-  );
+  const [selected, setSelected] = useState<Set<string>>(new Set(initial?.subscription_ids ?? []));
   const [tagsInput, setTagsInput] = useState(initial?.subscription_tags?.join(', ') ?? '');
   const [notes, setNotes] = useState(initial?.notes ?? '');
   const [pending, setPending] = useState(false);
@@ -816,6 +784,8 @@ function CollectionForm({
     try {
       await onSubmit({
         name: name.trim(),
+        // slug is immutable after creation — only sent on create.
+        ...(initial ? {} : { slug: slug.trim() }),
         enabled,
         type: 'select',
         subscription_ids: [...selected],
@@ -823,7 +793,7 @@ function CollectionForm({
         notes: notes.trim() || undefined,
       });
     } catch (err) {
-      setError(err instanceof ApiError ? err.problem.detail ?? err.message : String(err));
+      setError(err instanceof ApiError ? (err.problem.detail ?? err.message) : String(err));
     } finally {
       setPending(false);
     }
@@ -842,15 +812,31 @@ function CollectionForm({
             <div className={styles.frm}>
               <div className={styles.frmRow}>
                 <label>
-                  名称
-                  <span className="h">影响公开链接路径</span>
+                  显示名称
+                  <span className="h">界面展示用,可中文</span>
+                </label>
+                <div className={styles.ctl}>
+                  <input
+                    className="input"
+                    placeholder="例如:主力机场 / 聚合订阅 1"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    required
+                  />
+                </div>
+              </div>
+              <div className={styles.frmRow}>
+                <label>
+                  标识
+                  <span className="h">slug · 影响公开链接 · 创建后不可改</span>
                 </label>
                 <div className={styles.ctl}>
                   <input
                     className="input mono"
-                    placeholder="例如：聚合订阅1 / 主力机场"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
+                    placeholder="main-pool"
+                    value={slug}
+                    onChange={(e) => setSlug(e.target.value)}
+                    pattern="[a-z0-9-]+"
                     disabled={!!initial}
                     required
                   />
@@ -904,9 +890,7 @@ function CollectionForm({
             <div className={styles.memBlock}>
               {subs.length === 0 ? (
                 <div className={styles.addLine} style={{ borderTop: 0 }}>
-                  <span className={styles.swNote}>
-                    还没有订阅源，请先到「单订阅」tab 新增。
-                  </span>
+                  <span className={styles.swNote}>还没有订阅源，请先到「单订阅」tab 新增。</span>
                 </div>
               ) : (
                 subs.map((s) => {
@@ -917,9 +901,7 @@ function CollectionForm({
                       className={`${styles.mem}${!s.enabled ? ` ${styles.isOff}` : ''}`}
                       onClick={() => toggle(s.id)}
                     >
-                      <span
-                        className={`${styles.memLed} ${s.enabled ? styles.ok : styles.off}`}
-                      />
+                      <span className={`${styles.memLed} ${s.enabled ? styles.ok : styles.off}`} />
                       <div className={styles.grow}>
                         <div className={styles.nm}>{s.name}</div>
                         <div className={styles.sub}>
@@ -1084,10 +1066,9 @@ function Dossier({
       <span className={`${styles.led} ${styles[ledTone]}`} />
       <div className={styles.subMain}>
         <div className={styles.head}>
-          <b>{sub.name}</b>
-          <span className={`pill ${sub.kind === 'remote' ? 'acc' : 'idle'} plain`}>
-            {sub.kind}
-          </span>
+          <b>{sub.display_name || sub.name}</b>
+          {sub.display_name && <span className="pill plain mono">{sub.name}</span>}
+          <span className={`pill ${sub.kind === 'remote' ? 'acc' : 'idle'} plain`}>{sub.kind}</span>
           {sub.tags.map((t) => (
             <span key={t} className="tag">
               {t}
@@ -1117,13 +1098,8 @@ function Dossier({
           <span>
             <span className={styles.k}>上次拉取</span> {fmtTime(sub.last_synced_at)}
           </span>
-          {sub.node_prefix && (
-            <span>
-              <span className={styles.k}>前缀</span> {sub.node_prefix}
-            </span>
-          )}
           <span>
-            <PipelineLink subId={sub.id} count={opCount} />
+            <PipelineLink href={`/subscriptions/${sub.id}/pipeline`} count={opCount} />
           </span>
         </div>
       </div>
@@ -1234,20 +1210,14 @@ function TtlSeg({
   );
 }
 
-function AddForm({
-  onAdded,
-  onCancel,
-}: {
-  onAdded: () => void;
-  onCancel: () => void;
-}) {
+function AddForm({ onAdded, onCancel }: { onAdded: () => void; onCancel: () => void }) {
   const [kind, setKind] = useState<'remote' | 'local'>('remote');
   const [name, setName] = useState('');
+  const [displayName, setDisplayName] = useState('');
   const [url, setUrl] = useState('');
   const [content, setContent] = useState('');
   const [ua, setUa] = useState('');
   const [tagsInput, setTagsInput] = useState('');
-  const [nodePrefix, setNodePrefix] = useState('');
   const [ttlSec, setTtlSec] = useState(Math.round(DEFAULT_TTL_MS / 1000));
   const [enabled, setEnabled] = useState(true);
   const [pending, setPending] = useState(false);
@@ -1269,7 +1239,7 @@ function AddForm({
         ttl_ms: Math.max(1000, ttlSec * 1000),
         tags,
       };
-      if (nodePrefix.trim()) body.node_prefix = nodePrefix;
+      if (displayName.trim()) body.display_name = displayName.trim();
       if (kind === 'remote') {
         body.url = url.trim();
         if (ua.trim()) body.ua_override = ua.trim();
@@ -1279,7 +1249,7 @@ function AddForm({
       await api('/api/v1/subscriptions', { method: 'POST', body });
       onAdded();
     } catch (err) {
-      setError(err instanceof ApiError ? err.problem.detail ?? err.message : String(err));
+      setError(err instanceof ApiError ? (err.problem.detail ?? err.message) : String(err));
     } finally {
       setPending(false);
     }
@@ -1317,8 +1287,23 @@ function AddForm({
 
           <div className={styles.frmRow}>
             <label>
-              名称
-              <span className="h">slug · 仅小写字母 / 数字 / -</span>
+              显示名称
+              <span className="h">可选 · 界面展示用,可中文</span>
+            </label>
+            <div className={styles.ctl}>
+              <input
+                className="input"
+                placeholder="如:A 机场（香港）"
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className={styles.frmRow}>
+            <label>
+              标识
+              <span className="h">slug · 仅小写字母 / 数字 / - · 创建后不可改</span>
             </label>
             <div className={styles.ctl}>
               <input
@@ -1352,21 +1337,6 @@ function AddForm({
                 placeholder="premium, asia"
                 value={tagsInput}
                 onChange={(e) => setTagsInput(e.target.value)}
-              />
-            </div>
-          </div>
-
-          <div className={styles.frmRow}>
-            <label>
-              节点名前缀
-              <span className="h">可选 · 避免跨源同名被去重丢弃</span>
-            </label>
-            <div className={styles.ctl}>
-              <input
-                className="input mono"
-                placeholder="[Airport-A] "
-                value={nodePrefix}
-                onChange={(e) => setNodePrefix(e.target.value)}
               />
             </div>
           </div>
@@ -1405,7 +1375,9 @@ function AddForm({
             <div className={styles.frmRow} style={{ alignItems: 'start' }}>
               <label>
                 节点内容
-                <span className="h">clash yaml · 或多行 ss:// vmess:// vless:// trojan:// hy2:// … · 或 base64</span>
+                <span className="h">
+                  clash yaml · 或多行 ss:// vmess:// vless:// trojan:// hy2:// … · 或 base64
+                </span>
               </label>
               <div className={styles.ctl}>
                 <CodeEditor
@@ -1442,7 +1414,11 @@ function AddForm({
           取消
         </button>
       </div>
-      {error && <div className={styles.errBanner} style={{ marginTop: 12 }}>{error}</div>}
+      {error && (
+        <div className={styles.errBanner} style={{ marginTop: 12 }}>
+          {error}
+        </div>
+      )}
     </form>
   );
 }
@@ -1456,12 +1432,11 @@ function EditForm({
   onCancel: () => void;
   onSave: (patch: Record<string, unknown>) => Promise<void>;
 }) {
-  const [name, setName] = useState(sub.name);
+  const [displayName, setDisplayName] = useState(sub.display_name ?? '');
   const [url, setUrl] = useState(sub.url ?? '');
   const [content, setContent] = useState(sub.content ?? '');
   const [ua, setUa] = useState(sub.ua_override ?? '');
   const [tagsInput, setTagsInput] = useState(sub.tags.join(', '));
-  const [nodePrefix, setNodePrefix] = useState(sub.node_prefix ?? '');
   const [ttlSec, setTtlSec] = useState(Math.max(1, Math.round(sub.ttl_ms / 1000)));
   const [enabled, setEnabled] = useState(sub.enabled);
   const [pending, setPending] = useState(false);
@@ -1477,12 +1452,11 @@ function EditForm({
         .map((t) => t.trim())
         .filter((t) => t.length > 0);
       const patch: Record<string, unknown> = {
-        name: name.trim(),
+        // slug (name) is immutable after creation — not sent.
+        display_name: displayName.trim(),
         enabled,
         ttl_ms: Math.max(1000, ttlSec * 1000),
         tags,
-        // Sending empty string clears the field; the API treats undefined as "no change".
-        node_prefix: nodePrefix,
       };
       if (sub.kind === 'remote') {
         patch.url = url.trim();
@@ -1492,7 +1466,7 @@ function EditForm({
       }
       await onSave(patch);
     } catch (err) {
-      setError(err instanceof ApiError ? err.problem.detail ?? err.message : String(err));
+      setError(err instanceof ApiError ? (err.problem.detail ?? err.message) : String(err));
     } finally {
       setPending(false);
     }
@@ -1508,17 +1482,26 @@ function EditForm({
       <div className={styles.frm}>
         <div className={styles.frmRow}>
           <label>
-            名称
-            <span className="h">slug</span>
+            显示名称
+            <span className="h">可选 · 界面展示用,可中文</span>
           </label>
           <div className={styles.ctl}>
             <input
-              className="input mono"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              pattern="[a-z0-9-]+"
-              required
+              className="input"
+              placeholder="如:A 机场（香港）"
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
             />
+          </div>
+        </div>
+
+        <div className={styles.frmRow}>
+          <label>
+            标识
+            <span className="h">slug · 创建后不可改</span>
+          </label>
+          <div className={styles.ctl}>
+            <input className="input mono" value={sub.name} disabled readOnly />
           </div>
         </div>
 
@@ -1542,21 +1525,6 @@ function EditForm({
               placeholder="premium, asia"
               value={tagsInput}
               onChange={(e) => setTagsInput(e.target.value)}
-            />
-          </div>
-        </div>
-
-        <div className={styles.frmRow}>
-          <label>
-            节点名前缀
-            <span className="h">可选 · 避免跨源同名被去重丢弃</span>
-          </label>
-          <div className={styles.ctl}>
-            <input
-              className="input mono"
-              placeholder="[Airport-A] "
-              value={nodePrefix}
-              onChange={(e) => setNodePrefix(e.target.value)}
             />
           </div>
         </div>
@@ -1623,14 +1591,18 @@ function EditForm({
       </div>
 
       <div className={styles.editActs} style={{ marginTop: 16 }}>
-        <button type="submit" className="btn primary" disabled={pending || !name.trim()}>
+        <button type="submit" className="btn primary" disabled={pending}>
           {pending ? '保存中…' : '保存'}
         </button>
         <button type="button" className="btn" onClick={onCancel} disabled={pending}>
           取消
         </button>
       </div>
-      {error && <div className={styles.errBanner} style={{ marginTop: 12 }}>{error}</div>}
+      {error && (
+        <div className={styles.errBanner} style={{ marginTop: 12 }}>
+          {error}
+        </div>
+      )}
     </form>
   );
 }

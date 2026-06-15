@@ -28,6 +28,11 @@ export async function getCollectionByName(name: string): Promise<Collection | nu
   return all.find((c) => c.name === name) ?? null;
 }
 
+export async function getCollectionBySlug(slug: string): Promise<Collection | null> {
+  const all = await listCollections();
+  return all.find((c) => c.slug === slug) ?? null;
+}
+
 // Writes bump config:version in the same multi() — collections drive
 // collection-scope proxy-groups and profile bindings in the rendered config.
 

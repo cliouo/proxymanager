@@ -32,6 +32,7 @@ export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
         inlined_proxy_count: resolved.inlinedProxyCount,
         proxy_group_count: resolved.proxyGroupCount,
         node_names: resolved.nodeNames,
+        nodes_by_sub: resolved.nodesBySub,
         collisions: resolved.collisions,
         subscriptions: resolved.subscriptions,
         warnings: resolved.warnings,

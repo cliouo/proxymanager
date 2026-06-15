@@ -1,8 +1,4 @@
-import type {
-  ProxyGroup,
-  ProxyGroupKind,
-  ProxyGroupType,
-} from '@/schemas';
+import type { ProxyGroup, ProxyGroupKind, ProxyGroupType } from '@/schemas';
 
 /**
  * Shared client model for the 策略组 workspace.
@@ -10,8 +6,8 @@ import type {
  * A proxy-group's membership comes from up to three composable sources:
  *   1. 手选  — explicit `proxies:` (builtins / other groups / individual nodes), ordered
  *   2. 自动纳入 — `include-all*` + `filter`/`exclude-filter`, with a live match preview
- *   3. 绑定  — render-time, kind-driven (single-sub → filter from node_prefix;
- *              collection-scope → proxies from member nodes). Read-only preview.
+ *   3. 绑定  — render-time, kind-driven (single-sub → proxies from the bound
+ *              sub's member nodes). Read-only preview.
  *
  * `kind` is a *soft lens*, not a locked mode: it decides which source the
  * editor foregrounds and any render-time binding — but every native field
@@ -23,8 +19,8 @@ import type {
 export interface SubscriptionLite {
   id: string;
   name: string;
+  display_name?: string;
   enabled: boolean;
-  node_prefix?: string;
   tags?: string[];
 }
 
@@ -64,18 +60,12 @@ export const KIND_DESCRIPTIONS: Record<ProxyGroupKind, string> = {
   manual: '从清单点选成员(内置 / 节点 / 其他策略组)。规则集出口、系统兜底常用此型。',
   filter: 'include-all-proxies + filter:按正则自动纳入节点(含地区快填)。',
   all: 'include-all-proxies + 无 filter:把全部节点都纳入(总开关)。',
-  'single-sub': '绑定一个订阅源,渲染时 filter 从 node_prefix 自动生成。',
+  'single-sub': '绑定一个订阅源,渲染时成员 = 该源处理后的全部节点。',
   raw: '逐字段编辑 mihomo 原生 proxy-group(逃生口)。',
 };
 
 /** Order shown in the intent picker (most-used first; raw last as the escape hatch). */
-export const KIND_ORDER: ProxyGroupKind[] = [
-  'manual',
-  'filter',
-  'all',
-  'single-sub',
-  'raw',
-];
+export const KIND_ORDER: ProxyGroupKind[] = ['manual', 'filter', 'all', 'single-sub', 'raw'];
 
 /** Commonly-used `section` values shown as a datalist in the editor. Free text otherwise. */
 export const COMMON_SECTIONS = ['规则集', '系统', '地区', '入口', '服务', '订阅'] as const;
@@ -112,7 +102,12 @@ export const REGIONS: { code: string; label: string; nameSuggestion: string; fil
   { code: 'SG', label: '新加坡', nameSuggestion: '新加坡', filter: '新加坡|狮城|SG|Singapore|🇸🇬' },
   { code: 'DE', label: '德国', nameSuggestion: '德国', filter: '德国|德國|DE|Germany|🇩🇪' },
   { code: 'KR', label: '韩国', nameSuggestion: '韩国', filter: '韩国|韓國|KR|Korea|🇰🇷' },
-  { code: 'UK', label: '英国', nameSuggestion: '英国', filter: '英国|英國|UK|GB|United ?Kingdom|🇬🇧' },
+  {
+    code: 'UK',
+    label: '英国',
+    nameSuggestion: '英国',
+    filter: '英国|英國|UK|GB|United ?Kingdom|🇬🇧',
+  },
 ];
 
 /**

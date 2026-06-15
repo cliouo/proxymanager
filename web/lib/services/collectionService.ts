@@ -3,6 +3,7 @@ import {
   deleteCollection as repoDelete,
   getCollection,
   getCollectionByName,
+  getCollectionBySlug,
   listCollections,
   upsertCollection,
 } from '@/lib/repos/collectionsRepo';
@@ -30,6 +31,10 @@ export async function createCollection(input: CollectionCreate): Promise<Collect
   if (dup) {
     throw ProblemDetailsError.conflict(`Collection name "${parsed.name}" already exists.`);
   }
+  const slugDup = await getCollectionBySlug(parsed.slug);
+  if (slugDup) {
+    throw ProblemDetailsError.conflict(`Collection slug "${parsed.slug}" already exists.`);
+  }
   const now = nowSeconds();
   const col: Collection = {
     id: crypto.randomUUID(),
@@ -42,10 +47,7 @@ export async function createCollection(input: CollectionCreate): Promise<Collect
   return col;
 }
 
-export async function patchCollection(
-  id: string,
-  patch: CollectionUpdate,
-): Promise<Collection> {
+export async function patchCollection(id: string, patch: CollectionUpdate): Promise<Collection> {
   const validated = CollectionUpdateSchema.parse(patch);
   const current = await getCollection(id);
   if (!current) {
@@ -54,9 +56,7 @@ export async function patchCollection(
   if (validated.name && validated.name !== current.name) {
     const dup = await getCollectionByName(validated.name);
     if (dup && dup.id !== id) {
-      throw ProblemDetailsError.conflict(
-        `Collection name "${validated.name}" already exists.`,
-      );
+      throw ProblemDetailsError.conflict(`Collection name "${validated.name}" already exists.`);
     }
   }
   const next: Collection = {
@@ -75,4 +75,4 @@ export async function deleteCollection(id: string): Promise<boolean> {
   return removed;
 }
 
-export { listCollections, getCollection, getCollectionByName };
+export { listCollections, getCollection, getCollectionByName, getCollectionBySlug };

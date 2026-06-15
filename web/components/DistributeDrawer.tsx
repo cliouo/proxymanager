@@ -18,10 +18,12 @@ import { useToast } from '@/components/ui/Toast';
  */
 
 export interface DistributeTarget {
-  /** 路径段:single → /source/{name},collection → /collection/{name}。 */
+  /** 路径段:single → /source/{pathSeg},collection → /collection/{pathSeg}。 */
   kind: 'source' | 'collection';
-  /** 名称(同时是路径段;中文名会被 URL 编码)。 */
+  /** 展示名(可中文 / 显示名)—— 仅用于抽屉标题,不进 URL。 */
   name: string;
+  /** URL 路径段(订阅 slug / 聚合 slug)—— 稳定英文标识,与展示名解耦。 */
+  pathSeg: string;
   /** 头部副标题,如「远程订阅 · 公开分发中」。 */
   typeLabel: string;
   enabled: boolean;
@@ -62,7 +64,7 @@ export function DistributeDrawer({
   // 每次换目标都回到掩码态 —— 上一个资源点过「显示」不应外溢到下一个。
   useEffect(() => {
     setReveal(false);
-  }, [target?.kind, target?.name]);
+  }, [target?.kind, target?.pathSeg]);
 
   useEffect(() => {
     if (!target) return;
@@ -75,7 +77,7 @@ export function DistributeDrawer({
 
   const { realUrl, shownUrl } = useMemo(() => {
     if (!target) return { realUrl: '', shownUrl: '' };
-    const path = `/${target.kind}/${encodeURIComponent(target.name)}`;
+    const path = `/${target.kind}/${encodeURIComponent(target.pathSeg)}`;
     if (!subBase) return { realUrl: '', shownUrl: `…/api/sub/${MASK}${path}` };
     const real = `${subBase}${path}`;
     if (reveal) return { realUrl: real, shownUrl: real };
@@ -183,8 +185,8 @@ export function DistributeDrawer({
               </button>
             </div>
             <p className="df-h" style={{ marginTop: 10 }}>
-              可直接作 mihomo <code>proxy-providers</code> 的 <code>url:</code>,或当普通订阅导入
-              —— 节点已过本源的处理流水线与前缀。
+              可直接作 mihomo <code>proxy-providers</code> 的 <code>url:</code>,或当普通订阅导入 ——
+              节点已过本源的节点处理。
             </p>
           </div>
 

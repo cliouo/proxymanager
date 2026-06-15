@@ -8,6 +8,7 @@ import {
   groupNodesBySub,
   matchFilter,
   wouldCycle,
+  type NodesBySub,
   type SubBucket,
 } from '../_lib/useAvailableMembers';
 import styles from '../proxyGroups.module.css';
@@ -31,6 +32,7 @@ export interface MemberComposerProps {
   autoActive: boolean;
   onRegionFill?: (filter: string, nameSuggestion: string) => void;
   nodeNames: string[];
+  nodesBySub: NodesBySub;
   subs: SubscriptionLite[];
   groups: ProxyGroup[];
   previewError: string | null;
@@ -134,20 +136,30 @@ function AutoIncludeBox({
 
       <div className={styles.rePreview}>
         {match.error ? (
-          <div className="count" style={{ color: 'var(--danger)', fontSize: 11.5, fontFamily: 'var(--font-mono)' }}>
+          <div
+            className="count"
+            style={{ color: 'var(--danger)', fontSize: 11.5, fontFamily: 'var(--font-mono)' }}
+          >
             正则错误:{match.error}
           </div>
         ) : previewError ? (
-          <div className="count" style={{ color: 'var(--warn)', fontSize: 11.5, fontFamily: 'var(--font-mono)' }}>
+          <div
+            className="count"
+            style={{ color: 'var(--warn)', fontSize: 11.5, fontFamily: 'var(--font-mono)' }}
+          >
             节点列表暂不可用,命中数无法计算;可照常保存,filter 渲染时生效。
           </div>
         ) : !autoActive ? (
-          <div className="count" style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--muted)' }}>
+          <div
+            className="count"
+            style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--muted)' }}
+          >
             未开启 include-all-proxies — filter 只会作用于手选 / use 引入的成员。
           </div>
         ) : !filter.trim() ? (
           <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--muted)' }}>
-            纳入全部 <b style={{ color: 'var(--accent)' }}>{nodeNames.length}</b> 个节点(未设 filter)。
+            纳入全部 <b style={{ color: 'var(--accent)' }}>{nodeNames.length}</b> 个节点(未设
+            filter)。
           </div>
         ) : (
           <>
@@ -157,8 +169,8 @@ function AutoIncludeBox({
               style={{ paddingLeft: 0 }}
               onClick={() => setListOpen((v) => !v)}
             >
-              实时预览:命中 <b style={{ color: 'var(--accent)' }}>{match.matched.length}</b> / {nodeNames.length} 个节点{' '}
-              {listOpen ? '收起 ▴' : '展开 ▾'}
+              实时预览:命中 <b style={{ color: 'var(--accent)' }}>{match.matched.length}</b> /{' '}
+              {nodeNames.length} 个节点 {listOpen ? '收起 ▴' : '展开 ▾'}
             </button>
             {listOpen && (
               <div className={styles.nodeBox} style={{ marginTop: 8 }}>
@@ -240,9 +252,17 @@ function ManualPickBox(props: MemberComposerProps) {
 
   return (
     <div>
-      <div className={styles.refHead} style={{ marginTop: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+      <div
+        className={styles.refHead}
+        style={{ marginTop: 0, display: 'flex', alignItems: 'center', gap: 8 }}
+      >
         <span>手选成员 · proxies {proxies.length}</span>
-        <button type="button" className="btn sm" style={{ marginLeft: 'auto' }} onClick={() => setPickerOpen(true)}>
+        <button
+          type="button"
+          className="btn sm"
+          style={{ marginLeft: 'auto' }}
+          onClick={() => setPickerOpen(true)}
+        >
           ＋ 添加成员
         </button>
       </div>
@@ -285,7 +305,9 @@ function ManualPickBox(props: MemberComposerProps) {
         </div>
       )}
       {proxies.length > 1 && (
-        <div className="hint" style={{ marginTop: 8 }}>拖动芯片调整顺序 · 渲染顺序即排列顺序。</div>
+        <div className="hint" style={{ marginTop: 8 }}>
+          拖动芯片调整顺序 · 渲染顺序即排列顺序。
+        </div>
       )}
 
       {pickerOpen && (
@@ -296,6 +318,7 @@ function ManualPickBox(props: MemberComposerProps) {
           groups={groups}
           subs={props.subs}
           nodeNames={nodeNames}
+          nodesBySub={props.nodesBySub}
           previewError={props.previewError}
           onClose={() => setPickerOpen(false)}
         />
@@ -313,6 +336,7 @@ function MemberPicker({
   groups,
   subs,
   nodeNames,
+  nodesBySub,
   previewError,
   onClose,
 }: {
@@ -322,6 +346,7 @@ function MemberPicker({
   groups: ProxyGroup[];
   subs: SubscriptionLite[];
   nodeNames: string[];
+  nodesBySub: NodesBySub;
   previewError: string | null;
   onClose: () => void;
 }) {
@@ -334,7 +359,10 @@ function MemberPicker({
     () => groups.filter((g) => g.name !== selfName).map((g) => g.name),
     [groups, selfName],
   );
-  const { buckets, unfiled } = useMemo(() => groupNodesBySub(nodeNames, subs), [nodeNames, subs]);
+  const { buckets, unfiled } = useMemo(
+    () => groupNodesBySub(nodeNames, subs, nodesBySub),
+    [nodeNames, subs, nodesBySub],
+  );
 
   const toggle = (name: string) =>
     onChange(sel.has(name) ? selected.filter((p) => p !== name) : [...selected, name]);
@@ -412,12 +440,20 @@ function MemberPicker({
 
           {previewError && (
             <p style={{ fontSize: 12, color: 'var(--warn)' }}>
-              节点列表来自最近一次预览,现在不可用——可先选内置 / 策略组,或到「最终配置」重新预览后再回来。
+              节点列表来自最近一次预览,现在不可用——可先选内置 /
+              策略组,或到「最终配置」重新预览后再回来。
             </p>
           )}
 
           {buckets.map((b) => (
-            <NodeBucket key={b.sub.id} bucket={b} query={query} sel={sel} toggle={toggle} bulk={bulk} />
+            <NodeBucket
+              key={b.sub.id}
+              bucket={b}
+              query={query}
+              sel={sel}
+              toggle={toggle}
+              bulk={bulk}
+            />
           ))}
 
           {filteredUnfiled.length > 0 && (
@@ -463,10 +499,10 @@ function NodeBucket({
 }) {
   const shown = bucket.nodes.filter((n) => !query || n.toLowerCase().includes(query));
   if (shown.length === 0) return null;
-  const prefix = bucket.sub.node_prefix?.trim();
+  const label = bucket.sub.display_name || bucket.sub.name;
   return (
     <NodeBucketRaw
-      title={`节点 · ${bucket.sub.name}${prefix ? ` [${prefix}]` : ''} · ${shown.length}`}
+      title={`节点 · ${label} · ${shown.length}`}
       nodes={shown}
       sel={sel}
       toggle={toggle}
@@ -498,7 +534,11 @@ function NodeBucketRaw({
       title={title}
       action={
         <div style={{ display: 'flex', gap: 10 }}>
-          <button type="button" className={styles.linkBtn} onClick={() => bulk(nodes, !allSelected)}>
+          <button
+            type="button"
+            className={styles.linkBtn}
+            onClick={() => bulk(nodes, !allSelected)}
+          >
             {allSelected ? '全不选' : '全选'}
           </button>
           <button type="button" className={styles.linkBtn} onClick={() => setOpen((v) => !v)}>

@@ -175,7 +175,7 @@ registry.registerPath({
   path: '/api/v1/subscriptions',
   summary: 'List subscriptions',
   description:
-    'Upstream airport subscription sources. Every enabled subscription has its (operator-processed) nodes auto-injected into the rendered config\'s `proxies:` block at resolve time — see /api/v1/preview for the resolved view.',
+    "Upstream airport subscription sources. Every enabled subscription has its (operator-processed) nodes auto-injected into the rendered config's `proxies:` block at resolve time — see /api/v1/preview for the resolved view.",
   tags: ['subscriptions'],
   responses: {
     200: {
@@ -229,7 +229,10 @@ registry.registerPath({
     body: { content: { 'application/json': { schema: SubscriptionCreateSchema } } },
   },
   responses: {
-    200: { content: { 'application/json': { schema: SubscriptionResponseSchema } }, description: 'Updated' },
+    200: {
+      content: { 'application/json': { schema: SubscriptionResponseSchema } },
+      description: 'Updated',
+    },
     404: { description: 'Not found' },
     409: { description: 'Name already exists' },
   },
@@ -245,7 +248,10 @@ registry.registerPath({
     body: { content: { 'application/json': { schema: SubscriptionUpdateSchema } } },
   },
   responses: {
-    200: { content: { 'application/json': { schema: SubscriptionResponseSchema } }, description: 'Updated' },
+    200: {
+      content: { 'application/json': { schema: SubscriptionResponseSchema } },
+      description: 'Updated',
+    },
     404: { description: 'Not found' },
     409: { description: 'Name already exists' },
   },
@@ -268,7 +274,7 @@ registry.registerPath({
   path: '/api/v1/subscriptions/{id}/refresh',
   summary: 'Refresh subscription from upstream',
   description:
-    'Force-fetches the upstream URL (bypasses the fetch cache), validates it parses as Clash YAML, and records sync time + traffic info. The fresh content is cached and used at the next resolveConfig run when the subscription\'s nodes are injected into `/api/sub/{token}/default`.',
+    "Force-fetches the upstream URL (bypasses the fetch cache), validates it parses as Clash YAML, and records sync time + traffic info. The fresh content is cached and used at the next resolveConfig run when the subscription's nodes are injected into `/api/sub/{token}/default`.",
   tags: ['subscriptions'],
   request: { params: z.object({ id: z.string() }) },
   responses: {
@@ -287,7 +293,7 @@ registry.registerPath({
   path: '/api/sub/{token}/source/{name}',
   summary: 'Public node-only link for a single subscription',
   description:
-    'Distribution endpoint: serves the subscription\'s processed nodes (operators pipeline + node_prefix + dedup) as a Clash provider YAML (`proxies:` block only). Usable directly as a mihomo proxy-provider `url:` or imported as a plain subscription — the upstream source URL is never exposed. Validates SUB_TOKEN; disabled subscriptions return 404. Sends `Subscription-Userinfo` when upstream traffic info is known, a content-addressed ETag (If-None-Match → 304), and `X-Stale: 1` when serving the stale-on-error cache. `?noCache=1` bypasses the fetch cache.',
+    "Distribution endpoint: serves the subscription's processed nodes (operators 节点处理 + dedup) as a Clash provider YAML (`proxies:` block only). Usable directly as a mihomo proxy-provider `url:` or imported as a plain subscription — the upstream source URL is never exposed. Validates SUB_TOKEN; disabled subscriptions return 404. Sends `Subscription-Userinfo` when upstream traffic info is known, a content-addressed ETag (If-None-Match → 304), and `X-Stale: 1` when serving the stale-on-error cache. `?noCache=1` bypasses the fetch cache.",
   tags: ['subscriptions'],
   security: [],
   request: { params: z.object({ token: z.string(), name: z.string() }) },
@@ -304,7 +310,7 @@ registry.registerPath({
   path: '/api/sub/{token}/collection/{name}',
   summary: 'Public node-only link for a collection (聚合订阅)',
   description:
-    'Distribution endpoint: merges the collection\'s enabled member subscriptions (explicit ids + tag matches, member order), applies each member\'s operators + node_prefix, dedups first-writer-wins, and serves the result as a Clash provider YAML. `{name}` matches the collection name first (URL-encoded CJK ok) and falls back to the collection id when it looks like a UUID. Failed members are skipped (`X-Skipped-Members`); the request only fails when every member fails. Disabled collections return 404.',
+    "Distribution endpoint: merges the collection's enabled member subscriptions (explicit ids + tag matches, member order), runs the collection's own operators 节点处理 over the merged union, dedups first-writer-wins, and serves the result as a Clash provider YAML. `{name}` matches the collection slug first, then the collection id when it looks like a UUID, then the display name as a legacy fallback (URL-encoded CJK ok). Failed members are skipped (`X-Skipped-Members`); the request only fails when every member fails. Disabled collections return 404.",
   tags: ['subscriptions'],
   security: [],
   request: { params: z.object({ token: z.string(), name: z.string() }) },
@@ -326,7 +332,10 @@ registry.registerPath({
     'User-maintained rule-set files (the YAML blobs referenced by base.yaml `rule-providers`). MVP supports text/yaml content, served verbatim at /api/rule-providers/{token}/{name}. List items are meta-only — `content` is returned by the {id} detail endpoint.',
   tags: ['rule-sets'],
   responses: {
-    200: { content: { 'application/json': { schema: RuleSetListResponseSchema } }, description: 'Rule set list' },
+    200: {
+      content: { 'application/json': { schema: RuleSetListResponseSchema } },
+      description: 'Rule set list',
+    },
   },
 });
 
@@ -337,7 +346,10 @@ registry.registerPath({
   tags: ['rule-sets'],
   request: { body: { content: { 'application/json': { schema: RuleSetCreateSchema } } } },
   responses: {
-    201: { content: { 'application/json': { schema: RuleSetResponseSchema } }, description: 'Created' },
+    201: {
+      content: { 'application/json': { schema: RuleSetResponseSchema } },
+      description: 'Created',
+    },
     409: { description: 'Name already exists' },
     422: { description: 'Validation failed' },
   },
@@ -350,7 +362,10 @@ registry.registerPath({
   tags: ['rule-sets'],
   request: { params: z.object({ id: z.string() }) },
   responses: {
-    200: { content: { 'application/json': { schema: RuleSetResponseSchema } }, description: 'Rule set' },
+    200: {
+      content: { 'application/json': { schema: RuleSetResponseSchema } },
+      description: 'Rule set',
+    },
     404: { description: 'Not found' },
   },
 });
@@ -365,7 +380,10 @@ registry.registerPath({
     body: { content: { 'application/json': { schema: RuleSetCreateSchema } } },
   },
   responses: {
-    200: { content: { 'application/json': { schema: RuleSetResponseSchema } }, description: 'Updated' },
+    200: {
+      content: { 'application/json': { schema: RuleSetResponseSchema } },
+      description: 'Updated',
+    },
     404: { description: 'Not found' },
     409: { description: 'Name already exists' },
   },
@@ -381,7 +399,10 @@ registry.registerPath({
     body: { content: { 'application/json': { schema: RuleSetUpdateSchema } } },
   },
   responses: {
-    200: { content: { 'application/json': { schema: RuleSetResponseSchema } }, description: 'Updated' },
+    200: {
+      content: { 'application/json': { schema: RuleSetResponseSchema } },
+      description: 'Updated',
+    },
     404: { description: 'Not found' },
     409: { description: 'Name already exists' },
   },

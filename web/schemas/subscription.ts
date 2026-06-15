@@ -24,6 +24,12 @@ export const SubscriptionSchema = z.object({
     .string()
     .min(1)
     .regex(/^[a-z0-9-]+$/, 'must contain only lowercase letters, digits, and dashes'),
+  /**
+   * Human-facing label shown in the UI (Chinese welcome). Purely cosmetic —
+   * `name` remains the stable slug identifier used in public links and group
+   * bindings. Falls back to `name` when empty.
+   */
+  display_name: z.string().optional(),
   enabled: z.boolean(),
   /**
    * Source type. Defaults to 'remote' so legacy records (which only had
@@ -43,16 +49,10 @@ export const SubscriptionSchema = z.object({
   /** Tags used by Collections for `subscription_tags` auto-inclusion. */
   tags: z.array(z.string()).default([]),
   /**
-   * Optional namespace prefix prepended to each node's `name` at resolve
-   * time, e.g. `[Airport-A] `. Used to disambiguate cross-source name
-   * collisions when multiple subscriptions ship a node with the same name.
-   * Applied after the operators pipeline; the underlying sub content is
-   * left untouched.
-   */
-  node_prefix: z.string().optional(),
-  /**
-   * Ordered node-processing pipeline (Sub-Store 节点操作). Applied to this
+   * Ordered node-processing pipeline (界面「节点处理」). Applied to this
    * sub's parsed proxies after fetch/normalise; see lib/proxies/operators.ts.
+   * Cross-source same-name collisions are handled by the dedup step here and
+   * by global first-writer-wins dedup — there is no separate name prefix.
    */
   operators: z.array(OperatorSchema).default([]),
   /** Last successful sync time (ms epoch via Date.now). */
@@ -75,6 +75,7 @@ export const SubscriptionCreateSchema = z
       .string()
       .min(1)
       .regex(/^[a-z0-9-]+$/, 'must contain only lowercase letters, digits, and dashes'),
+    display_name: z.string().optional(),
     enabled: z.boolean().default(true),
     kind: SubscriptionKindSchema.default('remote'),
     url: z.url().optional(),
@@ -83,7 +84,6 @@ export const SubscriptionCreateSchema = z
     ttl_ms: z.number().int().positive().default(DEFAULT_SUBSCRIPTION_TTL_MS),
     content: z.string().optional(),
     tags: z.array(z.string()).default([]),
-    node_prefix: z.string().optional(),
     operators: z.array(OperatorSchema).default([]),
   })
   .refine(
@@ -97,6 +97,7 @@ export const SubscriptionUpdateSchema = z.object({
     .min(1)
     .regex(/^[a-z0-9-]+$/, 'must contain only lowercase letters, digits, and dashes')
     .optional(),
+  display_name: z.string().optional(),
   enabled: z.boolean().optional(),
   kind: SubscriptionKindSchema.optional(),
   url: z.url().optional(),
@@ -105,7 +106,6 @@ export const SubscriptionUpdateSchema = z.object({
   ttl_ms: z.number().int().positive().optional(),
   content: z.string().optional(),
   tags: z.array(z.string()).optional(),
-  node_prefix: z.string().optional(),
   operators: z.array(OperatorSchema).optional(),
 });
 

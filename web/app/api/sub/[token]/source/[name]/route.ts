@@ -10,8 +10,8 @@ export const dynamic = 'force-dynamic';
 type Ctx = RouteContext<'/api/sub/[token]/source/[name]'>;
 
 /**
- * 单订阅源的公开分发链接 —— 只下发该源处理后的节点(operators 流水线 +
- * node_prefix + 去重),输出 `proxies:` provider YAML。任何 mihomo / Clash
+ * 单订阅源的公开分发链接 —— 只下发该源处理后的节点(operators 节点处理 +
+ * 去重),输出 `proxies:` provider YAML。任何 mihomo / Clash
  * 客户端可把它当 proxy-provider `url:` 或普通订阅使用;上游源站地址永不暴露。
  * 停用的源对外 404(与「未分发」语义一致)。`?noCache=1` 强制绕过 fetch 缓存。
  */

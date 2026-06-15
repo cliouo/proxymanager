@@ -4,7 +4,12 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ApiError, api } from '@/lib/client/api';
 import type { ProxyGroup, ProxyGroupTemplate } from '@/schemas';
 import type { RefSummary } from '../_components/GroupEditor';
-import { memberStat, usePreviewNodes, type MemberStat } from './useAvailableMembers';
+import {
+  memberStat,
+  usePreviewNodes,
+  type MemberStat,
+  type NodesBySub,
+} from './useAvailableMembers';
 import type { SubscriptionLite } from './model';
 
 /**
@@ -34,6 +39,7 @@ export interface ProxyGroupsData {
   ruleSets: { id: string }[];
   anchors: string[];
   nodeNames: string[];
+  nodesBySub: NodesBySub;
   previewError: string | null;
   error: string | null;
   loaded: boolean;
@@ -54,7 +60,7 @@ export function useProxyGroupsData(): ProxyGroupsData {
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
 
-  const { nodeNames, error: previewError, reload: reloadPreview } = usePreviewNodes();
+  const { nodeNames, nodesBySub, error: previewError, reload: reloadPreview } = usePreviewNodes();
 
   const reload = useCallback(async () => {
     try {
@@ -70,8 +76,8 @@ export function useProxyGroupsData(): ProxyGroupsData {
         ss.data.map((s) => ({
           id: s.id,
           name: s.name,
+          display_name: s.display_name,
           enabled: s.enabled,
-          node_prefix: s.node_prefix,
           tags: s.tags ?? [],
         })),
       );
@@ -128,8 +134,8 @@ export function useProxyGroupsData(): ProxyGroupsData {
   );
 
   const stat = useCallback(
-    (g: ProxyGroup) => memberStat(g, nodeNames, subs),
-    [nodeNames, subs],
+    (g: ProxyGroup) => memberStat(g, nodeNames, subs, nodesBySub),
+    [nodeNames, subs, nodesBySub],
   );
 
   return {
@@ -140,6 +146,7 @@ export function useProxyGroupsData(): ProxyGroupsData {
     ruleSets,
     anchors,
     nodeNames,
+    nodesBySub,
     previewError,
     error,
     loaded,

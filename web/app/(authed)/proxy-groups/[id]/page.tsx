@@ -29,6 +29,7 @@ export default function ProxyGroupDetailPage() {
     templates,
     subs,
     nodeNames,
+    nodesBySub,
     previewError,
     loaded,
     reload,
@@ -183,6 +184,7 @@ export default function ProxyGroupDetailPage() {
         subs={subs}
         groups={groups}
         nodeNames={nodeNames}
+        nodesBySub={nodesBySub}
         previewError={previewError}
         isCreate={false}
         originalName={group.name}

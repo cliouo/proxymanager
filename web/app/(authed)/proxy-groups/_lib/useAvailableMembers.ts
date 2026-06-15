@@ -4,13 +4,17 @@ import { useCallback, useEffect, useState } from 'react';
 import { ApiError, api } from '@/lib/client/api';
 import { matchFilter, type FilterMatch } from '@/lib/proxies/filterMatch';
 import type { ProxyGroup } from '@/schemas';
-import { escapeRegex, type SubscriptionLite } from './model';
+import { type SubscriptionLite } from './model';
+
+/** Per-subscription surviving node names, keyed by `sub.name`. */
+export type NodesBySub = Record<string, string[]>;
 
 /**
  * The only authoritative source of real node names is the resolved preview —
  * subscriptions are fetched/parsed at resolve time, so node names don't exist
  * until then. We read `/api/v1/preview/default` once and reuse `node_names`
- * for the member picker and every membership preview.
+ * (flat) + `nodes_by_sub` (per-sub attribution) for the member picker and every
+ * membership preview.
  *
  * Degrades gracefully: if the preview fails (upstream down, base missing),
  * `nodeNames` is empty and `error` is set — the composer falls back to manual
@@ -18,12 +22,14 @@ import { escapeRegex, type SubscriptionLite } from './model';
  */
 export function usePreviewNodes(): {
   nodeNames: string[];
+  nodesBySub: NodesBySub;
   loading: boolean;
   error: string | null;
   computedAt: number | null;
   reload: () => Promise<void>;
 } {
   const [nodeNames, setNodeNames] = useState<string[]>([]);
+  const [nodesBySub, setNodesBySub] = useState<NodesBySub>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [computedAt, setComputedAt] = useState<number | null>(null);
@@ -31,8 +37,11 @@ export function usePreviewNodes(): {
   const reload = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await api<{ data: { node_names: string[] } }>('/api/v1/preview/default');
+      const res = await api<{ data: { node_names: string[]; nodes_by_sub?: NodesBySub } }>(
+        '/api/v1/preview/default',
+      );
       setNodeNames(res.data.node_names ?? []);
+      setNodesBySub(res.data.nodes_by_sub ?? {});
       setComputedAt(Date.now());
       setError(null);
     } catch (err) {
@@ -46,7 +55,7 @@ export function usePreviewNodes(): {
     reload();
   }, [reload]);
 
-  return { nodeNames, loading, error, computedAt, reload };
+  return { nodeNames, nodesBySub, loading, error, computedAt, reload };
 }
 
 /* ─── Pure helpers (no React) ────────────────────────────────────────── */
@@ -57,47 +66,35 @@ export interface SubBucket {
 }
 
 /**
- * Group node names under the subscription whose `node_prefix` they start with.
- * Ties (one prefix is a prefix of another) go to the longest match so the
- * attribution is deterministic. Nodes matching no prefix land in `unfiled`.
- *
- * This is best-effort attribution for the picker UI — the renderer's true
- * per-sub set lives in resolve.ts, but for "show me airport A's nodes" this
- * is exactly right whenever node_prefix is set (which we nudge users to do).
+ * Group node names under the subscription that injected them, using the
+ * authoritative per-sub attribution from the resolved preview (`nodes_by_sub`,
+ * keyed by sub name). Nodes not attributed to any listed sub land in `unfiled`
+ * (e.g. base.yaml literal proxies). No more prefix-guessing.
  */
 export function groupNodesBySub(
   nodeNames: string[],
   subs: SubscriptionLite[],
+  nodesBySub: NodesBySub,
 ): { buckets: SubBucket[]; unfiled: string[] } {
-  const prefixed = subs
-    .filter((s) => s.node_prefix && s.node_prefix.length > 0)
-    .map((s) => ({ sub: s, prefix: s.node_prefix as string }))
-    .sort((a, b) => b.prefix.length - a.prefix.length);
-
-  const bucketMap = new Map<string, string[]>();
-  for (const s of subs) bucketMap.set(s.id, []);
-  const unfiled: string[] = [];
-
-  for (const name of nodeNames) {
-    const hit = prefixed.find((p) => name.startsWith(p.prefix));
-    if (hit) bucketMap.get(hit.sub.id)!.push(name);
-    else unfiled.push(name);
+  const claimed = new Set<string>();
+  const buckets: SubBucket[] = [];
+  for (const sub of subs) {
+    const nodes = nodesBySub[sub.name] ?? [];
+    if (nodes.length === 0) continue;
+    for (const n of nodes) claimed.add(n);
+    buckets.push({ sub, nodes });
   }
-
-  const buckets: SubBucket[] = subs
-    .map((sub) => ({ sub, nodes: bucketMap.get(sub.id) ?? [] }))
-    .filter((b) => b.nodes.length > 0);
-
+  const unfiled = nodeNames.filter((n) => !claimed.has(n));
   return { buckets, unfiled };
 }
 
 export type { FilterMatch };
 export { matchFilter };
 
-/** Node names a single-sub binding would select: `^<escaped node_prefix>`. */
-export function singleSubPreview(nodeNames: string[], nodePrefix: string | undefined): string[] {
-  if (!nodePrefix) return [];
-  return matchFilter(nodeNames, `^${escapeRegex(nodePrefix)}`).matched;
+/** Node names a single-sub binding selects: the bound sub's surviving nodes. */
+export function singleSubPreview(nodesBySub: NodesBySub, subName: string | undefined): string[] {
+  if (!subName) return [];
+  return nodesBySub[subName] ?? [];
 }
 
 /* ─── member stat (rail count + detail summary) ──────────────────────── */
@@ -117,10 +114,11 @@ export function memberStat(
   group: ProxyGroup,
   nodeNames: string[],
   subs: SubscriptionLite[],
+  nodesBySub: NodesBySub,
 ): MemberStat {
   if (group.kind === 'single-sub' && group.bound_subscription_id) {
     const sub = subs.find((s) => s.id === group.bound_subscription_id);
-    const n = singleSubPreview(nodeNames, sub?.node_prefix).length;
+    const n = singleSubPreview(nodesBySub, sub?.name).length;
     return { count: n, unit: '节点', summary: `单订阅「${sub?.name ?? '?'}」→ ${n} 节点` };
   }
   if (group['include-all-proxies'] || group['include-all'] || group['include-all-providers']) {

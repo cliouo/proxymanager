@@ -24,7 +24,17 @@ import styles from '../proxyGroups.module.css';
 export default function ProxyGroupNewPage() {
   const router = useRouter();
   const data = useProxyGroupsData();
-  const { templates, subs, groups, nodeNames, previewError, loaded, reload, reloadPreview } = data;
+  const {
+    templates,
+    subs,
+    groups,
+    nodeNames,
+    nodesBySub,
+    previewError,
+    loaded,
+    reload,
+    reloadPreview,
+  } = data;
 
   const [form, setForm] = useState<FormState | null>(null);
   const [busy, setBusy] = useState(false);
@@ -88,7 +98,9 @@ export default function ProxyGroupNewPage() {
             <button type="button" className={styles.back} onClick={() => setForm(null)}>
               ‹ 换场景
             </button>
-            <span className="crumb">{KIND_LABELS[form.kind]} · 预设只是起点,创建后所有字段仍可改</span>
+            <span className="crumb">
+              {KIND_LABELS[form.kind]} · 预设只是起点,创建后所有字段仍可改
+            </span>
           </div>
           <GroupEditor
             form={form}
@@ -97,6 +109,7 @@ export default function ProxyGroupNewPage() {
             subs={subs}
             groups={groups}
             nodeNames={nodeNames}
+            nodesBySub={nodesBySub}
             previewError={previewError}
             isCreate
             originalName=""
