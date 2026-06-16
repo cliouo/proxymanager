@@ -12,6 +12,10 @@ import { CONFIG_READ_ACTIONS } from './primitives/configReads';
 import { CONFIG_WRITE_ACTIONS } from './primitives/configWrites';
 import { FETCH_ACTIONS } from './primitives/fetch';
 import {
+  OPERATOR_READ_ACTIONS,
+  OPERATOR_WRITE_ACTIONS,
+} from './primitives/operatorWrites';
+import {
   PROXY_GROUP_READ_ACTIONS,
   PROXY_GROUP_WRITE_ACTIONS,
 } from './primitives/proxyGroupWrites';
@@ -28,11 +32,13 @@ const ALL_ACTIONS: ActionDef[] = [
   ...CONFIG_READ_ACTIONS,
   ...RULE_PROVIDER_READ_ACTIONS,
   ...PROXY_GROUP_READ_ACTIONS,
+  ...OPERATOR_READ_ACTIONS,
   ...FETCH_ACTIONS,
   searchMihomoDocs,
   ...WRITE_ACTIONS,
   ...RULE_PROVIDER_WRITE_ACTIONS,
   ...PROXY_GROUP_WRITE_ACTIONS,
+  ...OPERATOR_WRITE_ACTIONS,
   ...CONFIG_WRITE_ACTIONS,
 ];
 
