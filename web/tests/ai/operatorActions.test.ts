@@ -194,6 +194,36 @@ describe('preview_node_operators', () => {
     expect(storedSubOps()).toHaveLength(0); // unchanged — preview never saves
   });
 
+  it('flags orphaned references when a rename drops a name a chain pins', async () => {
+    seedSub([]);
+    // A chain wrap whose backend is the (pre-rename) node name.
+    bucket(REDIS_KEYS.proxyGroups).set('w', {
+      id: '99999999-9999-4999-8999-999999999999',
+      kind: 'raw',
+      name: 'chain:F-to-hk',
+      type: 'select',
+      proxies: ['🇭🇰HK-1'],
+      'dialer-proxy': 'F',
+      rank: 10,
+      updated_at: 0,
+    });
+    const action = getAction('preview_node_operators');
+    if (action.risk !== 'read') throw new Error('expected read');
+    const env = await action.run(ctx, {
+      source_type: 'subscription',
+      id: SUB_ID,
+      operators: [{ kind: 'rename-regex', pattern: 'HK', replacement: '香港' }],
+    });
+    const data = env.data as {
+      orphanedReferences: Array<{ node: string; kind: string; via: string }>;
+      orphanWarning?: string;
+    };
+    expect(data.orphanedReferences).toEqual([
+      { node: '🇭🇰HK-1', kind: 'chain-backend', via: 'chain:F-to-hk' },
+    ]);
+    expect(data.orphanWarning).toBeTruthy();
+  });
+
   it('dry-runs against a collection by merging member nodes', async () => {
     seedCollection([]);
     const action = getAction('preview_node_operators');

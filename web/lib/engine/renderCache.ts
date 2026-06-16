@@ -52,8 +52,12 @@ const EX_SLACK_SECONDS = 60;
  *       isn't honored on a proxy-group); include-all groups now exclude clones.
  *   4 → chain clone now also covers subscription-injected backends (plain
  *       objects), not just base.yaml literals.
+ *   5 → a chain wrap whose backend node is missing (renamed/dropped) is now
+ *       pruned instead of emitted as a group referencing a non-existent node;
+ *       references to it (group members / rules) are scrubbed so the config
+ *       still loads.
  */
-const RENDER_CACHE_EPOCH = 4;
+const RENDER_CACHE_EPOCH = 5;
 
 export type RenderCacheStatus = 'hit' | 'miss' | 'bypass';
 

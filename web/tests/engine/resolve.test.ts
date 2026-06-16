@@ -424,6 +424,105 @@ rules:
     expect(poolGroup?.['exclude-filter']).toContain('chain:pool-to-B');
   });
 
+  const BASE_WITH_F = `mixed-port: 7890
+proxies:
+  - name: F
+    type: ss
+    server: f.example.com
+    port: 443
+    cipher: aes-128-gcm
+    password: pw
+
+# === PROXY-GROUPS ===
+
+rules:
+  - MATCH,DIRECT
+`;
+
+  function makeRule(over: Partial<Rule>): Rule {
+    return {
+      id: crypto.randomUUID(),
+      anchor: 'manual',
+      type: 'DOMAIN',
+      value: 'example.com',
+      policy: 'DIRECT',
+      rank: 10,
+      source: 'manual',
+      added_at: 1_700_000_000,
+      updated_at: 1_700_000_000,
+      ...over,
+    } as Rule;
+  }
+
+  it('prunes a chain wrap whose backend node is missing (renamed/dropped) instead of emitting a group that crashes mihomo', async () => {
+    // Backend "B-GONE" doesn't exist in proxies (e.g. it was renamed away).
+    const wrap = makeGroup({
+      name: 'chain:F-to-B',
+      type: 'select',
+      proxies: ['B-GONE'],
+      'dialer-proxy': 'F',
+    });
+    const result = await resolveConfig(BASE_WITH_F, [], [], [wrap], [], {});
+
+    // The broken wrap is gone entirely — no clone, no dangling group.
+    expect(result.content).not.toContain('chain:F-to-B');
+    expect(result.content).not.toContain('B-GONE');
+    expect(result.proxyGroupCount).toBe(0);
+    // The config still parses and references only existing nodes.
+    expect(() => parse(result.content)).not.toThrow();
+    expect(result.warnings.some((w) => w.includes('chain:F-to-B') && w.includes('后端'))).toBe(true);
+  });
+
+  it('scrubs a broken chain from another group’s members (DIRECT fallback when emptied)', async () => {
+    const wrap = makeGroup({
+      name: 'chain:F-to-B',
+      type: 'select',
+      proxies: ['B-GONE'],
+      'dialer-proxy': 'F',
+      rank: 30,
+    });
+    const mixed = makeGroup({
+      name: 'MyGroup',
+      type: 'select',
+      proxies: ['chain:F-to-B', 'F'],
+      rank: 10,
+    });
+    const onlyBroken = makeGroup({
+      name: 'OnlyBroken',
+      type: 'select',
+      proxies: ['chain:F-to-B'],
+      rank: 20,
+    });
+    const result = await resolveConfig(BASE_WITH_F, [], [], [wrap, mixed, onlyBroken], [], {});
+
+    const doc = parse(result.content) as {
+      'proxy-groups': Array<Record<string, unknown>>;
+    };
+    const my = doc['proxy-groups'].find((g) => g.name === 'MyGroup');
+    expect(my?.proxies).toEqual(['F']); // broken chain removed, F kept
+    const only = doc['proxy-groups'].find((g) => g.name === 'OnlyBroken');
+    expect(only?.proxies).toEqual(['DIRECT']); // emptied → kept valid
+    // No group references the pruned chain anymore.
+    expect(result.content).not.toContain('chain:F-to-B');
+    expect(result.warnings.some((w) => w.includes('MyGroup'))).toBe(true);
+  });
+
+  it('drops a rule whose policy points at a broken chain', async () => {
+    const wrap = makeGroup({
+      name: 'chain:F-to-B',
+      type: 'select',
+      proxies: ['B-GONE'],
+      'dialer-proxy': 'F',
+    });
+    const rule = makeRule({ type: 'DOMAIN-SUFFIX', value: 'openai.com', policy: 'chain:F-to-B' });
+    const result = await resolveConfig(BASE_WITH_F, [rule], [], [wrap], [], {});
+
+    expect(result.content).not.toContain('chain:F-to-B');
+    expect(
+      result.warnings.some((w) => w.includes('chain:F-to-B') && w.includes('规则')),
+    ).toBe(true);
+  });
+
   it('clones a wrap whose backend is a subscription-injected node (plain object)', async () => {
     resolveSubMock.mockResolvedValueOnce({
       proxies: providerProxies([{ name: 'US-Frontier', server: 'us.example' }]),

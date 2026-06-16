@@ -23,6 +23,7 @@ import { stringify } from 'yaml';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { applyOperators, type ClashProxy } from '@/lib/proxies/operators';
 import { mergeCollectionMemberProxies } from '@/lib/services/nodeExportService';
+import { findNodeReferences } from '@/lib/services/nodeReferenceService';
 import { resolveSubscriptionProxiesRaw } from '@/lib/services/subscriptionFetcher';
 import {
   getCollection,
@@ -243,6 +244,15 @@ const previewOperators = defineAction({
     const ops = input.operators.map((spec, i) => materialize(spec, `preview-${i}`));
     const { proxies: before, memberErrors } = await sourceRawProxies(handle, input.no_cache === true);
     const { proxies: after, steps } = applyOperators(before, ops);
+
+    // Names present before but gone after = renamed-or-dropped. If any was
+    // pinned by a chain backend / proxy-group member / rule, the pipeline would
+    // orphan that reference (and a chain backend orphan crashes mihomo on load).
+    const beforeNames = before.map((p) => (typeof p.name === 'string' ? p.name : ''));
+    const afterNames = new Set(after.map((p) => (typeof p.name === 'string' ? p.name : '')));
+    const disappeared = [...new Set(beforeNames)].filter((n) => n && !afterNames.has(n));
+    const orphanedReferences = await findNodeReferences(disappeared);
+
     return {
       kind: 'node-operators-preview',
       data: {
@@ -252,6 +262,13 @@ const previewOperators = defineAction({
         after: namesPayload(after),
         steps,
         ...(memberErrors && memberErrors.length ? { memberErrors } : {}),
+        orphanedReferences,
+        ...(orphanedReferences.length
+          ? {
+              orphanWarning:
+                '⚠️ 这些节点改名/被过滤后，会让链式代理后端、策略组成员或规则的引用悬空(尤其 chain-backend 会导致整份配置无法加载)。落地前请提醒用户，并提议一并更新这些引用。',
+            }
+          : {}),
       },
     };
   },

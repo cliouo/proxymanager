@@ -137,8 +137,8 @@ describe('list_local_nodes', () => {
     const data = env.data as { count: number; nodes: Array<Record<string, unknown>> };
     expect(data.count).toBe(2);
     expect(data.nodes).toEqual([
-      { name: 'xiagangbgp-hk-disx', type: 'ss' },
-      { name: 'Xiamen-hk-jp', type: 'vmess' },
+      { name: 'xiagangbgp-hk-disx', type: 'ss', referencedBy: [] },
+      { name: 'Xiamen-hk-jp', type: 'vmess', referencedBy: [] },
     ]);
     // No secret keys leaked anywhere in the payload.
     const blob = JSON.stringify(data);
@@ -154,6 +154,31 @@ describe('list_local_nodes', () => {
     await expect(action.run(ctx, { id: REMOTE_ID })).rejects.toMatchObject({
       problem: { status: 422 },
     });
+  });
+
+  it('annotates a node with referencedBy when a chain backend pins it', async () => {
+    seedLocal();
+    // A chain wrap whose single backend member is the local node below.
+    bucket(REDIS_KEYS.proxyGroups).set('w', {
+      id: '99999999-9999-4999-8999-999999999999',
+      kind: 'raw',
+      name: 'chain:F-to-xiagangbgp-hk-disx',
+      type: 'select',
+      proxies: ['xiagangbgp-hk-disx'],
+      'dialer-proxy': 'F',
+      rank: 10,
+      updated_at: 0,
+    });
+    const action = getAction('list_local_nodes');
+    if (action.risk !== 'read') throw new Error('expected read');
+    const env = await action.run(ctx, { id: LOCAL_ID });
+    const data = env.data as { nodes: Array<{ name: string; referencedBy: Array<{ kind: string; via: string }> }> };
+    const pinned = data.nodes.find((n) => n.name === 'xiagangbgp-hk-disx');
+    expect(pinned?.referencedBy).toEqual([
+      { kind: 'chain-backend', via: 'chain:F-to-xiagangbgp-hk-disx' },
+    ]);
+    // The unreferenced node stays empty.
+    expect(data.nodes.find((n) => n.name === 'Xiamen-hk-jp')?.referencedBy).toEqual([]);
   });
 });
 

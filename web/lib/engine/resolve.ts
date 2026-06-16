@@ -293,7 +293,11 @@ export async function resolveConfig(
   // dialer-proxy) we clone the backend node, rename it to the wrap's name and
   // attach dialer-proxy — yielding a real outbound that dials through the
   // front. The wrap is then dropped from the proxy-groups block.
-  const chainWrapNames = realizeChainWraps(doc, proxyGroups, warnings);
+  const { realized: chainWrapNames, broken: brokenWrapNames } = realizeChainWraps(
+    doc,
+    proxyGroups,
+    warnings,
+  );
 
   let expandedContent = doc.toString();
 
@@ -313,7 +317,19 @@ export async function resolveConfig(
   // `rank` order, each merged underneath its optional template (group wins,
   // template fills gaps). Groups whose `template_id` doesn't resolve still
   // render — their own fields are used as-is and a warning is recorded.
-  const groupsToRender = transformedGroups.filter((g) => !chainWrapNames.has(g.name));
+  // A broken chain wrap (backend node renamed/dropped → couldn't be cloned) is
+  // pruned from the groups block AND scrubbed from anything that referenced it,
+  // so a renamed-away backend degrades to "this chain is gone" instead of
+  // crashing the whole config (mihomo rejects a group/rule pointing at a name
+  // that doesn't exist).
+  let groupsToRender = transformedGroups.filter(
+    (g) => !chainWrapNames.has(g.name) && !brokenWrapNames.has(g.name),
+  );
+  let effectiveRules = rules;
+  if (brokenWrapNames.size > 0) {
+    groupsToRender = scrubBrokenChainFromGroups(groupsToRender, brokenWrapNames, warnings);
+    effectiveRules = scrubBrokenChainFromRules(rules, brokenWrapNames, warnings);
+  }
   const proxyGroupRender = renderProxyGroupsBlock(
     groupsToRender,
     templates,
@@ -328,7 +344,7 @@ export async function resolveConfig(
     );
   }
 
-  const rendered = renderBase(expandedContent, rules, opts);
+  const rendered = renderBase(expandedContent, effectiveRules, opts);
 
   const nodeNames: string[] = [];
   for (const name of baseProxyNames) nodeNames.push(name);
@@ -526,8 +542,9 @@ function realizeChainWraps(
   doc: ReturnType<typeof parseDocument>,
   groups: ProxyGroup[],
   warnings: string[],
-): Set<string> {
+): { realized: Set<string>; broken: Set<string> } {
   const realized = new Set<string>();
+  const broken = new Set<string>();
   const wraps: ProxyGroup[] = [];
   for (const g of groups) {
     if (!g['dialer-proxy']) continue;
@@ -539,7 +556,7 @@ function realizeChainWraps(
       );
     }
   }
-  if (wraps.length === 0) return realized;
+  if (wraps.length === 0) return { realized, broken };
 
   let seqNode = doc.get('proxies', true);
   if (!isSeq(seqNode)) {
@@ -563,8 +580,9 @@ function realizeChainWraps(
     const backendNode = nodeByName.get(backend);
     if (backendNode === undefined) {
       warnings.push(
-        `链式代理 "${wrap.name}" 的后端 "${backend}" 不是具体节点(可能是策略组或当前不存在),无法克隆为出站,已跳过。`,
+        `链式代理 "${wrap.name}" 的后端 "${backend}" 当前不存在(可能节点被改名/删除,或后端是策略组),无法克隆为出站;已移除这条链及指向它的引用,以免整份配置无法加载。`,
       );
+      broken.add(wrap.name);
       continue;
     }
     if (existingNames.has(wrap.name)) {
@@ -590,7 +608,43 @@ function realizeChainWraps(
     existingNames.add(wrap.name);
     realized.add(wrap.name);
   }
-  return realized;
+  return { realized, broken };
+}
+
+/**
+ * Remove pruned chain-wrap names from other groups' explicit `proxies` members.
+ * A select group can't render with zero members, so an emptied list falls back
+ * to `[DIRECT]` (and is warned about) to keep the config loadable.
+ */
+function scrubBrokenChainFromGroups(
+  groups: ProxyGroup[],
+  broken: Set<string>,
+  warnings: string[],
+): ProxyGroup[] {
+  return groups.map((g) => {
+    if (!g.proxies?.length) return g;
+    const kept = g.proxies.filter((p) => !broken.has(p));
+    if (kept.length === g.proxies.length) return g;
+    warnings.push(
+      `策略组 "${g.name}" 的成员里有已失效的链式代理(后端节点已改名/删除),已移除${
+        kept.length === 0 ? ';该组已无成员,临时填入 DIRECT 以保证配置可加载' : ''
+      }。`,
+    );
+    return { ...g, proxies: kept.length > 0 ? kept : ['DIRECT'] };
+  });
+}
+
+/** Drop rules whose policy points at a pruned chain wrap (else mihomo rejects). */
+function scrubBrokenChainFromRules(rules: Rule[], broken: Set<string>, warnings: string[]): Rule[] {
+  return rules.filter((r) => {
+    if (broken.has(r.policy)) {
+      warnings.push(
+        `规则 "${r.type}${r.value ? `,${r.value}` : ''}" 指向已失效的链式代理 "${r.policy}",本次下发已跳过该规则。`,
+      );
+      return false;
+    }
+    return true;
+  });
 }
 
 /* ─── proxy-group rendering ─────────────────────────────────────────── */

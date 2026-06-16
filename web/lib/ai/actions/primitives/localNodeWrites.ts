@@ -14,6 +14,7 @@
 
 import { z } from 'zod';
 import { ProblemDetailsError } from '@/lib/http/problem';
+import { findNodeReferences } from '@/lib/services/nodeReferenceService';
 import {
   parseLocalProxies,
   serialiseLocalProxies,
@@ -63,7 +64,7 @@ function locateUnique(proxies: Record<string, unknown>[], name: string): number 
 const listLocalNodes = defineAction({
   name: 'list_local_nodes',
   description:
-    '列出一个本地订阅源(kind=local，节点内容是用户自填的)的原始节点——只返回每个节点的 name 与 type，**不含密码 / uuid / 服务器等任何凭证**(已脱敏)。要用 rename_local_node 直接改某个本地节点名前，先调用它拿到准确的现有名字。远程源没有可直接编辑的原始内容(节点来自上游)，对远程源调用会报错并提示改用 rename-regex 算子。先用 list_node_sources 拿订阅源 id 并确认其 kind。',
+    '列出一个本地订阅源(kind=local，节点内容是用户自填的)的原始节点——只返回每个节点的 name 与 type，**不含密码 / uuid / 服务器等任何凭证**(已脱敏)。每个节点还带 referencedBy(它被哪些链式代理后端 / 策略组成员 / 规则按名引用)——**改名前若某节点 referencedBy 非空，务必提醒用户改名会断这些引用(尤其 chain-backend 会让整份配置加载失败)、并提议一并更新**。要用 rename_local_node 改名前先调用它拿准确名字。远程源没有可直接编辑的原始内容，对远程源调用会报错并提示改用 rename-regex 算子。先用 list_node_sources 拿订阅源 id 并确认其 kind。',
   input: z.object({
     id: z.uuid().describe('本地订阅源的 id(先用 list_node_sources 拿，kind 须为 local)'),
   }),
@@ -71,12 +72,23 @@ const listLocalNodes = defineAction({
   async run(_ctx, input) {
     const sub = await mustLocalSub(input.id);
     const proxies = parseLocalProxies(sub.content!);
+    const names = proxies.map((p) => nodeName(p));
+    const refs = await findNodeReferences(names);
+    const byNode = new Map<string, Array<{ kind: string; via: string }>>();
+    for (const r of refs) {
+      const list = byNode.get(r.node) ?? [];
+      list.push({ kind: r.kind, via: r.via });
+      byNode.set(r.node, list);
+    }
     return {
       kind: 'local-nodes',
       data: {
         source: sub.display_name || sub.name,
         count: proxies.length,
-        nodes: proxies.map((p) => ({ name: nodeName(p), type: p.type ?? null })),
+        nodes: proxies.map((p) => {
+          const name = nodeName(p);
+          return { name, type: p.type ?? null, referencedBy: byNode.get(name) ?? [] };
+        }),
       },
     };
   },
