@@ -16,10 +16,6 @@ interface ProxyGroupSummary {
   type: string;
   proxies: string[];
   dialerProxy?: string;
-  includeAllProxies?: boolean;
-  filter?: string;
-  url?: string;
-  interval?: number;
 }
 interface ParsedBase {
   proxies: ProxySummary[];
@@ -51,8 +47,14 @@ interface PoolChainView {
 const DEFAULT_TEST_URL = 'http://www.gstatic.com/generate_204';
 const DEFAULT_INTERVAL = 300;
 
+interface ChainList {
+  fixedChains: FixedChainView[];
+  poolChains: PoolChainView[];
+}
+
 export default function ChainedProxyPage() {
   const [parsed, setParsed] = useState<ParsedBase | null>(null);
+  const [view, setView] = useState<ChainList>({ fixedChains: [], poolChains: [] });
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [addingFixed, setAddingFixed] = useState(false);
@@ -62,8 +64,15 @@ export default function ChainedProxyPage() {
   const reload = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await api<{ data: ParsedBase }>('/api/v1/base/parsed');
-      setParsed(res.data);
+      // Pickers read the resolved config (live node + group names); the chain
+      // list comes from the hash — wraps are realized as cloned proxies at
+      // render time, so the resolved doc can't tell us the backend name.
+      const [parsedRes, chainsRes] = await Promise.all([
+        api<{ data: ParsedBase }>('/api/v1/base/parsed'),
+        api<{ data: ChainList }>('/api/v1/scenarios/chained-proxy'),
+      ]);
+      setParsed(parsedRes.data);
+      setView(chainsRes.data);
       setError(null);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
@@ -75,8 +84,6 @@ export default function ChainedProxyPage() {
   useEffect(() => {
     reload();
   }, [reload]);
-
-  const view = useMemo(() => classify(parsed), [parsed]);
 
   if (loading && !parsed) {
     return <p className={styles.empty}>正在加载 base.yaml…</p>;
@@ -218,48 +225,6 @@ export default function ChainedProxyPage() {
       </section>
     </>
   );
-}
-
-function classify(parsed: ParsedBase | null): {
-  fixedChains: FixedChainView[];
-  poolChains: PoolChainView[];
-} {
-  if (!parsed) return { fixedChains: [], poolChains: [] };
-  const groupByName = new Map(parsed.proxyGroups.map((g) => [g.name, g]));
-  const proxyNames = new Set(parsed.proxies.map((p) => p.name));
-
-  const fixedChains: FixedChainView[] = [];
-  const poolChains: PoolChainView[] = [];
-  for (const g of parsed.proxyGroups) {
-    if (!g.dialerProxy) continue;
-    if (g.proxies.length !== 1) continue;
-    const backend = g.proxies[0];
-    if (proxyNames.has(g.dialerProxy)) {
-      fixedChains.push({ chainName: g.name, front: g.dialerProxy, backend });
-    } else {
-      const pool = groupByName.get(g.dialerProxy);
-      if (pool) {
-        const smart: SmartPoolConfig | undefined = pool.includeAllProxies
-          ? {
-              strategy: pool.type === 'url-test' ? 'url-test' : 'fallback',
-              filter: pool.filter,
-              testUrl: pool.url ?? DEFAULT_TEST_URL,
-              interval: pool.interval ?? DEFAULT_INTERVAL,
-            }
-          : undefined;
-        poolChains.push({
-          chainName: g.name,
-          poolName: pool.name,
-          poolMembers: pool.proxies,
-          backend,
-          smart,
-        });
-      }
-    }
-  }
-  fixedChains.sort((a, b) => a.chainName.localeCompare(b.chainName));
-  poolChains.sort((a, b) => a.chainName.localeCompare(b.chainName));
-  return { fixedChains, poolChains };
 }
 
 async function runOp(op: string, payload: unknown): Promise<void> {

@@ -48,8 +48,10 @@ const EX_SLACK_SECONDS = 60;
  *   1 → +base `rule-set:` refs now emit their rule-providers declaration.
  *   2 → dropped node_prefix (names no longer prefixed) + single-sub groups now
  *       emit `proxies` from member nodes instead of a `^prefix` filter.
+ *   3 → chained-proxy wraps render as cloned `proxies:` entries (dialer-proxy
+ *       isn't honored on a proxy-group); include-all groups now exclude clones.
  */
-const RENDER_CACHE_EPOCH = 2;
+const RENDER_CACHE_EPOCH = 3;
 
 export type RenderCacheStatus = 'hit' | 'miss' | 'bypass';
 

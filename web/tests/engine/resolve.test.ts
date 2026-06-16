@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { parse } from 'yaml';
 import type { Collection, ProxyGroup, ProxyGroupTemplate, Rule, Subscription } from '@/schemas';
 
 /**
@@ -331,6 +332,107 @@ describe('resolveConfig — managed proxy-groups', () => {
     expect(result.content).toContain('name: 香港');
     // Rank order preserved in render output.
     expect(result.content.indexOf('name: 默认')).toBeLessThan(result.content.indexOf('name: 香港'));
+  });
+
+  it('realizes a chained-proxy wrap as a cloned proxies entry, not a proxy-group', async () => {
+    const base = `mixed-port: 7890
+proxies:
+  - name: B
+    type: ss
+    server: b.example.com
+    port: 443
+    cipher: aes-128-gcm
+    password: pw
+  - name: F
+    type: ss
+    server: f.example.com
+    port: 443
+    cipher: aes-128-gcm
+    password: pw
+
+# === PROXY-GROUPS ===
+
+rules:
+  - MATCH,DIRECT
+`;
+    const wrap = makeGroup({
+      name: 'chain:F-to-B',
+      type: 'select',
+      proxies: ['B'],
+      'dialer-proxy': 'F',
+    });
+    const result = await resolveConfig(base, [], [], [wrap], [], {});
+
+    // The wrap is NOT emitted as a proxy-group…
+    expect(result.proxyGroupCount).toBe(0);
+    expect(result.content).not.toContain('proxy-groups:');
+    // …it's a cloned proxies entry carrying dialer-proxy + the backend config.
+    expect(result.content).toContain('name: chain:F-to-B');
+    expect(result.content).toContain('dialer-proxy: F');
+    const cloneIdx = result.content.indexOf('name: chain:F-to-B');
+    const dialerIdx = result.content.indexOf('dialer-proxy: F');
+    const rulesIdx = result.content.indexOf('rules:');
+    // The clone (and its dialer-proxy) live in the proxies block, before rules.
+    expect(dialerIdx).toBeGreaterThan(cloneIdx);
+    expect(dialerIdx).toBeLessThan(rulesIdx);
+  });
+
+  it('excludes the chain clone from a smart front pool (no include-all loop)', async () => {
+    const base = `mixed-port: 7890
+proxies:
+  - name: B
+    type: ss
+    server: b.example.com
+    port: 443
+    cipher: aes-128-gcm
+    password: pw
+
+# === PROXY-GROUPS ===
+
+rules:
+  - MATCH,DIRECT
+`;
+    const pool = makeGroup({
+      name: 'pool:B',
+      kind: 'filter',
+      type: 'fallback',
+      'include-all-proxies': true,
+      filter: 'HK',
+      url: 'http://www.gstatic.com/generate_204',
+      interval: 300,
+      rank: 10,
+    });
+    const wrap = makeGroup({
+      name: 'chain:pool-to-B',
+      type: 'select',
+      proxies: ['B'],
+      'dialer-proxy': 'pool:B',
+      rank: 20,
+    });
+    const result = await resolveConfig(base, [], [], [pool, wrap], [], {});
+
+    const doc = parse(result.content) as {
+      proxies: Array<Record<string, unknown>>;
+      'proxy-groups': Array<Record<string, unknown>>;
+    };
+    // Only the pool renders as a group; the wrap became a cloned proxy.
+    expect(result.proxyGroupCount).toBe(1);
+    const clone = doc.proxies.find((p) => p.name === 'chain:pool-to-B');
+    expect(clone?.['dialer-proxy']).toBe('pool:B');
+    // The pool's exclude-filter drops the clone so include-all can't loop it back.
+    const poolGroup = doc['proxy-groups'].find((g) => g.name === 'pool:B');
+    expect(poolGroup?.['exclude-filter']).toContain('chain:pool-to-B');
+  });
+
+  it('warns and skips a wrap whose backend is not a concrete node', async () => {
+    const wrap = makeGroup({
+      name: 'chain:F-to-ghost',
+      type: 'select',
+      proxies: ['ghost'],
+      'dialer-proxy': '直连',
+    });
+    const result = await resolveConfig(BASE_WITH_MARKER, [], [], [wrap], [], {});
+    expect(result.warnings.some((w) => w.includes('无法克隆'))).toBe(true);
   });
 
   it('renders groups in rank order, ties broken by name', async () => {

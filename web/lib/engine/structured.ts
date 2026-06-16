@@ -25,14 +25,6 @@ export interface ProxyGroupSummary {
   /** Member names in order. */
   proxies: string[];
   dialerProxy?: string;
-  /** Pulls every top-level proxy into the group — marks a "smart" filter pool. */
-  includeAllProxies?: boolean;
-  /** Regex narrowing the resolved member set (region/keyword pool). */
-  filter?: string;
-  /** Health-check probe URL (url-test / fallback). */
-  url?: string;
-  /** Health-check interval in seconds. */
-  interval?: number;
 }
 
 export interface StructuredBase {
@@ -84,19 +76,11 @@ function extractProxyGroups(doc: Document): ProxyGroupSummary[] {
         if (isScalar(m) && typeof m.value === 'string') members.push(m.value);
       }
     }
-    const includeAll = item.get('include-all-proxies', true);
     out.push({
       name,
       type: scalarString(item.get('type', true)) ?? 'unknown',
       proxies: members,
       dialerProxy: scalarString(item.get('dialer-proxy', true)),
-      includeAllProxies:
-        isScalar(includeAll) && typeof includeAll.value === 'boolean'
-          ? includeAll.value
-          : undefined,
-      filter: scalarString(item.get('filter', true)),
-      url: scalarString(item.get('url', true)),
-      interval: scalarNumber(item.get('interval', true)),
     });
   }
   return out;
@@ -105,11 +89,5 @@ function extractProxyGroups(doc: Document): ProxyGroupSummary[] {
 function scalarString(node: unknown): string | undefined {
   if (!node) return undefined;
   if (isScalar(node) && typeof node.value === 'string') return node.value;
-  return undefined;
-}
-
-function scalarNumber(node: unknown): number | undefined {
-  if (!node) return undefined;
-  if (isScalar(node) && typeof node.value === 'number') return node.value;
   return undefined;
 }

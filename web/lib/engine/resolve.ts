@@ -286,6 +286,15 @@ export async function resolveConfig(
     );
   }
 
+  // Realize chained-proxy wraps as cloned `proxies:` entries. A proxy-group
+  // can't carry `dialer-proxy` — mihomo ignores it (Meta-Docs: "proxy-group
+  // 并不直接支持 dialer-proxy"). The *value* may reference a group, but the
+  // field must live on a `proxies:` entry. So for each wrap (single member +
+  // dialer-proxy) we clone the backend node, rename it to the wrap's name and
+  // attach dialer-proxy — yielding a real outbound that dials through the
+  // front. The wrap is then dropped from the proxy-groups block.
+  const chainWrapNames = realizeChainWraps(doc, proxyGroups, warnings);
+
   let expandedContent = doc.toString();
 
   // Apply kind-driven bindings BEFORE rendering. single-sub and
@@ -304,7 +313,13 @@ export async function resolveConfig(
   // `rank` order, each merged underneath its optional template (group wins,
   // template fills gaps). Groups whose `template_id` doesn't resolve still
   // render — their own fields are used as-is and a warning is recorded.
-  const proxyGroupRender = renderProxyGroupsBlock(transformedGroups, templates, warnings);
+  const groupsToRender = transformedGroups.filter((g) => !chainWrapNames.has(g.name));
+  const proxyGroupRender = renderProxyGroupsBlock(
+    groupsToRender,
+    templates,
+    chainWrapNames,
+    warnings,
+  );
   if (PROXY_GROUPS_MARKER.test(expandedContent)) {
     expandedContent = expandedContent.replace(PROXY_GROUPS_MARKER, proxyGroupRender.block);
   } else if (proxyGroups.length > 0) {
@@ -318,6 +333,7 @@ export async function resolveConfig(
   const nodeNames: string[] = [];
   for (const name of baseProxyNames) nodeNames.push(name);
   for (const s of survivors) nodeNames.push(s.name);
+  for (const name of chainWrapNames) nodeNames.push(name);
 
   const collisions = Array.from(collisionMap.values());
 
@@ -475,6 +491,86 @@ export function resolveCollectionMemberSubs(
   return out;
 }
 
+/* ─── chained-proxy realization ─────────────────────────────────────── */
+
+function scalarMapName(map: YAMLMap): string | undefined {
+  const n = map.get('name', true);
+  if (isScalar(n) && typeof n.value === 'string') return n.value;
+  return undefined;
+}
+
+/**
+ * Translate chained-proxy "wrap" groups into cloned `proxies:` entries and
+ * return the set of wrap names so the caller can drop them from the
+ * proxy-groups block.
+ *
+ * A wrap is a managed group with `dialer-proxy` set and exactly one member
+ * (the backend). We deep-clone the backend's proxy node, rename the clone to
+ * the wrap's name and attach `dialer-proxy: <front>`. The front may be a
+ * proxy-group (e.g. a smart pool) — that's allowed as a *value*. Multi-member
+ * groups carrying dialer-proxy can't be cloned cleanly; they're warned about
+ * and left as-is (the field stays a no-op, but at least nothing is dropped).
+ */
+function realizeChainWraps(
+  doc: ReturnType<typeof parseDocument>,
+  groups: ProxyGroup[],
+  warnings: string[],
+): Set<string> {
+  const realized = new Set<string>();
+  const wraps: ProxyGroup[] = [];
+  for (const g of groups) {
+    if (!g['dialer-proxy']) continue;
+    if ((g.proxies?.length ?? 0) === 1) {
+      wraps.push(g);
+    } else {
+      warnings.push(
+        `策略组 "${g.name}" 设了 dialer-proxy 但成员数≠1;mihomo 不支持在策略组上用 dialer-proxy,已忽略。`,
+      );
+    }
+  }
+  if (wraps.length === 0) return realized;
+
+  let seqNode = doc.get('proxies', true);
+  if (!isSeq(seqNode)) {
+    doc.set('proxies', []);
+    seqNode = doc.get('proxies', true);
+  }
+  const proxiesSeq = seqNode as YAMLSeq;
+
+  // name → backing YAML map for every concrete proxy currently in the doc.
+  const nodeByName = new Map<string, YAMLMap>();
+  for (const item of proxiesSeq.items) {
+    if (isMap(item)) {
+      const nm = scalarMapName(item);
+      if (nm) nodeByName.set(nm, item);
+    }
+  }
+  const existingNames = new Set(nodeByName.keys());
+
+  for (const wrap of wraps) {
+    const backend = wrap.proxies![0];
+    const front = wrap['dialer-proxy']!;
+    const backendNode = nodeByName.get(backend);
+    if (!backendNode) {
+      warnings.push(
+        `链式代理 "${wrap.name}" 的后端 "${backend}" 不是具体节点(可能是策略组或当前不存在),无法克隆为出站,已跳过。`,
+      );
+      continue;
+    }
+    if (existingNames.has(wrap.name)) {
+      warnings.push(`链式代理 "${wrap.name}" 与已有节点重名,跳过克隆以免冲突。`);
+      continue;
+    }
+    const clone = backendNode.clone() as YAMLMap;
+    clone.set('name', wrap.name);
+    clone.set('dialer-proxy', front);
+    proxiesSeq.add(clone);
+    existingNames.add(wrap.name);
+    realized.add(wrap.name);
+  }
+  return realized;
+}
+
 /* ─── proxy-group rendering ─────────────────────────────────────────── */
 
 interface ProxyGroupBlockRender {
@@ -494,6 +590,7 @@ interface ProxyGroupBlockRender {
 function renderProxyGroupsBlock(
   groups: ProxyGroup[],
   templates: ProxyGroupTemplate[],
+  chainCloneNames: Set<string>,
   warnings: string[],
 ): ProxyGroupBlockRender {
   if (groups.length === 0) return { block: '', count: 0 };
@@ -524,11 +621,35 @@ function renderProxyGroupsBlock(
         template = tpl;
       }
     }
-    emitted.push(mergeWithTemplate(g, template));
+    const map = mergeWithTemplate(g, template);
+    excludeChainClonesFromIncludeAll(map, chainCloneNames);
+    emitted.push(map);
   }
 
   const block = stringifyYaml({ 'proxy-groups': emitted }).trimEnd();
   return { block, count: emitted.length };
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Chain clones live in `proxies:` (see realizeChainWraps), so any group with
+ * `include-all-proxies` would otherwise pull them in — polluting "all nodes"
+ * pools and, worse, looping a smart front pool back through a chain that dials
+ * *through that pool*. Drop them via `exclude-filter` (anchored, regex-escaped;
+ * combined with any user filter). No-op for groups that don't include-all.
+ */
+function excludeChainClonesFromIncludeAll(
+  group: Record<string, unknown>,
+  cloneNames: Set<string>,
+): void {
+  if (cloneNames.size === 0) return;
+  if (group['include-all-proxies'] !== true && group['include-all'] !== true) return;
+  const ours = [...cloneNames].map((n) => `^${escapeRegExp(n)}$`).join('|');
+  const existing = typeof group['exclude-filter'] === 'string' ? group['exclude-filter'] : '';
+  group['exclude-filter'] = existing ? `(?:${existing})|${ours}` : ours;
 }
 
 /* ─── Helpers ──────────────────────────────────────────────────────── */
