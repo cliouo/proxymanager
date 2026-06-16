@@ -355,6 +355,19 @@
   margin-bottom: 0;
 }
 
+/* new-pool mode switch (smart vs manual) */
+.modeTabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.modeHint {
+  margin: 0 0 16px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
 /* candidate picker (checkbox grid) */
 .picker {
   border: 1px solid var(--border-2);

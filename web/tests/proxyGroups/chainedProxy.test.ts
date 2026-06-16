@@ -143,6 +143,34 @@ describe('chained-proxy summariseChains', () => {
     expect(summary.fixedChains).toEqual([]);
   });
 
+  it('reports a smart pool (include-all-proxies + filter) with its spec', async () => {
+    seed({
+      name: 'pool:B',
+      type: 'fallback',
+      'include-all-proxies': true,
+      filter: '香港|HK',
+      url: 'http://www.gstatic.com/generate_204',
+      interval: 300,
+    });
+    seed({ name: 'chain:pool-to-B', proxies: ['B'], 'dialer-proxy': 'pool:B' });
+    const summary = await scenarioMod.summariseChains();
+    expect(summary.poolChains).toEqual([
+      {
+        poolName: 'pool:B',
+        poolMembers: [],
+        chainName: 'chain:pool-to-B',
+        backend: 'B',
+        smart: {
+          strategy: 'fallback',
+          filter: '香港|HK',
+          testUrl: 'http://www.gstatic.com/generate_204',
+          interval: 300,
+        },
+      },
+    ]);
+    expect(summary.fixedChains).toEqual([]);
+  });
+
   it('does not count a group as a chain wrap when it has multiple proxies', async () => {
     seed({ name: 'multi', proxies: ['A', 'B'], 'dialer-proxy': 'X' });
     const summary = await scenarioMod.summariseChains();
@@ -217,6 +245,65 @@ describe('chained-proxy ops — integration with the proxy-group service', () =>
     expect(names).toEqual(['chain:pool-to-B', 'pool:B']);
     const wrap = groups.find((g) => g.name === 'chain:pool-to-B');
     expect(wrap?.['dialer-proxy']).toBe('pool:B');
+  });
+
+  it('create-smart-pool-chain writes a filter pool + wrap, no pinned node names', async () => {
+    const { chainedProxyScenario } = scenarioMod;
+    const ctx = {
+      actor: 'test',
+      taxonomy: {
+        all: async () => ({}),
+        get: async () => null,
+        set: async () => undefined,
+        delete: async () => false,
+      },
+      base: {} as never,
+      rules: {} as never,
+    };
+    await chainedProxyScenario.ops['create-smart-pool-chain'](ctx, {
+      backend: 'B',
+      strategy: 'fallback',
+      filter: '香港|HK',
+    });
+    const groups = Array.from(bucket('proxy-groups').values()) as ProxyGroup[];
+    const pool = groups.find((g) => g.name === 'pool:B');
+    const wrap = groups.find((g) => g.name === 'chain:pool-to-B');
+    expect(pool?.type).toBe('fallback');
+    expect(pool?.['include-all-proxies']).toBe(true);
+    expect(pool?.filter).toBe('香港|HK');
+    expect(pool?.proxies).toBeUndefined(); // no pinned node names
+    expect(pool?.url).toBe('http://www.gstatic.com/generate_204');
+    expect(wrap?.['dialer-proxy']).toBe('pool:B');
+  });
+
+  it('update-smart-pool swaps strategy + clears the filter when emptied', async () => {
+    const { chainedProxyScenario } = scenarioMod;
+    const ctx = {
+      actor: 'test',
+      taxonomy: {
+        all: async () => ({}),
+        get: async () => null,
+        set: async () => undefined,
+        delete: async () => false,
+      },
+      base: {} as never,
+      rules: {} as never,
+    };
+    await chainedProxyScenario.ops['create-smart-pool-chain'](ctx, {
+      backend: 'B',
+      strategy: 'fallback',
+      filter: '香港|HK',
+    });
+    await chainedProxyScenario.ops['update-smart-pool'](ctx, {
+      poolName: 'pool:B',
+      strategy: 'url-test',
+      // filter omitted → cleared
+    });
+    const groups = Array.from(bucket('proxy-groups').values()) as ProxyGroup[];
+    const pool = groups.find((g) => g.name === 'pool:B');
+    expect(pool?.type).toBe('url-test');
+    expect(pool?.filter).toBeUndefined();
+    expect(pool?.['include-all-proxies']).toBe(true);
   });
 
   it('create-pool-chain rejects backend appearing in fronts', async () => {

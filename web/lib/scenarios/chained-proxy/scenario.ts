@@ -54,6 +54,27 @@ import type {
 
 const NameSchema = z.string().min(1).max(128);
 
+/**
+ * Smart-pool defaults. The probe URL points at a *behind-the-wall* target on
+ * purpose: a front node that can't reach it times out and drops from the
+ * pool, so "passes the wall + fastest" becomes the selection criterion that
+ * Clash evaluates at runtime — no node names are pinned.
+ */
+const DEFAULT_TEST_URL = 'http://www.gstatic.com/generate_204';
+const DEFAULT_INTERVAL = 300;
+
+/** fallback = stick to the first healthy front (stable chain); url-test = always chase the fastest. */
+const PoolStrategySchema = z.enum(['fallback', 'url-test']);
+
+/** The runtime-evaluated spec shared by smart-pool create + update. */
+const SmartPoolSpec = z.object({
+  strategy: PoolStrategySchema.default('fallback'),
+  /** Region/keyword regex matched against live node names; empty = all nodes. */
+  filter: z.string().trim().min(1).max(512).optional(),
+  testUrl: z.string().url().max(512).optional(),
+  interval: z.number().int().positive().max(86400).optional(),
+});
+
 const SetFixedChainPayload = z.object({
   backend: NameSchema,
   front: NameSchema,
@@ -79,6 +100,16 @@ const UpdatePoolMembersPayload = z.object({
   fronts: z.array(NameSchema).min(1).max(64),
 });
 
+const CreateSmartPoolChainPayload = SmartPoolSpec.extend({
+  backend: NameSchema,
+  poolName: NameSchema.optional(),
+  chainName: NameSchema.optional(),
+});
+
+const UpdateSmartPoolPayload = SmartPoolSpec.extend({
+  poolName: NameSchema,
+});
+
 const DeletePoolChainPayload = z.object({
   chainName: NameSchema,
 });
@@ -91,11 +122,22 @@ interface FixedChainSnapshot {
   front: string;
 }
 
+/** Smart-pool config captured for faithful undo of a smart pool. */
+interface SmartPoolSnapshot {
+  strategy: z.infer<typeof PoolStrategySchema>;
+  filter?: string;
+  testUrl: string;
+  interval: number;
+}
+
 interface PoolChainSnapshot {
   poolName: string;
+  /** Manual pools list their members; smart pools leave this empty. */
   poolMembers: string[];
   chainName: string;
   backend: string;
+  /** Present iff the pool is a smart (filter + auto-select) pool. */
+  smart?: SmartPoolSnapshot;
 }
 
 /* ─── Validation helpers ────────────────────────────────────────────── */
@@ -133,6 +175,37 @@ function defaultPoolName(backend: string): string {
 }
 function defaultPoolChainName(backend: string): string {
   return `chain:pool-to-${backend}`;
+}
+
+/* ─── Smart-pool helpers ────────────────────────────────────────────── */
+
+/** Normalise a parsed SmartPoolSpec into the concrete values we persist. */
+function resolveSmartSpec(spec: z.infer<typeof SmartPoolSpec>): SmartPoolSnapshot {
+  return {
+    strategy: spec.strategy,
+    filter: spec.filter,
+    testUrl: spec.testUrl ?? DEFAULT_TEST_URL,
+    interval: spec.interval ?? DEFAULT_INTERVAL,
+  };
+}
+
+/**
+ * Build the proxy-group fields for a smart pool: pull every node in via
+ * `include-all-proxies`, narrow by an optional region/keyword `filter`, and
+ * let the `url-test`/`fallback` type pick a live front at runtime. No node
+ * names are stored, so a subscription refresh can't break the pool.
+ */
+function smartPoolGroupInput(poolName: string, snap: SmartPoolSnapshot) {
+  return {
+    kind: 'filter' as const,
+    name: poolName,
+    type: snap.strategy,
+    'include-all-proxies': true,
+    ...(snap.filter ? { filter: snap.filter } : {}),
+    url: snap.testUrl,
+    interval: snap.interval,
+    notes: 'chained-proxy: smart fronts pool',
+  };
 }
 
 /* ─── Op handlers ───────────────────────────────────────────────────── */
@@ -265,6 +338,89 @@ const updatePoolMembers: OpHandler = async (_ctx, raw) => {
   };
 };
 
+const createSmartPoolChain: OpHandler = async (ctx, raw) => {
+  const p = CreateSmartPoolChainPayload.parse(raw);
+  const poolName = p.poolName ?? defaultPoolName(p.backend);
+  const chainName = p.chainName ?? defaultPoolChainName(p.backend);
+  if (poolName === chainName) {
+    throw ProblemDetailsError.unprocessable('池名与链路名不能相同。');
+  }
+  const smart = resolveSmartSpec(p);
+
+  // Batch-create so name-uniqueness + cycle detection see both groups
+  // together; either both land or neither does.
+  await createProxyGroups([
+    smartPoolGroupInput(poolName, smart),
+    {
+      kind: 'raw',
+      name: chainName,
+      type: 'select',
+      proxies: [p.backend],
+      'dialer-proxy': poolName,
+      notes: 'chained-proxy: pool-chain wrap',
+    },
+  ]);
+
+  await ctx.taxonomy.set(poolName, { kind: 'custom' }).catch(() => undefined);
+  await ctx.taxonomy.set(chainName, { kind: 'custom' }).catch(() => undefined);
+
+  const snap: PoolChainSnapshot = {
+    poolName,
+    poolMembers: [],
+    chainName,
+    backend: p.backend,
+    smart,
+  };
+  return {
+    data: { poolName, chainName, backend: p.backend, smart },
+    // Reuse the pool-chain create/delete action pair so undo/redo flows
+    // through the existing inverses (which now restore smart pools too).
+    events: [
+      {
+        action: 'create-pool-chain',
+        target: { kind: 'proxy-group', name: chainName },
+        after: snap,
+      },
+    ] satisfies AuditEventInput[],
+  };
+};
+
+const updateSmartPool: OpHandler = async (_ctx, raw) => {
+  const { poolName, ...spec } = UpdateSmartPoolPayload.parse(raw);
+  const group = await getProxyGroupByName(poolName);
+  if (!group) {
+    throw ProblemDetailsError.notFound(`proxy-group "${poolName}" not found.`);
+  }
+  const before: SmartPoolSnapshot = {
+    strategy: group.type === 'url-test' ? 'url-test' : 'fallback',
+    filter: group.filter,
+    testUrl: group.url ?? DEFAULT_TEST_URL,
+    interval: group.interval ?? DEFAULT_INTERVAL,
+  };
+  const after = resolveSmartSpec(spec);
+
+  await patchProxyGroup(group.id, {
+    type: after.strategy,
+    'include-all-proxies': true,
+    // `null` clears the field — drop the filter when the pool goes region-less.
+    filter: after.filter ?? null,
+    url: after.testUrl,
+    interval: after.interval,
+  });
+
+  return {
+    data: { poolName, ...after },
+    events: [
+      {
+        action: 'update-smart-pool',
+        target: { kind: 'proxy-group', name: poolName },
+        before,
+        after,
+      },
+    ] satisfies AuditEventInput[],
+  };
+};
+
 const deletePoolChain: OpHandler = async (ctx, raw) => {
   const { chainName } = DeletePoolChainPayload.parse(raw);
   const { backend, front: poolName } = await loadChainWrap(chainName);
@@ -274,6 +430,17 @@ const deletePoolChain: OpHandler = async (ctx, raw) => {
   // trouble, but in practice each chain owns its own pool.
   const poolGroup = await getProxyGroupByName(poolName);
   const poolMembers = poolGroup?.proxies ?? [];
+  // Capture the smart spec (if any) so undo can rebuild a filter pool
+  // faithfully rather than as an empty manual pool.
+  const smart: SmartPoolSnapshot | undefined =
+    poolGroup?.['include-all-proxies'] === true
+      ? {
+          strategy: poolGroup.type === 'url-test' ? 'url-test' : 'fallback',
+          filter: poolGroup.filter,
+          testUrl: poolGroup.url ?? DEFAULT_TEST_URL,
+          interval: poolGroup.interval ?? DEFAULT_INTERVAL,
+        }
+      : undefined;
 
   // Pre-validate together: if either is referenced by something outside the
   // chained-proxy bundle, refuse the whole teardown.
@@ -284,7 +451,7 @@ const deletePoolChain: OpHandler = async (ctx, raw) => {
   // Pool taxonomy is left alone — if the user previously tagged the pool
   // themselves we shouldn't blow that away.
 
-  const snap: PoolChainSnapshot = { poolName, poolMembers, chainName, backend };
+  const snap: PoolChainSnapshot = { poolName, poolMembers, chainName, backend, smart };
   return {
     data: { chainName, poolName, backend },
     events: [
@@ -385,17 +552,52 @@ const inverseUpdatePoolMembers: InverseHandler = async (_ctx, event) => {
   };
 };
 
+const inverseUpdateSmartPool: InverseHandler = async (_ctx, event) => {
+  const before = event.before as SmartPoolSnapshot | undefined;
+  const target = event.target;
+  if (!before || target?.kind !== 'proxy-group') {
+    throw ProblemDetailsError.unprocessable('Missing before-state or target.');
+  }
+  const group = await getProxyGroupByName(target.name);
+  if (!group) {
+    throw ProblemDetailsError.conflict(`Pool "${target.name}" no longer exists.`);
+  }
+  await patchProxyGroup(group.id, {
+    type: before.strategy,
+    'include-all-proxies': true,
+    filter: before.filter ?? null,
+    url: before.testUrl,
+    interval: before.interval,
+  });
+  return {
+    data: null,
+    events: [
+      {
+        action: 'update-smart-pool',
+        target,
+        after: before,
+      },
+    ],
+  };
+};
+
 const inverseDeletePoolChain: InverseHandler = async (ctx, event) => {
   const before = event.before as PoolChainSnapshot | undefined;
   if (!before) throw ProblemDetailsError.unprocessable('Missing before-state.');
+  const poolInput = before.smart
+    ? {
+        ...smartPoolGroupInput(before.poolName, before.smart),
+        notes: 'chained-proxy: smart fronts pool (restored via undo)',
+      }
+    : {
+        kind: 'raw' as const,
+        name: before.poolName,
+        type: 'select' as const,
+        proxies: before.poolMembers,
+        notes: 'chained-proxy: fronts pool (restored via undo)',
+      };
   await createProxyGroups([
-    {
-      kind: 'raw',
-      name: before.poolName,
-      type: 'select',
-      proxies: before.poolMembers,
-      notes: 'chained-proxy: fronts pool (restored via undo)',
-    },
+    poolInput,
     {
       kind: 'raw',
       name: before.chainName,
@@ -434,6 +636,7 @@ export async function summariseChains(): Promise<{
     poolMembers: string[];
     chainName: string;
     backend: string;
+    smart?: SmartPoolSnapshot;
   }[];
 }> {
   const all = await listProxyGroups();
@@ -444,18 +647,32 @@ export async function summariseChains(): Promise<{
     poolMembers: string[];
     chainName: string;
     backend: string;
+    smart?: SmartPoolSnapshot;
   }[] = [];
   for (const g of all) {
     const front = g['dialer-proxy'];
     const members = g.proxies ?? [];
     if (!front || members.length !== 1) continue;
     const pool = byName.get(front);
-    if (pool && (pool.proxies?.length ?? 0) > 0 && !pool['dialer-proxy']) {
+    // A pool is any managed group the wrap points at that isn't itself a
+    // wrap. Manual pools carry `proxies`; smart pools carry
+    // `include-all-proxies` + an optional filter (and so have no members).
+    if (pool && !pool['dialer-proxy']) {
+      const smart: SmartPoolSnapshot | undefined =
+        pool['include-all-proxies'] === true
+          ? {
+              strategy: pool.type === 'url-test' ? 'url-test' : 'fallback',
+              filter: pool.filter,
+              testUrl: pool.url ?? DEFAULT_TEST_URL,
+              interval: pool.interval ?? DEFAULT_INTERVAL,
+            }
+          : undefined;
       poolChains.push({
         poolName: pool.name,
         poolMembers: pool.proxies ?? [],
         chainName: g.name,
         backend: members[0],
+        smart,
       });
     } else {
       fixedChains.push({ chainName: g.name, backend: members[0], front });
@@ -478,7 +695,9 @@ export const chainedProxyScenario: Scenario = {
     'set-fixed-chain': setFixedChain,
     'clear-chain': clearChain,
     'create-pool-chain': createPoolChain,
+    'create-smart-pool-chain': createSmartPoolChain,
     'update-pool-members': updatePoolMembers,
+    'update-smart-pool': updateSmartPool,
     'delete-pool-chain': deletePoolChain,
   },
   inverses: {
@@ -486,6 +705,7 @@ export const chainedProxyScenario: Scenario = {
     'clear-chain': inverseClearChain,
     'create-pool-chain': inverseCreatePoolChain,
     'update-pool-members': inverseUpdatePoolMembers,
+    'update-smart-pool': inverseUpdateSmartPool,
     'delete-pool-chain': inverseDeletePoolChain,
   },
 };

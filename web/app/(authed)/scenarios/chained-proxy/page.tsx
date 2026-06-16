@@ -16,11 +16,22 @@ interface ProxyGroupSummary {
   type: string;
   proxies: string[];
   dialerProxy?: string;
+  includeAllProxies?: boolean;
+  filter?: string;
+  url?: string;
+  interval?: number;
 }
 interface ParsedBase {
   proxies: ProxySummary[];
   proxyGroups: ProxyGroupSummary[];
   etag: string;
+}
+
+interface SmartPoolConfig {
+  strategy: 'fallback' | 'url-test';
+  filter?: string;
+  testUrl: string;
+  interval: number;
 }
 
 interface FixedChainView {
@@ -33,7 +44,12 @@ interface PoolChainView {
   poolName: string;
   poolMembers: string[];
   backend: string;
+  /** Present iff the pool is a smart (filter + auto-select) pool. */
+  smart?: SmartPoolConfig;
 }
+
+const DEFAULT_TEST_URL = 'http://www.gstatic.com/generate_204';
+const DEFAULT_INTERVAL = 300;
 
 export default function ChainedProxyPage() {
   const [parsed, setParsed] = useState<ParsedBase | null>(null);
@@ -168,19 +184,15 @@ export default function ChainedProxyPage() {
 
         {addingPool && (
           <div className={styles.formPanel}>
-            <PoolChainForm
+            <PoolCreatePanel
               proxies={parsed.proxies}
               groups={parsed.proxyGroups}
-              onSubmit={async (backend, fronts, poolName, chainName) => {
-                try {
-                  await runOp('create-pool-chain', { backend, fronts, poolName, chainName });
-                  setAddingPool(false);
-                  await reload();
-                } catch (err) {
-                  setError(err instanceof ApiError ? err.message : String(err));
-                }
+              onDone={async () => {
+                setAddingPool(false);
+                await reload();
               }}
               onCancel={() => setAddingPool(false)}
+              onError={setError}
             />
           </div>
         )}
@@ -227,11 +239,20 @@ function classify(parsed: ParsedBase | null): {
     } else {
       const pool = groupByName.get(g.dialerProxy);
       if (pool) {
+        const smart: SmartPoolConfig | undefined = pool.includeAllProxies
+          ? {
+              strategy: pool.type === 'url-test' ? 'url-test' : 'fallback',
+              filter: pool.filter,
+              testUrl: pool.url ?? DEFAULT_TEST_URL,
+              interval: pool.interval ?? DEFAULT_INTERVAL,
+            }
+          : undefined;
         poolChains.push({
           chainName: g.name,
           poolName: pool.name,
           poolMembers: pool.proxies,
           backend,
+          smart,
         });
       }
     }
@@ -417,49 +438,109 @@ function PoolFlow({
         <GhostStation glyph="◎" name="目标站点" role="看到落地出口 IP" />
       </div>
 
-      <div className={styles.candsLabel}>前置池成员 · 由 {pool.poolName} 组运行时择优</div>
-      <div className={styles.cands}>
-        {pool.poolMembers.length === 0 ? (
-          <span className={styles.cand}>
-            <i className={styles.dot} />
-            （空池）
-          </span>
-        ) : (
-          pool.poolMembers.map((m) => (
-            <span key={m} className={`${styles.cand} ${styles.candActive}`}>
+      {pool.smart ? (
+        <>
+          <div className={styles.candsLabel}>
+            智能前置池 · 由 {pool.poolName} 组运行时按健康检查自动择优
+          </div>
+          <div className={styles.cands}>
+            <span className={`${styles.cand} ${styles.candActive}`}>
               <i className={styles.dot} />
-              {m}
+              {pool.smart.strategy === 'fallback' ? 'fallback · 粘住可用' : 'url-test · 追最快'}
             </span>
-          ))
+            <span className={`${styles.cand} ${styles.candActive}`}>
+              <i className={styles.dot} />
+              {pool.smart.filter ? `筛选 /${pool.smart.filter}/` : '全部节点（无筛选）'}
+            </span>
+            <span className={styles.cand}>
+              <i className={styles.dot} />
+              探测 {pool.smart.interval}s
+            </span>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className={styles.candsLabel}>前置池成员 · 由 {pool.poolName} 组运行时择优</div>
+          <div className={styles.cands}>
+            {pool.poolMembers.length === 0 ? (
+              <span className={styles.cand}>
+                <i className={styles.dot} />
+                （空池）
+              </span>
+            ) : (
+              pool.poolMembers.map((m) => (
+                <span key={m} className={`${styles.cand} ${styles.candActive}`}>
+                  <i className={styles.dot} />
+                  {m}
+                </span>
+              ))
+            )}
+          </div>
+        </>
+      )}
+
+      <div className={styles.flowMeta}>
+        {pool.smart ? (
+          <>
+            生成策略组 <code className="mono">{pool.chainName}</code> · 前置池{' '}
+            <code className="mono">{pool.poolName}</code> 用{' '}
+            <code className="mono">include-all-proxies</code>
+            {pool.smart.filter ? (
+              <>
+                {' '}
+                + <code className="mono">filter</code>
+              </>
+            ) : null}{' '}
+            动态纳入节点，订阅更新后自动重新匹配；落地出口固定为{' '}
+            <code className="mono">{pool.backend}</code>。
+          </>
+        ) : (
+          <>
+            生成策略组 <code className="mono">{pool.chainName}</code> · 前置由{' '}
+            <code className="mono">{pool.poolName}</code> 组按其组规则在池内切换，落地出口固定为{' '}
+            <code className="mono">{pool.backend}</code>。
+          </>
         )}
       </div>
 
-      <div className={styles.flowMeta}>
-        生成策略组 <code className="mono">{pool.chainName}</code> · 前置由{' '}
-        <code className="mono">{pool.poolName}</code> 组按其组规则在池内切换，落地出口固定为{' '}
-        <code className="mono">{pool.backend}</code>。
-      </div>
-
-      {editing && (
-        <div className={styles.editZone}>
-          <PoolChainForm
-            proxies={proxies}
-            groups={groups}
-            initial={{ poolName: pool.poolName, members: pool.poolMembers }}
-            onSubmit={async (_b, fronts) => {
-              try {
-                await runOp('update-pool-members', { poolName: pool.poolName, fronts });
-                onEdit(false);
-                onChanged();
-                onError(null);
-              } catch (err) {
-                onError(err instanceof ApiError ? err.message : String(err));
-              }
-            }}
-            onCancel={() => onEdit(false)}
-          />
-        </div>
-      )}
+      {editing &&
+        (pool.smart ? (
+          <div className={styles.editZone}>
+            <SmartPoolForm
+              initial={pool.smart}
+              onSubmit={async (cfg) => {
+                try {
+                  await runOp('update-smart-pool', { poolName: pool.poolName, ...cfg });
+                  onEdit(false);
+                  onChanged();
+                  onError(null);
+                } catch (err) {
+                  onError(err instanceof ApiError ? err.message : String(err));
+                }
+              }}
+              onCancel={() => onEdit(false)}
+            />
+          </div>
+        ) : (
+          <div className={styles.editZone}>
+            <PoolChainForm
+              proxies={proxies}
+              groups={groups}
+              initial={{ poolName: pool.poolName, members: pool.poolMembers }}
+              onSubmit={async (_b, fronts) => {
+                try {
+                  await runOp('update-pool-members', { poolName: pool.poolName, fronts });
+                  onEdit(false);
+                  onChanged();
+                  onError(null);
+                } catch (err) {
+                  onError(err instanceof ApiError ? err.message : String(err));
+                }
+              }}
+              onCancel={() => onEdit(false)}
+            />
+          </div>
+        ))}
     </div>
   );
 }
@@ -697,6 +778,252 @@ function PoolChainForm({
           disabled={pending || selected.size === 0 || (!initial && !backend)}
         >
           {pending ? '…' : initial ? '保存成员' : '创建池'}
+        </button>
+        {onCancel && (
+          <button className="btn ghost" type="button" onClick={onCancel}>
+            取消
+          </button>
+        )}
+      </div>
+    </form>
+  );
+}
+
+/**
+ * New-pool panel — pick between a smart pool (region/keyword filter + runtime
+ * auto-select, resilient to subscription refreshes) and a manual pool (pinned
+ * member names). Smart is the default and recommended path.
+ */
+function PoolCreatePanel({
+  proxies,
+  groups,
+  onDone,
+  onCancel,
+  onError,
+}: {
+  proxies: ProxySummary[];
+  groups: ProxyGroupSummary[];
+  onDone: () => Promise<void> | void;
+  onCancel: () => void;
+  onError: (s: string | null) => void;
+}) {
+  const [mode, setMode] = useState<'smart' | 'manual'>('smart');
+
+  return (
+    <div>
+      <div className={styles.modeTabs}>
+        <button
+          type="button"
+          className={`btn sm ${mode === 'smart' ? 'primary' : 'ghost'}`}
+          onClick={() => setMode('smart')}
+        >
+          智能池 · 地区/筛选 + 自动择优
+        </button>
+        <button
+          type="button"
+          className={`btn sm ${mode === 'manual' ? 'primary' : 'ghost'}`}
+          onClick={() => setMode('manual')}
+        >
+          手选池 · 逐个挑节点
+        </button>
+      </div>
+      <p className={styles.modeHint}>
+        {mode === 'smart'
+          ? '按地区/关键字正则动态纳入节点，Clash 用健康检查自动选「能过墙且快」的前置；订阅更新后自动重新匹配，不会因节点改名 / 下线而失效。推荐。'
+          : '从当前节点里逐个勾选固定成员。直观，但成员名写死——订阅更新改名或下线后需手动维护。'}
+      </p>
+
+      {mode === 'smart' ? (
+        <SmartPoolForm
+          proxies={proxies}
+          onSubmit={async (out) => {
+            try {
+              await runOp('create-smart-pool-chain', out);
+              onError(null);
+              await onDone();
+            } catch (err) {
+              onError(err instanceof ApiError ? err.message : String(err));
+            }
+          }}
+          onCancel={onCancel}
+        />
+      ) : (
+        <PoolChainForm
+          proxies={proxies}
+          groups={groups}
+          onSubmit={async (backend, fronts, poolName, chainName) => {
+            try {
+              await runOp('create-pool-chain', { backend, fronts, poolName, chainName });
+              onError(null);
+              await onDone();
+            } catch (err) {
+              onError(err instanceof ApiError ? err.message : String(err));
+            }
+          }}
+          onCancel={onCancel}
+        />
+      )}
+    </div>
+  );
+}
+
+interface SmartPoolSubmit {
+  backend?: string;
+  poolName?: string;
+  chainName?: string;
+  strategy: 'fallback' | 'url-test';
+  filter?: string;
+  testUrl: string;
+  interval: number;
+}
+
+/**
+ * Smart-pool config form. `proxies` present → create mode (also collects the
+ * backend + names); otherwise edit mode (config only). Emits a flat payload
+ * the caller maps to `create-smart-pool-chain` / `update-smart-pool`.
+ */
+function SmartPoolForm({
+  proxies,
+  initial,
+  onSubmit,
+  onCancel,
+}: {
+  proxies?: ProxySummary[];
+  initial?: SmartPoolConfig;
+  onSubmit: (out: SmartPoolSubmit) => Promise<void>;
+  onCancel?: () => void;
+}) {
+  const isCreate = !!proxies;
+  const [backend, setBackend] = useState('');
+  const [poolName, setPoolName] = useState('');
+  const [chainName, setChainName] = useState('');
+  const [strategy, setStrategy] = useState<'fallback' | 'url-test'>(initial?.strategy ?? 'fallback');
+  const [filter, setFilter] = useState(initial?.filter ?? '');
+  const [showAdv, setShowAdv] = useState(false);
+  const [testUrl, setTestUrl] = useState(initial?.testUrl ?? DEFAULT_TEST_URL);
+  const [intervalSec, setIntervalSec] = useState(String(initial?.interval ?? DEFAULT_INTERVAL));
+  const [pending, setPending] = useState(false);
+
+  const proxyNames = useMemo(
+    () => (proxies ?? []).map((p) => p.name).sort((a, b) => a.localeCompare(b)),
+    [proxies],
+  );
+
+  return (
+    <form
+      onSubmit={async (e) => {
+        e.preventDefault();
+        if (isCreate && !backend) return;
+        const iv = Number.parseInt(intervalSec, 10);
+        const out: SmartPoolSubmit = {
+          strategy,
+          filter: filter.trim() || undefined,
+          testUrl: testUrl.trim() || DEFAULT_TEST_URL,
+          interval: Number.isFinite(iv) && iv > 0 ? iv : DEFAULT_INTERVAL,
+        };
+        if (isCreate) {
+          out.backend = backend;
+          out.poolName = poolName.trim() || undefined;
+          out.chainName = chainName.trim() || undefined;
+        }
+        setPending(true);
+        try {
+          await onSubmit(out);
+        } finally {
+          setPending(false);
+        }
+      }}
+    >
+      {isCreate && (
+        <div className={styles.formGrid3} style={{ marginBottom: 16 }}>
+          <Field label="后端（出口）" tight>
+            <select
+              className="input mono"
+              value={backend}
+              onChange={(e) => setBackend(e.target.value)}
+              required
+            >
+              <option value="">— 选择后端 —</option>
+              {proxyNames.map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="池名（可选）" tight>
+            <input
+              className="input mono"
+              value={poolName}
+              onChange={(e) => setPoolName(e.target.value)}
+              placeholder={backend ? `pool:${backend}` : '自动命名'}
+            />
+          </Field>
+          <Field label="链路名（可选）" tight>
+            <input
+              className="input mono"
+              value={chainName}
+              onChange={(e) => setChainName(e.target.value)}
+              placeholder={backend ? `chain:pool-to-${backend}` : '自动命名'}
+            />
+          </Field>
+        </div>
+      )}
+
+      <div className={styles.formGrid} style={{ marginBottom: 12 }}>
+        <Field label="选择策略" tight>
+          <select
+            className="input mono"
+            value={strategy}
+            onChange={(e) => setStrategy(e.target.value as 'fallback' | 'url-test')}
+          >
+            <option value="fallback">fallback · 选第一个可用,挂了才切(链路更稳,推荐)</option>
+            <option value="url-test">url-test · 永远追最快(切换更频繁)</option>
+          </select>
+        </Field>
+        <Field label="地区 / 关键字筛选 · 正则,可空" tight>
+          <input
+            className="input mono"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder="香港|HK|🇭🇰 · 留空=全部节点"
+          />
+        </Field>
+      </div>
+
+      <button
+        type="button"
+        className="btn sm ghost"
+        onClick={() => setShowAdv((v) => !v)}
+        style={{ marginBottom: showAdv ? 12 : 0 }}
+      >
+        {showAdv ? '收起高级' : '高级 · 探测地址 / 间隔'}
+      </button>
+      {showAdv && (
+        <div className={styles.formGrid} style={{ marginBottom: 12 }}>
+          <Field label="健康检查地址 · 用墙外目标" tight>
+            <input
+              className="input mono"
+              value={testUrl}
+              onChange={(e) => setTestUrl(e.target.value)}
+              placeholder={DEFAULT_TEST_URL}
+            />
+          </Field>
+          <Field label="探测间隔（秒）" tight>
+            <input
+              className="input mono"
+              type="number"
+              min={1}
+              value={intervalSec}
+              onChange={(e) => setIntervalSec(e.target.value)}
+            />
+          </Field>
+        </div>
+      )}
+
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button className="btn primary" type="submit" disabled={pending || (isCreate && !backend)}>
+          {pending ? '…' : isCreate ? '创建智能池' : '保存'}
         </button>
         {onCancel && (
           <button className="btn ghost" type="button" onClick={onCancel}>
