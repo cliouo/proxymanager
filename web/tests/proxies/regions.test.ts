@@ -46,6 +46,15 @@ describe('detectRegion', () => {
     expect(detectRegion('imm_GBR 01')).toBe('GB');
     expect(detectRegion('imm_USA 01')).toBe('US');
   });
+  it('matches the newer regions (alpha-2 and alpha-3)', () => {
+    expect(detectRegion('imm_DNK 01')).toBe('DK');
+    expect(detectRegion('imm_ISL 01')).toBe('IS');
+    expect(detectRegion('imm_POL 01')).toBe('PL');
+    expect(detectRegion('shouhou_AE01')).toBe('AE');
+    expect(detectRegion('shouhou_NG01')).toBe('NG');
+    expect(detectRegion('shouhou_PAK01')).toBe('PK');
+    expect(detectRegion('shouhou_UKR01')).toBe('UA');
+  });
   it('does not let an alpha-2 code false-match inside an alpha-3 token', () => {
     // "HKG" must resolve via HKG (HK), not be missed because HK is bounded out.
     expect(detectRegion('HKG-backup')).toBe('HK');

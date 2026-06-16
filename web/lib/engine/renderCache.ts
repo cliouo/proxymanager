@@ -59,8 +59,10 @@ const EX_SLACK_SECONDS = 60;
  *   6 → region detection (flag-emoji #4 / region-filter #9 / sort #6) now also
  *       recognizes alpha-3 codes (HKG/SGP/JPN…), so a flag-emoji add can flag
  *       nodes named with 3-letter codes that previously got none.
+ *   7 → region table gained DK/IS/PL/AE/NG/PK/UA (Denmark/Iceland/Poland/UAE/
+ *       Nigeria/Pakistan/Ukraine), so flag-emoji now flags those too.
  */
-const RENDER_CACHE_EPOCH = 6;
+const RENDER_CACHE_EPOCH = 7;
 
 export type RenderCacheStatus = 'hit' | 'miss' | 'bypass';
 

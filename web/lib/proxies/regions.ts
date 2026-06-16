@@ -253,6 +253,55 @@ export const REGIONS: Region[] = [
     zh: '中国',
     patterns: [/中国|中國|回国|回國|北京|上海|广州|深圳/i, /China|Beijing|Shanghai/i, code2('CN')],
   },
+  {
+    code: 'DK',
+    alpha3: 'DNK',
+    emoji: '🇩🇰',
+    zh: '丹麦',
+    patterns: [/丹麦|丹麥|哥本哈根/i, /Denmark|Copenhagen/i, code2('DK')],
+  },
+  {
+    code: 'IS',
+    alpha3: 'ISL',
+    emoji: '🇮🇸',
+    zh: '冰岛',
+    patterns: [/冰岛|冰島|雷克雅未克/i, /Iceland|Reykjavik/i, code2('IS')],
+  },
+  {
+    code: 'PL',
+    alpha3: 'POL',
+    emoji: '🇵🇱',
+    zh: '波兰',
+    patterns: [/波兰|波蘭|华沙|華沙/i, /Poland|Warsaw/i, code2('PL')],
+  },
+  {
+    code: 'AE',
+    alpha3: 'ARE',
+    emoji: '🇦🇪',
+    zh: '阿联酋',
+    patterns: [/阿联酋|阿聯酋|迪拜|杜拜|阿布扎比/i, /United\s?Arab|Dubai|Abu\s?Dhabi/i, code2('AE')],
+  },
+  {
+    code: 'NG',
+    alpha3: 'NGA',
+    emoji: '🇳🇬',
+    zh: '尼日利亚',
+    patterns: [/尼日利亚|尼日利亞|拉各斯/i, /Nigeria|Lagos/i, code2('NG')],
+  },
+  {
+    code: 'PK',
+    alpha3: 'PAK',
+    emoji: '🇵🇰',
+    zh: '巴基斯坦',
+    patterns: [/巴基斯坦|卡拉奇|伊斯兰堡/i, /Pakistan|Karachi|Islamabad/i, code2('PK')],
+  },
+  {
+    code: 'UA',
+    alpha3: 'UKR',
+    emoji: '🇺🇦',
+    zh: '乌克兰',
+    patterns: [/乌克兰|烏克蘭|基辅|基輔/i, /Ukraine|Kyiv|Kiev/i, code2('UA')],
+  },
 ];
 
 // Append a bounded alpha-3 matcher to every region. Done as a post-step (rather
