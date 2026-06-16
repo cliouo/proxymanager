@@ -50,8 +50,10 @@ const EX_SLACK_SECONDS = 60;
  *       emit `proxies` from member nodes instead of a `^prefix` filter.
  *   3 → chained-proxy wraps render as cloned `proxies:` entries (dialer-proxy
  *       isn't honored on a proxy-group); include-all groups now exclude clones.
+ *   4 → chain clone now also covers subscription-injected backends (plain
+ *       objects), not just base.yaml literals.
  */
-const RENDER_CACHE_EPOCH = 3;
+const RENDER_CACHE_EPOCH = 4;
 
 export type RenderCacheStatus = 'hit' | 'miss' | 'bypass';
 

@@ -424,6 +424,42 @@ rules:
     expect(poolGroup?.['exclude-filter']).toContain('chain:pool-to-B');
   });
 
+  it('clones a wrap whose backend is a subscription-injected node (plain object)', async () => {
+    resolveSubMock.mockResolvedValueOnce({
+      proxies: providerProxies([{ name: 'US-Frontier', server: 'us.example' }]),
+      proxyCount: 1,
+    });
+    const wrap = makeGroup({
+      name: 'chain:pool-to-US-Frontier',
+      type: 'select',
+      proxies: ['US-Frontier'], // injected node, not a base literal
+      'dialer-proxy': 'pool:US',
+    });
+    const result = await resolveConfig(
+      BASE_WITH_MARKER,
+      [],
+      [makeSub({ name: 'a' })],
+      [wrap],
+      [],
+      {},
+    );
+
+    const doc = parse(result.content) as {
+      proxies: Array<Record<string, unknown>>;
+      'proxy-groups'?: Array<Record<string, unknown>>;
+    };
+    const clone = doc.proxies.find((p) => p.name === 'chain:pool-to-US-Frontier');
+    // The injected backend was cloned into proxies with its config + dialer-proxy…
+    expect(clone).toBeTruthy();
+    expect(clone?.['dialer-proxy']).toBe('pool:US');
+    expect(clone?.server).toBe('us.example');
+    // …and is NOT left behind as a proxy-group.
+    const asGroup = (doc['proxy-groups'] ?? []).find(
+      (g) => g.name === 'chain:pool-to-US-Frontier',
+    );
+    expect(asGroup).toBeFalsy();
+  });
+
   it('warns and skips a wrap whose backend is not a concrete node', async () => {
     const wrap = makeGroup({
       name: 'chain:F-to-ghost',

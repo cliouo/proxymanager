@@ -493,9 +493,20 @@ export function resolveCollectionMemberSubs(
 
 /* ─── chained-proxy realization ─────────────────────────────────────── */
 
-function scalarMapName(map: YAMLMap): string | undefined {
-  const n = map.get('name', true);
-  if (isScalar(n) && typeof n.value === 'string') return n.value;
+/**
+ * Read a proxy entry's `name`, whether it's a parsed `YAMLMap` (base.yaml
+ * literals) or a plain JS object (subscription-injected nodes appended via
+ * appendProxies — these are NOT yaml Nodes, so `isMap` is false for them).
+ */
+function proxyEntryName(item: unknown): string | undefined {
+  if (isMap(item)) {
+    const n = item.get('name', true);
+    return isScalar(n) && typeof n.value === 'string' ? n.value : undefined;
+  }
+  if (item && typeof item === 'object' && !Array.isArray(item)) {
+    const n = (item as { name?: unknown }).name;
+    if (typeof n === 'string') return n;
+  }
   return undefined;
 }
 
@@ -537,13 +548,12 @@ function realizeChainWraps(
   }
   const proxiesSeq = seqNode as YAMLSeq;
 
-  // name → backing YAML map for every concrete proxy currently in the doc.
-  const nodeByName = new Map<string, YAMLMap>();
+  // name → backing entry for every concrete proxy currently in the doc.
+  // Entries are either YAMLMap (base literals) or plain objects (injected).
+  const nodeByName = new Map<string, unknown>();
   for (const item of proxiesSeq.items) {
-    if (isMap(item)) {
-      const nm = scalarMapName(item);
-      if (nm) nodeByName.set(nm, item);
-    }
+    const nm = proxyEntryName(item);
+    if (nm) nodeByName.set(nm, item);
   }
   const existingNames = new Set(nodeByName.keys());
 
@@ -551,7 +561,7 @@ function realizeChainWraps(
     const backend = wrap.proxies![0];
     const front = wrap['dialer-proxy']!;
     const backendNode = nodeByName.get(backend);
-    if (!backendNode) {
+    if (backendNode === undefined) {
       warnings.push(
         `链式代理 "${wrap.name}" 的后端 "${backend}" 不是具体节点(可能是策略组或当前不存在),无法克隆为出站,已跳过。`,
       );
@@ -561,9 +571,21 @@ function realizeChainWraps(
       warnings.push(`链式代理 "${wrap.name}" 与已有节点重名,跳过克隆以免冲突。`);
       continue;
     }
-    const clone = backendNode.clone() as YAMLMap;
-    clone.set('name', wrap.name);
-    clone.set('dialer-proxy', front);
+    // Clone the backend, override name + attach dialer-proxy. Handle both a
+    // parsed YAMLMap and a plain injected object.
+    let clone: unknown;
+    if (isMap(backendNode)) {
+      const m = backendNode.clone() as YAMLMap;
+      m.set('name', wrap.name);
+      m.set('dialer-proxy', front);
+      clone = m;
+    } else {
+      clone = {
+        ...(backendNode as Record<string, unknown>),
+        name: wrap.name,
+        'dialer-proxy': front,
+      };
+    }
     proxiesSeq.add(clone);
     existingNames.add(wrap.name);
     realized.add(wrap.name);
