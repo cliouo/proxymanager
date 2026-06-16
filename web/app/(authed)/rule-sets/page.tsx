@@ -24,6 +24,8 @@ interface RuleSet {
   proxy?: string;
   note?: string;
   updated_at: number;
+  /** 被 base 结构直接引用(如 DNS `rule-set:` 策略)——非 RULE-SET 规则,但确实下发。 */
+  referenced_in_base?: boolean;
 }
 
 interface Meta {
@@ -98,7 +100,10 @@ export default function RuleSetsPage() {
   }, [reload]);
 
   const selected = useMemo(() => sets.find((s) => s.id === selectedId) ?? null, [sets, selectedId]);
-  const usedCount = useMemo(() => sets.filter((s) => (usage[s.name] ?? 0) > 0).length, [sets, usage]);
+  const usedCount = useMemo(
+    () => sets.filter((s) => (usage[s.name] ?? 0) > 0 || s.referenced_in_base).length,
+    [sets, usage],
+  );
 
   // 列表只回 meta；本地托管的编辑器需要 content——选中时按 id 拉详情。
   // `selected` 在每次 reload 后是新对象,保存成功后这里会自动重拉到最新内容。
@@ -229,6 +234,7 @@ export default function RuleSetsPage() {
             ) : (
               filtered.map((s) => {
                 const used = usage[s.name] ?? 0;
+                const inBase = s.referenced_in_base ?? false;
                 return (
                   <button
                     key={s.id}
@@ -241,10 +247,10 @@ export default function RuleSetsPage() {
                     <b>
                       {s.name}
                       <span
-                        className={`pill ${used > 0 ? 'ai' : 'warn'} plain`}
+                        className={`pill ${used > 0 || inBase ? 'ai' : 'warn'} plain`}
                         style={{ marginLeft: 'auto' }}
                       >
-                        {used > 0 ? `被 ${used} 引用` : '未被使用'}
+                        {used > 0 ? `被 ${used} 引用` : inBase ? 'base 引用' : '未被使用'}
                       </span>
                     </b>
                     <span>
@@ -277,6 +283,7 @@ export default function RuleSetsPage() {
                   key={selected.id}
                   set={detail}
                   usedBy={usage[selected.name] ?? 0}
+                  referencedInBase={selected.referenced_in_base ?? false}
                   providerUrl={meta ? `${meta.ruleProvidersBase}/${selected.name}` : ''}
                   onSaved={() => reload(selected.name)}
                   onDelete={() => onDelete(selected.id)}
@@ -295,6 +302,7 @@ export default function RuleSetsPage() {
                 key={selected.id}
                 set={selected}
                 usedBy={usage[selected.name] ?? 0}
+                referencedInBase={selected.referenced_in_base ?? false}
                 onSaved={() => reload(selected.name)}
                 onDelete={() => onDelete(selected.id)}
                 onError={setError}
@@ -319,6 +327,7 @@ export default function RuleSetsPage() {
 function LocalDetail({
   set,
   usedBy,
+  referencedInBase,
   providerUrl,
   onSaved,
   onDelete,
@@ -326,6 +335,7 @@ function LocalDetail({
 }: {
   set: RuleSet;
   usedBy: number;
+  referencedInBase: boolean;
   providerUrl: string;
   onSaved: () => Promise<void> | void;
   onDelete: () => void;
@@ -397,8 +407,11 @@ function LocalDetail({
           </div>
           <div className="cell">
             <div className="k">被规则引用</div>
-            <div className="v" style={{ color: usedBy > 0 ? 'var(--accent)' : 'var(--faint)' }}>
-              {usedBy} 条
+            <div
+              className="v"
+              style={{ color: usedBy > 0 || referencedInBase ? 'var(--accent)' : 'var(--faint)' }}
+            >
+              {usedBy > 0 ? `${usedBy} 条` : referencedInBase ? 'base 结构' : '0 条'}
             </div>
           </div>
           <div className="cell">
@@ -460,7 +473,9 @@ function LocalDetail({
         <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 14 }}>
           {usedBy > 0
             ? '已被规则引用，注入 rule-providers 并对外下发。'
-            : '未被规则引用 · 留库不下发（到「规则」页加 RULE-SET 规则启用）。'}
+            : referencedInBase
+              ? '被 base 结构直接引用（如 DNS rule-set: 策略），已注入 rule-providers 下发。'
+              : '未被规则引用 · 留库不下发（到「规则」页加 RULE-SET 规则启用）。'}
           {behavior === 'domain' && (
             <span style={{ color: 'var(--faint)' }}> behavior=domain 时每行一个域名，性能优于 classical。</span>
           )}
@@ -477,12 +492,14 @@ function LocalDetail({
 function RemoteDetail({
   set,
   usedBy,
+  referencedInBase,
   onSaved,
   onDelete,
   onError,
 }: {
   set: RuleSet;
   usedBy: number;
+  referencedInBase: boolean;
   onSaved: () => Promise<void> | void;
   onDelete: () => void;
   onError: (m: string) => void;
@@ -575,8 +592,11 @@ function RemoteDetail({
           </div>
           <div className="cell">
             <div className="k">被规则引用</div>
-            <div className="v" style={{ color: usedBy > 0 ? 'var(--accent)' : 'var(--faint)' }}>
-              {usedBy} 条
+            <div
+              className="v"
+              style={{ color: usedBy > 0 || referencedInBase ? 'var(--accent)' : 'var(--faint)' }}
+            >
+              {usedBy > 0 ? `${usedBy} 条` : referencedInBase ? 'base 结构' : '0 条'}
             </div>
           </div>
           <div className="cell">
