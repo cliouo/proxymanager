@@ -56,8 +56,11 @@ const EX_SLACK_SECONDS = 60;
  *       pruned instead of emitted as a group referencing a non-existent node;
  *       references to it (group members / rules) are scrubbed so the config
  *       still loads.
+ *   6 → region detection (flag-emoji #4 / region-filter #9 / sort #6) now also
+ *       recognizes alpha-3 codes (HKG/SGP/JPN…), so a flag-emoji add can flag
+ *       nodes named with 3-letter codes that previously got none.
  */
-const RENDER_CACHE_EPOCH = 5;
+const RENDER_CACHE_EPOCH = 6;
 
 export type RenderCacheStatus = 'hit' | 'miss' | 'bypass';
 
