@@ -295,7 +295,6 @@ function ManualPickBox(props: MemberComposerProps) {
                 type="button"
                 onClick={() => remove(name)}
                 className="x"
-                style={{ background: 'none', cursor: 'pointer' }}
                 aria-label={`移除 ${name}`}
               >
                 ×

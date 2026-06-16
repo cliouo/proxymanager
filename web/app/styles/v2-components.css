@@ -335,6 +335,86 @@ code,
   display: none;
 }
 
+/* ── member chips — composer manual picks + the add-member picker ──
+   kinds tint via the --chip var: node = accent, builtin = accent mono,
+   group = ai/purple. `.in` = selected/present (filled), `.dead` = unavailable. */
+.mem {
+  --chip: var(--fg-2);
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 4px 4px 4px 11px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--chip);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--border-2);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    box-shadow 0.14s var(--ease),
+    background 0.14s var(--ease);
+}
+.mem:not(.dead):hover {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--chip) 55%, var(--border-2));
+}
+.mem.builtin {
+  --chip: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.01em;
+}
+.mem.group {
+  --chip: var(--ai);
+}
+.mem.in {
+  --chip: var(--accent);
+  color: var(--chip);
+  background: color-mix(in srgb, var(--chip) 13%, var(--surface));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--chip) 40%, transparent);
+  font-weight: 550;
+}
+.mem.in.builtin {
+  --chip: var(--accent);
+}
+.mem.in.group {
+  --chip: var(--ai);
+}
+.mem.dead {
+  --chip: var(--faint);
+  cursor: not-allowed;
+  text-decoration: line-through;
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+/* inline remove (chip) / close (picker) button */
+.x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  font-size: 13px;
+  line-height: 1;
+  color: inherit;
+  opacity: 0.55;
+  background: transparent;
+  cursor: pointer;
+  transition:
+    opacity 0.12s,
+    background 0.12s,
+    color 0.12s;
+}
+.x:hover {
+  opacity: 1;
+  color: var(--danger);
+  background: var(--danger-dim);
+}
+
 .tag {
   display: inline-block;
   padding: 1px 7px;
