@@ -118,6 +118,25 @@ function seed(over: Partial<ProxyGroup>): ProxyGroup {
   return g;
 }
 
+describe('frontPoolGroupNames', () => {
+  it('flags a group that is the dialer-proxy target of another group', async () => {
+    const { frontPoolGroupNames } = await import('@/schemas');
+    const pools = frontPoolGroupNames([
+      { name: 'pool:B', 'dialer-proxy': undefined },
+      { name: 'chain:pool-to-B', 'dialer-proxy': 'pool:B' },
+      { name: '香港', 'dialer-proxy': undefined },
+    ]);
+    expect([...pools]).toEqual(['pool:B']);
+  });
+
+  it('ignores dialer-proxy values that are not group names (raw proxy fronts)', async () => {
+    const { frontPoolGroupNames } = await import('@/schemas');
+    // Fixed chain front "F" is a raw proxy, not a managed group → not a pool.
+    const pools = frontPoolGroupNames([{ name: 'chain:F-to-B', 'dialer-proxy': 'F' }]);
+    expect(pools.size).toBe(0);
+  });
+});
+
 describe('chained-proxy summariseChains', () => {
   it('reports a fixed chain when wrap.dialer-proxy points at a name with no pool body', async () => {
     seed({ name: 'chain:F-to-B', proxies: ['B'], 'dialer-proxy': 'F' });

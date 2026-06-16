@@ -331,9 +331,10 @@ function FixedFlow({
       </div>
 
       <div className={styles.flowMeta}>
-        生成策略组 <code className="mono">{chain.chainName}</code> · 出口{' '}
-        <code className="mono">{chain.backend}</code> 写入{' '}
-        <code className="mono">dialer-proxy: {chain.front}</code>。
+        生成可路由节点 <code className="mono">{chain.chainName}</code>(克隆出口{' '}
+        <code className="mono">{chain.backend}</code> 并套上前置{' '}
+        <code className="mono">{chain.front}</code>)。<b>在规则或策略组里选它</b>，流量才会走这条链
+        —— 要选 <code className="mono">{chain.chainName}</code>，别直接选前置。
       </div>
     </div>
   );
@@ -447,7 +448,7 @@ function PoolFlow({
       <div className={styles.flowMeta}>
         {pool.smart ? (
           <>
-            生成策略组 <code className="mono">{pool.chainName}</code> · 前置池{' '}
+            可路由节点 <code className="mono">{pool.chainName}</code> · 前置池{' '}
             <code className="mono">{pool.poolName}</code> 用{' '}
             <code className="mono">include-all-proxies</code>
             {pool.smart.filter ? (
@@ -461,11 +462,13 @@ function PoolFlow({
           </>
         ) : (
           <>
-            生成策略组 <code className="mono">{pool.chainName}</code> · 前置由{' '}
+            可路由节点 <code className="mono">{pool.chainName}</code> · 前置由{' '}
             <code className="mono">{pool.poolName}</code> 组按其组规则在池内切换，落地出口固定为{' '}
             <code className="mono">{pool.backend}</code>。
           </>
-        )}
+        )}{' '}
+        <b>在规则或策略组里选 <code className="mono">{pool.chainName}</code></b> 才会用到这条链
+        ——别选前置池 <code className="mono">{pool.poolName}</code>（那只走前置、不经后端）。
       </div>
 
       {editing &&

@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import type { ProxyGroup } from '@/schemas';
+import { type ProxyGroup, frontPoolGroupNames } from '@/schemas';
 import { BUILTINS, REGIONS, type SubscriptionLite } from '../_lib/model';
 import {
   buildGroupGraph,
@@ -355,9 +355,16 @@ function MemberPicker({
   const sel = useMemo(() => new Set(selected), [selected]);
 
   const graph = useMemo(() => buildGroupGraph(groups), [groups]);
+  // Front pools (groups used as a chained-proxy dialer-proxy) are internal
+  // plumbing — don't offer them as members. Keep any that are already selected
+  // so the user can still see + remove them here.
+  const pools = useMemo(() => frontPoolGroupNames(groups), [groups]);
   const otherGroups = useMemo(
-    () => groups.filter((g) => g.name !== selfName).map((g) => g.name),
-    [groups, selfName],
+    () =>
+      groups
+        .filter((g) => g.name !== selfName && (!pools.has(g.name) || sel.has(g.name)))
+        .map((g) => g.name),
+    [groups, selfName, pools, sel],
   );
   const { buckets, unfiled } = useMemo(
     () => groupNodesBySub(nodeNames, subs, nodesBySub),

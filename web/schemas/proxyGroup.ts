@@ -315,6 +315,26 @@ export const ProxyGroupTemplateUpdateSchema = z.object({
 export type ProxyGroupTemplateCreate = z.infer<typeof ProxyGroupTemplateCreateSchema>;
 export type ProxyGroupTemplateUpdate = z.infer<typeof ProxyGroupTemplateUpdateSchema>;
 
+/**
+ * Names of proxy-groups that serve purely as a chained-proxy *front pool* — a
+ * group that some other group points at via `dialer-proxy`. These are internal
+ * plumbing (a chain dials *through* them; routing traffic straight at one only
+ * reaches the front, not the backend), so they should not be offered as rule
+ * policies or as members of other groups. Detection is structural
+ * (rename-proof), not by the `pool:` name convention.
+ */
+export function frontPoolGroupNames(
+  groups: Array<{ name: string; 'dialer-proxy'?: string | null }>,
+): Set<string> {
+  const groupNames = new Set(groups.map((g) => g.name));
+  const pools = new Set<string>();
+  for (const g of groups) {
+    const dp = g['dialer-proxy'];
+    if (dp && groupNames.has(dp)) pools.add(dp);
+  }
+  return pools;
+}
+
 /* ─── Render-time merge ──────────────────────────────────────────────── */
 
 /**
