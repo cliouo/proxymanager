@@ -411,6 +411,27 @@ export function normaliseToClashProviderYaml(text: string): { yaml: string; prox
 }
 
 /**
+ * Parse a local subscription's `content` into its proxy objects, accepting
+ * the same shapes as the resolver (Clash `proxies:` YAML / URI list / base64).
+ * Degenerate non-object entries are dropped. Used by the assistant's
+ * local-node tools to list + rename source nodes; the editor re-serialises the
+ * result back through {@link serialiseLocalProxies}, normalising the stored
+ * content to a `proxies:` YAML block (fields preserved, formatting may change).
+ */
+export function parseLocalProxies(content: string): Record<string, unknown>[] {
+  const { proxies } = normaliseToClashProxies(content);
+  return proxies.filter(
+    (p): p is Record<string, unknown> =>
+      !!p && typeof p === 'object' && !Array.isArray(p),
+  );
+}
+
+/** Serialise proxy objects back into local-subscription content (provider YAML). */
+export function serialiseLocalProxies(proxies: Record<string, unknown>[]): string {
+  return stringify({ proxies }, { lineWidth: 0 });
+}
+
+/**
  * Object-level normaliser: same recognition rules as
  * {@link normaliseToClashProviderYaml} but stops at the parsed proxy list —
  * no stringify. The returned list is the *raw* parsed array (entries not
