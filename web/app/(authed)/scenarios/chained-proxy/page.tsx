@@ -168,7 +168,7 @@ export default function ChainedProxyPage() {
 
         {view.fixedChains.length === 0 ? (
           <p className={styles.empty}>
-            暂无固定链路 — 一条固定链路只将一个前置节点 → 一个后端节点封装到一个 group。
+            暂无固定链路 — 一条固定链路把一个后端出口包成 group(proxies),再经一个固定前置入口(dialer-proxy)出站;前置可选节点或策略组。
           </p>
         ) : (
           view.fixedChains.map((c) => (
