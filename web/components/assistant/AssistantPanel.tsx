@@ -12,6 +12,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import type { ChatMessage } from '@/lib/ai/deepseek';
+import { api } from '@/lib/client/api';
 import { AssistantNotConfiguredError, runAgentTurn } from '@/lib/client/assistantAgent';
 import { loadAssistantConfig } from '@/lib/client/assistant-config';
 import { useAssistant } from './AssistantContext';
@@ -151,6 +152,9 @@ export function AssistantPanel() {
   // The raw model transcript (system prompt excluded) the agent continues from.
   // Owned by the browser now; persisted alongside the rendered messages.
   const [convo, setConvo] = useState<ChatMessage[]>([]);
+  // Index of the message whose pending confirm-write cards are being bulk-approved
+  // ("全部同意"), or null. Only one bulk run at a time.
+  const [bulkBusy, setBulkBusy] = useState<number | null>(null);
 
   useEffect(() => {
     const p = loadPersisted();
@@ -195,6 +199,40 @@ export function AssistantPanel() {
         return { role: 'assistant', blocks };
       }),
     );
+  }
+
+  /**
+   * Approve every still-pending confirm-write card in one message ("全部同意").
+   * Tokens are spent sequentially in card order — operator writes against one
+   * source are order-dependent (a reorder/update assumes prior adds landed), so
+   * we must not fire them concurrently. A card that fails is left pending so the
+   * user can inspect / retry it individually; the rest still go through.
+   */
+  async function approveAll(blocks: AssistantBlock[], mIndex: number) {
+    if (bulkBusy !== null) return;
+    const pending = blocks.filter(
+      (b): b is Extract<AssistantBlock, { type: 'tool' }> =>
+        b.type === 'tool' && b.kind === 'confirm-write',
+    );
+    if (pending.length === 0) return;
+    setBulkBusy(mIndex);
+    try {
+      for (const b of pending) {
+        const token = (b.data as { token?: string } | undefined)?.token;
+        if (!token) continue;
+        try {
+          const res = await api<{ data: { kind: string; data: unknown } }>(
+            '/api/v1/assistant/confirm',
+            { method: 'POST', body: { token }, headers: { 'X-Source': 'ai_chat' } },
+          );
+          resolveConfirm(b.id, { status: 'executed', result: res.data });
+        } catch {
+          // Leave this card pending — its own 批准并执行 surfaces the real error.
+        }
+      }
+    } finally {
+      setBulkBusy(null);
+    }
   }
 
   /** Persist that a write-result block was undone, so a refresh keeps 已撤销. */
@@ -451,6 +489,30 @@ export function AssistantPanel() {
                     }
                     return <Markdown key={j} content={b.content} />;
                   })}
+                  {(() => {
+                    const pending = m.blocks.filter(
+                      (b) => b.type === 'tool' && b.kind === 'confirm-write',
+                    ).length;
+                    const isLast = i === messages.length - 1;
+                    // Only once ≥2 cards await AND the turn finished streaming for
+                    // the active message (so all cards have arrived first).
+                    if (pending < 2 || (isLast && busy)) return null;
+                    const running = bulkBusy === i;
+                    return (
+                      <div className="mt-2 flex items-center gap-2">
+                        <button
+                          onClick={() => void approveAll(m.blocks, i)}
+                          disabled={running || bulkBusy !== null}
+                          className="h-8 rounded-lg bg-[var(--color-primary)] px-3 text-[13px] font-medium text-[var(--color-on-primary)] transition-colors hover:bg-[var(--color-primary-hover)] disabled:opacity-40"
+                        >
+                          {running ? '全部执行中…' : `全部同意（${pending}）`}
+                        </button>
+                        <span className="text-[12px] text-[var(--color-muted)]">
+                          一次批准本条消息内待确认的全部写操作
+                        </span>
+                      </div>
+                    );
+                  })()}
                 </div>
               ),
             )}
