@@ -184,6 +184,17 @@ export async function renderProfileConfig(
   if (!base) {
     throw (opts.missingBaseError ?? defaultMissingBaseError)();
   }
+  // Profile existence guard. The engine renders any profile by name (via
+  // boundSource below), so the only thing that should 404 is a name with no
+  // record. `default` is exempt: pre-init it has no record yet but must still
+  // render (legacy "every enabled sub"). This lives on the miss path on
+  // purpose — a cache *hit* already proves a valid prior render under the
+  // current config:version, and deleting a profile bumps that version (see
+  // profilesRepo), so a stale hit for a deleted profile can't survive. Keeping
+  // it off the hit path preserves the single-MGET fast path for polling clients.
+  if (profileName !== 'default' && !profileRecord) {
+    throw ProblemDetailsError.notFound(`Profile "${profileName}" 不存在。`);
+  }
 
   const resolved = await resolveConfig(base.content, rules, subscriptions, proxyGroups, templates, {
     providers,

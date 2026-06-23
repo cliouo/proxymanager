@@ -210,3 +210,21 @@ describe('renderProfileConfig — uninitialised base', () => {
     ).rejects.toMatchObject({ problem: { status: 422 } });
   });
 });
+
+describe('renderProfileConfig — profile existence guard', () => {
+  // getProfileByName is mocked to null for the whole file, so any non-default
+  // name has "no record" → must 404 instead of silently rendering all subs.
+  it('404s a non-default name with no profile record', async () => {
+    await expect(
+      mod.renderProfileConfig('does-not-exist', { providerUrlBase: URL_BASE }),
+    ).rejects.toMatchObject({ problem: { status: 404 } });
+    // The unknown name must not have written a cache entry.
+    expect(setCalls).toHaveLength(0);
+  });
+
+  it('still renders `default` even with no profile record (pre-init fallback)', async () => {
+    const out = await mod.renderProfileConfig('default', { providerUrlBase: URL_BASE });
+    expect(out.cache).toBe('miss');
+    expect(out.resolved.content).toBe(RESOLVED.content);
+  });
+});

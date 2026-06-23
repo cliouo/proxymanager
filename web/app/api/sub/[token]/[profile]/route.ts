@@ -2,7 +2,6 @@ import { requireSubToken } from '@/lib/auth';
 import { renderProfileConfig } from '@/lib/engine/renderCache';
 import { etagMatches } from '@/lib/http/etag';
 import { withProblemDetails } from '@/lib/http/handler';
-import { ProblemDetailsError } from '@/lib/http/problem';
 
 export const dynamic = 'force-dynamic';
 
@@ -12,12 +11,8 @@ export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
   const { token, profile } = await ctx.params;
   requireSubToken(token);
 
-  if (profile !== 'default') {
-    throw ProblemDetailsError.notFound(
-      `Profile "${profile}" not configured. Only "default" is supported in MVP.`,
-    );
-  }
-
+  // Any profile is distributable by name — renderProfileConfig binds its
+  // source and 404s an unknown name (see lib/engine/renderCache).
   const url = new URL(request.url);
   const noCache = url.searchParams.get('noCache') === '1';
   // Data loading + resolveConfig now live behind the render cache — when

@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useId, useMemo, useState } from 'react';
 import { ApiError, api } from '@/lib/client/api';
 import { PageTopbar } from '@/components/PageChrome';
+import { useToast } from '@/components/ui/Toast';
 import styles from '../profiles.module.css';
 
 type ProfileSource =
@@ -31,6 +32,8 @@ interface CollectionLite {
 }
 
 const DEFAULT_PROFILE_NAME = 'default';
+// 不带前缀 —— 真实令牌(SUB_TOKEN)没有固定形状,掩码不该暗示长度/前缀。
+const TOKEN_MASK = '••••••••';
 
 function slugFor(name: string): string {
   return `${name || 'untitled'}.yaml`;
@@ -41,11 +44,14 @@ export default function ProfileDetailPage() {
   const params = useParams<{ id: string }>();
   const id = params.id;
   const fid = useId();
+  const toast = useToast();
 
   const [profile, setProfile] = useState<Profile | null>(null);
   const [subs, setSubs] = useState<SubscriptionLite[]>([]);
   const [collections, setCollections] = useState<CollectionLite[]>([]);
   const [total, setTotal] = useState(0);
+  const [subBase, setSubBase] = useState<string | null>(null);
+  const [revealToken, setRevealToken] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -70,16 +76,19 @@ export default function ProfileDetailPage() {
   const reload = useCallback(async () => {
     setError(null);
     try {
-      const [p, s, c, list] = await Promise.all([
+      const [p, s, c, list, meta] = await Promise.all([
         api<{ data: Profile }>(`/api/v1/profiles/${id}`),
         api<{ data: SubscriptionLite[] }>('/api/v1/subscriptions'),
         api<{ data: CollectionLite[] }>('/api/v1/collections'),
         api<{ meta: { total: number } }>('/api/v1/profiles'),
+        // 分发链接前缀 `{origin}/api/sub/{token}`;拿不到不挡页面,链接面板降级。
+        api<{ data: { subBase: string } }>('/api/v1/meta').catch(() => null),
       ]);
       hydrate(p.data);
       setSubs(s.data);
       setCollections(c.data);
       setTotal(list.meta.total);
+      setSubBase(meta?.data.subBase ?? null);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : '加载失败');
     } finally {
@@ -106,6 +115,28 @@ export default function ProfileDetailPage() {
       return true;
     return false;
   }, [profile, name, notes, sourceKind, sourceId]);
+
+  // 订阅链接基于**已保存**的名称(下发路径用它),不是编辑框里的草稿名。
+  const { subRealUrl, subShownUrl } = useMemo(() => {
+    if (!profile) return { subRealUrl: '', subShownUrl: '' };
+    const path = `/${encodeURIComponent(profile.name)}`;
+    if (!subBase) return { subRealUrl: '', subShownUrl: `…/api/sub/${TOKEN_MASK}${path}` };
+    const real = `${subBase}${path}`;
+    if (revealToken) return { subRealUrl: real, subShownUrl: real };
+    // subBase 形如 {origin}/api/sub/{token} —— 掩掉最后一段令牌,不在页面明文常驻。
+    const cut = subBase.lastIndexOf('/');
+    return { subRealUrl: real, subShownUrl: `${subBase.slice(0, cut)}/${TOKEN_MASK}${path}` };
+  }, [profile, subBase, revealToken]);
+
+  const copySubUrl = useCallback(async () => {
+    if (!subRealUrl) return;
+    try {
+      await navigator.clipboard.writeText(subRealUrl);
+      toast('已复制订阅链接 · 可直接在客户端导入这份配置文件');
+    } catch {
+      toast('复制失败 · 请点「显示」后手动选取');
+    }
+  }, [subRealUrl, toast]);
 
   const save = useCallback(async () => {
     setSaveMsg(null);
@@ -356,6 +387,73 @@ export default function ProfileDetailPage() {
                   想用多个机场，请先在
                   <Link href="/subscriptions"> 资源库 </Link>
                   建一个聚合订阅再绑定它。
+                </span>
+              </div>
+            </div>
+          </section>
+
+          {/* 订阅链接 —— 把这份配置文件拿去别的客户端用 */}
+          <section className="panel">
+            <div className="panel-head">
+              <h2>订阅链接</h2>
+              <div className={styles.grow} />
+              {profile && (
+                <Link className="btn ghost sm" href={`/api/v1/preview/${encodeURIComponent(profile.name)}`} target="_blank">
+                  预览生成的配置
+                </Link>
+              )}
+            </div>
+            <div className="panel-body">
+              <div className="field" style={{ marginBottom: 0 }}>
+                <label>
+                  这份配置文件的下发地址{' '}
+                  <span style={{ color: 'var(--faint)', fontWeight: 400 }}>
+                    · 在 mihomo / Clash 客户端里当订阅导入
+                  </span>
+                </label>
+                <div className="dist-url">
+                  <code>{subShownUrl}</code>
+                  <button
+                    type="button"
+                    className="urlbtn"
+                    onClick={() => setRevealToken((v) => !v)}
+                    title="显示 / 隐藏令牌"
+                  >
+                    {revealToken ? '隐藏' : '显示'}
+                  </button>
+                </div>
+                <div className="dist-acts" style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                  <button
+                    type="button"
+                    className="btn primary sm"
+                    onClick={copySubUrl}
+                    disabled={!subRealUrl}
+                  >
+                    复制链接
+                  </button>
+                  <button
+                    type="button"
+                    className="btn sm"
+                    onClick={() => subRealUrl && window.open(subRealUrl, '_blank', 'noopener')}
+                    disabled={!subRealUrl}
+                  >
+                    打开
+                  </button>
+                </div>
+              </div>
+              <div className={styles.srcNote} style={{ marginTop: 14 }}>
+                <span className="g">⇲</span>
+                <span>
+                  链接里含访问令牌(平台级 <span className="mono">SUB_TOKEN</span>
+                  ,与其它配置文件共用),属秘钥 —— 默认掩码,点「显示」再查看 / 复制。
+                  {name.trim() !== profile?.name && (
+                    <>
+                      {' '}
+                      <b style={{ color: 'var(--warn)' }}>
+                        链接用的是已保存的名称「{profile?.name}」;改名后需保存才会生效。
+                      </b>
+                    </>
+                  )}
                 </span>
               </div>
             </div>

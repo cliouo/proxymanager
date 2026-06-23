@@ -7,10 +7,12 @@ import { api } from '@/lib/client/api';
  * 配置文件（profile）上下文 —— 侧边栏切换器与 topbar scope 标签共享同一份数据，
  * 避免两处各拉一次 `/api/v1/profiles`。
  *
- * 诚实边界(DESIGN §7「不画假数据」)：引擎当前只渲染名为 `default` 的配置文件
- * (`/api/v1/preview/[profile]` 对非 default 直接 404)，**没有真正的「切换生效配置文件」**。
- * 因此 `current` 取名为 `default` 的记录(否则取第一条)，仅作为「当前生效」的展示锚点；
- * 切换器把其余 profile 记录链接到各自的设置页(/profiles/[id])做管理,不伪造「一键切换全局」。
+ * 诚实边界(DESIGN §7「不画假数据」)：每份配置文件现在都能按名字独立渲染 / 分发
+ * (`/api/v1/preview/{name}`、`/api/sub/{token}/{name}` —— 见各份配置文件设置页的
+ * 「订阅链接」面板)。`default` 的特殊之处只剩两点：它是 app 内总览 / 最终配置页
+ * 与裸 `/api/sub/{token}` 跳转所锚定的那一份。因此 `current` 取名为 `default` 的记录
+ * (否则取第一条)仅作展示锚点；**没有「全局一键切换生效配置文件」这种状态**——切换器
+ * 把每份配置文件链接到各自的设置页(/profiles/[id]),要用哪份就复制哪份的订阅链接。
  */
 
 export type ProfileSource =

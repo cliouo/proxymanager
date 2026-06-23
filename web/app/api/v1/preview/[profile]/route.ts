@@ -1,6 +1,5 @@
 import { renderProfileConfig } from '@/lib/engine/renderCache';
 import { withProblemDetails } from '@/lib/http/handler';
-import { ProblemDetailsError } from '@/lib/http/problem';
 
 export const dynamic = 'force-dynamic';
 
@@ -8,12 +7,8 @@ type Ctx = RouteContext<'/api/v1/preview/[profile]'>;
 
 export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
   const { profile } = await ctx.params;
-  if (profile !== 'default') {
-    throw ProblemDetailsError.notFound(
-      `Profile "${profile}" not configured. Only "default" is supported in MVP.`,
-    );
-  }
-
+  // Any profile renders by name — renderProfileConfig binds its source and
+  // 404s an unknown name (see lib/engine/renderCache).
   const origin = new URL(request.url).origin;
   const token = process.env.SUB_TOKEN;
   // Data loading + resolveConfig now live behind the render cache — when
