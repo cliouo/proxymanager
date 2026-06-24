@@ -7,13 +7,30 @@ import { api } from '@/lib/client/api';
  * 配置文件（profile）上下文 —— 侧边栏切换器与 topbar scope 标签共享同一份数据，
  * 避免两处各拉一次 `/api/v1/profiles`。
  *
- * 诚实边界(DESIGN §7「不画假数据」)：每份配置文件现在都能按名字独立渲染 / 分发
- * (`/api/v1/preview/{name}`、`/api/sub/{token}/{name}` —— 见各份配置文件设置页的
- * 「订阅链接」面板)。`default` 的特殊之处只剩两点：它是 app 内总览 / 最终配置页
- * 与裸 `/api/sub/{token}` 跳转所锚定的那一份。因此 `current` 取名为 `default` 的记录
- * (否则取第一条)仅作展示锚点；**没有「全局一键切换生效配置文件」这种状态**——切换器
- * 把每份配置文件链接到各自的设置页(/profiles/[id]),要用哪份就复制哪份的订阅链接。
+ * Phase 2：每份配置文件**自带** base / 策略组 / 规则（按 id 独立存储）。本上下文
+ * 多了一个「正在编辑的配置文件」(`activeProfile`)：切换器选中后写入 `pm.active_profile`
+ * cookie，服务端的编辑接口(`/base`、`/proxy-groups`、`/rules`、衍生的 `/anchors`、
+ * `/policies`、场景 ops 等，见 lib/profileScope)据此 cookie 自动作用到该配置文件。
+ * 切换会重载页面，让所有按作用域取数的请求带上新 cookie 重新拉取。
+ *
+ * `current`（名为 `default` 者，否则第一条）仍是 app 内总览/裸 `/api/sub/{token}` 跳转
+ * 锚定的那一份；它不一定等于 `activeProfile`。
  */
+
+/** Cookie the server reads to scope editing routes — keep in sync with lib/profileScope. */
+const ACTIVE_PROFILE_COOKIE = 'pm.active_profile';
+
+function readActiveCookie(): string | null {
+  if (typeof document === 'undefined') return null;
+  for (const part of document.cookie.split(';')) {
+    const eq = part.indexOf('=');
+    if (eq === -1) continue;
+    if (part.slice(0, eq).trim() === ACTIVE_PROFILE_COOKIE) {
+      return decodeURIComponent(part.slice(eq + 1).trim());
+    }
+  }
+  return null;
+}
 
 export type ProfileSource =
   | { type: 'none' }
@@ -31,8 +48,12 @@ export interface Profile {
 
 interface ProfilesValue {
   profiles: Profile[];
-  /** 当前生效的配置文件(名为 default 者,否则第一条),无记录时为 null。 */
+  /** 总览/裸订阅链接锚定的配置文件(名为 default 者,否则第一条),无记录时为 null。 */
   current: Profile | null;
+  /** 正在编辑的配置文件 —— /base、/proxy-groups、/rules 等作用于它。回退到 current。 */
+  activeProfile: Profile | null;
+  /** 切换正在编辑的配置文件:写 cookie 并重载页面以按新作用域重新取数。 */
+  setActiveProfile: (name: string) => void;
   loaded: boolean;
   reload: () => Promise<void>;
 }
@@ -85,9 +106,28 @@ export function ProfilesProvider({ children }: { children: React.ReactNode }) {
     [profiles],
   );
 
+  // Active editing profile, mirrored from the `pm.active_profile` cookie. Read
+  // in an effect (not during render) to avoid a hydration mismatch.
+  const [activeName, setActiveName] = useState<string | null>(null);
+  useEffect(() => {
+    setActiveName(readActiveCookie());
+  }, []);
+
+  const activeProfile = useMemo(
+    () => (activeName ? (profiles.find((p) => p.name === activeName) ?? current) : current),
+    [activeName, profiles, current],
+  );
+
+  const setActiveProfile = useCallback((name: string) => {
+    // Persist for the server (resolveScopeProfile) and reload so every
+    // scope-reading fetch re-runs under the new cookie.
+    document.cookie = `${ACTIVE_PROFILE_COOKIE}=${encodeURIComponent(name)}; path=/; max-age=31536000; SameSite=Lax`;
+    window.location.reload();
+  }, []);
+
   const value = useMemo<ProfilesValue>(
-    () => ({ profiles, current, loaded, reload }),
-    [profiles, current, loaded, reload],
+    () => ({ profiles, current, activeProfile, setActiveProfile, loaded, reload }),
+    [profiles, current, activeProfile, setActiveProfile, loaded, reload],
   );
 
   return <ProfilesContext.Provider value={value}>{children}</ProfilesContext.Provider>;

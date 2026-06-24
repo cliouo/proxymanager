@@ -37,7 +37,7 @@ const set: OpHandler = async (ctx, raw) => {
   let before: unknown;
   await ctx.base.withDocument(async (doc) => {
     before = setValueAt(doc, segs, jsValue).before;
-    await validateReferences(doc);
+    await validateReferences(ctx.profileId, doc);
   });
   return {
     data: { path, applied: true },
@@ -54,7 +54,7 @@ const del: OpHandler = async (ctx, raw) => {
   let before: unknown;
   await ctx.base.withDocument(async (doc) => {
     before = deleteValueAt(doc, segs).before;
-    await validateReferences(doc);
+    await validateReferences(ctx.profileId, doc);
   });
   return {
     data: { path, deleted: true },
@@ -72,7 +72,7 @@ const inverseSet: InverseHandler = async (ctx, event) => {
     } else {
       setValueAt(doc, segs, event.before); // restore prior value
     }
-    await validateReferences(doc);
+    await validateReferences(ctx.profileId, doc);
   });
   return {
     data: { path },
@@ -96,7 +96,7 @@ const inverseDelete: InverseHandler = async (ctx, event) => {
   assertEditablePath(segs);
   await ctx.base.withDocument(async (doc) => {
     setValueAt(doc, segs, event.before);
-    await validateReferences(doc);
+    await validateReferences(ctx.profileId, doc);
   });
   return {
     data: { path },

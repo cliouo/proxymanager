@@ -1,11 +1,13 @@
 import { withProblemDetails } from '@/lib/http/handler';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { getBase } from '@/lib/repos/baseRepo';
+import { resolveScopeProfile } from '@/lib/profileScope';
 
 export const dynamic = 'force-dynamic';
 
-export const GET = withProblemDetails(async () => {
-  const base = await getBase();
+export const GET = withProblemDetails(async (request: Request) => {
+  const { id: profileId } = await resolveScopeProfile(request);
+  const base = await getBase(profileId);
   if (!base) {
     throw ProblemDetailsError.notFound('Base config has not been initialized yet.');
   }

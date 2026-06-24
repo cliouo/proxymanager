@@ -1900,6 +1900,70 @@ textarea.input {
   color: var(--faint);
   flex: none;
 }
+/* Profile rows: a pick-button (switches active editing profile) + a gear link
+   (goes to that profile's settings). */
+.profile-pop .pp-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.profile-pop .pp-row .pp-pick {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  padding: 8px 8px;
+  border-radius: var(--r-sm);
+  color: var(--fg-2);
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+}
+.profile-pop .pp-row .pp-pick:hover {
+  background: var(--surface-3);
+  color: var(--fg);
+}
+.profile-pop .pp-row .pp-pick .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--faint);
+}
+.profile-pop .pp-row .pp-pick .nm {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.profile-pop .pp-row .pp-pick .tail {
+  font: 10px var(--font-mono);
+  color: var(--faint);
+  flex: none;
+}
+.profile-pop .pp-row.on .pp-pick {
+  color: var(--accent);
+}
+.profile-pop .pp-row.on .pp-pick .dot {
+  background: var(--accent);
+}
+.profile-pop .pp-row .pp-gear {
+  flex: none;
+  padding: 6px 8px;
+  border-radius: var(--r-sm);
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 13px;
+}
+.profile-pop .pp-row .pp-gear:hover {
+  background: var(--surface-3);
+  color: var(--fg);
+}
 .profile-pop .pp-sep {
   height: 1px;
   background: var(--border);

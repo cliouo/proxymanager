@@ -58,7 +58,8 @@ vi.mock('@/lib/repos/resolvedRepo', () => ({
 
 let registry: typeof import('@/lib/ai/actions/registry');
 
-const ctx = { actor: 'test' };
+const PID = 'prof-test';
+const ctx = { actor: 'test', profileId: PID };
 const LOCAL_ID = '33333333-3333-4333-8333-333333333333';
 const REMOTE_ID = '44444444-4444-4444-8444-444444444444';
 
@@ -159,7 +160,7 @@ describe('list_local_nodes', () => {
   it('annotates a node with referencedBy when a chain backend pins it', async () => {
     seedLocal();
     // A chain wrap whose single backend member is the local node below.
-    bucket(REDIS_KEYS.proxyGroups).set('w', {
+    bucket(REDIS_KEYS.proxyGroups(PID)).set('w', {
       id: '99999999-9999-4999-8999-999999999999',
       kind: 'raw',
       name: 'chain:F-to-xiagangbgp-hk-disx',

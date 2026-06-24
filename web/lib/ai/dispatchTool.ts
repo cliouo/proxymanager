@@ -39,6 +39,7 @@ export async function dispatchToolCall(
         actor: ctx.actor,
         action: action.name,
         input: parsed,
+        profileId: ctx.profileId,
       });
       const data = { action: action.name, summary: action.summary(parsed), diff, token, expiresAt };
       return { kind: 'confirm-write', data, modelContent: WRITE_PENDING_MODEL_CONTENT };

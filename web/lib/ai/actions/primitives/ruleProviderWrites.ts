@@ -61,8 +61,8 @@ const listRuleProviders = defineAction({
     '列出规则集库（rule-providers）的全部条目：name(被 RULE-SET 规则引用的值)/source(local 托管 或 remote 外部URL)/format/behavior/url/interval/enabled，以及每个被多少条 RULE-SET 规则引用(referenced)。回答"有哪些规则集""某规则集被谁引用""改规则集前拿 id"时调用。',
   input: z.object({}),
   risk: 'read',
-  async run() {
-    const [sets, rules] = await Promise.all([listRuleSets(), listRules()]);
+  async run(ctx) {
+    const [sets, rules] = await Promise.all([listRuleSets(), listRules(ctx.profileId)]);
     const refs = new Map<string, number>();
     for (const r of rules) {
       if (r.type === 'RULE-SET' && r.value) refs.set(r.value, (refs.get(r.value) ?? 0) + 1);
@@ -130,7 +130,7 @@ const createRuleProvider = defineWriteAction({
     return { diff: { op: 'add', path: `rule-providers[${input.name}]`, afterYaml: libYaml(input) } };
   },
   async execute(ctx, input) {
-    const res = await dispatch({ scenario: SCENARIO, op: 'create', payload: input, actor: ctx.actor });
+    const res = await dispatch({ scenario: SCENARIO, op: 'create', payload: input, actor: ctx.actor, profileId: ctx.profileId });
     return writeResult('add', `已新增规则集 ${input.name}`, res.data, res.events.map((e) => ({ id: e.id, op: e.op })));
   },
 });
@@ -176,7 +176,7 @@ const updateRuleProvider = defineWriteAction({
     const { id, ...rest } = input;
     const patch: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(rest)) if (v !== undefined) patch[k] = v;
-    const res = await dispatch({ scenario: SCENARIO, op: 'patch', payload: { id, patch }, actor: ctx.actor });
+    const res = await dispatch({ scenario: SCENARIO, op: 'patch', payload: { id, patch }, actor: ctx.actor, profileId: ctx.profileId });
     return writeResult('update', `已修改规则集 ${id.slice(0, 8)}…`, res.data, res.events.map((e) => ({ id: e.id, op: e.op })));
   },
 });
@@ -198,7 +198,7 @@ const deleteRuleProvider = defineWriteAction({
   },
   async execute(ctx, input) {
     const before = await mustGet(input.id);
-    const res = await dispatch({ scenario: SCENARIO, op: 'delete', payload: { id: input.id }, actor: ctx.actor });
+    const res = await dispatch({ scenario: SCENARIO, op: 'delete', payload: { id: input.id }, actor: ctx.actor, profileId: ctx.profileId });
     return writeResult('delete', `已删除规则集 ${before.name}`, res.data, res.events.map((e) => ({ id: e.id, op: e.op })));
   },
 });
@@ -248,6 +248,7 @@ const localizeRuleProvider = defineWriteAction({
       op: 'patch',
       payload: { id: input.id, patch: { source: 'local', content: fetched.text, url: '' } },
       actor: ctx.actor,
+      profileId: ctx.profileId,
     });
     return writeResult(
       'update',

@@ -41,6 +41,7 @@ import { resolveConfig } from '@/lib/engine/resolve';
 import { getRedis } from '@/lib/redis/client';
 import { REDIS_KEYS } from '@/lib/redis/keys';
 import { getBase, type BaseMeta } from '@/lib/repos/baseRepo';
+import { getProfileByName } from '@/lib/repos/profilesRepo';
 import { listProxyGroups } from '@/lib/repos/proxyGroupsRepo';
 import { listProxyGroupTemplates } from '@/lib/repos/proxyGroupTemplatesRepo';
 import { listRules } from '@/lib/repos/rulesRepo';
@@ -190,7 +191,11 @@ async function main(): Promise<void> {
   const commit = process.argv.includes('--commit');
   console.log(`\n=== migrate-proxy-groups-into-hash (${commit ? 'COMMIT' : 'DRY-RUN'}) ===\n`);
 
-  const base = await getBase();
+  const defaultProfile = await getProfileByName('default');
+  if (!defaultProfile) throw new Error('default profile missing — run `pnpm init:default-profile` first');
+  const profileId = defaultProfile.id;
+
+  const base = await getBase(profileId);
   if (!base) throw new Error('base:content 不存在,无法迁移。');
   const oldContent = base.content;
   const oldMeta: BaseMeta = {
@@ -200,7 +205,7 @@ async function main(): Promise<void> {
     updated_at: base.updated_at,
   };
 
-  const existingGroups = await listProxyGroups();
+  const existingGroups = await listProxyGroups(profileId);
   const existingTemplates = await listProxyGroupTemplates();
   console.log(`base.etag        : ${oldMeta.etag}`);
   console.log(`hash 现有策略组  : ${existingGroups.length} 个`);
@@ -224,7 +229,7 @@ async function main(): Promise<void> {
       rulesIdx === -1
         ? [...lines, '', MARKER]
         : [...lines.slice(0, rulesIdx), MARKER, '', ...lines.slice(rulesIdx)];
-    await maybeCommitMarkerOnly({ commit, oldContent, oldMeta, newContent: newLines.join('\n') });
+    await maybeCommitMarkerOnly({ commit, profileId, oldContent, oldMeta, newContent: newLines.join('\n') });
     return;
   }
 
@@ -329,7 +334,7 @@ async function main(): Promise<void> {
   /* render-equivalence verification — proxy-groups block must produce the same JS object */
   console.log('\n— 渲染等价验证 —');
   const [rules, providers, subscriptions] = await Promise.all([
-    listRules(),
+    listRules(profileId),
     listRuleSets(),
     listSubscriptions(),
   ]);
@@ -409,7 +414,7 @@ async function main(): Promise<void> {
   parseBase(newContent);
 
   const redis = getRedis();
-  const live = await redis.get<string>(REDIS_KEYS.base.content);
+  const live = await redis.get<string>(REDIS_KEYS.base.content(profileId));
   if (live !== oldContent) {
     throw new Error('base:content 在本次运行期间被其他写入修改,已中止。请重新 dry-run。');
   }
@@ -432,7 +437,7 @@ async function main(): Promise<void> {
   tx.set(`base:meta:backup:${ts}`, oldMeta);
   if (newGroups.length > 0) {
     tx.set(`proxy-groups:migrated:${ts}`, JSON.stringify(newGroups.map((g) => g.id)));
-    tx.hset(REDIS_KEYS.proxyGroups, groupPayload);
+    tx.hset(REDIS_KEYS.proxyGroups(profileId), groupPayload);
   }
   if (newTemplates.length > 0) {
     tx.set(
@@ -441,8 +446,8 @@ async function main(): Promise<void> {
     );
     tx.hset(REDIS_KEYS.proxyGroupTemplates, tplPayload);
   }
-  tx.set(REDIS_KEYS.base.content, newContent);
-  tx.set(REDIS_KEYS.base.meta, newMeta);
+  tx.set(REDIS_KEYS.base.content(profileId), newContent);
+  tx.set(REDIS_KEYS.base.meta(profileId), newMeta);
   await tx.exec();
 
   console.log('\n✓ COMMIT 完成(原子事务):');
@@ -462,6 +467,7 @@ async function main(): Promise<void> {
 
 interface CommitMarkerOnlyArgs {
   commit: boolean;
+  profileId: string;
   oldContent: string;
   oldMeta: BaseMeta;
   newContent: string;
@@ -474,7 +480,7 @@ async function maybeCommitMarkerOnly(args: CommitMarkerOnlyArgs): Promise<void> 
   }
   parseBase(args.newContent);
   const redis = getRedis();
-  const live = await redis.get<string>(REDIS_KEYS.base.content);
+  const live = await redis.get<string>(REDIS_KEYS.base.content(args.profileId));
   if (live !== args.oldContent) {
     throw new Error('base:content 在本次运行期间被其他写入修改,已中止。');
   }
@@ -488,8 +494,8 @@ async function maybeCommitMarkerOnly(args: CommitMarkerOnlyArgs): Promise<void> 
   const tx = redis.multi();
   tx.set(`base:content:backup:${ts}`, args.oldContent);
   tx.set(`base:meta:backup:${ts}`, args.oldMeta);
-  tx.set(REDIS_KEYS.base.content, args.newContent);
-  tx.set(REDIS_KEYS.base.meta, newMeta);
+  tx.set(REDIS_KEYS.base.content(args.profileId), args.newContent);
+  tx.set(REDIS_KEYS.base.meta(args.profileId), newMeta);
   await tx.exec();
   console.log(`\n✓ 已写入 marker。备份:base:content:backup:${ts}\n`);
 }

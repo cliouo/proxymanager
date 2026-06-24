@@ -36,6 +36,7 @@
 
 import { getRedis } from '@/lib/redis/client';
 import { REDIS_KEYS } from '@/lib/redis/keys';
+import { getProfileByName } from '@/lib/repos/profilesRepo';
 import { listProxyGroups } from '@/lib/repos/proxyGroupsRepo';
 import { invalidateResolvedSnapshot } from '@/lib/repos/resolvedRepo';
 import { listRules } from '@/lib/repos/rulesRepo';
@@ -87,7 +88,11 @@ async function main(): Promise<void> {
   const commit = process.argv.includes('--commit');
   console.log(`\n=== recategorize-proxy-groups (${commit ? 'COMMIT' : 'DRY-RUN'}) ===\n`);
 
-  const [groups, rules] = await Promise.all([listProxyGroups(), listRules()]);
+  const defaultProfile = await getProfileByName('default');
+  if (!defaultProfile) throw new Error('default profile missing — run `pnpm init:default-profile` first');
+  const profileId = defaultProfile.id;
+
+  const [groups, rules] = await Promise.all([listProxyGroups(profileId), listRules(profileId)]);
   console.log(`策略组总数 : ${groups.length}`);
   console.log(`规则总数   : ${rules.length}`);
 
@@ -160,7 +165,7 @@ async function main(): Promise<void> {
   const ts = Date.now();
 
   // Read the raw hash to back up everything (atomic snapshot for rollback).
-  const rawAll = await redis.hgetall<Record<string, unknown>>(REDIS_KEYS.proxyGroups);
+  const rawAll = await redis.hgetall<Record<string, unknown>>(REDIS_KEYS.proxyGroups(profileId));
 
   // Build the writes (only touched groups; preserve other fields).
   const writes: Record<string, ProxyGroup> = {};
@@ -176,7 +181,7 @@ async function main(): Promise<void> {
 
   const tx = redis.multi();
   tx.set(`proxy-groups:recat:backup:${ts}`, JSON.stringify(rawAll ?? {}));
-  tx.hset(REDIS_KEYS.proxyGroups, writes);
+  tx.hset(REDIS_KEYS.proxyGroups(profileId), writes);
   await tx.exec();
   await invalidateResolvedSnapshot().catch(() => undefined);
 

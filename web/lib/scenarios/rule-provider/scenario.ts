@@ -19,6 +19,7 @@
 
 import { z } from 'zod';
 import { ProblemDetailsError } from '@/lib/http/problem';
+import { listProfiles } from '@/lib/repos/profilesRepo';
 import { listRules } from '@/lib/repos/rulesRepo';
 import { getRuleSetByName, upsertRuleSet } from '@/lib/repos/ruleSetsRepo';
 import {
@@ -75,8 +76,13 @@ const del: OpHandler = async (_ctx, raw) => {
   const { id } = DeletePayloadSchema.parse(raw);
   const before = await getRuleSet(id);
   if (!before) throw ProblemDetailsError.notFound(`Rule set ${id} not found.`);
-  // Don't orphan a reference: refuse while any RULE-SET rule still points here.
-  const refs = (await listRules()).filter((r) => r.type === 'RULE-SET' && r.value === before.name);
+  // Don't orphan a reference: refuse while any RULE-SET rule still points
+  // here. Rule-sets are a SHARED library, so scan every profile's rules.
+  const profiles = await listProfiles();
+  const ruleLists = await Promise.all(profiles.map((p) => listRules(p.id)));
+  const refs = ruleLists
+    .flat()
+    .filter((r) => r.type === 'RULE-SET' && r.value === before.name);
   if (refs.length > 0) {
     throw ProblemDetailsError.conflict(
       `规则集 "${before.name}" 仍被 ${refs.length} 条 RULE-SET 规则引用，无法删除；请先修改或删除这些规则。`,

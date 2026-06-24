@@ -29,6 +29,7 @@ import { referencedProviderNames } from '@/lib/engine/renderer';
 import { getRedis } from '@/lib/redis/client';
 import { REDIS_KEYS } from '@/lib/redis/keys';
 import { getBase, type BaseMeta } from '@/lib/repos/baseRepo';
+import { getProfileByName } from '@/lib/repos/profilesRepo';
 import { listRules } from '@/lib/repos/rulesRepo';
 import { listRuleSets } from '@/lib/repos/ruleSetsRepo';
 import { computeEtag } from '@/lib/services/baseService';
@@ -82,7 +83,11 @@ async function main(): Promise<void> {
   const commit = process.argv.includes('--commit');
   console.log(`\n=== migrate-providers-into-hash (${commit ? 'COMMIT' : 'DRY-RUN'}) ===\n`);
 
-  const base = await getBase();
+  const defaultProfile = await getProfileByName('default');
+  if (!defaultProfile) throw new Error('default profile missing — run `pnpm init:default-profile` first');
+  const profileId = defaultProfile.id;
+
+  const base = await getBase(profileId);
   if (!base) throw new Error('base:content 不存在，无法迁移。');
   const oldContent = base.content;
   const oldMeta: BaseMeta = {
@@ -94,7 +99,7 @@ async function main(): Promise<void> {
 
   const existing = await listRuleSets();
   const byName = new Map(existing.map((s) => [s.name, s]));
-  const rules = await listRules();
+  const rules = await listRules(profileId);
   console.log(`base.etag        : ${oldMeta.etag}`);
   console.log(`库现有规则集     : ${existing.length} 个`);
 
@@ -230,7 +235,7 @@ async function main(): Promise<void> {
 
   const parsed = parseBase(newContent); // also validates the rewritten YAML
   const redis = getRedis();
-  const live = await redis.get<string>(REDIS_KEYS.base.content);
+  const live = await redis.get<string>(REDIS_KEYS.base.content(profileId));
   if (live !== oldContent) {
     throw new Error('base:content 在本次运行期间被其他写入修改，已中止。请重新 dry-run。');
   }
@@ -252,8 +257,8 @@ async function main(): Promise<void> {
     for (const s of imported) payload[s.id] = s;
     tx.hset(REDIS_KEYS.ruleSets, payload);
   }
-  tx.set(REDIS_KEYS.base.content, newContent);
-  tx.set(REDIS_KEYS.base.meta, newMeta);
+  tx.set(REDIS_KEYS.base.content(profileId), newContent);
+  tx.set(REDIS_KEYS.base.meta(profileId), newMeta);
   await tx.exec();
 
   console.log('\n✓ COMMIT 完成（原子事务）：');

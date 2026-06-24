@@ -14,6 +14,7 @@ import { z } from 'zod';
 import { hasDeepSeekKey } from '@/lib/ai/deepseek';
 import { runAssistant, type AssistantEvent } from '@/lib/ai/orchestrator';
 import { PROBLEM_BASE_URL, ProblemDetailsError, problemResponse } from '@/lib/http/problem';
+import { resolveScopeProfile } from '@/lib/profileScope';
 import { resolveActor } from '@/lib/services/rulesService';
 
 export const dynamic = 'force-dynamic';
@@ -45,6 +46,7 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   const actor = resolveActor(request);
+  const { id: profileId } = await resolveScopeProfile(request);
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream<Uint8Array>({
@@ -54,6 +56,7 @@ export async function POST(request: Request): Promise<Response> {
       try {
         await runAssistant({
           actor,
+          profileId,
           conversationId: parsed.data.conversationId,
           userMessage: parsed.data.message,
           emit: frame,

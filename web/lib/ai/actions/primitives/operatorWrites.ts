@@ -239,7 +239,7 @@ const previewOperators = defineAction({
     '试算一条算子管线作用到某订阅源 / 聚合订阅的真实节点上会得到什么——拿该源节点(订阅源=上游抓取并标准化后、聚合订阅=合并成员节点后)，按顺序跑你给的整条 operators 管线，返回处理前 / 后的节点名与每步 before/after/dropped/changed 跟踪。改算子(尤其正则过滤 / 重命名)前务必先调用验证命中正确(常见坑：裸 us 会顺带吃进 A-us-tralia / R-us-sia，应用单词边界或地区算子)。只读、不保存。',
   input: PreviewInput,
   risk: 'read',
-  async run(_ctx, input) {
+  async run(ctx, input) {
     const handle = await loadSource(input.source_type, input.id);
     const ops = input.operators.map((spec, i) => materialize(spec, `preview-${i}`));
     const { proxies: before, memberErrors } = await sourceRawProxies(handle, input.no_cache === true);
@@ -251,7 +251,7 @@ const previewOperators = defineAction({
     const beforeNames = before.map((p) => (typeof p.name === 'string' ? p.name : ''));
     const afterNames = new Set(after.map((p) => (typeof p.name === 'string' ? p.name : '')));
     const disappeared = [...new Set(beforeNames)].filter((n) => n && !afterNames.has(n));
-    const orphanedReferences = await findNodeReferences(disappeared);
+    const orphanedReferences = await findNodeReferences(ctx.profileId, disappeared);
 
     return {
       kind: 'node-operators-preview',

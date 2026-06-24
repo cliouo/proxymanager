@@ -89,12 +89,20 @@ vi.mock('@/lib/repos/resolvedRepo', () => ({
   setResolvedSnapshot: vi.fn(async () => undefined),
 }));
 
+// A real UUID: deleteProxyGroupTemplate's cross-profile reference scan walks
+// listProfiles() then listProxyGroups(profile.id), so the seeded profile (and
+// hence the proxy-groups partition key) must use a schema-valid profile id.
+const PID = '55555555-5555-4555-8555-555555555555';
+
 let svc: typeof import('@/lib/services/proxyGroupService');
 let tplSvc: typeof import('@/lib/services/proxyGroupTemplateService');
 
 beforeEach(async () => {
   stores.clear();
   counters.clear();
+  // Seed the test profile so cross-profile scans (e.g. template reference
+  // checks) can discover this profile's proxy-groups partition.
+  bucket('profiles').set(PID, { id: PID, name: 'prof-test', source: { type: 'none' }, updated_at: 0 });
   svc = await import('@/lib/services/proxyGroupService');
   tplSvc = await import('@/lib/services/proxyGroupTemplateService');
 });
@@ -116,7 +124,7 @@ function seedGroup(over: Partial<ProxyGroup>): ProxyGroup {
     updated_at: now,
     ...over,
   } as ProxyGroup;
-  bucket('proxy-groups').set(g.id, g);
+  bucket(`proxy-groups:${PID}`).set(g.id, g);
   return g;
 }
 
@@ -133,13 +141,13 @@ function seedRule(over: Partial<Rule>): Rule {
     updated_at: 0,
     ...over,
   } as Rule;
-  bucket('rules').set(r.id, r);
+  bucket(`rules:${PID}`).set(r.id, r);
   return r;
 }
 
 describe('proxyGroupService — create', () => {
   it('creates with auto id, default kind=raw, rank assigned', async () => {
-    const g = await svc.createProxyGroup({ name: 'us', type: 'select', proxies: ['DIRECT'] });
+    const g = await svc.createProxyGroup(PID, { name: 'us', type: 'select', proxies: ['DIRECT'] });
     expect(g.id).toMatch(/^[0-9a-f-]{36}$/);
     expect(g.kind).toBe('raw');
     expect(g.rank).toBe(10);
@@ -147,15 +155,15 @@ describe('proxyGroupService — create', () => {
   });
 
   it('rejects duplicate name', async () => {
-    await svc.createProxyGroup({ name: 'us', type: 'select' });
+    await svc.createProxyGroup(PID, { name: 'us', type: 'select' });
     await expect(
-      svc.createProxyGroup({ name: 'us', type: 'select' }),
+      svc.createProxyGroup(PID, { name: 'us', type: 'select' }),
     ).rejects.toMatchObject({ problem: { status: 409 } });
   });
 
   it('rejects unknown template_id', async () => {
     await expect(
-      svc.createProxyGroup({
+      svc.createProxyGroup(PID, {
         name: 'x',
         type: 'select',
         template_id: '00000000-0000-0000-0000-000000000000',
@@ -165,7 +173,7 @@ describe('proxyGroupService — create', () => {
 
   it('accepts known template_id', async () => {
     const tpl = await tplSvc.createProxyGroupTemplate({ name: 'pr', type: 'url-test', interval: 600 });
-    const g = await svc.createProxyGroup({
+    const g = await svc.createProxyGroup(PID, {
       name: 'x',
       type: 'url-test',
       template_id: tpl.id,
@@ -175,7 +183,7 @@ describe('proxyGroupService — create', () => {
 
   it('refuses a self-loop dialer-proxy cycle on create', async () => {
     await expect(
-      svc.createProxyGroup({
+      svc.createProxyGroup(PID, {
         name: 'self',
         type: 'select',
         proxies: ['DIRECT'],
@@ -187,7 +195,7 @@ describe('proxyGroupService — create', () => {
   it('refuses a 2-hop dialer-proxy cycle on create', async () => {
     seedGroup({ name: 'a', 'dialer-proxy': 'b' });
     await expect(
-      svc.createProxyGroup({
+      svc.createProxyGroup(PID, {
         name: 'b',
         type: 'select',
         proxies: ['DIRECT'],
@@ -199,7 +207,7 @@ describe('proxyGroupService — create', () => {
   it('assigns rank = max(existing) + 10', async () => {
     seedGroup({ name: 'a', rank: 50 });
     seedGroup({ name: 'b', rank: 100 });
-    const g = await svc.createProxyGroup({ name: 'c', type: 'select' });
+    const g = await svc.createProxyGroup(PID, { name: 'c', type: 'select' });
     expect(g.rank).toBe(110);
   });
 });
@@ -212,9 +220,9 @@ describe('proxyGroupService — patch + rename cascade', () => {
     seedRule({ policy: 'old' });
     seedRule({ policy: 'unrelated' });
 
-    await svc.patchProxyGroup(target.id, { name: 'fresh' });
+    await svc.patchProxyGroup(PID, target.id, { name: 'fresh' });
 
-    const all = await svc.listProxyGroups();
+    const all = await svc.listProxyGroups(PID);
     const renamed = all.find((g) => g.id === target.id);
     expect(renamed?.name).toBe('fresh');
     const parent = all.find((g) => g.name === 'parent');
@@ -222,7 +230,7 @@ describe('proxyGroupService — patch + rename cascade', () => {
     const chain = all.find((g) => g.name === 'chain');
     expect(chain?.['dialer-proxy']).toBe('fresh');
 
-    const rules = Array.from(bucket('rules').values()) as Rule[];
+    const rules = Array.from(bucket(`rules:${PID}`).values()) as Rule[];
     expect(rules.find((r) => r.policy === 'fresh')).toBeTruthy();
     expect(rules.find((r) => r.policy === 'old')).toBeFalsy();
     expect(rules.find((r) => r.policy === 'unrelated')).toBeTruthy();
@@ -231,14 +239,14 @@ describe('proxyGroupService — patch + rename cascade', () => {
   it('rename to existing name conflicts', async () => {
     const a = seedGroup({ name: 'a' });
     seedGroup({ name: 'b' });
-    await expect(svc.patchProxyGroup(a.id, { name: 'b' })).rejects.toMatchObject({
+    await expect(svc.patchProxyGroup(PID, a.id, { name: 'b' })).rejects.toMatchObject({
       problem: { status: 409 },
     });
   });
 
   it('null clears nullable optional (notes/section)', async () => {
     const g = seedGroup({ name: 'x', notes: 'before' });
-    const patched = await svc.patchProxyGroup(g.id, { notes: null });
+    const patched = await svc.patchProxyGroup(PID, g.id, { notes: null });
     expect(patched.notes).toBeUndefined();
   });
 
@@ -246,7 +254,7 @@ describe('proxyGroupService — patch + rename cascade', () => {
     const a = seedGroup({ name: 'a' });
     seedGroup({ name: 'b', 'dialer-proxy': 'a' });
     await expect(
-      svc.patchProxyGroup(a.id, { 'dialer-proxy': 'b' }),
+      svc.patchProxyGroup(PID, a.id, { 'dialer-proxy': 'b' }),
     ).rejects.toMatchObject({ problem: { status: 422 } });
   });
 });
@@ -255,7 +263,7 @@ describe('proxyGroupService — delete', () => {
   it('refuses delete when another group references it via proxies', async () => {
     const target = seedGroup({ name: 'busy' });
     seedGroup({ name: 'parent', proxies: ['busy'] });
-    await expect(svc.deleteProxyGroup(target.id)).rejects.toMatchObject({
+    await expect(svc.deleteProxyGroup(PID, target.id)).rejects.toMatchObject({
       problem: { status: 409 },
     });
   });
@@ -263,7 +271,7 @@ describe('proxyGroupService — delete', () => {
   it('refuses delete when another group references it via dialer-proxy', async () => {
     const target = seedGroup({ name: 'pool' });
     seedGroup({ name: 'wrap', 'dialer-proxy': 'pool' });
-    await expect(svc.deleteProxyGroup(target.id)).rejects.toMatchObject({
+    await expect(svc.deleteProxyGroup(PID, target.id)).rejects.toMatchObject({
       problem: { status: 409 },
     });
   });
@@ -271,33 +279,33 @@ describe('proxyGroupService — delete', () => {
   it('refuses delete when a rule policies into it', async () => {
     const target = seedGroup({ name: 'used' });
     seedRule({ policy: 'used' });
-    await expect(svc.deleteProxyGroup(target.id)).rejects.toMatchObject({
+    await expect(svc.deleteProxyGroup(PID, target.id)).rejects.toMatchObject({
       problem: { status: 409 },
     });
   });
 
   it('succeeds when nothing references it', async () => {
     const target = seedGroup({ name: 'lone' });
-    expect(await svc.deleteProxyGroup(target.id)).toBe(true);
-    expect(await svc.getProxyGroup(target.id)).toBeNull();
+    expect(await svc.deleteProxyGroup(PID, target.id)).toBe(true);
+    expect(await svc.getProxyGroup(PID, target.id)).toBeNull();
   });
 });
 
 describe('proxyGroupService — batch create + delete', () => {
   it('batch-creates a pool + wrap pair in one shot', async () => {
-    const [pool, wrap] = await svc.createProxyGroups([
+    const [pool, wrap] = await svc.createProxyGroups(PID, [
       { name: 'pool', type: 'select', proxies: ['f1', 'f2'] },
       { name: 'wrap', type: 'select', proxies: ['b'], 'dialer-proxy': 'pool' },
     ]);
     expect(pool.name).toBe('pool');
     expect(wrap['dialer-proxy']).toBe('pool');
-    const all = await svc.listProxyGroups();
+    const all = await svc.listProxyGroups(PID);
     expect(all.map((g) => g.name).sort()).toEqual(['pool', 'wrap']);
   });
 
   it('refuses batch-create with internal duplicate', async () => {
     await expect(
-      svc.createProxyGroups([
+      svc.createProxyGroups(PID, [
         { name: 'dup', type: 'select' },
         { name: 'dup', type: 'select' },
       ]),
@@ -306,7 +314,7 @@ describe('proxyGroupService — batch create + delete', () => {
 
   it('refuses batch-create that would cycle (wrap.dialer-proxy → pool whose dialer-proxy → wrap)', async () => {
     await expect(
-      svc.createProxyGroups([
+      svc.createProxyGroups(PID, [
         { name: 'a', type: 'select', 'dialer-proxy': 'b' },
         { name: 'b', type: 'select', 'dialer-proxy': 'a' },
       ]),
@@ -317,15 +325,15 @@ describe('proxyGroupService — batch create + delete', () => {
     seedGroup({ name: 'pool', proxies: ['f1'] });
     seedGroup({ name: 'wrap', proxies: ['b'], 'dialer-proxy': 'pool' });
     // intra-batch (wrap→pool) is fine when both are deleted.
-    expect(await svc.deleteProxyGroupsByName(['wrap', 'pool'])).toBe(2);
-    expect((await svc.listProxyGroups()).length).toBe(0);
+    expect(await svc.deleteProxyGroupsByName(PID, ['wrap', 'pool'])).toBe(2);
+    expect((await svc.listProxyGroups(PID)).length).toBe(0);
   });
 
   it('refuses bulk-delete when an external group still references the batch', async () => {
     seedGroup({ name: 'pool' });
     seedGroup({ name: 'wrap', 'dialer-proxy': 'pool' });
     seedGroup({ name: 'outsider', proxies: ['pool'] }); // external ref
-    await expect(svc.deleteProxyGroupsByName(['wrap', 'pool'])).rejects.toMatchObject({
+    await expect(svc.deleteProxyGroupsByName(PID, ['wrap', 'pool'])).rejects.toMatchObject({
       problem: { status: 409 },
     });
   });
@@ -339,7 +347,7 @@ describe('proxyGroupTemplateService', () => {
 
   it('refuses delete when a group still references the template', async () => {
     const tpl = await tplSvc.createProxyGroupTemplate({ name: 'pr', interval: 600 });
-    await svc.createProxyGroup({
+    await svc.createProxyGroup(PID, {
       name: 'g',
       type: 'url-test',
       template_id: tpl.id,

@@ -13,8 +13,8 @@ function byRank(a: ProxyGroup, b: ProxyGroup): number {
   return a.name.localeCompare(b.name);
 }
 
-export async function listProxyGroups(): Promise<ProxyGroup[]> {
-  const all = await getRedis().hgetall<Record<string, unknown>>(REDIS_KEYS.proxyGroups);
+export async function listProxyGroups(profileId: string): Promise<ProxyGroup[]> {
+  const all = await getRedis().hgetall<Record<string, unknown>>(REDIS_KEYS.proxyGroups(profileId));
   if (!all) return [];
   const out: ProxyGroup[] = [];
   for (const raw of Object.values(all)) {
@@ -24,42 +24,45 @@ export async function listProxyGroups(): Promise<ProxyGroup[]> {
   return out.sort(byRank);
 }
 
-export async function getProxyGroup(id: string): Promise<ProxyGroup | null> {
-  const raw = await getRedis().hget<unknown>(REDIS_KEYS.proxyGroups, id);
+export async function getProxyGroup(profileId: string, id: string): Promise<ProxyGroup | null> {
+  const raw = await getRedis().hget<unknown>(REDIS_KEYS.proxyGroups(profileId), id);
   return normalise(raw);
 }
 
-export async function getProxyGroupByName(name: string): Promise<ProxyGroup | null> {
-  const all = await listProxyGroups();
+export async function getProxyGroupByName(
+  profileId: string,
+  name: string,
+): Promise<ProxyGroup | null> {
+  const all = await listProxyGroups(profileId);
   return all.find((g) => g.name === name) ?? null;
 }
 
 // Writes bump config:version in the same multi() — proxy-groups are emitted
 // verbatim into the rendered config's PROXY-GROUPS block.
 
-export async function upsertProxyGroup(group: ProxyGroup): Promise<void> {
+export async function upsertProxyGroup(profileId: string, group: ProxyGroup): Promise<void> {
   await getRedis()
     .multi()
-    .hset(REDIS_KEYS.proxyGroups, { [group.id]: group })
+    .hset(REDIS_KEYS.proxyGroups(profileId), { [group.id]: group })
     .incr(REDIS_KEYS.configVersion)
     .exec();
 }
 
-export async function upsertProxyGroups(groups: ProxyGroup[]): Promise<void> {
+export async function upsertProxyGroups(profileId: string, groups: ProxyGroup[]): Promise<void> {
   if (groups.length === 0) return;
   const payload: Record<string, ProxyGroup> = {};
   for (const g of groups) payload[g.id] = g;
   await getRedis()
     .multi()
-    .hset(REDIS_KEYS.proxyGroups, payload)
+    .hset(REDIS_KEYS.proxyGroups(profileId), payload)
     .incr(REDIS_KEYS.configVersion)
     .exec();
 }
 
-export async function deleteProxyGroup(id: string): Promise<boolean> {
+export async function deleteProxyGroup(profileId: string, id: string): Promise<boolean> {
   const [removed] = await getRedis()
     .multi()
-    .hdel(REDIS_KEYS.proxyGroups, id)
+    .hdel(REDIS_KEYS.proxyGroups(profileId), id)
     .incr(REDIS_KEYS.configVersion)
     .exec<[number, number]>();
   return removed > 0;

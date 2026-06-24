@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ApiError, api } from '@/lib/client/api';
 import { PageTopbar } from '@/components/PageChrome';
 import { ScopePill } from '@/components/Topbar';
+import { useProfiles } from '@/components/profile/ProfileContext';
 import { CodeView } from '@/components/ui/CodeView';
 import styles from './config.module.css';
 
@@ -16,6 +17,7 @@ interface PreviewData {
 
 interface Meta {
   subscriptionUrl: string;
+  subBase: string;
   buildId: string | null;
   hasBase: boolean;
 }
@@ -23,6 +25,8 @@ interface Meta {
 type Tab = 'yaml' | 'summary';
 
 export default function ConfigPage() {
+  const { activeProfile } = useProfiles();
+  const activeName = activeProfile?.name ?? 'default';
   const [preview, setPreview] = useState<PreviewData | null>(null);
   const [meta, setMeta] = useState<Meta | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -36,7 +40,7 @@ export default function ConfigPage() {
     if (!opts?.silent) setLoadError(null);
     try {
       const [previewRes, metaRes] = await Promise.all([
-        api<{ data: PreviewData }>('/api/v1/preview/default'),
+        api<{ data: PreviewData }>(`/api/v1/preview/${encodeURIComponent(activeName)}`),
         api<{ data: Meta }>('/api/v1/meta').catch(() => null),
       ]);
       setPreview(previewRes.data);
@@ -52,7 +56,7 @@ export default function ConfigPage() {
     } finally {
       setLoaded(true);
     }
-  }, []);
+  }, [activeName]);
 
   useEffect(() => {
     load();
@@ -85,6 +89,11 @@ export default function ConfigPage() {
   const anchors = preview?.anchors_applied ?? [];
   const unmatched = preview?.unmatched_anchors ?? [];
   const totalRules = anchors.reduce((sum, a) => sum + a.ruleCount, 0);
+  // Subscription URL for the ACTIVE profile (meta.subscriptionUrl is the
+  // default-anchored one; derive the active one from subBase).
+  const subUrl = meta?.subBase
+    ? `${meta.subBase}/${encodeURIComponent(activeName)}`
+    : (meta?.subscriptionUrl ?? '');
 
   async function copyConfig() {
     if (!content) return;
@@ -94,8 +103,8 @@ export default function ConfigPage() {
   }
 
   async function copyUrl() {
-    if (!meta?.subscriptionUrl) return;
-    await navigator.clipboard.writeText(meta.subscriptionUrl);
+    if (!subUrl) return;
+    await navigator.clipboard.writeText(subUrl);
     setCopied('url');
     setTimeout(() => setCopied(null), 1500);
   }
@@ -106,7 +115,7 @@ export default function ConfigPage() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'default.yaml';
+    a.download = `${activeName}.yaml`;
     a.click();
     URL.revokeObjectURL(url);
   }
@@ -240,7 +249,7 @@ export default function ConfigPage() {
           )}
         </div>
 
-        {meta?.subscriptionUrl && (
+        {subUrl && (
           <>
             <div className={styles.inspH}>订阅地址</div>
             <div
@@ -251,7 +260,7 @@ export default function ConfigPage() {
                 marginBottom: 8,
               }}
             >
-              {meta.subscriptionUrl}
+              {subUrl}
             </div>
             <button className="btn sm" style={{ width: '100%' }} onClick={copyUrl}>
               {copied === 'url' ? '已复制 ✓' : '复制订阅 URL'}

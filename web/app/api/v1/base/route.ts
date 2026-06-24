@@ -3,13 +3,15 @@ import { withProblemDetails } from '@/lib/http/handler';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { getBase, setBase, type BaseMeta } from '@/lib/repos/baseRepo';
 import { listProxyGroups } from '@/lib/repos/proxyGroupsRepo';
+import { resolveScopeProfile } from '@/lib/profileScope';
 import { computeEtag, parseAndValidate } from '@/lib/services/baseService';
 import { BaseUpdateRequestSchema } from '@/schemas';
 
 export const dynamic = 'force-dynamic';
 
-export const GET = withProblemDetails(async () => {
-  const [base, groups] = await Promise.all([getBase(), listProxyGroups()]);
+export const GET = withProblemDetails(async (request: Request) => {
+  const { id: profileId } = await resolveScopeProfile(request);
+  const [base, groups] = await Promise.all([getBase(profileId), listProxyGroups(profileId)]);
   if (!base) {
     throw ProblemDetailsError.notFound('Base config has not been initialized yet.');
   }
@@ -38,6 +40,7 @@ export const GET = withProblemDetails(async () => {
 });
 
 export const PUT = withProblemDetails(async (request: Request) => {
+  const { id: profileId } = await resolveScopeProfile(request);
   const rawBody = await request.json().catch(() => {
     throw ProblemDetailsError.badRequest('Request body must be valid JSON.');
   });
@@ -46,7 +49,7 @@ export const PUT = withProblemDetails(async (request: Request) => {
   const ifMatch = request.headers.get('if-match');
   const expectedEtag = ifMatch ? ifMatch.replace(/^W\//, '').replace(/^"|"$/g, '') : null;
 
-  const { parsedBase, validation } = await parseAndValidate(content);
+  const { parsedBase, validation } = await parseAndValidate(profileId, content);
   if (!validation.valid) {
     throw ProblemDetailsError.unprocessable(
       'Base config would orphan existing rules.',
@@ -61,7 +64,7 @@ export const PUT = withProblemDetails(async (request: Request) => {
     updated_at: Math.floor(Date.now() / 1000),
   };
 
-  const result = await setBase(content, meta, expectedEtag);
+  const result = await setBase(profileId, content, meta, expectedEtag);
   if (!result.ok) {
     throw ProblemDetailsError.preconditionFailed(
       `Base config has been modified by another writer. Current ETag is ${result.currentEtag ?? '(none)'}.`,

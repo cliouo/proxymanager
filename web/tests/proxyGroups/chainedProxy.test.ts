@@ -92,6 +92,8 @@ vi.mock('@/lib/repos/resolvedRepo', () => ({
   setResolvedSnapshot: vi.fn(async () => undefined),
 }));
 
+const PID = 'prof-test';
+
 let scenarioMod: typeof import('@/lib/scenarios/chained-proxy/scenario');
 
 beforeEach(async () => {
@@ -114,7 +116,7 @@ function seed(over: Partial<ProxyGroup>): ProxyGroup {
     updated_at: 0,
     ...over,
   } as ProxyGroup;
-  bucket('proxy-groups').set(g.id, g);
+  bucket(`proxy-groups:${PID}`).set(g.id, g);
   return g;
 }
 
@@ -140,7 +142,7 @@ describe('frontPoolGroupNames', () => {
 describe('chained-proxy summariseChains', () => {
   it('reports a fixed chain when wrap.dialer-proxy points at a name with no pool body', async () => {
     seed({ name: 'chain:F-to-B', proxies: ['B'], 'dialer-proxy': 'F' });
-    const summary = await scenarioMod.summariseChains();
+    const summary = await scenarioMod.summariseChains(PID);
     expect(summary.fixedChains).toEqual([
       { chainName: 'chain:F-to-B', backend: 'B', front: 'F' },
     ]);
@@ -150,7 +152,7 @@ describe('chained-proxy summariseChains', () => {
   it('reports a pool chain when wrap.dialer-proxy points at another managed group', async () => {
     seed({ name: 'pool:B', proxies: ['F1', 'F2'] });
     seed({ name: 'chain:pool-to-B', proxies: ['B'], 'dialer-proxy': 'pool:B' });
-    const summary = await scenarioMod.summariseChains();
+    const summary = await scenarioMod.summariseChains(PID);
     expect(summary.poolChains).toEqual([
       {
         poolName: 'pool:B',
@@ -172,7 +174,7 @@ describe('chained-proxy summariseChains', () => {
       interval: 300,
     });
     seed({ name: 'chain:pool-to-B', proxies: ['B'], 'dialer-proxy': 'pool:B' });
-    const summary = await scenarioMod.summariseChains();
+    const summary = await scenarioMod.summariseChains(PID);
     expect(summary.poolChains).toEqual([
       {
         poolName: 'pool:B',
@@ -192,14 +194,14 @@ describe('chained-proxy summariseChains', () => {
 
   it('does not count a group as a chain wrap when it has multiple proxies', async () => {
     seed({ name: 'multi', proxies: ['A', 'B'], 'dialer-proxy': 'X' });
-    const summary = await scenarioMod.summariseChains();
+    const summary = await scenarioMod.summariseChains(PID);
     expect(summary.fixedChains).toEqual([]);
     expect(summary.poolChains).toEqual([]);
   });
 
   it('does not count a group as a chain wrap when it lacks dialer-proxy', async () => {
     seed({ name: 'no-dp', proxies: ['B'] });
-    const summary = await scenarioMod.summariseChains();
+    const summary = await scenarioMod.summariseChains(PID);
     expect(summary.fixedChains).toEqual([]);
     expect(summary.poolChains).toEqual([]);
   });
@@ -210,7 +212,7 @@ describe('chained-proxy summariseChains', () => {
     // fixedChains.
     seed({ name: 'wrap1', proxies: ['B'], 'dialer-proxy': 'wrap2' });
     seed({ name: 'wrap2', proxies: ['B2'], 'dialer-proxy': 'F' });
-    const summary = await scenarioMod.summariseChains();
+    const summary = await scenarioMod.summariseChains(PID);
     expect(summary.fixedChains.map((c) => c.chainName).sort()).toEqual(['wrap1', 'wrap2']);
     expect(summary.poolChains).toEqual([]);
   });
@@ -221,6 +223,7 @@ describe('chained-proxy ops — integration with the proxy-group service', () =>
     const { chainedProxyScenario } = scenarioMod;
     const ctx = {
       actor: 'test',
+      profileId: PID,
       taxonomy: {
         all: async () => ({}),
         get: async () => null,
@@ -238,7 +241,7 @@ describe('chained-proxy ops — integration with the proxy-group service', () =>
     expect(result.data).toMatchObject({ chainName: 'chain:F-to-B', backend: 'B', front: 'F' });
     expect(result.events[0].action).toBe('set-fixed-chain');
     // The wrap landed in the hash.
-    const groups = Array.from(bucket('proxy-groups').values()) as ProxyGroup[];
+    const groups = Array.from(bucket(`proxy-groups:${PID}`).values()) as ProxyGroup[];
     expect(groups.find((g) => g.name === 'chain:F-to-B')).toBeTruthy();
   });
 
@@ -246,6 +249,7 @@ describe('chained-proxy ops — integration with the proxy-group service', () =>
     const { chainedProxyScenario } = scenarioMod;
     const ctx = {
       actor: 'test',
+      profileId: PID,
       taxonomy: {
         all: async () => ({}),
         get: async () => null,
@@ -259,7 +263,7 @@ describe('chained-proxy ops — integration with the proxy-group service', () =>
       backend: 'B',
       fronts: ['F1', 'F2'],
     });
-    const groups = Array.from(bucket('proxy-groups').values()) as ProxyGroup[];
+    const groups = Array.from(bucket(`proxy-groups:${PID}`).values()) as ProxyGroup[];
     const names = groups.map((g) => g.name).sort();
     expect(names).toEqual(['chain:pool-to-B', 'pool:B']);
     const wrap = groups.find((g) => g.name === 'chain:pool-to-B');
@@ -270,6 +274,7 @@ describe('chained-proxy ops — integration with the proxy-group service', () =>
     const { chainedProxyScenario } = scenarioMod;
     const ctx = {
       actor: 'test',
+      profileId: PID,
       taxonomy: {
         all: async () => ({}),
         get: async () => null,
@@ -284,7 +289,7 @@ describe('chained-proxy ops — integration with the proxy-group service', () =>
       strategy: 'fallback',
       filter: '香港|HK',
     });
-    const groups = Array.from(bucket('proxy-groups').values()) as ProxyGroup[];
+    const groups = Array.from(bucket(`proxy-groups:${PID}`).values()) as ProxyGroup[];
     const pool = groups.find((g) => g.name === 'pool:B');
     const wrap = groups.find((g) => g.name === 'chain:pool-to-B');
     expect(pool?.type).toBe('fallback');
@@ -299,6 +304,7 @@ describe('chained-proxy ops — integration with the proxy-group service', () =>
     const { chainedProxyScenario } = scenarioMod;
     const ctx = {
       actor: 'test',
+      profileId: PID,
       taxonomy: {
         all: async () => ({}),
         get: async () => null,
@@ -318,7 +324,7 @@ describe('chained-proxy ops — integration with the proxy-group service', () =>
       strategy: 'url-test',
       // filter omitted → cleared
     });
-    const groups = Array.from(bucket('proxy-groups').values()) as ProxyGroup[];
+    const groups = Array.from(bucket(`proxy-groups:${PID}`).values()) as ProxyGroup[];
     const pool = groups.find((g) => g.name === 'pool:B');
     expect(pool?.type).toBe('url-test');
     expect(pool?.filter).toBeUndefined();
@@ -329,6 +335,7 @@ describe('chained-proxy ops — integration with the proxy-group service', () =>
     const { chainedProxyScenario } = scenarioMod;
     const ctx = {
       actor: 'test',
+      profileId: PID,
       taxonomy: {
         all: async () => ({}),
         get: async () => null,

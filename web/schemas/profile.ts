@@ -59,6 +59,14 @@ export const ProfileCreateSchema = z.object({
   name: z.string().min(1).regex(NAME_REGEX, NAME_HINT),
   source: ProfileSourceSchema.default(DEFAULT_PROFILE_SOURCE),
   notes: z.string().optional(),
+  /**
+   * Clone source (Phase 2). When set to an existing profile id, the new profile
+   * deep-copies that profile's base + proxy-groups + rules + taxonomy (new ids,
+   * names preserved). When omitted, the new profile gets a fresh skeleton copied
+   * from the `default` profile's base with no groups/rules. Not persisted on the
+   * Profile record — it's a create-time directive only.
+   */
+  copy_from: z.uuid().optional(),
 });
 
 export type ProfileCreate = z.input<typeof ProfileCreateSchema>;

@@ -1,5 +1,6 @@
 import { withProblemDetails } from '@/lib/http/handler';
 import { ProblemDetailsError } from '@/lib/http/problem';
+import { resolveScopeProfile } from '@/lib/profileScope';
 import { recordEvent } from '@/lib/repos/auditRepo';
 import { batchUpsertAndDelete, listRules } from '@/lib/repos/rulesRepo';
 import {
@@ -15,13 +16,14 @@ import { BatchRequestSchema, type BatchOpResult, type Rule } from '@/schemas';
 export const dynamic = 'force-dynamic';
 
 export const POST = withProblemDetails(async (request: Request) => {
+  const { id: profileId } = await resolveScopeProfile(request);
   const raw = await request.json().catch(() => {
     throw ProblemDetailsError.badRequest('Request body must be valid JSON.');
   });
   const { ops } = BatchRequestSchema.parse(raw);
 
-  const parsedBase = await loadParsedBase();
-  const existing = await listRules();
+  const parsedBase = await loadParsedBase(profileId);
+  const existing = await listRules(profileId);
   const existingMap = new Map(existing.map((r) => [r.id, r]));
 
   const writes: Rule[] = [];
@@ -45,7 +47,7 @@ export const POST = withProblemDetails(async (request: Request) => {
       nextRankCache.set(anchor, cached + 10);
       return cached;
     }
-    const start = await computeNextRank(anchor);
+    const start = await computeNextRank(profileId, anchor);
     nextRankCache.set(anchor, start + 10);
     return start;
   }
@@ -113,7 +115,7 @@ export const POST = withProblemDetails(async (request: Request) => {
     }
   }
 
-  await batchUpsertAndDelete(writes, removes);
+  await batchUpsertAndDelete(profileId, writes, removes);
 
   // Emit audit events serially after the commit lands. recordEvent is fast on
   // Upstash pipelines, and at batch sizes we expect (tens, not thousands) the
@@ -121,7 +123,7 @@ export const POST = withProblemDetails(async (request: Request) => {
   const actor = resolveActor(request);
   for (const ev of pendingEvents) {
     if (ev.op === 'rule.create') {
-      await recordEvent({ op: 'rule.create', actor, ruleId: ev.after.id, after: ev.after });
+      await recordEvent({ op: 'rule.create', actor, ruleId: ev.after.id, after: ev.after, profileId });
     } else if (ev.op === 'rule.update') {
       await recordEvent({
         op: 'rule.update',
@@ -129,6 +131,7 @@ export const POST = withProblemDetails(async (request: Request) => {
         ruleId: ev.after.id,
         before: ev.before,
         after: ev.after,
+        profileId,
       });
     } else {
       await recordEvent({
@@ -136,6 +139,7 @@ export const POST = withProblemDetails(async (request: Request) => {
         actor,
         ruleId: ev.before.id,
         before: ev.before,
+        profileId,
       });
     }
   }

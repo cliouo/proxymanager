@@ -100,7 +100,8 @@ beforeEach(async () => {
 
 afterEach(() => vi.restoreAllMocks());
 
-const CTX = { actor: 'test' };
+const PID = 'prof-test';
+const CTX = { actor: 'test', profileId: PID };
 
 function seedGroup(over: Partial<ProxyGroup>): ProxyGroup {
   const now = 1_700_000_000;
@@ -115,7 +116,7 @@ function seedGroup(over: Partial<ProxyGroup>): ProxyGroup {
     'include-all-proxies': true,
     ...over,
   } as ProxyGroup;
-  bucket('proxy-groups').set(g.id, g);
+  bucket(`proxy-groups:${PID}`).set(g.id, g);
   return g;
 }
 
@@ -182,7 +183,7 @@ describe('update_proxy_group', () => {
     expect(diff.afterYaml).toContain('🇺🇸');
 
     await action.execute(CTX, { id: g.id, filter: fixed });
-    const stored = bucket('proxy-groups').get(g.id) as ProxyGroup;
+    const stored = bucket(`proxy-groups:${PID}`).get(g.id) as ProxyGroup;
     expect(stored.filter).toBe(fixed);
   });
 
@@ -191,7 +192,7 @@ describe('update_proxy_group', () => {
     const action = registry.getAction('update_proxy_group')!;
     if (action.risk !== 'write') throw new Error('expected write');
     await action.execute(CTX, { id: g.id, exclude_filter: null });
-    const stored = bucket('proxy-groups').get(g.id) as ProxyGroup;
+    const stored = bucket(`proxy-groups:${PID}`).get(g.id) as ProxyGroup;
     expect(stored['exclude-filter']).toBeUndefined();
   });
 });

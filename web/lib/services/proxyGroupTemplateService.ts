@@ -1,4 +1,5 @@
 import { ProblemDetailsError } from '@/lib/http/problem';
+import { listProfiles } from '@/lib/repos/profilesRepo';
 import { listProxyGroups } from '@/lib/repos/proxyGroupsRepo';
 import {
   deleteProxyGroupTemplate as repoDelete,
@@ -79,13 +80,21 @@ export async function patchProxyGroupTemplate(
  * should detach the references first (clear `template_id`) — silent
  * cascade would let groups suddenly fall back to no-defaults, breaking
  * url-test groups that rely on the shared `url`/`interval`.
+ *
+ * Templates are a SHARED library (Phase 2): a group in ANY profile may
+ * reference one, so the reference scan walks every profile's proxy-groups.
  */
 export async function deleteProxyGroupTemplate(id: string): Promise<boolean> {
-  const groups = await listProxyGroups();
-  const referenced = groups.filter((g) => g.template_id === id).map((g) => g.name);
+  const profiles = await listProfiles();
+  const groupLists = await Promise.all(profiles.map((p) => listProxyGroups(p.id)));
+  const referenced = groupLists
+    .flat()
+    .filter((g) => g.template_id === id)
+    .map((g) => g.name);
   if (referenced.length > 0) {
+    const uniq = Array.from(new Set(referenced));
     throw ProblemDetailsError.conflict(
-      `模板仍被 ${referenced.length} 个策略组引用,无法删除: ${referenced.join(', ')}`,
+      `模板仍被 ${uniq.length} 个策略组引用,无法删除: ${uniq.join(', ')}`,
     );
   }
   const removed = await repoDelete(id);

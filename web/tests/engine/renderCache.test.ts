@@ -79,7 +79,18 @@ vi.mock('@/lib/repos/ruleSetsRepo', () => ({ listRuleSets: async () => [] }));
 vi.mock('@/lib/repos/proxyGroupsRepo', () => ({ listProxyGroups: async () => [] }));
 vi.mock('@/lib/repos/proxyGroupTemplatesRepo', () => ({ listProxyGroupTemplates: async () => [] }));
 vi.mock('@/lib/repos/collectionsRepo', () => ({ listCollections: async () => [] }));
-vi.mock('@/lib/repos/profilesRepo', () => ({ getProfileByName: async () => null }));
+// Per-profile (Phase 2): the engine resolves the profile record by name, then
+// loads base/rules/proxy-groups under its id. `default` resolves to a record;
+// any other name resolves to null (→ 404).
+const DEFAULT_PROFILE = {
+  id: 'prof-default',
+  name: 'default',
+  source: { type: 'none' as const },
+  updated_at: 0,
+};
+vi.mock('@/lib/repos/profilesRepo', () => ({
+  getProfileByName: async (name: string) => (name === 'default' ? DEFAULT_PROFILE : null),
+}));
 
 let mod: typeof import('@/lib/engine/renderCache');
 
@@ -212,8 +223,8 @@ describe('renderProfileConfig — uninitialised base', () => {
 });
 
 describe('renderProfileConfig — profile existence guard', () => {
-  // getProfileByName is mocked to null for the whole file, so any non-default
-  // name has "no record" → must 404 instead of silently rendering all subs.
+  // A name with no profile record can't be located → 404 instead of silently
+  // rendering. `default` resolves to a record (see the profilesRepo mock).
   it('404s a non-default name with no profile record', async () => {
     await expect(
       mod.renderProfileConfig('does-not-exist', { providerUrlBase: URL_BASE }),
@@ -222,7 +233,7 @@ describe('renderProfileConfig — profile existence guard', () => {
     expect(setCalls).toHaveLength(0);
   });
 
-  it('still renders `default` even with no profile record (pre-init fallback)', async () => {
+  it('renders `default` via its profile record (loads per-profile base)', async () => {
     const out = await mod.renderProfileConfig('default', { providerUrlBase: URL_BASE });
     expect(out.cache).toBe('miss');
     expect(out.resolved.content).toBe(RESOLVED.content);

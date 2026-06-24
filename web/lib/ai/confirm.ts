@@ -21,6 +21,11 @@ export interface ConfirmationRecord {
   action: string;
   /** The already-validated action input to execute. */
   input: unknown;
+  /**
+   * Profile the write targets, captured at preview time so executing the
+   * confirmation later hits the same profile regardless of the current cookie.
+   */
+  profileId: string;
 }
 
 export interface MintedConfirmation {

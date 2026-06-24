@@ -1,5 +1,6 @@
 import { withProblemDetails } from '@/lib/http/handler';
 import { ProblemDetailsError } from '@/lib/http/problem';
+import { resolveScopeProfile } from '@/lib/profileScope';
 import { safeFetchText } from '@/lib/net/safeFetch';
 import { dispatch } from '@/lib/scenarios/_shared/dispatch';
 import { getRuleSet } from '@/lib/services/ruleSetService';
@@ -16,6 +17,7 @@ type Ctx = RouteContext<'/api/v1/rule-sets/[id]/localize'>;
  * rule-provider scenario.
  */
 export const POST = withProblemDetails(async (request: Request, ctx: Ctx) => {
+  const { id: profileId } = await resolveScopeProfile(request);
   const { id } = await ctx.params;
   const set = await getRuleSet(id);
   if (!set) throw ProblemDetailsError.notFound(`Rule set ${id} not found.`);
@@ -32,6 +34,7 @@ export const POST = withProblemDetails(async (request: Request, ctx: Ctx) => {
     op: 'patch',
     payload: { id, patch: { source: 'local', content: fetched.text, url: '' } },
     actor: resolveActor(request),
+    profileId,
   });
   return Response.json({ data: res.data, meta: { bytes: fetched.bytes } });
 });

@@ -33,6 +33,8 @@ export interface DispatchRequest {
   op: string;
   payload: unknown;
   actor: string;
+  /** The profile whose base/rules/proxy-groups this op mutates. */
+  profileId: string;
 }
 
 export interface DispatchResponse {
@@ -40,17 +42,17 @@ export interface DispatchResponse {
   events: AuditEvent[];
 }
 
-function createRulesStore(): RulesStore {
+function createRulesStore(profileId: string): RulesStore {
   return {
     async list(filter) {
-      const all = await listRulesRepo();
+      const all = await listRulesRepo(profileId);
       if (!filter?.anchor) return all;
       return all.filter((r) => r.anchor === filter.anchor);
     },
-    get: getRuleRepo,
-    upsert: upsertRuleRepo,
-    delete: deleteRuleRepo,
-    computeNextRank,
+    get: (id) => getRuleRepo(profileId, id),
+    upsert: (rule) => upsertRuleRepo(profileId, rule),
+    delete: (id) => deleteRuleRepo(profileId, id),
+    computeNextRank: (anchor) => computeNextRank(profileId, anchor),
   };
 }
 
@@ -68,9 +70,10 @@ export async function dispatch(req: DispatchRequest): Promise<DispatchResponse> 
 
   const ctx: OpContext = {
     actor: req.actor,
-    base: createBaseStore(),
-    rules: createRulesStore(),
-    taxonomy: createTaxonomyStore(),
+    profileId: req.profileId,
+    base: createBaseStore(req.profileId),
+    rules: createRulesStore(req.profileId),
+    taxonomy: createTaxonomyStore(req.profileId),
   };
 
   const result = await handler(ctx, req.payload);
@@ -86,6 +89,7 @@ export async function dispatch(req: DispatchRequest): Promise<DispatchResponse> 
         ruleId: ev.target.kind === 'rule' ? ev.target.id : undefined,
         before: ev.before,
         after: ev.after,
+        profileId: req.profileId,
       }),
     );
   }

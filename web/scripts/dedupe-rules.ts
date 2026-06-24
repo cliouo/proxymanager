@@ -25,6 +25,7 @@ import { renderRule } from '@/lib/engine/renderer';
 import { getRedis } from '@/lib/redis/client';
 import { REDIS_KEYS } from '@/lib/redis/keys';
 import { getBase } from '@/lib/repos/baseRepo';
+import { getProfileByName } from '@/lib/repos/profilesRepo';
 import { listRules } from '@/lib/repos/rulesRepo';
 import type { Rule } from '@/schemas';
 
@@ -38,14 +39,18 @@ async function main(): Promise<void> {
   const commit = process.argv.includes('--commit');
   console.log(`\n=== dedupe-rules (${commit ? 'COMMIT' : 'DRY-RUN'}) ===\n`);
 
-  const base = await getBase();
+  const defaultProfile = await getProfileByName('default');
+  if (!defaultProfile) throw new Error('default profile missing — run `pnpm init:default-profile` first');
+  const profileId = defaultProfile.id;
+
+  const base = await getBase(profileId);
   const anchorOrder = base ? parseBase(base.content).anchors : [];
   const anchorRank = (a: string) => {
     const i = anchorOrder.indexOf(a);
     return i === -1 ? 999 : i;
   };
 
-  const all = await listRules();
+  const all = await listRules(profileId);
   const active = all.filter(isActive);
   console.log(`规则总数 : ${all.length}（生效 ${active.length} / 停用 ${all.length - active.length}）`);
 
@@ -144,7 +149,7 @@ async function main(): Promise<void> {
   await redis
     .multi()
     .set(`rules:deduped:${ts}`, JSON.stringify(removals))
-    .hdel(REDIS_KEYS.rules, ...removeIds)
+    .hdel(REDIS_KEYS.rules(profileId), ...removeIds)
     .exec();
 
   console.log('\n✓ COMMIT 完成（原子事务）：');

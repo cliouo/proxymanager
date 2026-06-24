@@ -1,4 +1,6 @@
 import { ProblemDetailsError } from '@/lib/http/problem';
+import { getRedis } from '@/lib/redis/client';
+import { REDIS_KEYS } from '@/lib/redis/keys';
 import {
   deleteProfile as repoDelete,
   getProfile,
@@ -6,16 +8,23 @@ import {
   listProfiles,
   upsertProfile,
 } from '@/lib/repos/profilesRepo';
+import { getBase, setBase } from '@/lib/repos/baseRepo';
+import { upsertRules, listRules } from '@/lib/repos/rulesRepo';
+import { listProxyGroups, upsertProxyGroups } from '@/lib/repos/proxyGroupsRepo';
 import { invalidateResolvedSnapshot } from '@/lib/repos/resolvedRepo';
 import { listCollections } from '@/lib/repos/collectionsRepo';
 import { listSubscriptions } from '@/lib/repos/subscriptionsRepo';
+import { createTaxonomyStore } from '@/lib/scenarios/_shared/GroupTaxonomy';
 import {
+  DEFAULT_PROFILE_NAME,
   ProfileCreateSchema,
   ProfileUpdateSchema,
   type Profile,
   type ProfileCreate,
   type ProfileSource,
   type ProfileUpdate,
+  type ProxyGroup,
+  type Rule,
 } from '@/schemas';
 
 function nowSeconds(): number {
@@ -52,6 +61,64 @@ async function assertSourceValid(source: ProfileSource | undefined): Promise<voi
   }
 }
 
+/**
+ * Deep-copy a profile's owned config (base [+ proxy-groups + rules + taxonomy])
+ * into a freshly created profile's scope. Proxy-groups and rules get NEW ids;
+ * names/rank/section/template_id/bound_* are preserved verbatim, so every
+ * cross-reference (group→group, rule→group all by name; template_id→shared
+ * template) stays valid without remapping. `includeGroupsRules:false` copies
+ * only the base skeleton (the "blank" path — fresh chassis, no routing).
+ */
+async function cloneProfileConfig(
+  srcId: string,
+  destId: string,
+  includeGroupsRules: boolean,
+): Promise<void> {
+  const now = nowSeconds();
+  const srcBase = await getBase(srcId);
+  if (srcBase) {
+    // Same content ⇒ same content-hash etag; carry anchors/policies forward.
+    await setBase(
+      destId,
+      srcBase.content,
+      {
+        etag: srcBase.etag,
+        anchors: srcBase.anchors,
+        policies: srcBase.policies,
+        updated_at: now,
+      },
+      null,
+    );
+  }
+  if (!includeGroupsRules) return;
+
+  const [groups, rules] = await Promise.all([listProxyGroups(srcId), listRules(srcId)]);
+  if (groups.length > 0) {
+    const cloned: ProxyGroup[] = groups.map((g) => ({
+      ...g,
+      id: crypto.randomUUID(),
+      created_at: now,
+      updated_at: now,
+    }));
+    await upsertProxyGroups(destId, cloned);
+  }
+  if (rules.length > 0) {
+    const cloned: Rule[] = rules.map((r) => ({
+      ...r,
+      id: crypto.randomUUID(),
+      updated_at: now,
+    }));
+    await upsertRules(destId, cloned);
+  }
+  // Taxonomy is keyed by group name (preserved on clone), so a straight copy
+  // into the new profile's hash is correct.
+  const srcTax = await createTaxonomyStore(srcId).all();
+  const destTax = createTaxonomyStore(destId);
+  for (const [name, tag] of Object.entries(srcTax)) {
+    await destTax.set(name, tag);
+  }
+}
+
 export async function createProfile(input: ProfileCreate): Promise<Profile> {
   const parsed = ProfileCreateSchema.parse(input);
   const dup = await getProfileByName(parsed.name);
@@ -59,14 +126,34 @@ export async function createProfile(input: ProfileCreate): Promise<Profile> {
     throw ProblemDetailsError.conflict(`profile 名称 "${parsed.name}" 已存在。`);
   }
   await assertSourceValid(parsed.source);
+
+  // Resolve the clone source BEFORE creating the record so a bad copy_from
+  // fails cleanly. copy_from set → full clone of that profile; omitted → fresh
+  // skeleton from `default` (base only, no groups/rules).
+  const { copy_from, ...profileFields } = parsed;
+  let srcId: string | null = null;
+  let includeGroupsRules = false;
+  if (copy_from) {
+    const src = await getProfile(copy_from);
+    if (!src) throw ProblemDetailsError.unprocessable(`复制来源配置文件不存在: ${copy_from}`);
+    srcId = src.id;
+    includeGroupsRules = true;
+  } else {
+    const fallback = await getProfileByName(DEFAULT_PROFILE_NAME);
+    srcId = fallback?.id ?? null; // null = nothing to seed from (pre-init)
+  }
+
   const now = nowSeconds();
   const profile: Profile = {
-    ...parsed,
+    ...profileFields,
     id: generateProfileId(),
     created_at: now,
     updated_at: now,
   } as Profile;
   await upsertProfile(profile);
+  if (srcId) {
+    await cloneProfileConfig(srcId, profile.id, includeGroupsRules);
+  }
   invalidateSnapshot();
   return profile;
 }
@@ -117,7 +204,18 @@ export async function deleteProfile(id: string): Promise<boolean> {
     throw ProblemDetailsError.conflict('至少保留一个 profile;无法删除最后一个。');
   }
   const removed = await repoDelete(id);
-  if (removed) invalidateSnapshot();
+  if (removed) {
+    // Drop the profile's owned config so its keys don't linger as orphans.
+    await getRedis()
+      .multi()
+      .del(REDIS_KEYS.base.content(id))
+      .del(REDIS_KEYS.base.meta(id))
+      .del(REDIS_KEYS.rules(id))
+      .del(REDIS_KEYS.proxyGroups(id))
+      .del(REDIS_KEYS.taxonomy.groups(id))
+      .exec();
+    invalidateSnapshot();
+  }
   return removed;
 }
 

@@ -28,6 +28,7 @@ import { parseDocument } from 'yaml';
 import { getRedis } from '@/lib/redis/client';
 import { REDIS_KEYS } from '@/lib/redis/keys';
 import { getBase, type BaseMeta } from '@/lib/repos/baseRepo';
+import { getProfileByName } from '@/lib/repos/profilesRepo';
 import { listProxyGroups } from '@/lib/repos/proxyGroupsRepo';
 import { invalidateResolvedSnapshot } from '@/lib/repos/resolvedRepo';
 import { computeEtag } from '@/lib/services/baseService';
@@ -58,7 +59,11 @@ async function main(): Promise<void> {
   const commit = process.argv.includes('--commit');
   console.log(`\n=== fix-sub-store-dedup (${commit ? 'COMMIT' : 'DRY-RUN'}) ===\n`);
 
-  const base = await getBase();
+  const defaultProfile = await getProfileByName('default');
+  if (!defaultProfile) throw new Error('default profile missing — run `pnpm init:default-profile` first');
+  const profileId = defaultProfile.id;
+
+  const base = await getBase(profileId);
   if (!base) throw new Error('base:content 不存在。');
   const oldContent = base.content;
   const oldMeta: BaseMeta = {
@@ -69,7 +74,7 @@ async function main(): Promise<void> {
   };
 
   // 1) Groups to flip: include-all-providers → include-all-proxies.
-  const groups = await listProxyGroups();
+  const groups = await listProxyGroups(profileId);
   const toFlip = groups.filter((g) => g['include-all-providers'] === true && g['include-all'] !== true);
   const modified: ProxyGroup[] = toFlip.map((g) => {
     const next = { ...g, 'include-all-proxies': true, updated_at: nowSeconds() } as Record<string, unknown>;
@@ -111,7 +116,7 @@ async function main(): Promise<void> {
   }
 
   const redis = getRedis();
-  const live = await redis.get<string>(REDIS_KEYS.base.content);
+  const live = await redis.get<string>(REDIS_KEYS.base.content(profileId));
   if (live !== oldContent) {
     throw new Error('base:content 在本次运行期间被其他写入修改,已中止。请重新 dry-run。');
   }
@@ -133,10 +138,10 @@ async function main(): Promise<void> {
   tx.set(`base:meta:backup:${ts}`, oldMeta);
   if (modified.length > 0) {
     tx.set(`proxy-groups:iap-fix:backup:${ts}`, JSON.stringify(groupBackup));
-    tx.hset(REDIS_KEYS.proxyGroups, groupPayload);
+    tx.hset(REDIS_KEYS.proxyGroups(profileId), groupPayload);
   }
-  tx.set(REDIS_KEYS.base.content, newContent);
-  tx.set(REDIS_KEYS.base.meta, newMeta);
+  tx.set(REDIS_KEYS.base.content(profileId), newContent);
+  tx.set(REDIS_KEYS.base.meta(profileId), newMeta);
   await tx.exec();
   await invalidateResolvedSnapshot().catch(() => undefined);
 

@@ -17,6 +17,8 @@ interface RecordInput {
   before?: unknown;
   after?: unknown;
   undoes?: string;
+  /** Profile the mutation targeted (Phase 2 per-profile config). */
+  profileId?: string;
 }
 
 export function generateEventId(): string {
@@ -44,6 +46,7 @@ export async function recordEvent(input: RecordInput): Promise<AuditEvent> {
     before: input.before,
     after: input.after,
     undoes: input.undoes,
+    profileId: input.profileId,
   };
 
   const redis = getRedis();

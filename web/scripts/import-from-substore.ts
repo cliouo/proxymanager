@@ -30,6 +30,7 @@ import { parseBase } from '@/lib/engine/parser';
 import { getRedis } from '@/lib/redis/client';
 import { REDIS_KEYS } from '@/lib/redis/keys';
 import { computeEtag } from '@/lib/services/baseService';
+import { getProfileByName } from '@/lib/repos/profilesRepo';
 import type { BaseMeta } from '@/lib/repos/baseRepo';
 import type { Rule, RuleType } from '@/schemas';
 
@@ -137,6 +138,10 @@ async function main() {
     process.exit(1);
   }
 
+  const defaultProfile = await getProfileByName('default');
+  if (!defaultProfile) throw new Error('default profile missing — run `pnpm init:default-profile` first');
+  const profileId = defaultProfile.id;
+
   console.log(`[import] reading from: ${arg}`);
   const original = await loadInput(arg);
   console.log(`[import] loaded ${original.length} bytes`);
@@ -180,12 +185,12 @@ async function main() {
 
   const redis = getRedis();
   const tx = redis.multi();
-  tx.set(REDIS_KEYS.base.content, transformedYaml);
-  tx.set(REDIS_KEYS.base.meta, meta);
+  tx.set(REDIS_KEYS.base.content(profileId), transformedYaml);
+  tx.set(REDIS_KEYS.base.meta(profileId), meta);
   if (rules.length > 0) {
     const hashPayload: Record<string, Rule> = {};
     for (const rule of rules) hashPayload[rule.id] = rule;
-    tx.hset(REDIS_KEYS.rules, hashPayload);
+    tx.hset(REDIS_KEYS.rules(profileId), hashPayload);
   }
   await tx.exec();
 

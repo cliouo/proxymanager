@@ -2,20 +2,21 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ApiError, api } from '@/lib/client/api';
+import { useProfiles } from '@/components/profile/ProfileContext';
 import type { Collection } from '@/lib/types/collection';
-import type { Profile, ProfileSource } from '@/schemas';
+import type { ProfileSource } from '@/schemas';
 import styles from '../base.module.css';
 
 /**
- * Per-profile source binding — single-select. A profile pulls nodes from
- * exactly one source: unbound (`none`, the default — injects no subscription
- * nodes), one single subscription, or one 聚合订阅 (collection, whose members
- * merge). Want a hand-picked multi-airport set? Build a collection on the 订阅源
- * page and bind it here — the profile never fans out to an ad-hoc list.
+ * Per-profile source binding — single-select, for the ACTIVE editing profile
+ * (Phase 2). A profile pulls nodes from exactly one source: unbound (`none` —
+ * injects no subscription nodes), one single subscription, or one 聚合订阅
+ * (collection, whose members merge). Want a hand-picked multi-airport set? Build
+ * a collection on the 订阅源 page and bind it here — the profile never fans out
+ * to an ad-hoc list.
  *
- * If no `default` profile record exists yet (pre `npm run init:default-profile`),
- * we render a hint instead — resolve still works (legacy all-enabled fallback)
- * but binding isn't authored yet.
+ * If no profile record exists yet (pre `npm run init:default-profile`), we
+ * render a hint instead.
  */
 
 interface SubLite {
@@ -40,22 +41,27 @@ function valueToSource(v: string): ProfileSource {
 }
 
 export function ProfileBindingBar() {
-  const [profile, setProfile] = useState<Profile | null>(null);
+  const { activeProfile, reload } = useProfiles();
   const [subs, setSubs] = useState<SubLite[]>([]);
   const [collections, setCollections] = useState<Collection[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Optimistic override of the active profile's source while a PATCH is in flight.
+  const [pendingSource, setPendingSource] = useState<ProfileSource | null>(null);
+
+  const profile = activeProfile;
+  const source: ProfileSource = useMemo(
+    () => pendingSource ?? profile?.source ?? { type: 'none' },
+    [pendingSource, profile],
+  );
 
   const load = useCallback(async () => {
     try {
-      const [profiles, subList, colList] = await Promise.all([
-        api<{ data: Profile[] }>('/api/v1/profiles'),
+      const [subList, colList] = await Promise.all([
         api<{ data: SubLite[] }>('/api/v1/subscriptions'),
         api<{ data: Collection[] }>('/api/v1/collections'),
       ]);
-      const def = profiles.data.find((p) => p.name === 'default') ?? null;
-      setProfile(def);
       setSubs(subList.data);
       setCollections(colList.data);
       setError(null);
@@ -73,8 +79,7 @@ export function ProfileBindingBar() {
   const change = async (value: string) => {
     if (!profile || busy) return;
     const next = valueToSource(value);
-    const prior = profile;
-    setProfile({ ...profile, source: next });
+    setPendingSource(next);
     setBusy(true);
     setError(null);
     try {
@@ -82,16 +87,17 @@ export function ProfileBindingBar() {
         method: 'PATCH',
         body: { source: next },
       });
+      await reload(); // refresh the shared profiles list (switcher + this bar)
     } catch (err) {
-      setProfile(prior);
       setError(err instanceof ApiError ? err.message : String(err));
     } finally {
+      setPendingSource(null);
       setBusy(false);
     }
   };
 
   const summary = useMemo(() => {
-    const src = profile?.source ?? { type: 'none' as const };
+    const src = source;
     if (src.type === 'none') return '未绑定 · 不注入任何订阅节点';
     if (src.type === 'subscription') {
       const s = subs.find((x) => x.id === src.id);
@@ -101,27 +107,28 @@ export function ProfileBindingBar() {
     const c = collections.find((x) => x.id === src.id);
     if (!c) return '⚠ 绑定的聚合订阅已不存在';
     return `聚合订阅 · ${c.name} · ${c.subscription_ids.length} 成员`;
-  }, [profile, subs, collections]);
+  }, [source, subs, collections]);
 
   if (!loaded) return null;
 
   if (!profile) {
     return (
       <div className={styles.warnStrip}>
-        默认 profile 未初始化 ——{' '}
+        配置文件未初始化 ——{' '}
         <code>npm run init:default-profile -- --commit</code> 后刷新。
-        在此之前所有 <code>enabled</code> 订阅源都会注入(legacy fallback)。
       </div>
     );
   }
 
   return (
     <div className={styles.bindBar}>
-      <span className={styles.label}>节点来源</span>
+      <span className={styles.label}>
+        节点来源<span className="sh"> · {profile.name}</span>
+      </span>
       <select
         className="input mono"
         style={{ width: 256, flex: 'none' }}
-        value={sourceToValue(profile.source)}
+        value={sourceToValue(source)}
         onChange={(e) => change(e.target.value)}
         disabled={busy}
       >

@@ -89,7 +89,8 @@ vi.mock('@/lib/services/nodeExportService', () => ({
 
 let registry: typeof import('@/lib/ai/actions/registry');
 
-const ctx = { actor: 'test' };
+const PID = 'prof-test';
+const ctx = { actor: 'test', profileId: PID };
 
 const SUB_ID = '11111111-1111-4111-8111-111111111111';
 const COL_ID = '22222222-2222-4222-8222-222222222222';
@@ -197,7 +198,7 @@ describe('preview_node_operators', () => {
   it('flags orphaned references when a rename drops a name a chain pins', async () => {
     seedSub([]);
     // A chain wrap whose backend is the (pre-rename) node name.
-    bucket(REDIS_KEYS.proxyGroups).set('w', {
+    bucket(REDIS_KEYS.proxyGroups(PID)).set('w', {
       id: '99999999-9999-4999-8999-999999999999',
       kind: 'raw',
       name: 'chain:F-to-hk',

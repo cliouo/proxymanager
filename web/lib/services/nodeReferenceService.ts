@@ -24,10 +24,13 @@ export interface NodeReference {
  * Scan proxy-groups (manual members + chain-wrap backends) and rules (policy)
  * for any of `names`. Returns one entry per reference. Empty input → no reads.
  */
-export async function findNodeReferences(names: string[]): Promise<NodeReference[]> {
+export async function findNodeReferences(
+  profileId: string,
+  names: string[],
+): Promise<NodeReference[]> {
   if (names.length === 0) return [];
   const wanted = new Set(names);
-  const [groups, rules] = await Promise.all([listProxyGroups(), listRules()]);
+  const [groups, rules] = await Promise.all([listProxyGroups(profileId), listRules(profileId)]);
   const refs: NodeReference[] = [];
 
   for (const g of groups) {

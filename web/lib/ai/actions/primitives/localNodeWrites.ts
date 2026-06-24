@@ -69,11 +69,11 @@ const listLocalNodes = defineAction({
     id: z.uuid().describe('本地订阅源的 id(先用 list_node_sources 拿，kind 须为 local)'),
   }),
   risk: 'read',
-  async run(_ctx, input) {
+  async run(ctx, input) {
     const sub = await mustLocalSub(input.id);
     const proxies = parseLocalProxies(sub.content!);
     const names = proxies.map((p) => nodeName(p));
-    const refs = await findNodeReferences(names);
+    const refs = await findNodeReferences(ctx.profileId, names);
     const byNode = new Map<string, Array<{ kind: string; via: string }>>();
     for (const r of refs) {
       const list = byNode.get(r.node) ?? [];

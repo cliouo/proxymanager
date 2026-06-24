@@ -3,6 +3,7 @@ import { withProblemDetails } from '@/lib/http/handler';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { getBase } from '@/lib/repos/baseRepo';
 import { listProxyGroups } from '@/lib/repos/proxyGroupsRepo';
+import { resolveScopeProfile } from '@/lib/profileScope';
 import { frontPoolGroupNames } from '@/schemas';
 
 export const dynamic = 'force-dynamic';
@@ -17,8 +18,9 @@ export const dynamic = 'force-dynamic';
  * 管线,只该被链路套用,不该被规则直接选中(选了只走前置、不经后端)。仅从
  * 选择器隐藏——校验侧仍接受,避免已有引用保存时硬报错。
  */
-export const GET = withProblemDetails(async () => {
-  const [base, groups] = await Promise.all([getBase(), listProxyGroups()]);
+export const GET = withProblemDetails(async (request: Request) => {
+  const { id: profileId } = await resolveScopeProfile(request);
+  const [base, groups] = await Promise.all([getBase(profileId), listProxyGroups(profileId)]);
   if (!base) {
     throw ProblemDetailsError.notFound('Base config has not been initialized yet.');
   }

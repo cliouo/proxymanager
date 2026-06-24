@@ -241,8 +241,8 @@ export function getConfigSection(content: string, path: string): SectionResult {
 }
 
 /** Load base.yaml raw text (structure intact — do NOT toJS, it drops anchors). */
-export async function loadBaseContent(): Promise<string> {
-  const base = await getBase();
+export async function loadBaseContent(profileId: string): Promise<string> {
+  const base = await getBase(profileId);
   if (!base) {
     throw ProblemDetailsError.unprocessable('base.yaml 尚未初始化。');
   }

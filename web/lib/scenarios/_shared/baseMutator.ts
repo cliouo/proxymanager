@@ -17,10 +17,10 @@ import { computeEtag } from '@/lib/services/baseService';
 import { nowSeconds } from '@/lib/services/rulesService';
 import type { BaseReadResult, BaseStore } from './types';
 
-export function createBaseStore(): BaseStore {
+export function createBaseStore(profileId: string): BaseStore {
   return {
     async read(): Promise<BaseReadResult> {
-      const base = await getBase();
+      const base = await getBase(profileId);
       if (!base) {
         throw ProblemDetailsError.unprocessable(
           'Base config has not been initialized. Set base before mutating.',
@@ -49,6 +49,7 @@ export function createBaseStore(): BaseStore {
 
       const newEtag = computeEtag(newContent);
       const writeResult = await setBase(
+        profileId,
         newContent,
         {
           anchors: parsed.anchors,

@@ -149,9 +149,10 @@ interface PoolChainSnapshot {
  * would let `clear-chain` blow away non-chain groups that happen to fit.
  */
 async function loadChainWrap(
+  profileId: string,
   chainName: string,
 ): Promise<{ group: ProxyGroup; backend: string; front: string }> {
-  const group = await getProxyGroupByName(chainName);
+  const group = await getProxyGroupByName(profileId, chainName);
   if (!group) {
     throw ProblemDetailsError.notFound(`Chain group "${chainName}" not found.`);
   }
@@ -217,7 +218,7 @@ const setFixedChain: OpHandler = async (ctx, raw) => {
   }
   const name = chainName ?? defaultFixedChainName(front, backend);
 
-  await createProxyGroup({
+  await createProxyGroup(ctx.profileId, {
     kind: 'raw',
     name,
     type: 'select',
@@ -242,8 +243,8 @@ const setFixedChain: OpHandler = async (ctx, raw) => {
 
 const clearChain: OpHandler = async (ctx, raw) => {
   const { chainName } = ClearChainPayload.parse(raw);
-  const { group, backend, front } = await loadChainWrap(chainName);
-  await deleteProxyGroup(group.id);
+  const { group, backend, front } = await loadChainWrap(ctx.profileId, chainName);
+  await deleteProxyGroup(ctx.profileId, group.id);
   await ctx.taxonomy.delete(chainName).catch(() => undefined);
   const snap: FixedChainSnapshot = { chainName, backend, front };
   return {
@@ -280,7 +281,7 @@ const createPoolChain: OpHandler = async (ctx, raw) => {
 
   // Batch-create so name-uniqueness + cycle detection see both groups
   // together; either both land or neither does (the helper pre-validates).
-  await createProxyGroups([
+  await createProxyGroups(ctx.profileId, [
     {
       kind: 'raw',
       name: poolName,
@@ -314,17 +315,17 @@ const createPoolChain: OpHandler = async (ctx, raw) => {
   };
 };
 
-const updatePoolMembers: OpHandler = async (_ctx, raw) => {
+const updatePoolMembers: OpHandler = async (ctx, raw) => {
   const { poolName, fronts } = UpdatePoolMembersPayload.parse(raw);
   if (new Set(fronts).size !== fronts.length) {
     throw ProblemDetailsError.unprocessable('Pool members must be unique.');
   }
-  const group = await getProxyGroupByName(poolName);
+  const group = await getProxyGroupByName(ctx.profileId, poolName);
   if (!group) {
     throw ProblemDetailsError.notFound(`proxy-group "${poolName}" not found.`);
   }
   const prevMembers = group.proxies ?? [];
-  await patchProxyGroup(group.id, { proxies: fronts });
+  await patchProxyGroup(ctx.profileId, group.id, { proxies: fronts });
   return {
     data: { poolName, fronts },
     events: [
@@ -349,7 +350,7 @@ const createSmartPoolChain: OpHandler = async (ctx, raw) => {
 
   // Batch-create so name-uniqueness + cycle detection see both groups
   // together; either both land or neither does.
-  await createProxyGroups([
+  await createProxyGroups(ctx.profileId, [
     smartPoolGroupInput(poolName, smart),
     {
       kind: 'raw',
@@ -385,9 +386,9 @@ const createSmartPoolChain: OpHandler = async (ctx, raw) => {
   };
 };
 
-const updateSmartPool: OpHandler = async (_ctx, raw) => {
+const updateSmartPool: OpHandler = async (ctx, raw) => {
   const { poolName, ...spec } = UpdateSmartPoolPayload.parse(raw);
-  const group = await getProxyGroupByName(poolName);
+  const group = await getProxyGroupByName(ctx.profileId, poolName);
   if (!group) {
     throw ProblemDetailsError.notFound(`proxy-group "${poolName}" not found.`);
   }
@@ -399,7 +400,7 @@ const updateSmartPool: OpHandler = async (_ctx, raw) => {
   };
   const after = resolveSmartSpec(spec);
 
-  await patchProxyGroup(group.id, {
+  await patchProxyGroup(ctx.profileId, group.id, {
     type: after.strategy,
     'include-all-proxies': true,
     // `null` clears the field — drop the filter when the pool goes region-less.
@@ -423,12 +424,12 @@ const updateSmartPool: OpHandler = async (_ctx, raw) => {
 
 const deletePoolChain: OpHandler = async (ctx, raw) => {
   const { chainName } = DeletePoolChainPayload.parse(raw);
-  const { backend, front: poolName } = await loadChainWrap(chainName);
+  const { backend, front: poolName } = await loadChainWrap(ctx.profileId, chainName);
 
   // The fronts pool — only delete if it's still around. We don't track
   // ownership; if the user shares the pool across chains they'd be in
   // trouble, but in practice each chain owns its own pool.
-  const poolGroup = await getProxyGroupByName(poolName);
+  const poolGroup = await getProxyGroupByName(ctx.profileId, poolName);
   const poolMembers = poolGroup?.proxies ?? [];
   // Capture the smart spec (if any) so undo can rebuild a filter pool
   // faithfully rather than as an empty manual pool.
@@ -445,7 +446,7 @@ const deletePoolChain: OpHandler = async (ctx, raw) => {
   // Pre-validate together: if either is referenced by something outside the
   // chained-proxy bundle, refuse the whole teardown.
   const namesToDelete = poolGroup ? [chainName, poolName] : [chainName];
-  await deleteProxyGroupsByName(namesToDelete);
+  await deleteProxyGroupsByName(ctx.profileId, namesToDelete);
 
   await ctx.taxonomy.delete(chainName).catch(() => undefined);
   // Pool taxonomy is left alone — if the user previously tagged the pool
@@ -469,11 +470,11 @@ const deletePoolChain: OpHandler = async (ctx, raw) => {
 const inverseSetFixedChain: InverseHandler = async (ctx, event) => {
   const after = event.after as FixedChainSnapshot | undefined;
   if (!after) throw ProblemDetailsError.unprocessable('Missing after-state.');
-  const group = await getProxyGroupByName(after.chainName);
+  const group = await getProxyGroupByName(ctx.profileId, after.chainName);
   if (!group) {
     throw ProblemDetailsError.conflict(`Chain "${after.chainName}" no longer exists.`);
   }
-  await deleteProxyGroup(group.id);
+  await deleteProxyGroup(ctx.profileId, group.id);
   await ctx.taxonomy.delete(after.chainName).catch(() => undefined);
   return {
     data: null,
@@ -490,7 +491,7 @@ const inverseSetFixedChain: InverseHandler = async (ctx, event) => {
 const inverseClearChain: InverseHandler = async (ctx, event) => {
   const before = event.before as FixedChainSnapshot | undefined;
   if (!before) throw ProblemDetailsError.unprocessable('Missing before-state.');
-  await createProxyGroup({
+  await createProxyGroup(ctx.profileId, {
     kind: 'raw',
     name: before.chainName,
     type: 'select',
@@ -514,7 +515,7 @@ const inverseClearChain: InverseHandler = async (ctx, event) => {
 const inverseCreatePoolChain: InverseHandler = async (ctx, event) => {
   const after = event.after as PoolChainSnapshot | undefined;
   if (!after) throw ProblemDetailsError.unprocessable('Missing after-state.');
-  await deleteProxyGroupsByName([after.chainName, after.poolName]);
+  await deleteProxyGroupsByName(ctx.profileId, [after.chainName, after.poolName]);
   await ctx.taxonomy.delete(after.chainName).catch(() => undefined);
   await ctx.taxonomy.delete(after.poolName).catch(() => undefined);
   return {
@@ -529,17 +530,17 @@ const inverseCreatePoolChain: InverseHandler = async (ctx, event) => {
   };
 };
 
-const inverseUpdatePoolMembers: InverseHandler = async (_ctx, event) => {
+const inverseUpdatePoolMembers: InverseHandler = async (ctx, event) => {
   const before = event.before as { members: string[] } | undefined;
   const target = event.target;
   if (!before || target?.kind !== 'proxy-group') {
     throw ProblemDetailsError.unprocessable('Missing before-state or target.');
   }
-  const group = await getProxyGroupByName(target.name);
+  const group = await getProxyGroupByName(ctx.profileId, target.name);
   if (!group) {
     throw ProblemDetailsError.conflict(`Pool "${target.name}" no longer exists.`);
   }
-  await patchProxyGroup(group.id, { proxies: before.members });
+  await patchProxyGroup(ctx.profileId, group.id, { proxies: before.members });
   return {
     data: null,
     events: [
@@ -552,17 +553,17 @@ const inverseUpdatePoolMembers: InverseHandler = async (_ctx, event) => {
   };
 };
 
-const inverseUpdateSmartPool: InverseHandler = async (_ctx, event) => {
+const inverseUpdateSmartPool: InverseHandler = async (ctx, event) => {
   const before = event.before as SmartPoolSnapshot | undefined;
   const target = event.target;
   if (!before || target?.kind !== 'proxy-group') {
     throw ProblemDetailsError.unprocessable('Missing before-state or target.');
   }
-  const group = await getProxyGroupByName(target.name);
+  const group = await getProxyGroupByName(ctx.profileId, target.name);
   if (!group) {
     throw ProblemDetailsError.conflict(`Pool "${target.name}" no longer exists.`);
   }
-  await patchProxyGroup(group.id, {
+  await patchProxyGroup(ctx.profileId, group.id, {
     type: before.strategy,
     'include-all-proxies': true,
     filter: before.filter ?? null,
@@ -596,7 +597,7 @@ const inverseDeletePoolChain: InverseHandler = async (ctx, event) => {
         proxies: before.poolMembers,
         notes: 'chained-proxy: fronts pool (restored via undo)',
       };
-  await createProxyGroups([
+  await createProxyGroups(ctx.profileId, [
     poolInput,
     {
       kind: 'raw',
@@ -629,7 +630,7 @@ const inverseDeletePoolChain: InverseHandler = async (ctx, event) => {
  * Pool chains are detected when the wrap's `dialer-proxy` points at another
  * group (the pool); fixed chains when it points at a name we don't manage.
  */
-export async function summariseChains(): Promise<{
+export async function summariseChains(profileId: string): Promise<{
   fixedChains: { chainName: string; backend: string; front: string }[];
   poolChains: {
     poolName: string;
@@ -639,7 +640,7 @@ export async function summariseChains(): Promise<{
     smart?: SmartPoolSnapshot;
   }[];
 }> {
-  const all = await listProxyGroups();
+  const all = await listProxyGroups(profileId);
   const byName = new Map(all.map((g) => [g.name, g]));
   const fixedChains: { chainName: string; backend: string; front: string }[] = [];
   const poolChains: {

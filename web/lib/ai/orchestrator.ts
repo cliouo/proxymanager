@@ -30,6 +30,8 @@ export type AssistantEvent =
 
 export interface RunAssistantOptions {
   actor: string;
+  /** The profile the assistant's actions read/write (per-profile config). */
+  profileId: string;
   /** Conversation id — keys the server-side transcript across turns. */
   conversationId: string;
   /** The new user turn. Prior turns are loaded from the session store. */
@@ -39,8 +41,8 @@ export interface RunAssistantOptions {
 }
 
 export async function runAssistant(opts: RunAssistantOptions): Promise<void> {
-  const { actor, conversationId, userMessage, emit, signal } = opts;
-  const ctx: ActionContext = { actor };
+  const { actor, profileId, conversationId, userMessage, emit, signal } = opts;
+  const ctx: ActionContext = { actor, profileId };
   const tools = actionsToTools(listActions());
 
   // Full prior transcript (tool calls + results + reasoning_content) so the

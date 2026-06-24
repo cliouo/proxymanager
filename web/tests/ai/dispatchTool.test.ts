@@ -67,7 +67,8 @@ beforeEach(async () => {
 });
 afterEach(() => vi.restoreAllMocks());
 
-const CTX = { actor: 'test' };
+const PID = 'prof-test';
+const CTX = { actor: 'test', profileId: PID };
 
 function seedGroup(over: Partial<ProxyGroup>): ProxyGroup {
   const g = {
@@ -80,7 +81,7 @@ function seedGroup(over: Partial<ProxyGroup>): ProxyGroup {
     'include-all-proxies': true,
     ...over,
   } as ProxyGroup;
-  bucket('proxy-groups').set(g.id, g);
+  bucket(`proxy-groups:${PID}`).set(g.id, g);
   return g;
 }
 
@@ -105,7 +106,7 @@ describe('dispatchToolCall', () => {
     expect(data.action).toBe('update_proxy_group');
     expect(data.token).toMatch(/^[a-f0-9]{36}$/);
     // The mutation must NOT have run yet — group unchanged in the store.
-    expect((bucket('proxy-groups').get(g.id) as ProxyGroup).filter).toBe('(?i)old');
+    expect((bucket(`proxy-groups:${PID}`).get(g.id) as ProxyGroup).filter).toBe('(?i)old');
   });
 
   it('returns an error result for an unknown tool (never throws)', async () => {

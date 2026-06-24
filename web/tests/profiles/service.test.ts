@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Collection, Profile, Subscription } from '@/schemas';
+import { REDIS_KEYS } from '@/lib/redis/keys';
+import { RuleSchema, type Collection, type Profile, type ProxyGroup, type Rule, type Subscription } from '@/schemas';
 
 const stores = new Map<string, Map<string, unknown>>();
+/** Plain string keys (base:content/meta, config:version, backups). */
+const kv = new Map<string, unknown>();
 /** Plain-key counters (config:version INCRs land here). */
 const counters = new Map<string, number>();
 function bucket(key: string): Map<string, unknown> {
@@ -29,6 +32,14 @@ const fakeRedis = {
     for (const id of ids) if (m.delete(id)) n++;
     return n;
   },
+  get: async (key: string) => kv.get(key) ?? null,
+  set: async (key: string, value: unknown) => {
+    kv.set(key, value);
+  },
+  del: async (key: string) => {
+    kv.delete(key);
+    stores.delete(key);
+  },
   incr: async (key: string) => {
     const next = (counters.get(key) ?? 0) + 1;
     counters.set(key, next);
@@ -39,12 +50,20 @@ const fakeRedis = {
   multi: () => {
     const ops: Array<() => Promise<unknown>> = [];
     const tx = {
+      set: (key: string, value: unknown) => {
+        ops.push(() => fakeRedis.set(key, value));
+        return tx;
+      },
       hset: (key: string, payload: Record<string, unknown>) => {
         ops.push(() => fakeRedis.hset(key, payload));
         return tx;
       },
       hdel: (key: string, ...ids: string[]) => {
         ops.push(() => fakeRedis.hdel(key, ...ids));
+        return tx;
+      },
+      del: (key: string) => {
+        ops.push(() => fakeRedis.del(key));
         return tx;
       },
       incr: (key: string) => {
@@ -71,6 +90,8 @@ let svc: typeof import('@/lib/services/profileService');
 
 beforeEach(async () => {
   stores.clear();
+  kv.clear();
+  counters.clear();
   svc = await import('@/lib/services/profileService');
 });
 
@@ -224,5 +245,119 @@ describe('profileService — delete', () => {
 
   it('returns false for an unknown id', async () => {
     expect(await svc.deleteProfile('00000000-0000-0000-0000-000000000000')).toBe(false);
+  });
+
+  it('cleans up the deleted profile’s owned config keys', async () => {
+    seedProfile({ name: 'default' });
+    const other = seedProfile({ name: 'work' });
+    // Seed the profile's owned config.
+    kv.set(REDIS_KEYS.base.content(other.id), 'proxies: []\n');
+    kv.set(REDIS_KEYS.base.meta(other.id), { etag: 'e', anchors: [], policies: [], updated_at: 0 });
+    bucket(REDIS_KEYS.rules(other.id)).set('r1', { id: 'r1' });
+    bucket(REDIS_KEYS.proxyGroups(other.id)).set('g1', { id: 'g1' });
+
+    expect(await svc.deleteProfile(other.id)).toBe(true);
+    expect(kv.get(REDIS_KEYS.base.content(other.id))).toBeUndefined();
+    expect(kv.get(REDIS_KEYS.base.meta(other.id))).toBeUndefined();
+    expect(stores.get(REDIS_KEYS.rules(other.id))).toBeUndefined();
+    expect(stores.get(REDIS_KEYS.proxyGroups(other.id))).toBeUndefined();
+  });
+});
+
+describe('profileService — clone-on-create (Phase 2)', () => {
+  /**
+   * Seed a source profile that owns a base + one group + one rule + taxonomy.
+   * Records are built schema-valid (real uuids) so listProxyGroups/listRules,
+   * which normalise on read, don't drop them. Returns the source ids.
+   */
+  function seedOwnedConfig(p: Profile): { groupId: string; ruleId: string } {
+    kv.set(REDIS_KEYS.base.content(p.id), 'proxies: []\n# === PROXY-GROUPS ===\n');
+    kv.set(REDIS_KEYS.base.meta(p.id), {
+      etag: 'etag-src',
+      anchors: ['manual'],
+      policies: ['PROXY'],
+      updated_at: 100,
+    });
+    const groupId = crypto.randomUUID();
+    const group = {
+      id: groupId,
+      name: 'MyGroup',
+      type: 'select',
+      kind: 'manual',
+      rank: 10,
+      proxies: ['DIRECT'],
+      updated_at: 0,
+    } as unknown as ProxyGroup;
+    bucket(REDIS_KEYS.proxyGroups(p.id)).set(groupId, group);
+    const rule = RuleSchema.parse({
+      id: crypto.randomUUID(),
+      anchor: 'manual',
+      type: 'DOMAIN',
+      value: 'a.com',
+      policy: 'MyGroup',
+      rank: 10,
+      source: 'manual',
+      added_at: 0,
+      updated_at: 0,
+    }) as Rule;
+    bucket(REDIS_KEYS.rules(p.id)).set(rule.id, rule);
+    bucket(REDIS_KEYS.taxonomy.groups(p.id)).set('MyGroup', { kind: 'custom' });
+    return { groupId, ruleId: rule.id };
+  }
+
+  it('copy_from deep-copies base + groups + rules + taxonomy with new ids, names preserved', async () => {
+    const src = seedProfile({ name: 'default' });
+    const seeded = seedOwnedConfig(src);
+
+    const dest = await svc.createProfile({ name: 'cloned', copy_from: src.id });
+
+    // base copied
+    expect(kv.get(REDIS_KEYS.base.content(dest.id))).toBe('proxies: []\n# === PROXY-GROUPS ===\n');
+    // groups copied with NEW id, SAME name
+    const groups = Object.values(
+      Object.fromEntries(bucket(REDIS_KEYS.proxyGroups(dest.id))),
+    ) as ProxyGroup[];
+    expect(groups).toHaveLength(1);
+    expect(groups[0].name).toBe('MyGroup');
+    expect(groups[0].id).not.toBe(seeded.groupId);
+    // rules copied with NEW id, references preserved (policy by name)
+    const rules = Object.values(Object.fromEntries(bucket(REDIS_KEYS.rules(dest.id)))) as Rule[];
+    expect(rules).toHaveLength(1);
+    expect(rules[0].policy).toBe('MyGroup');
+    expect(rules[0].id).not.toBe(seeded.ruleId);
+    // taxonomy copied (keyed by group name)
+    expect(bucket(REDIS_KEYS.taxonomy.groups(dest.id)).get('MyGroup')).toEqual({ kind: 'custom' });
+  });
+
+  it('editing the clone’s groups does not touch the source (isolation)', async () => {
+    const src = seedProfile({ name: 'default' });
+    seedOwnedConfig(src);
+    const dest = await svc.createProfile({ name: 'cloned', copy_from: src.id });
+
+    // Mutate the clone's proxy-groups hash directly.
+    bucket(REDIS_KEYS.proxyGroups(dest.id)).clear();
+
+    // Source is untouched.
+    expect(bucket(REDIS_KEYS.proxyGroups(src.id)).size).toBe(1);
+  });
+
+  it('blank create (no copy_from) seeds base only from default, no groups/rules', async () => {
+    const def = seedProfile({ name: 'default' });
+    seedOwnedConfig(def);
+
+    const dest = await svc.createProfile({ name: 'fresh' }); // no copy_from
+
+    expect(kv.get(REDIS_KEYS.base.content(dest.id))).toBe(
+      'proxies: []\n# === PROXY-GROUPS ===\n',
+    );
+    expect(stores.get(REDIS_KEYS.proxyGroups(dest.id))).toBeUndefined();
+    expect(stores.get(REDIS_KEYS.rules(dest.id))).toBeUndefined();
+  });
+
+  it('rejects copy_from pointing at a non-existent profile', async () => {
+    seedProfile({ name: 'default' });
+    await expect(
+      svc.createProfile({ name: 'x', copy_from: '00000000-0000-0000-0000-000000000000' }),
+    ).rejects.toThrow(/复制来源/);
   });
 });

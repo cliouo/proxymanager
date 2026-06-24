@@ -50,8 +50,8 @@ function writeResult(
   return { kind: 'write-result', data: { op, summary, result: data, events } };
 }
 
-async function mustGetRule(id: string): Promise<Rule> {
-  const rule = await getRule(id);
+async function mustGetRule(profileId: string, id: string): Promise<Rule> {
+  const rule = await getRule(profileId, id);
   if (!rule) throw ProblemDetailsError.notFound(`规则 ${id} 不存在。`);
   return rule;
 }
@@ -95,8 +95,8 @@ const addRule = defineWriteAction({
         : `${i.type},${i.value}${i.options?.length ? `,${i.options.join(',')}` : ''} → ${i.policy}`;
     return `新增规则：${head}（锚点 ${i.anchor}${i.enabled === false ? '，停用' : ''}）`;
   },
-  async preview(_ctx, input) {
-    const parsed = await loadParsedBase();
+  async preview(ctx, input) {
+    const parsed = await loadParsedBase(ctx.profileId);
     ensureValidAnchorAndPolicy({ anchor: input.anchor, policy: input.policy }, parsed);
     if (input.type === 'RULE-SET') {
       ensureValidRuleSetRef({ type: input.type, value: input.value ?? '' }, await loadProviderNames());
@@ -109,6 +109,7 @@ const addRule = defineWriteAction({
       op: 'create',
       payload: { ...input, value: input.value ?? '', source: 'manual' },
       actor: ctx.actor,
+      profileId: ctx.profileId,
     });
     return writeResult(
       'add',
@@ -143,8 +144,8 @@ const updateRule = defineWriteAction({
   input: UpdateRuleInput,
   risk: 'write',
   summary: (i) => `修改规则 ${i.id.slice(0, 8)}…`,
-  async preview(_ctx, input) {
-    const before = await mustGetRule(input.id);
+  async preview(ctx, input) {
+    const before = await mustGetRule(ctx.profileId, input.id);
     const after = {
       ...before,
       ...(input.type !== undefined ? { type: input.type } : {}),
@@ -156,7 +157,7 @@ const updateRule = defineWriteAction({
       ...(input.note !== undefined ? { note: input.note } : {}),
     };
     if (input.anchor !== undefined || input.policy !== undefined) {
-      const parsed = await loadParsedBase();
+      const parsed = await loadParsedBase(ctx.profileId);
       ensureValidAnchorAndPolicy({ anchor: after.anchor, policy: after.policy }, parsed);
     }
     if ((input.type !== undefined || input.value !== undefined) && after.type === 'RULE-SET') {
@@ -173,6 +174,7 @@ const updateRule = defineWriteAction({
       op: 'patch',
       payload: { id, patch },
       actor: ctx.actor,
+      profileId: ctx.profileId,
     });
     return writeResult(
       'update',
@@ -193,17 +195,18 @@ const deleteRule = defineWriteAction({
   input: DeleteRuleInput,
   risk: 'write',
   summary: (i) => `删除规则 ${i.id.slice(0, 8)}…`,
-  async preview(_ctx, input) {
-    const before = await mustGetRule(input.id);
+  async preview(ctx, input) {
+    const before = await mustGetRule(ctx.profileId, input.id);
     return { diff: { op: 'delete', before: trim(before) } };
   },
   async execute(ctx, input) {
-    const before = await mustGetRule(input.id);
+    const before = await mustGetRule(ctx.profileId, input.id);
     const res = await dispatch({
       scenario: SCENARIO,
       op: 'delete',
       payload: { id: input.id },
       actor: ctx.actor,
+      profileId: ctx.profileId,
     });
     return writeResult(
       'delete',

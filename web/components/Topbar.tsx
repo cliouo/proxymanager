@@ -15,7 +15,7 @@ const SHARED_PREFIXES = ['/subscriptions', '/rule-sets', '/collections'];
  * 默认 = 青色当前配置文件名;`shared` = 紫色「账户共享」(订阅源 / 规则集等账户级资源页)。
  */
 export function ScopePill({ shared }: { shared?: boolean }) {
-  const { current } = useProfiles();
+  const { activeProfile } = useProfiles();
   if (shared) {
     return (
       <span className="pill ai plain tb-scope" title="账户级共享资源 · 所有配置文件共用">
@@ -23,10 +23,10 @@ export function ScopePill({ shared }: { shared?: boolean }) {
       </span>
     );
   }
-  if (!current) return null;
+  if (!activeProfile) return null;
   return (
-    <span className="pill acc plain tb-scope" title="当前编辑的配置文件">
-      {current.name}
+    <span className="pill acc plain tb-scope" title="正在编辑的配置文件">
+      {activeProfile.name}
     </span>
   );
 }
@@ -44,7 +44,7 @@ export function Topbar({ onMenu }: { onMenu: () => void }) {
   const pathname = usePathname();
   const title = titleForPath(pathname);
   const assistant = useAssistant();
-  const { current } = useProfiles();
+  const { activeProfile } = useProfiles();
   const chrome = usePageChrome();
 
   const shared = SHARED_PREFIXES.some((p) => pathname.startsWith(p));
@@ -73,9 +73,9 @@ export function Topbar({ onMenu }: { onMenu: () => void }) {
             </span>
           ) : (
             !managementOnly &&
-            current && (
-              <span className="pill acc plain tb-scope" title="当前生效的配置文件">
-                {current.name}
+            activeProfile && (
+              <span className="pill acc plain tb-scope" title="正在编辑的配置文件">
+                {activeProfile.name}
               </span>
             )
           )}

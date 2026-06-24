@@ -60,8 +60,8 @@ function writeResult(op: string, summary: string, data: unknown): ActionEnvelope
   return { kind: 'write-result', data: { op, summary, result: data, events: [] } };
 }
 
-async function mustGet(id: string): Promise<ProxyGroup> {
-  const g = await getProxyGroup(id);
+async function mustGet(profileId: string, id: string): Promise<ProxyGroup> {
+  const g = await getProxyGroup(profileId, id);
   if (!g) throw ProblemDetailsError.notFound(`策略组 ${id} 不存在。`);
   return g;
 }
@@ -129,13 +129,13 @@ const previewMembers = defineAction({
     '试算一个 filter(+exclude-filter) 正则会从当前可用节点里筛出哪些节点——按 mihomo 语义(filter 命中保留、再去掉 exclude-filter 命中)对真实节点名跑一遍。改/优化地区组或筛选组的正则前后都该调用来验证。可传已有组 id(默认用它的 filter)、也可传候选 filter/exclude_filter 覆盖来对比。只读，不改配置。返回命中节点名和数量。',
   input: PreviewInput,
   risk: 'read',
-  async run(_ctx, input) {
+  async run(ctx, input) {
     const { names, hint } = await nodePool();
     let filter = input.filter;
     let excludeFilter = input.exclude_filter;
     let groupName: string | null = null;
     if (input.id) {
-      const g = await mustGet(input.id);
+      const g = await mustGet(ctx.profileId, input.id);
       groupName = g.name;
       if (filter === undefined) filter = g.filter;
       if (excludeFilter === undefined) excludeFilter = g['exclude-filter'];
@@ -194,7 +194,7 @@ const createGroup = defineWriteAction({
     const view = { name, type, kind, ...toKebab(rest) } as Partial<ProxyGroup>;
     return { diff: { op: 'add', path: `proxy-groups[${name}]`, afterYaml: groupYaml(view) } };
   },
-  async execute(_ctx, input) {
+  async execute(ctx, input) {
     const { name, type, kind, section, notes, ...rest } = input;
     const payload = {
       name,
@@ -204,7 +204,7 @@ const createGroup = defineWriteAction({
       ...(notes !== undefined ? { notes } : {}),
       ...toKebab(rest),
     } as ProxyGroupCreate;
-    const created = await createProxyGroup(payload);
+    const created = await createProxyGroup(ctx.profileId, payload);
     return writeResult('add', `已新建策略组 ${name}`, { id: created.id, name: created.name });
   },
 });
@@ -240,9 +240,9 @@ const updateGroup = defineWriteAction({
   input: UpdateInput,
   risk: 'write',
   summary: (i) => `修改策略组 ${i.id.slice(0, 8)}…`,
-  async preview(_ctx, input) {
+  async preview(ctx, input) {
     const { id, ...rest } = input;
-    const before = await mustGet(id);
+    const before = await mustGet(ctx.profileId, id);
     const patch = toKebab(rest);
     const after: Partial<ProxyGroup> = { ...before };
     for (const [k, v] of Object.entries(patch)) {
@@ -258,11 +258,11 @@ const updateGroup = defineWriteAction({
       },
     };
   },
-  async execute(_ctx, input) {
+  async execute(ctx, input) {
     const { id, ...rest } = input;
-    const before = await mustGet(id);
+    const before = await mustGet(ctx.profileId, id);
     const patch = toKebab(rest) as ProxyGroupUpdate;
-    const updated = await patchProxyGroup(id, patch);
+    const updated = await patchProxyGroup(ctx.profileId, id, patch);
     return writeResult('update', `已修改策略组 ${before.name}`, { id: updated.id, name: updated.name });
   },
 });
@@ -278,13 +278,13 @@ const deleteGroup = defineWriteAction({
   input: DeleteInput,
   risk: 'write',
   summary: (i) => `删除策略组 ${i.id.slice(0, 8)}…`,
-  async preview(_ctx, input) {
-    const before = await mustGet(input.id);
+  async preview(ctx, input) {
+    const before = await mustGet(ctx.profileId, input.id);
     return { diff: { op: 'delete', path: `proxy-groups[${before.name}]`, beforeYaml: groupYaml(before) } };
   },
-  async execute(_ctx, input) {
-    const before = await mustGet(input.id);
-    const removed = await svcDelete(input.id);
+  async execute(ctx, input) {
+    const before = await mustGet(ctx.profileId, input.id);
+    const removed = await svcDelete(ctx.profileId, input.id);
     if (!removed) throw ProblemDetailsError.notFound(`策略组 ${input.id} 不存在。`);
     return writeResult('delete', `已删除策略组 ${before.name}`, { name: before.name });
   },

@@ -2,7 +2,7 @@ import { withProblemDetails } from '@/lib/http/handler';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { renderProfileConfig } from '@/lib/engine/renderCache';
 import { extractStructured } from '@/lib/engine/structured';
-import { DEFAULT_PROFILE_NAME } from '@/schemas';
+import { resolveScopeProfileName } from '@/lib/profileScope';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,12 +16,13 @@ export const dynamic = 'force-dynamic';
  * `resolve.subscriptions` summary alongside any `warnings` (e.g. legacy
  * `pm-inline-collections` detected).
  */
-export const GET = withProblemDetails(async () => {
+export const GET = withProblemDetails(async (request: Request) => {
+  // Scope to the active editing profile (chained-proxy UI etc. read this).
   // No providerUrlBase here (matches the old direct resolveConfig call —
   // the renderer falls back to its placeholder host). The render cache keys
   // identity on that, so this route shares hits with other no-base renders.
   const { resolved, baseEtag, baseUpdatedAt, cache } = await renderProfileConfig(
-    DEFAULT_PROFILE_NAME,
+    resolveScopeProfileName(request),
     {
       missingBaseError: () =>
         ProblemDetailsError.unprocessable('Base config has not been initialized.'),

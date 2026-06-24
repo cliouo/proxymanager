@@ -99,6 +99,12 @@ export interface TaxonomyStore {
 export interface OpContext {
   /** Source label resolved from request `X-Source` header. */
   actor: string;
+  /**
+   * The profile this op mutates. base/rules/taxonomy stores are already
+   * scoped to it; handlers that touch proxy-groups directly (e.g.
+   * chained-proxy) must pass this to the proxy-group repo.
+   */
+  profileId: string;
   base: BaseStore;
   rules: RulesStore;
   taxonomy: TaxonomyStore;

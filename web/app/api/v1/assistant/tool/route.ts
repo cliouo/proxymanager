@@ -13,6 +13,7 @@ import { z } from 'zod';
 import { dispatchToolCall } from '@/lib/ai/dispatchTool';
 import { withProblemDetails } from '@/lib/http/handler';
 import { ProblemDetailsError } from '@/lib/http/problem';
+import { resolveScopeProfile } from '@/lib/profileScope';
 import { resolveActor } from '@/lib/services/rulesService';
 
 export const dynamic = 'force-dynamic';
@@ -27,6 +28,11 @@ export const POST = withProblemDetails(async (request: Request) => {
     throw ProblemDetailsError.badRequest('Request body must be valid JSON.');
   });
   const { name, input } = ToolRequestSchema.parse(raw);
-  const result = await dispatchToolCall({ actor: resolveActor(request) }, name, input ?? {});
+  const { id: profileId } = await resolveScopeProfile(request);
+  const result = await dispatchToolCall(
+    { actor: resolveActor(request), profileId },
+    name,
+    input ?? {},
+  );
   return Response.json({ data: result });
 });

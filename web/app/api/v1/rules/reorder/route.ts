@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { withProblemDetails } from '@/lib/http/handler';
 import { ProblemDetailsError } from '@/lib/http/problem';
+import { resolveScopeProfile } from '@/lib/profileScope';
 import { batchUpsertAndDelete, listRules } from '@/lib/repos/rulesRepo';
 import { nowSeconds } from '@/lib/services/rulesService';
 import type { Rule } from '@/schemas';
@@ -15,11 +16,12 @@ const ReorderRequestSchema = z
   .optional();
 
 export const POST = withProblemDetails(async (request: Request) => {
+  const { id: profileId } = await resolveScopeProfile(request);
   const raw = await request.json().catch(() => undefined);
   const body = ReorderRequestSchema.parse(raw) ?? { step: 10 };
   const step = body.step ?? 10;
 
-  const all = await listRules();
+  const all = await listRules(profileId);
   const target = body.anchor ? all.filter((r) => r.anchor === body.anchor) : all;
   if (body.anchor && target.length === 0) {
     throw ProblemDetailsError.notFound(`No rules found under anchor "${body.anchor}".`);
@@ -49,7 +51,7 @@ export const POST = withProblemDetails(async (request: Request) => {
     if (changes.length > 0) reassigned[anchor] = changes;
   }
 
-  await batchUpsertAndDelete(writes, []);
+  await batchUpsertAndDelete(profileId, writes, []);
 
   return Response.json({
     data: {

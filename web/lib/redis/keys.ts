@@ -1,9 +1,15 @@
 export const REDIS_KEYS = {
+  /**
+   * Per-profile base skeleton. Phase 2 made base/rules/proxy-groups owned by
+   * each profile (keyed by profile id) instead of a single global instance —
+   * see {@link legacy} for the pre-migration global keys the migration reads.
+   */
   base: {
-    content: 'base:content',
-    meta: 'base:meta',
+    content: (profileId: string): string => `base:content:${profileId}`,
+    meta: (profileId: string): string => `base:meta:${profileId}`,
   },
-  rules: 'rules',
+  /** Per-profile routing rules. Hash keyed by rule id. */
+  rules: (profileId: string): string => `rules:${profileId}`,
   subscriptions: 'subscriptions',
   proxies: 'proxies',
   ruleSets: 'rule-sets',
@@ -21,10 +27,12 @@ export const REDIS_KEYS = {
    * Project-defined taxonomy that doesn't live in base.yaml. Used by
    * scenarios to distinguish proxy-groups by user intent (regional vs
    * platform vs custom) when the Clash schema treats them identically.
-   * Hash keyed by group name → JSON {kind, region?, color?}.
+   * Hash keyed by group name → JSON {kind, region?, color?}. Per-profile
+   * (Phase 2): proxy-groups are owned per profile and names can collide
+   * across profiles, so taxonomy is scoped by profile id too.
    */
   taxonomy: {
-    groups: 'taxonomy:groups',
+    groups: (profileId: string): string => `taxonomy:groups:${profileId}`,
   },
   /**
    * Fetch cache for remote subscription bodies. Each entry is a standalone
@@ -37,12 +45,13 @@ export const REDIS_KEYS = {
    */
   collections: 'collections',
   /**
-   * Managed proxy-groups (策略组). Hash keyed by group id. Values include
-   * every native mihomo proxy-group field plus our metadata (kind/section/
-   * rank/template_id/notes). Migrated out of base.yaml's `proxy-groups:`
-   * block — base now only carries a `# === PROXY-GROUPS ===` marker.
+   * Managed proxy-groups (策略组). Per-profile (Phase 2): Hash keyed by group
+   * id, one hash per profile id. Values include every native mihomo proxy-group
+   * field plus our metadata (kind/section/rank/template_id/notes). Migrated out
+   * of base.yaml's `proxy-groups:` block — base now only carries a
+   * `# === PROXY-GROUPS ===` marker.
    */
-  proxyGroups: 'proxy-groups',
+  proxyGroups: (profileId: string): string => `proxy-groups:${profileId}`,
   /**
    * Shared-defaults templates for proxy-groups (the moral equivalent of the
    * `&pr` YAML anchor). Hash keyed by template id; referenced by
@@ -111,4 +120,17 @@ export const REDIS_KEYS = {
    * Readers fall back to the legacy embedded `content` for unmigrated fields.
    */
   ruleSetContent: (id: string): string => `rule-set-content:${id}`,
+  /**
+   * Pre-Phase-2 GLOBAL key literals for base/rules/proxy-groups/taxonomy,
+   * back when those were single shared instances. Only the per-profile
+   * migration script reads these (to move data into the `default` profile's
+   * scope) and writes timestamped backups; nothing else should reference them.
+   */
+  legacy: {
+    baseContent: 'base:content',
+    baseMeta: 'base:meta',
+    rules: 'rules',
+    proxyGroups: 'proxy-groups',
+    taxonomyGroups: 'taxonomy:groups',
+  },
 } as const;

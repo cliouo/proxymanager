@@ -24,6 +24,7 @@
     "migrate:profile-source": "tsx --env-file=.env.local scripts/migrate-profile-source.ts",
     "migrate:rule-set-content": "tsx --env-file=.env.local scripts/migrate-rule-set-content.ts",
     "migrate:collection-slug": "tsx --env-file=.env.local scripts/migrate-collection-slug.ts",
+    "migrate:config-per-profile": "tsx --env-file=.env.local scripts/migrate-config-per-profile.ts",
     "vercel:dev": "vercel dev",
     "vercel:link": "vercel link",
     "vercel:deploy": "vercel deploy",

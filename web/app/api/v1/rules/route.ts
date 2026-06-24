@@ -1,5 +1,6 @@
 import { withProblemDetails } from '@/lib/http/handler';
 import { ProblemDetailsError } from '@/lib/http/problem';
+import { resolveScopeProfile } from '@/lib/profileScope';
 import { listRules } from '@/lib/repos/rulesRepo';
 import { dispatch } from '@/lib/scenarios/_shared/dispatch';
 import { resolveActor } from '@/lib/services/rulesService';
@@ -24,6 +25,7 @@ function parseInt(value: string | null, fallback: number): number {
 }
 
 export const GET = withProblemDetails(async (request: Request) => {
+  const { id: profileId } = await resolveScopeProfile(request);
   const url = new URL(request.url);
   const params = url.searchParams;
 
@@ -42,7 +44,7 @@ export const GET = withProblemDetails(async (request: Request) => {
   const limit = Math.min(500, Math.max(1, parseInt(params.get('limit'), 100)));
   const offset = Math.max(0, parseInt(params.get('offset'), 0));
 
-  const all = await listRules();
+  const all = await listRules(profileId);
 
   const filtered = all.filter((rule) => {
     if (anchorFilter && rule.anchor !== anchorFilter) return false;
@@ -70,6 +72,7 @@ export const GET = withProblemDetails(async (request: Request) => {
  * existing /rules UI keep working unchanged.
  */
 export const POST = withProblemDetails(async (request: Request) => {
+  const { id: profileId } = await resolveScopeProfile(request);
   const payload = await request.json().catch(() => {
     throw ProblemDetailsError.badRequest('Request body must be valid JSON.');
   });
@@ -78,6 +81,7 @@ export const POST = withProblemDetails(async (request: Request) => {
     op: 'create',
     payload,
     actor: resolveActor(request),
+    profileId,
   });
   const rule = result.data as Rule;
   return Response.json(

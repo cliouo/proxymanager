@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { withProblemDetails } from '@/lib/http/handler';
 import { ProblemDetailsError } from '@/lib/http/problem';
+import { resolveScopeProfile } from '@/lib/profileScope';
 import { dispatch } from '@/lib/scenarios/_shared/dispatch';
 import { resolveActor } from '@/lib/services/rulesService';
 
@@ -17,11 +18,13 @@ export const POST = withProblemDetails(async (request: Request) => {
     throw ProblemDetailsError.badRequest('Request body must be valid JSON.');
   });
   const { scenario, op, payload } = OpRequestSchema.parse(raw);
+  const { id: profileId } = await resolveScopeProfile(request);
   const result = await dispatch({
     scenario,
     op,
     payload,
     actor: resolveActor(request),
+    profileId,
   });
   return Response.json({ data: result.data, events: result.events });
 });

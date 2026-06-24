@@ -13,8 +13,8 @@ import type { Rule } from '@/schemas';
  * 这里——策略组迁出 base.yaml 后，裸 parseBase 的 policies 不再是合法
  * 目标全集，直接用会把指向托管组的规则误判孤立。
  */
-export async function loadParsedBase(): Promise<ParsedBase> {
-  const [base, groups] = await Promise.all([getBase(), listProxyGroups()]);
+export async function loadParsedBase(profileId: string): Promise<ParsedBase> {
+  const [base, groups] = await Promise.all([getBase(profileId), listProxyGroups(profileId)]);
   if (!base) {
     throw ProblemDetailsError.unprocessable(
       'Base config has not been initialized. Set base before creating rules.',
@@ -67,8 +67,8 @@ export function ensureValidRuleSetRef(
   }
 }
 
-export async function computeNextRank(anchor: string): Promise<number> {
-  const all = await listRules();
+export async function computeNextRank(profileId: string, anchor: string): Promise<number> {
+  const all = await listRules(profileId);
   const inAnchor = all.filter((r) => r.anchor === anchor);
   if (inAnchor.length === 0) return 10;
   const max = Math.max(...inAnchor.map((r) => r.rank));

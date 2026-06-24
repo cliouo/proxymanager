@@ -23,10 +23,10 @@ const getBaseOverview = defineAction({
     '读取当前 base.yaml 的结构摘要：可用的规则锚点(anchors)、策略组/手写节点名(policies)、用户手写残留的 proxy-providers(若有)、规则集(ruleProviders，即规则集库的 name，RULE-SET 规则可引用)。回答"有哪些策略组/锚点/规则集能用"或写规则前先查可用目标时调用。订阅源注入的节点不在这里——查可用节点请用 list_proxy_nodes。不含任何节点凭证。',
   input: z.object({}),
   risk: 'read',
-  async run() {
+  async run(ctx) {
     // rule-providers are now platform-managed (the rule-set library), not the
     // base.yaml block — surface their names from the hash, not the parsed base.
-    const [parsed, sets] = await Promise.all([loadParsedBase(), listRuleSets()]);
+    const [parsed, sets] = await Promise.all([loadParsedBase(ctx.profileId), listRuleSets()]);
     return {
       kind: 'base-overview',
       data: {
@@ -77,8 +77,8 @@ const listRulesAction = defineAction({
     anchor: z.string().min(1).max(64).optional().describe('只返回该锚点下的规则'),
   }),
   risk: 'read',
-  async run(_ctx, input) {
-    const all = await listRules();
+  async run(ctx, input) {
+    const all = await listRules(ctx.profileId);
     const rules = input.anchor ? all.filter((r) => r.anchor === input.anchor) : all;
     return {
       kind: 'rule-list',
@@ -107,9 +107,9 @@ const listProxyGroupsAction = defineAction({
     '列出当前 hash 中的全部策略组(proxy-groups)和共享模板(templates)。每个策略组含 id(改/删时用)/name/type(mihomo 原生类型)/kind(UI 预设形态:raw/manual/filter/all/single-sub)/proxies/filter/exclude-filter/template_id/dialer-proxy/include-all-* 等字段;single-sub 组的 bound_subscription_id 与 collection-scope 组的 bound_collection_id 在此暴露(渲染时据此自动生成 filter / proxies)。回答"我有哪些策略组""某组怎么配的""有没有用模板"、写规则选 policy、或要 create/update/delete_proxy_group 前拿 id 时调用。',
   input: z.object({}),
   risk: 'read',
-  async run() {
+  async run(ctx) {
     const [groups, templates] = await Promise.all([
-      listProxyGroups(),
+      listProxyGroups(ctx.profileId),
       listProxyGroupTemplates(),
     ]);
     return {

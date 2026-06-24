@@ -1,4 +1,5 @@
 import { withProblemDetails } from '@/lib/http/handler';
+import { resolveScopeProfile } from '@/lib/profileScope';
 import { summariseChains } from '@/lib/scenarios/chained-proxy/scenario';
 
 export const dynamic = 'force-dynamic';
@@ -11,7 +12,8 @@ export const dynamic = 'force-dynamic';
  * name the UI needs. The form pickers still read /api/v1/base/parsed for the
  * live proxy + group names.
  */
-export const GET = withProblemDetails(async () => {
-  const { fixedChains, poolChains } = await summariseChains();
+export const GET = withProblemDetails(async (request: Request) => {
+  const { id: profileId } = await resolveScopeProfile(request);
+  const { fixedChains, poolChains } = await summariseChains(profileId);
   return Response.json({ data: { fixedChains, poolChains } });
 });

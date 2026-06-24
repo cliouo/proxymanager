@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { withProblemDetails } from '@/lib/http/handler';
 import { ProblemDetailsError } from '@/lib/http/problem';
+import { resolveScopeProfile } from '@/lib/profileScope';
 import { createProxyGroups } from '@/lib/services/proxyGroupService';
 import { ProxyGroupCreateSchema } from '@/schemas';
 
@@ -20,10 +21,11 @@ const BatchSchema = z.object({
 });
 
 export const POST = withProblemDetails(async (request: Request) => {
+  const { id: profileId } = await resolveScopeProfile(request);
   const raw = await request.json().catch(() => {
     throw ProblemDetailsError.badRequest('Request body must be valid JSON.');
   });
   const { groups } = BatchSchema.parse(raw);
-  const created = await createProxyGroups(groups);
+  const created = await createProxyGroups(profileId, groups);
   return Response.json({ data: created, meta: { count: created.length } }, { status: 201 });
 });

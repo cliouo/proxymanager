@@ -25,6 +25,11 @@ export type ActionRisk = 'read' | 'write';
 export interface ActionContext {
   /** Audit actor label, resolved from `X-Source` (e.g. "web-ui", "ai_chat"). */
   actor: string;
+  /**
+   * The profile the assistant edits (Phase 2: base/rules/proxy-groups are
+   * per-profile). Read/write actions pass this to the scoped repos/dispatch.
+   */
+  profileId: string;
 }
 
 /**

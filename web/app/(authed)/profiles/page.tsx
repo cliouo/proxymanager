@@ -105,9 +105,9 @@ export default function ProfilesPage() {
       </PageTopbar>
 
       <p className={styles.pageIntro}>
-        每份<b>配置文件</b>是一份可独立解析的客户端配置：它绑定<b>单一节点来源</b>
-        （某个订阅源、某个聚合订阅，或暂不绑定），其余结构 base、策略组、规则等当前由全局共享。
-        <b>订阅源</b>和<b>规则集</b>放在下方共享资源库里，被各份配置文件共用。
+        每份<b>配置文件</b>是一份可独立解析的客户端配置：它有<b>自己的</b>结构 base、策略组与规则，
+        并绑定<b>单一节点来源</b>（某个订阅源、某个聚合订阅，或暂不绑定）。新建时可<b>从某份配置文件复制</b>
+        （默认 default）再改，互不影响。<b>订阅源</b>和<b>规则集</b>放在下方共享资源库里，被各份配置文件共用。
       </p>
 
       {/* 共享资源库 */}
@@ -238,6 +238,7 @@ export default function ProfilesPage() {
         <NewProfileModal
           subs={subs}
           collections={collections}
+          profiles={profiles}
           onClose={() => setCreating(false)}
           onCreated={() => {
             setCreating(false);
@@ -251,18 +252,20 @@ export default function ProfilesPage() {
 
 /* ============================================================
    新建配置文件弹窗 → POST /api/v1/profiles
-   真实接口只接受 { name, source, notes }。create-mode 卡里
-   只保留接口支持的「空白 / 基础模板」语义占位；clone/import
-   暂无后端，故不画（DESIGN §7：不画假能力）。
+   接口接受 { name, source, notes?, copy_from? }。copy_from 指向
+   一份已有配置文件 → 深拷贝其 base + 策略组 + 规则；留空(空白) →
+   仅从 default 复制一份骨架 base，无策略组/规则。
    ============================================================ */
 function NewProfileModal({
   subs,
   collections,
+  profiles,
   onClose,
   onCreated,
 }: {
   subs: SubscriptionLite[];
   collections: CollectionLite[];
+  profiles: Profile[];
   onClose: () => void;
   onCreated: () => void;
 }) {
@@ -271,6 +274,14 @@ function NewProfileModal({
   const [notes, setNotes] = useState('');
   const [sourceKind, setSourceKind] = useState<'none' | 'subscription' | 'collection'>('none');
   const [sourceId, setSourceId] = useState('');
+  // 初始内容：从某配置文件复制(默认 default) 或 空白(仅骨架)。
+  const defaultProfileId = useMemo(
+    () =>
+      profiles.find((p) => p.name === DEFAULT_PROFILE_NAME)?.id ?? profiles[0]?.id ?? '',
+    [profiles],
+  );
+  const [seed, setSeed] = useState<'copy' | 'blank'>(profiles.length > 0 ? 'copy' : 'blank');
+  const [copyFrom, setCopyFrom] = useState<string>(defaultProfileId);
   const [pending, setPending] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -300,14 +311,19 @@ function NewProfileModal({
     try {
       await api('/api/v1/profiles', {
         method: 'POST',
-        body: { name: n, source, ...(notes.trim() ? { notes: notes.trim() } : {}) },
+        body: {
+          name: n,
+          source,
+          ...(notes.trim() ? { notes: notes.trim() } : {}),
+          ...(seed === 'copy' && copyFrom ? { copy_from: copyFrom } : {}),
+        },
       });
       onCreated();
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : '创建失败');
       setPending(false);
     }
-  }, [name, nameValid, notes, sourceId, sourceKind, onCreated]);
+  }, [name, nameValid, notes, sourceId, sourceKind, seed, copyFrom, onCreated]);
 
   return (
     <div className="modal-bg open" onClick={onClose}>
@@ -398,6 +414,50 @@ function NewProfileModal({
             </select>
           )}
         </div>
+
+        {profiles.length > 0 && (
+          <div className="field">
+            <label>
+              初始内容{' '}
+              <span style={{ color: 'var(--faint)', fontWeight: 400 }}>
+                · base / 策略组 / 规则的起点
+              </span>
+            </label>
+            <div className="seg" role="tablist">
+              <button
+                type="button"
+                className={`opt${seed === 'copy' ? ' on' : ''}`}
+                onClick={() => setSeed('copy')}
+              >
+                从配置文件复制
+              </button>
+              <button
+                type="button"
+                className={`opt${seed === 'blank' ? ' on' : ''}`}
+                onClick={() => setSeed('blank')}
+              >
+                空白（仅骨架）
+              </button>
+            </div>
+            {seed === 'copy' ? (
+              <select
+                className="input mono"
+                style={{ marginTop: 8 }}
+                value={copyFrom}
+                onChange={(e) => setCopyFrom(e.target.value)}
+              >
+                {profiles.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                    {p.name === DEFAULT_PROFILE_NAME ? '（默认）' : ''}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <div className="hint">从 default 复制一份骨架 base，不含策略组与规则。</div>
+            )}
+          </div>
+        )}
 
         <div className="field" style={{ marginBottom: 18 }}>
           <label>

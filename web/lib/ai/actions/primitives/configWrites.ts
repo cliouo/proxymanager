@@ -33,9 +33,13 @@ const setConfigSection = defineWriteAction({
   }),
   risk: 'write',
   summary: (i) => `设置配置 ${i.path}`,
-  async preview(_ctx, input) {
+  async preview(ctx, input) {
     assertEditablePath(parsePath(input.path));
-    const { beforeYaml, afterYaml, existed } = await dryRunSet(input.path, input.value);
+    const { beforeYaml, afterYaml, existed } = await dryRunSet(
+      ctx.profileId,
+      input.path,
+      input.value,
+    );
     return { diff: { op: existed ? 'update' : 'add', path: input.path, beforeYaml, afterYaml } };
   },
   async execute(ctx, input) {
@@ -44,6 +48,7 @@ const setConfigSection = defineWriteAction({
       op: 'set',
       payload: { path: input.path, value: input.value },
       actor: ctx.actor,
+      profileId: ctx.profileId,
     });
     return writeResult(
       'set-section',
@@ -62,9 +67,9 @@ const deleteConfigSection = defineWriteAction({
   }),
   risk: 'write',
   summary: (i) => `删除配置 ${i.path}`,
-  async preview(_ctx, input) {
+  async preview(ctx, input) {
     assertEditablePath(parsePath(input.path));
-    const { beforeYaml } = await dryRunDelete(input.path);
+    const { beforeYaml } = await dryRunDelete(ctx.profileId, input.path);
     return { diff: { op: 'delete', path: input.path, beforeYaml } };
   },
   async execute(ctx, input) {
@@ -73,6 +78,7 @@ const deleteConfigSection = defineWriteAction({
       op: 'delete',
       payload: { path: input.path },
       actor: ctx.actor,
+      profileId: ctx.profileId,
     });
     return writeResult(
       'delete-section',

@@ -99,9 +99,9 @@ export function deleteValueAt(doc: Document, segs: Segment[]): { before: unknown
 }
 
 /** Refuse a mutation that would leave rules referencing a missing anchor/policy. */
-export async function validateReferences(doc: Document): Promise<void> {
+export async function validateReferences(profileId: string, doc: Document): Promise<void> {
   const parsed = parseBase(doc.toString());
-  const [rules, groups] = await Promise.all([listRules(), listProxyGroups()]);
+  const [rules, groups] = await Promise.all([listRules(profileId), listProxyGroups(profileId)]);
   // 托管策略组计入合法 policy 全集——它们在渲染时注入，不在 base 字面里。
   const v = validateBase(
     parsed,
@@ -120,8 +120,8 @@ export async function validateReferences(doc: Document): Promise<void> {
   }
 }
 
-async function loadDoc(): Promise<Document> {
-  const base = await getBase();
+async function loadDoc(profileId: string): Promise<Document> {
+  const base = await getBase(profileId);
   if (!base) throw ProblemDetailsError.unprocessable('base.yaml 尚未初始化。');
   const doc = parseDocument(base.content);
   if (doc.errors.length > 0) {
@@ -137,12 +137,16 @@ export interface DryRunResult {
 }
 
 /** Apply a set to a throwaway doc + validate, returning before/after YAML for the confirm card. */
-export async function dryRunSet(path: string, value: string): Promise<DryRunResult> {
-  const doc = await loadDoc();
+export async function dryRunSet(
+  profileId: string,
+  path: string,
+  value: string,
+): Promise<DryRunResult> {
+  const doc = await loadDoc(profileId);
   const segs = parsePath(path);
   const jsValue = parseYamlValue(value);
   const { before } = setValueAt(doc, segs, jsValue);
-  await validateReferences(doc);
+  await validateReferences(profileId, doc);
   return {
     beforeYaml: before === undefined ? undefined : stringify(before).trimEnd(),
     afterYaml: stringify(jsValue).trimEnd(),
@@ -150,11 +154,11 @@ export async function dryRunSet(path: string, value: string): Promise<DryRunResu
   };
 }
 
-export async function dryRunDelete(path: string): Promise<DryRunResult> {
-  const doc = await loadDoc();
+export async function dryRunDelete(profileId: string, path: string): Promise<DryRunResult> {
+  const doc = await loadDoc(profileId);
   const segs = parsePath(path);
   const { before } = deleteValueAt(doc, segs);
-  await validateReferences(doc);
+  await validateReferences(profileId, doc);
   return {
     beforeYaml: before === undefined ? undefined : stringify(before).trimEnd(),
     existed: true,

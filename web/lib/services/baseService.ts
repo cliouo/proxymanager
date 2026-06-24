@@ -74,7 +74,10 @@ export interface ParseAndValidateResult {
   validation: BaseValidationResult;
 }
 
-export async function parseAndValidate(content: string): Promise<ParseAndValidateResult> {
+export async function parseAndValidate(
+  profileId: string,
+  content: string,
+): Promise<ParseAndValidateResult> {
   let parsedBase: ParsedBase;
   try {
     parsedBase = parseBase(content);
@@ -85,9 +88,9 @@ export async function parseAndValidate(content: string): Promise<ParseAndValidat
     throw err;
   }
   const [rules, providerSets, proxyGroups] = await Promise.all([
-    listRules(),
+    listRules(profileId),
     listRuleSets(),
-    listProxyGroups(),
+    listProxyGroups(profileId),
   ]);
   const providerNames = new Set(providerSets.map((s) => s.name));
   // 策略组在 hash 里、渲染时才注入 base——校验候选 base 内容时必须把它们

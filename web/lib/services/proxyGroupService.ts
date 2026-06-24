@@ -44,8 +44,8 @@ async function assertTemplateExists(templateId: string | undefined): Promise<voi
   }
 }
 
-async function nextRank(): Promise<number> {
-  const all = await listProxyGroups();
+async function nextRank(profileId: string): Promise<number> {
+  const all = await listProxyGroups(profileId);
   if (all.length === 0) return RANK_STEP;
   let max = 0;
   for (const g of all) if (g.rank > max) max = g.rank;
@@ -94,11 +94,15 @@ function ensureNoDialerProxyCycle(
  * hash, rules block is markers-only), so this is the complete reach.
  */
 async function cascadeRename(
+  profileId: string,
   oldName: string,
   newName: string,
   excludingId: string,
 ): Promise<{ groupsTouched: number; rulesTouched: number }> {
-  const [allGroups, allRules] = await Promise.all([listProxyGroups(), listRules()]);
+  const [allGroups, allRules] = await Promise.all([
+    listProxyGroups(profileId),
+    listRules(profileId),
+  ]);
 
   const groupsToWrite: ProxyGroup[] = [];
   for (const g of allGroups) {
@@ -128,8 +132,8 @@ async function cascadeRename(
     }
   }
 
-  if (groupsToWrite.length > 0) await upsertProxyGroups(groupsToWrite);
-  if (rulesToWrite.length > 0) await upsertRules(rulesToWrite);
+  if (groupsToWrite.length > 0) await upsertProxyGroups(profileId, groupsToWrite);
+  if (rulesToWrite.length > 0) await upsertRules(profileId, rulesToWrite);
 
   return { groupsTouched: groupsToWrite.length, rulesTouched: rulesToWrite.length };
 }
@@ -140,8 +144,15 @@ async function cascadeRename(
  * leave dangling refs (mihomo refuses to load) or surprise the user by
  * unwiring their rules — better to make them clean up explicitly.
  */
-async function ensureUnreferenced(name: string, excludingId: string): Promise<void> {
-  const [allGroups, allRules] = await Promise.all([listProxyGroups(), listRules()]);
+async function ensureUnreferenced(
+  profileId: string,
+  name: string,
+  excludingId: string,
+): Promise<void> {
+  const [allGroups, allRules] = await Promise.all([
+    listProxyGroups(profileId),
+    listRules(profileId),
+  ]);
   const refs: string[] = [];
   for (const g of allGroups) {
     if (g.id === excludingId) continue;
@@ -164,15 +175,18 @@ async function ensureUnreferenced(name: string, excludingId: string): Promise<vo
   }
 }
 
-export async function createProxyGroup(input: ProxyGroupCreate): Promise<ProxyGroup> {
+export async function createProxyGroup(
+  profileId: string,
+  input: ProxyGroupCreate,
+): Promise<ProxyGroup> {
   const parsed = ProxyGroupCreateSchema.parse(input);
-  const dup = await getProxyGroupByName(parsed.name);
+  const dup = await getProxyGroupByName(profileId, parsed.name);
   if (dup) {
     throw ProblemDetailsError.conflict(`proxy-group 名称 "${parsed.name}" 已存在。`);
   }
   await assertTemplateExists(parsed.template_id);
   const now = nowSeconds();
-  const rank = parsed.rank ?? (await nextRank());
+  const rank = parsed.rank ?? (await nextRank(profileId));
   const group: ProxyGroup = {
     ...parsed,
     id: generateProxyGroupId(),
@@ -182,10 +196,10 @@ export async function createProxyGroup(input: ProxyGroupCreate): Promise<ProxyGr
   } as ProxyGroup;
 
   // Cycle check against everyone EXCEPT this group (it's brand new).
-  const allGroups = await listProxyGroups();
+  const allGroups = await listProxyGroups(profileId);
   ensureNoDialerProxyCycle(allGroups, group);
 
-  await upsertProxyGroup(group);
+  await upsertProxyGroup(profileId, group);
   invalidateSnapshot();
   return group;
 }
@@ -196,17 +210,18 @@ export async function createProxyGroup(input: ProxyGroupCreate): Promise<ProxyGr
  * groups' proxies/dialer-proxy and to rule policies in one batch.
  */
 export async function patchProxyGroup(
+  profileId: string,
   id: string,
   patch: ProxyGroupUpdate,
 ): Promise<ProxyGroup> {
   const validated = ProxyGroupUpdateSchema.parse(patch);
-  const current = await getProxyGroup(id);
+  const current = await getProxyGroup(profileId, id);
   if (!current) {
     throw ProblemDetailsError.notFound(`proxy-group ${id} 不存在。`);
   }
   const renaming = !!(validated.name && validated.name !== current.name);
   if (renaming) {
-    const dup = await getProxyGroupByName(validated.name!);
+    const dup = await getProxyGroupByName(profileId, validated.name!);
     if (dup && dup.id !== id) {
       throw ProblemDetailsError.conflict(`proxy-group 名称 "${validated.name}" 已存在。`);
     }
@@ -225,7 +240,7 @@ export async function patchProxyGroup(
   }
 
   // Cycle check uses the patched form vs. every other group.
-  const allGroups = await listProxyGroups();
+  const allGroups = await listProxyGroups(profileId);
   const others = allGroups.filter((g) => g.id !== id);
   ensureNoDialerProxyCycle(others, next);
 
@@ -233,18 +248,18 @@ export async function patchProxyGroup(
   // a snapshot reader between the two writes sees inconsistent state. The
   // cascadeRename excludes the renamed group's id so it doesn't double-write.
   if (renaming) {
-    await cascadeRename(current.name, next.name, id);
+    await cascadeRename(profileId, current.name, next.name, id);
   }
-  await upsertProxyGroup(next);
+  await upsertProxyGroup(profileId, next);
   invalidateSnapshot();
   return next;
 }
 
-export async function deleteProxyGroup(id: string): Promise<boolean> {
-  const current = await getProxyGroup(id);
+export async function deleteProxyGroup(profileId: string, id: string): Promise<boolean> {
+  const current = await getProxyGroup(profileId, id);
   if (!current) return false;
-  await ensureUnreferenced(current.name, id);
-  const removed = await repoDelete(id);
+  await ensureUnreferenced(profileId, current.name, id);
+  const removed = await repoDelete(profileId, id);
   if (removed) invalidateSnapshot();
   return removed;
 }
@@ -256,7 +271,10 @@ export async function deleteProxyGroup(id: string): Promise<boolean> {
  * dialer-proxy cycle detection on the combined final state before writing.
  * One Redis hset → one snapshot invalidation.
  */
-export async function createProxyGroups(inputs: ProxyGroupCreate[]): Promise<ProxyGroup[]> {
+export async function createProxyGroups(
+  profileId: string,
+  inputs: ProxyGroupCreate[],
+): Promise<ProxyGroup[]> {
   if (inputs.length === 0) return [];
 
   const parsed = inputs.map((i) => ProxyGroupCreateSchema.parse(i));
@@ -269,7 +287,7 @@ export async function createProxyGroups(inputs: ProxyGroupCreate[]): Promise<Pro
     }
     seen.add(p.name);
   }
-  const existingByName = new Map((await listProxyGroups()).map((g) => [g.name, g]));
+  const existingByName = new Map((await listProxyGroups(profileId)).map((g) => [g.name, g]));
   for (const p of parsed) {
     if (existingByName.has(p.name)) {
       throw ProblemDetailsError.conflict(`proxy-group 名称 "${p.name}" 已存在。`);
@@ -283,7 +301,7 @@ export async function createProxyGroups(inputs: ProxyGroupCreate[]): Promise<Pro
 
   // Build groups with rank assignment.
   const now = nowSeconds();
-  let cursor = await nextRank();
+  let cursor = await nextRank(profileId);
   const built: ProxyGroup[] = parsed.map((p) => {
     const rank = p.rank ?? cursor;
     if (p.rank === undefined) cursor += RANK_STEP;
@@ -305,7 +323,7 @@ export async function createProxyGroups(inputs: ProxyGroupCreate[]): Promise<Pro
     ensureNoDialerProxyCycle(others, g);
   }
 
-  await upsertProxyGroups(built);
+  await upsertProxyGroups(profileId, built);
   invalidateSnapshot();
   return built;
 }
@@ -316,10 +334,16 @@ export async function createProxyGroups(inputs: ProxyGroupCreate[]): Promise<Pro
  * a wrap group referencing a pool group both being deleted), but anything
  * outside the batch must not reference any of them.
  */
-export async function deleteProxyGroupsByName(names: string[]): Promise<number> {
+export async function deleteProxyGroupsByName(
+  profileId: string,
+  names: string[],
+): Promise<number> {
   if (names.length === 0) return 0;
   const nameSet = new Set(names);
-  const [allGroups, allRules] = await Promise.all([listProxyGroups(), listRules()]);
+  const [allGroups, allRules] = await Promise.all([
+    listProxyGroups(profileId),
+    listRules(profileId),
+  ]);
   const idsToDelete = allGroups.filter((g) => nameSet.has(g.name)).map((g) => g.id);
   if (idsToDelete.length === 0) return 0;
   const idSet = new Set(idsToDelete);
@@ -349,7 +373,7 @@ export async function deleteProxyGroupsByName(names: string[]): Promise<number> 
 
   let removed = 0;
   for (const id of idsToDelete) {
-    if (await repoDelete(id)) removed++;
+    if (await repoDelete(profileId, id)) removed++;
   }
   if (removed > 0) invalidateSnapshot();
   return removed;

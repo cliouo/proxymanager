@@ -1,6 +1,7 @@
 import { referencedProviderNamesInText } from '@/lib/engine/renderer';
 import { withProblemDetails } from '@/lib/http/handler';
 import { ProblemDetailsError } from '@/lib/http/problem';
+import { resolveScopeProfile } from '@/lib/profileScope';
 import { getBase } from '@/lib/repos/baseRepo';
 import { dispatch } from '@/lib/scenarios/_shared/dispatch';
 import { listRuleSets } from '@/lib/services/ruleSetService';
@@ -9,10 +10,12 @@ import type { RuleSet } from '@/schemas';
 
 export const dynamic = 'force-dynamic';
 
-export const GET = withProblemDetails(async () => {
+export const GET = withProblemDetails(async (request: Request) => {
   // Meta only — content lives in its own Redis key and is returned by the
   // [id] detail route. Keeps the list payload small however big the bodies get.
-  const [sets, base] = await Promise.all([listRuleSets(), getBase()]);
+  // `referenced_in_base` is relative to the active profile's base.
+  const { id: profileId } = await resolveScopeProfile(request);
+  const [sets, base] = await Promise.all([listRuleSets(), getBase(profileId)]);
   // Rule-sets referenced straight from the base body (e.g. mihomo DNS
   // `nameserver-policy: { rule-set:foo,bar }`) are real usages the renderer
   // honours but no RULE-SET rule names — the rules-hash usage count alone
@@ -27,6 +30,7 @@ export const GET = withProblemDetails(async () => {
 });
 
 export const POST = withProblemDetails(async (request: Request) => {
+  const { id: profileId } = await resolveScopeProfile(request);
   const raw = await request.json().catch(() => {
     throw ProblemDetailsError.badRequest('Request body must be valid JSON.');
   });
@@ -35,6 +39,7 @@ export const POST = withProblemDetails(async (request: Request) => {
     op: 'create',
     payload: raw,
     actor: resolveActor(request),
+    profileId,
   });
   const created = res.data as RuleSet;
   return Response.json(

@@ -38,7 +38,12 @@ export const POST = withProblemDetails(async (request: Request) => {
 
   // Re-validate the stored input through the action schema (defense in depth).
   const input = action.input.parse(record.input);
-  const envelope = await action.execute({ actor: resolveActor(request) }, input);
+  // Use the profile captured at preview time so the confirmation executes
+  // against the same profile the user reviewed.
+  const envelope = await action.execute(
+    { actor: resolveActor(request), profileId: record.profileId },
+    input,
+  );
 
   return Response.json({ data: envelope });
 });

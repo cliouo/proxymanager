@@ -69,7 +69,7 @@ const BatchCreatePayloadSchema = z.object({
 
 const create: OpHandler = async (ctx, raw) => {
   const input = CreatePayloadSchema.parse(raw);
-  const parsedBase = await loadParsedBase();
+  const parsedBase = await loadParsedBase(ctx.profileId);
   ensureValidAnchorAndPolicy(input, parsedBase);
   if (input.type === 'RULE-SET') ensureValidRuleSetRef(input, await loadProviderNames());
 
@@ -108,7 +108,7 @@ const replace: OpHandler = async (ctx, raw) => {
   const existing = await ctx.rules.get(id);
   if (!existing) throw ProblemDetailsError.notFound(`Rule ${id} not found.`);
 
-  const parsedBase = await loadParsedBase();
+  const parsedBase = await loadParsedBase(ctx.profileId);
   ensureValidAnchorAndPolicy(body, parsedBase);
   if (body.type === 'RULE-SET') ensureValidRuleSetRef(body, await loadProviderNames());
 
@@ -148,7 +148,7 @@ const patch: OpHandler = async (ctx, raw) => {
 
   const updated: Rule = { ...existing, ...body, updated_at: nowSeconds() };
   if (body.anchor !== undefined || body.policy !== undefined) {
-    const parsedBase = await loadParsedBase();
+    const parsedBase = await loadParsedBase(ctx.profileId);
     ensureValidAnchorAndPolicy({ anchor: updated.anchor, policy: updated.policy }, parsedBase);
   }
   if ((body.type !== undefined || body.value !== undefined) && updated.type === 'RULE-SET') {
@@ -191,7 +191,7 @@ const del: OpHandler = async (ctx, raw) => {
 
 const batchCreate: OpHandler = async (ctx, raw) => {
   const { rules: inputs } = BatchCreatePayloadSchema.parse(raw);
-  const parsedBase = await loadParsedBase();
+  const parsedBase = await loadParsedBase(ctx.profileId);
 
   // Pre-validate everything; refuse the whole batch if any anchor/policy is invalid.
   const providerNames = inputs.some((r) => r.type === 'RULE-SET')
@@ -241,7 +241,7 @@ const batchCreate: OpHandler = async (ctx, raw) => {
     events.push({ action: 'create', target: { kind: 'rule', id: rule.id }, after: rule });
   }
 
-  await batchUpsertAndDelete(writes, []);
+  await batchUpsertAndDelete(ctx.profileId, writes, []);
   return { data: { outcomes, rules: writes }, events };
 };
 
@@ -285,7 +285,7 @@ const inverseDelete: InverseHandler = async (ctx, event) => {
   if (existing) {
     throw ProblemDetailsError.conflict(`Rule ${ruleId} already exists; nothing to restore.`);
   }
-  const parsedBase = await loadParsedBase();
+  const parsedBase = await loadParsedBase(ctx.profileId);
   ensureValidAnchorAndPolicy(before, parsedBase);
   const restored: Rule = { ...before, updated_at: nowSeconds() };
   await ctx.rules.upsert(restored);
@@ -317,7 +317,7 @@ const inverseUpdate: InverseHandler = async (ctx, event) => {
       `Rule ${ruleId} was modified after this event; refuse to revert.`,
     );
   }
-  const parsedBase = await loadParsedBase();
+  const parsedBase = await loadParsedBase(ctx.profileId);
   ensureValidAnchorAndPolicy(before, parsedBase);
   const reverted: Rule = { ...before, updated_at: nowSeconds() };
   await ctx.rules.upsert(reverted);

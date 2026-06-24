@@ -47,6 +47,12 @@ export const AuditEventSchema = z.object({
   undone_by: z.uuid().optional(),
   /** When this event itself is an undo, points at the original event. */
   undoes: z.uuid().optional(),
+  /**
+   * The profile this mutation targeted (Phase 2: base/rules/proxy-groups are
+   * per-profile). Optional for back-compat with pre-Phase-2 events; undo falls
+   * back to the `default` profile when absent.
+   */
+  profileId: z.string().min(1).optional(),
 });
 
 /** Convenience type for events known to target a rule (still carry a typed snapshot). */

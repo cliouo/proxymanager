@@ -11,8 +11,9 @@ import {
   listRules as listRulesRepo,
   upsertRule as upsertRuleRepo,
 } from '@/lib/repos/rulesRepo';
+import { getProfileByName } from '@/lib/repos/profilesRepo';
 import { computeNextRank, resolveActor } from '@/lib/services/rulesService';
-import type { AuditEvent } from '@/schemas';
+import { DEFAULT_PROFILE_NAME, type AuditEvent } from '@/schemas';
 
 export const dynamic = 'force-dynamic';
 
@@ -50,21 +51,32 @@ export const POST = withProblemDetails(async (request: Request, ctx: Ctx) => {
     );
   }
 
+  // Undo targets the profile the original mutation touched. Legacy events
+  // (pre-Phase-2) carry no profileId → fall back to the default profile.
+  const profileId =
+    event.profileId ?? (await getProfileByName(DEFAULT_PROFILE_NAME))?.id;
+  if (!profileId) {
+    throw ProblemDetailsError.unprocessable(
+      `Cannot undo: event has no profile and no "${DEFAULT_PROFILE_NAME}" profile exists.`,
+    );
+  }
+
   const actor = resolveActor(request);
   const opCtx: OpContext = {
     actor,
-    base: createBaseStore(),
+    profileId,
+    base: createBaseStore(profileId),
     rules: {
       async list(filter) {
-        const all = await listRulesRepo();
+        const all = await listRulesRepo(profileId);
         return filter?.anchor ? all.filter((r) => r.anchor === filter.anchor) : all;
       },
-      get: getRuleRepo,
-      upsert: upsertRuleRepo,
-      delete: deleteRuleRepo,
-      computeNextRank,
+      get: (id) => getRuleRepo(profileId, id),
+      upsert: (rule) => upsertRuleRepo(profileId, rule),
+      delete: (id) => deleteRuleRepo(profileId, id),
+      computeNextRank: (anchor) => computeNextRank(profileId, anchor),
     },
-    taxonomy: createTaxonomyStore(),
+    taxonomy: createTaxonomyStore(profileId),
   };
 
   const result = await inverse(opCtx, {
@@ -92,6 +104,7 @@ export const POST = withProblemDetails(async (request: Request, ctx: Ctx) => {
       before: ev.before,
       after: ev.after,
       undoes: event.id,
+      profileId,
     });
     // First emitted event is the canonical inverse; later ones (if any)
     // are bookkeeping and don't get the back-pointer on the original.

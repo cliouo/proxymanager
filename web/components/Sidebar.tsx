@@ -12,12 +12,7 @@ import {
   SYSTEM_NAV,
   type NavItem,
 } from '@/components/nav';
-import {
-  isLiveProfile,
-  profileMark,
-  sourceLabel,
-  useProfiles,
-} from '@/components/profile/ProfileContext';
+import { profileMark, sourceLabel, useProfiles } from '@/components/profile/ProfileContext';
 
 const PROMOTED_SCENARIOS = new Set(['rule-anchor-append', 'chained-proxy']);
 
@@ -42,7 +37,7 @@ const SCENARIO_LABEL_OVERRIDES: Record<string, string> = {
  */
 export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
   const pathname = usePathname();
-  const { current } = useProfiles();
+  const { activeProfile } = useProfiles();
   const [scenarios, setScenarios] = useState<ScenarioDescriptor[]>([]);
   const [buildId, setBuildId] = useState<string | null>(null);
 
@@ -65,10 +60,10 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
     return pathname.startsWith(href);
   }
 
-  // 「绑定与设置」指向当前配置文件的设置页;无 current 时退到管理总览。
-  const profileSettingsHref = current ? `/profiles/${current.id}` : '/profiles';
+  // 「绑定与设置」指向正在编辑的配置文件的设置页;无记录时退到管理总览。
+  const profileSettingsHref = activeProfile ? `/profiles/${activeProfile.id}` : '/profiles';
   const profileSettingsActive =
-    pathname === profileSettingsHref || (pathname.startsWith('/profiles/') && !!current);
+    pathname === profileSettingsHref || (pathname.startsWith('/profiles/') && !!activeProfile);
 
   return (
     <aside className={`side${open ? ' open' : ''}`}>
@@ -161,11 +156,12 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
 }
 
 /**
- * 配置文件切换器。诚实边界:引擎当前只渲染名为 `default` 的配置文件,没有「一键切换全局」;
- * 故列表项链接到各 profile 的设置页做管理,默认(生效)项标 on。
+ * 配置文件切换器(Phase 2)。选中一项即把「正在编辑的配置文件」切到它 —— 写
+ * `pm.active_profile` cookie 并重载,于是 /base、/proxy-groups、/rules 等都作用到它。
+ * 每行尾部的齿轮去该配置文件的设置页(绑定/订阅链接/删除)。
  */
 function ProfileSwitcher({ onNavigate }: { onNavigate: () => void }) {
-  const { profiles, current } = useProfiles();
+  const { profiles, activeProfile, setActiveProfile } = useProfiles();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -190,8 +186,8 @@ function ProfileSwitcher({ onNavigate }: { onNavigate: () => void }) {
     onNavigate();
   }
 
-  const name = current?.name ?? 'default';
-  const sub = current ? (isLiveProfile(current) ? '默认配置文件' : '配置文件') : '尚未初始化';
+  const activeId = activeProfile?.id ?? null;
+  const name = activeProfile?.name ?? 'default';
 
   return (
     <div className="side-switch" ref={ref}>
@@ -205,7 +201,7 @@ function ProfileSwitcher({ onNavigate }: { onNavigate: () => void }) {
         <span className="pf-ic">{profileMark(name)}</span>
         <span className="pf-txt">
           <span className="pf-name">{name}</span>
-          <span className="pf-sub">{sub}</span>
+          <span className="pf-sub">{activeProfile ? '正在编辑' : '尚未初始化'}</span>
         </span>
         <span className="caret">▾</span>
       </button>
@@ -217,16 +213,32 @@ function ProfileSwitcher({ onNavigate }: { onNavigate: () => void }) {
           </div>
         ) : (
           profiles.map((p) => (
-            <Link
-              key={p.id}
-              className={`pp-li${isLiveProfile(p) ? ' on' : ''}`}
-              href={`/profiles/${p.id}`}
-              onClick={go}
-            >
-              <span className="dot" />
-              <span className="nm">{p.name}</span>
-              <span className="tail">{isLiveProfile(p) ? '生效' : sourceLabel(p)}</span>
-            </Link>
+            <div key={p.id} className={`pp-row${p.id === activeId ? ' on' : ''}`}>
+              <button
+                type="button"
+                className="pp-pick"
+                onClick={() => {
+                  if (p.id === activeId) {
+                    go();
+                  } else {
+                    setActiveProfile(p.name); // writes cookie + reloads
+                  }
+                }}
+              >
+                <span className="dot" />
+                <span className="nm">{p.name}</span>
+                <span className="tail">{p.id === activeId ? '正在编辑' : sourceLabel(p)}</span>
+              </button>
+              <Link
+                className="pp-gear"
+                href={`/profiles/${p.id}`}
+                onClick={go}
+                aria-label={`${p.name} 设置`}
+                title="绑定与设置"
+              >
+                ⚙
+              </Link>
+            </div>
           ))
         )}
         <div className="pp-sep" />

@@ -86,6 +86,8 @@ const fakeRedis = {
 
 vi.mock('@/lib/redis/client', () => ({ getRedis: () => fakeRedis }));
 
+const PID = 'prof-test';
+
 let rulesRepo: typeof import('@/lib/repos/rulesRepo');
 let baseRepo: typeof import('@/lib/repos/baseRepo');
 let subsRepo: typeof import('@/lib/repos/subscriptionsRepo');
@@ -131,29 +133,29 @@ const SUB: Subscription = {
 
 describe('rulesRepo bumps config:version', () => {
   it('upsertRule / upsertRules / deleteRule / deleteRules / clearRules / batch', async () => {
-    await rulesRepo.upsertRule(makeRule('a'));
+    await rulesRepo.upsertRule(PID, makeRule('a'));
     expect(version()).toBe(1);
 
-    await rulesRepo.upsertRules([makeRule('b'), makeRule('c')]);
+    await rulesRepo.upsertRules(PID, [makeRule('b'), makeRule('c')]);
     expect(version()).toBe(2);
 
-    expect(await rulesRepo.deleteRule('a')).toBe(true);
+    expect(await rulesRepo.deleteRule(PID, 'a')).toBe(true);
     expect(version()).toBe(3);
 
-    expect(await rulesRepo.deleteRules(['b', 'c'])).toBe(2);
+    expect(await rulesRepo.deleteRules(PID, ['b', 'c'])).toBe(2);
     expect(version()).toBe(4);
 
-    await rulesRepo.batchUpsertAndDelete([makeRule('d')], []);
+    await rulesRepo.batchUpsertAndDelete(PID, [makeRule('d')], []);
     expect(version()).toBe(5);
 
-    await rulesRepo.clearRules();
+    await rulesRepo.clearRules(PID);
     expect(version()).toBe(6);
   });
 
   it('no-op early returns do not bump', async () => {
-    await rulesRepo.upsertRules([]);
-    await rulesRepo.deleteRules([]);
-    await rulesRepo.batchUpsertAndDelete([], []);
+    await rulesRepo.upsertRules(PID, []);
+    await rulesRepo.deleteRules(PID, []);
+    await rulesRepo.batchUpsertAndDelete(PID, [], []);
     expect(version()).toBe(0);
   });
 });
@@ -161,11 +163,11 @@ describe('rulesRepo bumps config:version', () => {
 describe('baseRepo bumps config:version', () => {
   it('setBase bumps on success, not on etag conflict', async () => {
     const meta = { anchors: [], policies: [], etag: 'v1', updated_at: 1 };
-    expect((await baseRepo.setBase('proxies: []', meta, null)).ok).toBe(true);
+    expect((await baseRepo.setBase(PID, 'proxies: []', meta, null)).ok).toBe(true);
     expect(version()).toBe(1);
 
     // Optimistic-concurrency failure must not invalidate anything.
-    const conflict = await baseRepo.setBase('proxies: []', { ...meta, etag: 'v2' }, 'wrong-etag');
+    const conflict = await baseRepo.setBase(PID, 'proxies: []', { ...meta, etag: 'v2' }, 'wrong-etag');
     expect(conflict.ok).toBe(false);
     expect(version()).toBe(1);
   });

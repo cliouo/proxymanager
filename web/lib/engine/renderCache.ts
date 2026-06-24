@@ -61,8 +61,11 @@ const EX_SLACK_SECONDS = 60;
  *       nodes named with 3-letter codes that previously got none.
  *   7 → region table gained DK/IS/PL/AE/NG/PK/UA (Denmark/Iceland/Poland/UAE/
  *       Nigeria/Pakistan/Ukraine), so flag-emoji now flags those too.
+ *   8 → base / rules / proxy-groups are now loaded per-profile (keyed by the
+ *       profile's id) instead of single global instances; every profile renders
+ *       its own owned config.
  */
-const RENDER_CACHE_EPOCH = 7;
+const RENDER_CACHE_EPOCH = 8;
 
 export type RenderCacheStatus = 'hit' | 'miss' | 'bypass';
 
@@ -161,39 +164,38 @@ export async function renderProfileConfig(
     version = (await redis.get<number>(REDIS_KEYS.configVersion)) ?? 0;
   }
 
-  // Miss / bypass — the data loading the three routes used to duplicate.
-  const [
-    base,
-    rules,
-    providers,
-    subscriptions,
-    proxyGroups,
-    templates,
-    collections,
-    profileRecord,
-  ] = await Promise.all([
-    getBase(),
-    listRules(),
-    listRuleSets(),
-    listSubscriptions(),
-    listProxyGroups(),
-    listProxyGroupTemplates(),
-    listCollections(),
-    getProfileByName(profileName),
-  ]);
+  // Miss / bypass. base / rules / proxy-groups are now owned per profile
+  // (keyed by the profile's id), so resolve the profile record FIRST, then
+  // load its scoped structural data alongside the shared libraries.
+  //
+  // Profile existence guard: the engine renders a profile by name, so a name
+  // with no record can't be located — 404 it (`default` included, since post-
+  // migration it always has a record; with none, there's nothing to render).
+  // This lives on the miss path on purpose — a cache *hit* already proves a
+  // valid prior render under the current config:version, and deleting a profile
+  // bumps that version (see profilesRepo), so a stale hit for a deleted profile
+  // can't survive. Keeping it off the hit path preserves the single-MGET fast
+  // path for polling clients.
+  const profileRecord = await getProfileByName(profileName);
+  if (!profileRecord) {
+    if (profileName === 'default') {
+      throw (opts.missingBaseError ?? defaultMissingBaseError)();
+    }
+    throw ProblemDetailsError.notFound(`Profile "${profileName}" 不存在。`);
+  }
+
+  const [base, rules, providers, subscriptions, proxyGroups, templates, collections] =
+    await Promise.all([
+      getBase(profileRecord.id),
+      listRules(profileRecord.id),
+      listRuleSets(),
+      listSubscriptions(),
+      listProxyGroups(profileRecord.id),
+      listProxyGroupTemplates(),
+      listCollections(),
+    ]);
   if (!base) {
     throw (opts.missingBaseError ?? defaultMissingBaseError)();
-  }
-  // Profile existence guard. The engine renders any profile by name (via
-  // boundSource below), so the only thing that should 404 is a name with no
-  // record. `default` is exempt: pre-init it has no record yet but must still
-  // render (legacy "every enabled sub"). This lives on the miss path on
-  // purpose — a cache *hit* already proves a valid prior render under the
-  // current config:version, and deleting a profile bumps that version (see
-  // profilesRepo), so a stale hit for a deleted profile can't survive. Keeping
-  // it off the hit path preserves the single-MGET fast path for polling clients.
-  if (profileName !== 'default' && !profileRecord) {
-    throw ProblemDetailsError.notFound(`Profile "${profileName}" 不存在。`);
   }
 
   const resolved = await resolveConfig(base.content, rules, subscriptions, proxyGroups, templates, {
@@ -202,9 +204,8 @@ export async function renderProfileConfig(
     ignoreFailedSubs: true,
     noCache: opts.noCache,
     collections,
-    // Profile binding. When no profile record exists yet (pre-init), falls
-    // through to "every enabled sub" — backward-compat.
-    boundSource: profileRecord?.source,
+    // Profile binding — which subscription(s) this profile injects.
+    boundSource: profileRecord.source,
   });
 
   // 新鲜度窗口 = 实际参与注入的订阅(resolveConfig 已做过 enabled + boundSource

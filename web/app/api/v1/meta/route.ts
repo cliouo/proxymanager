@@ -1,6 +1,8 @@
 import { withProblemDetails } from '@/lib/http/handler';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { getBase } from '@/lib/repos/baseRepo';
+import { resolveScopeProfileName } from '@/lib/profileScope';
+import { getProfileByName } from '@/lib/repos/profilesRepo';
 
 export const dynamic = 'force-dynamic';
 
@@ -11,7 +13,10 @@ export const GET = withProblemDetails(async (request: Request) => {
   }
 
   const origin = new URL(request.url).origin;
-  const base = await getBase();
+  // Resolve the active profile's base for the buildId/hasBase hints; tolerate a
+  // missing record (pre-init) by leaving base null rather than 404-ing meta.
+  const profile = await getProfileByName(resolveScopeProfileName(request));
+  const base = profile ? await getBase(profile.id) : null;
 
   return Response.json({
     data: {
