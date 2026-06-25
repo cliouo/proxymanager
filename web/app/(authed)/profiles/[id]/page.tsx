@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useId, useMemo, useState } from 'react';
 import { ApiError, api } from '@/lib/client/api';
 import { PageTopbar } from '@/components/PageChrome';
+import { useProfiles } from '@/components/profile/ProfileContext';
 import { useToast } from '@/components/ui/Toast';
 import styles from '../profiles.module.css';
 
@@ -45,6 +46,8 @@ export default function ProfileDetailPage() {
   const id = params.id;
   const fid = useId();
   const toast = useToast();
+  // Keep the sidebar switcher (shared ProfileContext) in sync after rename/delete.
+  const { reload: reloadSwitcher, activeProfile, clearActiveProfile } = useProfiles();
 
   const [profile, setProfile] = useState<Profile | null>(null);
   const [subs, setSubs] = useState<SubscriptionLite[]>([]);
@@ -161,6 +164,7 @@ export default function ProfileDetailPage() {
         body: { name: n, source, notes: notes.trim() ? notes.trim() : null },
       });
       hydrate(res.data);
+      void reloadSwitcher();
       setSaveMsg('已保存');
       window.setTimeout(() => setSaveMsg(null), 2400);
     } catch (e) {
@@ -168,7 +172,7 @@ export default function ProfileDetailPage() {
     } finally {
       setSaving(false);
     }
-  }, [id, name, nameValid, notes, sourceId, sourceKind, hydrate]);
+  }, [id, name, nameValid, notes, sourceId, sourceKind, hydrate, reloadSwitcher]);
 
   const remove = useCallback(async () => {
     if (!confirm(`确认删除配置文件「${profile?.name}」？此操作不可撤销。`)) return;
@@ -176,12 +180,15 @@ export default function ProfileDetailPage() {
     setError(null);
     try {
       await api(`/api/v1/profiles/${id}`, { method: 'DELETE' });
+      // 删的是当前活动配置文件 → 清掉 cookie,免得后续作用域请求 404。
+      if (activeProfile?.id === id) clearActiveProfile();
+      void reloadSwitcher();
       router.push('/profiles');
     } catch (e) {
       setError(e instanceof ApiError ? e.message : '删除失败');
       setDeleting(false);
     }
-  }, [id, profile?.name, router]);
+  }, [id, profile?.name, router, reloadSwitcher, activeProfile?.id, clearActiveProfile]);
 
   // ⌘S 保存
   useEffect(() => {

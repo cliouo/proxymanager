@@ -89,8 +89,9 @@ export default function ConfigPage() {
   const anchors = preview?.anchors_applied ?? [];
   const unmatched = preview?.unmatched_anchors ?? [];
   const totalRules = anchors.reduce((sum, a) => sum + a.ruleCount, 0);
-  // Subscription URL for the ACTIVE profile (meta.subscriptionUrl is the
-  // default-anchored one; derive the active one from subBase).
+  // Subscription URL for the ACTIVE profile. meta.subscriptionUrl now follows
+  // the active profile too, but derive from subBase + activeName so it stays
+  // correct even before meta finishes loading.
   const subUrl = meta?.subBase
     ? `${meta.subBase}/${encodeURIComponent(activeName)}`
     : (meta?.subscriptionUrl ?? '');

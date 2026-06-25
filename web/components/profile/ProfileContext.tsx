@@ -54,6 +54,8 @@ interface ProfilesValue {
   activeProfile: Profile | null;
   /** 切换正在编辑的配置文件:写 cookie 并重载页面以按新作用域重新取数。 */
   setActiveProfile: (name: string) => void;
+  /** 清除 active cookie 并回退到 current(无重载)—— 删除当前活动配置文件后调用。 */
+  clearActiveProfile: () => void;
   loaded: boolean;
   reload: () => Promise<void>;
 }
@@ -125,9 +127,16 @@ export function ProfilesProvider({ children }: { children: React.ReactNode }) {
     window.location.reload();
   }, []);
 
+  const clearActiveProfile = useCallback(() => {
+    // Drop the cookie (max-age=0) and fall back to `current` in memory, so a
+    // deleted active profile can't leave a stale cookie that 404s scoped routes.
+    document.cookie = `${ACTIVE_PROFILE_COOKIE}=; path=/; max-age=0; SameSite=Lax`;
+    setActiveName(null);
+  }, []);
+
   const value = useMemo<ProfilesValue>(
-    () => ({ profiles, current, activeProfile, setActiveProfile, loaded, reload }),
-    [profiles, current, activeProfile, setActiveProfile, loaded, reload],
+    () => ({ profiles, current, activeProfile, setActiveProfile, clearActiveProfile, loaded, reload }),
+    [profiles, current, activeProfile, setActiveProfile, clearActiveProfile, loaded, reload],
   );
 
   return <ProfilesContext.Provider value={value}>{children}</ProfilesContext.Provider>;

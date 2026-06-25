@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useCallback, useEffect, useId, useMemo, useState } from 'react';
 import { ApiError, api } from '@/lib/client/api';
 import { PageTopbar } from '@/components/PageChrome';
+import { useProfiles } from '@/components/profile/ProfileContext';
 import styles from './profiles.module.css';
 
 /** —— 真实数据形态（见 schemas/profile.ts / collection.ts / subscription.ts）—— */
@@ -58,6 +59,9 @@ export default function ProfilesPage() {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  // The sidebar switcher reads from the shared ProfileContext; refresh it too so
+  // a newly created profile shows up there without a full page reload.
+  const { reload: reloadSwitcher } = useProfiles();
 
   const reload = useCallback(async () => {
     setError(null);
@@ -243,6 +247,7 @@ export default function ProfilesPage() {
           onCreated={() => {
             setCreating(false);
             void reload();
+            void reloadSwitcher();
           }}
         />
       )}
