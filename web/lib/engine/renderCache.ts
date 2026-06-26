@@ -64,8 +64,11 @@ const EX_SLACK_SECONDS = 60;
  *   8 → base / rules / proxy-groups are now loaded per-profile (keyed by the
  *       profile's id) instead of single global instances; every profile renders
  *       its own owned config.
+ *   9 → cache entry now carries the profile's display_name so the sub route can
+ *       set a customisable Content-Disposition filename on a cache hit (no extra
+ *       profile load on the fast path).
  */
-const RENDER_CACHE_EPOCH = 8;
+const RENDER_CACHE_EPOCH = 9;
 
 export type RenderCacheStatus = 'hit' | 'miss' | 'bypass';
 
@@ -100,6 +103,8 @@ export interface RenderCacheEntry extends CachedResolveOutput {
   /** base.yaml meta carried along so /api/v1/base/parsed can answer from cache. */
   baseEtag: string;
   baseUpdatedAt: number;
+  /** Profile's display_name (Content-Disposition name); null = use default. */
+  displayName: string | null;
 }
 
 export interface RenderProfileOptions {
@@ -118,6 +123,8 @@ export interface RenderProfileResult {
   resolved: CachedResolveOutput;
   baseEtag: string;
   baseUpdatedAt: number;
+  /** Profile's display_name for the Content-Disposition filename (null = default). */
+  displayName: string | null;
   cache: RenderCacheStatus;
 }
 
@@ -156,6 +163,7 @@ export async function renderProfileConfig(
         resolved: entry,
         baseEtag: entry.baseEtag,
         baseUpdatedAt: entry.baseUpdatedAt,
+        displayName: entry.displayName ?? null,
         cache: 'hit',
       };
     }
@@ -223,6 +231,7 @@ export async function renderProfileConfig(
     freshForMs,
     baseEtag: base.etag,
     baseUpdatedAt: base.updated_at,
+    displayName: profileRecord.display_name ?? null,
     content: resolved.content,
     buildId: resolved.buildId,
     anchorsApplied: resolved.anchorsApplied,
@@ -243,6 +252,7 @@ export async function renderProfileConfig(
     resolved: entry,
     baseEtag: base.etag,
     baseUpdatedAt: base.updated_at,
+    displayName: profileRecord.display_name ?? null,
     cache: opts.noCache ? 'bypass' : 'miss',
   };
 }

@@ -1,3 +1,4 @@
+import { attachmentDisposition } from '@/lib/http/contentDisposition';
 import { contentEtag, etagMatches } from '@/lib/http/etag';
 import type { NodeExportResult } from '@/lib/services/nodeExportService';
 
@@ -32,14 +33,13 @@ export function nodeExportResponse(
     return new Response(null, { status: 304, headers });
   }
 
-  // RFC 5987:filename 给 ASCII 兜底,filename* 携带可能含中文的真实名。
-  const asciiSafe = filename.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_');
   return new Response(result.yaml, {
     status: 200,
     headers: {
       ...headers,
       'Content-Type': 'text/yaml; charset=utf-8',
-      'Content-Disposition': `attachment; filename="${asciiSafe}"; filename*=UTF-8''${encodeURIComponent(filename)}`,
+      // RFC 5987:filename 给 ASCII 兜底,filename* 携带可能含中文的真实名。
+      'Content-Disposition': attachmentDisposition(filename),
     },
   });
 }

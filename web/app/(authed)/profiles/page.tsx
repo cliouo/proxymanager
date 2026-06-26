@@ -110,8 +110,10 @@ export default function ProfilesPage() {
 
       <p className={styles.pageIntro}>
         每份<b>配置文件</b>是一份可独立解析的客户端配置：它有<b>自己的</b>结构 base、策略组与规则，
-        并绑定<b>单一节点来源</b>（某个订阅源、某个聚合订阅，或暂不绑定）。新建时可<b>从某份配置文件复制</b>
-        （默认 default）再改，互不影响。<b>订阅源</b>和<b>规则集</b>放在下方共享资源库里，被各份配置文件共用。
+        并绑定<b>单一节点来源</b>（某个订阅源、某个聚合订阅，或暂不绑定）。新建时可
+        <b>从某份配置文件复制</b>
+        （默认 default）再改，互不影响。<b>订阅源</b>和<b>规则集</b>
+        放在下方共享资源库里，被各份配置文件共用。
       </p>
 
       {/* 共享资源库 */}
@@ -276,13 +278,13 @@ function NewProfileModal({
 }) {
   const fid = useId();
   const [name, setName] = useState('');
+  const [displayName, setDisplayName] = useState('');
   const [notes, setNotes] = useState('');
   const [sourceKind, setSourceKind] = useState<'none' | 'subscription' | 'collection'>('none');
   const [sourceId, setSourceId] = useState('');
   // 初始内容：从某配置文件复制(默认 default) 或 空白(仅骨架)。
   const defaultProfileId = useMemo(
-    () =>
-      profiles.find((p) => p.name === DEFAULT_PROFILE_NAME)?.id ?? profiles[0]?.id ?? '',
+    () => profiles.find((p) => p.name === DEFAULT_PROFILE_NAME)?.id ?? profiles[0]?.id ?? '',
     [profiles],
   );
   const [seed, setSeed] = useState<'copy' | 'blank'>(profiles.length > 0 ? 'copy' : 'blank');
@@ -318,6 +320,7 @@ function NewProfileModal({
         method: 'POST',
         body: {
           name: n,
+          ...(displayName.trim() ? { display_name: displayName.trim() } : {}),
           source,
           ...(notes.trim() ? { notes: notes.trim() } : {}),
           ...(seed === 'copy' && copyFrom ? { copy_from: copyFrom } : {}),
@@ -328,7 +331,7 @@ function NewProfileModal({
       setErr(e instanceof ApiError ? e.message : '创建失败');
       setPending(false);
     }
-  }, [name, nameValid, notes, sourceId, sourceKind, seed, copyFrom, onCreated]);
+  }, [name, nameValid, displayName, notes, sourceId, sourceKind, seed, copyFrom, onCreated]);
 
   return (
     <div className="modal-bg open" onClick={onClose}>
@@ -349,6 +352,24 @@ function NewProfileModal({
           <div className="hint">
             文件名将由名称生成：<span className="mono">{slugPreview}</span>
           </div>
+        </div>
+
+        <div className="field">
+          <label htmlFor={`${fid}-display`}>
+            订阅显示名{' '}
+            <span style={{ color: 'var(--faint)', fontWeight: 400 }}>
+              · 可选 · 导入客户端后看到的名字
+            </span>
+          </label>
+          <input
+            id={`${fid}-display`}
+            className="input"
+            value={displayName}
+            placeholder={`默认：proxymanager-${name.trim() || 'untitled'}`}
+            maxLength={120}
+            onChange={(e) => setDisplayName(e.target.value)}
+          />
+          <div className="hint">支持中文 / 空格 / emoji；留空用默认名。之后也能改。</div>
         </div>
 
         <div className="field">

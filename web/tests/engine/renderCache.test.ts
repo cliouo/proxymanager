@@ -70,8 +70,24 @@ vi.mock('@/lib/repos/baseRepo', () => ({ getBase: () => getBaseMock() }));
 
 // Two subs in the library; only airport-a participates per RESOLVED.subscriptions.
 const SUBS = [
-  { id: 's1', name: 'airport-a', enabled: true, kind: 'remote', ttl_ms: 600_000, tags: [], operators: [] },
-  { id: 's2', name: 'airport-b', enabled: true, kind: 'remote', ttl_ms: 60_000, tags: [], operators: [] },
+  {
+    id: 's1',
+    name: 'airport-a',
+    enabled: true,
+    kind: 'remote',
+    ttl_ms: 600_000,
+    tags: [],
+    operators: [],
+  },
+  {
+    id: 's2',
+    name: 'airport-b',
+    enabled: true,
+    kind: 'remote',
+    ttl_ms: 60_000,
+    tags: [],
+    operators: [],
+  },
 ];
 vi.mock('@/lib/repos/subscriptionsRepo', () => ({ listSubscriptions: async () => SUBS }));
 vi.mock('@/lib/repos/rulesRepo', () => ({ listRules: async () => [] }));
@@ -190,7 +206,10 @@ describe('renderProfileConfig — invalidation paths', () => {
 describe('renderProfileConfig — noCache bypass', () => {
   it('skips the cache read, forwards noCache to resolveConfig, still rewrites the cache', async () => {
     await mod.renderProfileConfig('default', { providerUrlBase: URL_BASE }); // prime
-    const out = await mod.renderProfileConfig('default', { providerUrlBase: URL_BASE, noCache: true });
+    const out = await mod.renderProfileConfig('default', {
+      providerUrlBase: URL_BASE,
+      noCache: true,
+    });
     expect(out.cache).toBe('bypass');
     expect(resolveConfigMock).toHaveBeenCalledTimes(2);
     const opts = resolveConfigMock.mock.calls[1][5] as { noCache?: boolean };
@@ -216,7 +235,8 @@ describe('renderProfileConfig — uninitialised base', () => {
     getBaseMock.mockResolvedValue(null);
     await expect(
       mod.renderProfileConfig('default', {
-        missingBaseError: () => ProblemDetailsError.unprocessable('Base config has not been initialized.'),
+        missingBaseError: () =>
+          ProblemDetailsError.unprocessable('Base config has not been initialized.'),
       }),
     ).rejects.toMatchObject({ problem: { status: 422 } });
   });
@@ -237,5 +257,30 @@ describe('renderProfileConfig — profile existence guard', () => {
     const out = await mod.renderProfileConfig('default', { providerUrlBase: URL_BASE });
     expect(out.cache).toBe('miss');
     expect(out.resolved.content).toBe(RESOLVED.content);
+  });
+});
+
+describe('renderProfileConfig — display_name propagation', () => {
+  // The sub route reads displayName to set the Content-Disposition filename, and
+  // must get it on a cache HIT too (no profile load on the fast path) — so it's
+  // carried inside the cached entry, not re-fetched.
+  it('returns the profile display_name on miss and carries it through to a hit', async () => {
+    (DEFAULT_PROFILE as { display_name?: string }).display_name = '家庭主力 🏠';
+    try {
+      const miss = await mod.renderProfileConfig('default', { providerUrlBase: URL_BASE });
+      expect(miss.cache).toBe('miss');
+      expect(miss.displayName).toBe('家庭主力 🏠');
+
+      const hit = await mod.renderProfileConfig('default', { providerUrlBase: URL_BASE });
+      expect(hit.cache).toBe('hit');
+      expect(hit.displayName).toBe('家庭主力 🏠'); // served from the cached entry
+    } finally {
+      delete (DEFAULT_PROFILE as { display_name?: string }).display_name;
+    }
+  });
+
+  it('returns null when the profile has no display_name', async () => {
+    const out = await mod.renderProfileConfig('default', { providerUrlBase: URL_BASE });
+    expect(out.displayName).toBeNull();
   });
 });

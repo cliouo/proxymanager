@@ -31,6 +31,15 @@ import { z } from 'zod';
 const NAME_REGEX = /^[a-z0-9-]+$/;
 const NAME_HINT = 'must contain only lowercase letters, digits, and dashes';
 
+/**
+ * Human-facing subscription name. UNLIKE `name` (the kebab-case URL/file slug),
+ * this is free-form (Chinese, spaces, emoji all fine) and is what proxy clients
+ * show after importing the sub link — it becomes the Content-Disposition
+ * filename on `/api/sub/{token}/{profile}`. Empty/unset → clients fall back to
+ * the generated `proxymanager-{name}` default.
+ */
+const DISPLAY_NAME_MAX = 120;
+
 /** Single-select node source. Discriminated on `type`. */
 export const ProfileSourceSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('none') }),
@@ -46,6 +55,8 @@ export const DEFAULT_PROFILE_SOURCE: ProfileSource = { type: 'none' };
 export const ProfileSchema = z.object({
   id: z.uuid(),
   name: z.string().min(1).regex(NAME_REGEX, NAME_HINT),
+  /** Free-form name clients display after import (Content-Disposition). */
+  display_name: z.string().max(DISPLAY_NAME_MAX).optional(),
   /** The single source this profile resolves nodes from. See file header. */
   source: ProfileSourceSchema.default(DEFAULT_PROFILE_SOURCE),
   notes: z.string().optional(),
@@ -57,6 +68,7 @@ export type Profile = z.infer<typeof ProfileSchema>;
 
 export const ProfileCreateSchema = z.object({
   name: z.string().min(1).regex(NAME_REGEX, NAME_HINT),
+  display_name: z.string().max(DISPLAY_NAME_MAX).optional(),
   source: ProfileSourceSchema.default(DEFAULT_PROFILE_SOURCE),
   notes: z.string().optional(),
   /**
@@ -73,6 +85,7 @@ export type ProfileCreate = z.input<typeof ProfileCreateSchema>;
 
 export const ProfileUpdateSchema = z.object({
   name: z.string().min(1).regex(NAME_REGEX, NAME_HINT).optional(),
+  display_name: z.string().max(DISPLAY_NAME_MAX).nullable().optional(),
   source: ProfileSourceSchema.optional(),
   notes: z.string().nullable().optional(),
 });
