@@ -1,0 +1,22 @@
+{
+  "name": "proxymanager",
+  "displayName": "ProxyManager 配置助手",
+  "version": "0.1.0",
+  "description": "Drive a ProxyManager clash/mihomo proxy-config instance from any skill-aware agent: edit routing rules, the rule-set library, proxy-groups, the base.yaml skeleton, and subscription node-processing operators — every write gated behind ProxyManager's server-side confirmation handshake. 4 skills (1 hub + 3 deep-dive spokes) on one `proxymanager` MCP server.",
+  "author": { "name": "cliouo" },
+  "homepage": "https://github.com/cliouo/proxymanager",
+  "repository": "https://github.com/cliouo/proxymanager",
+  "license": "MIT",
+  "keywords": ["clash", "mihomo", "proxy", "subscription", "mcp", "config", "skill"],
+  "mcpServers": {
+    "proxymanager": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/servers/proxymanager-mcp.mjs"],
+      "env": {
+        "PROXYMANAGER_BASE_URL": "${PROXYMANAGER_BASE_URL:-http://localhost:3000}",
+        "PROXYMANAGER_ADMIN_KEY": "${PROXYMANAGER_ADMIN_KEY:-}",
+        "PROXYMANAGER_PROFILE": "${PROXYMANAGER_PROFILE:-default}"
+      }
+    }
+  }
+}

@@ -28,6 +28,7 @@ import {
   RULE_PROVIDER_READ_ACTIONS,
   RULE_PROVIDER_WRITE_ACTIONS,
 } from './primitives/ruleProviderWrites';
+import { SKILL_REF_ACTIONS } from './primitives/skillRefs';
 import { WRITE_ACTIONS } from './primitives/writes';
 import type { ActionDef } from './types';
 
@@ -39,6 +40,7 @@ const ALL_ACTIONS: ActionDef[] = [
   ...OPERATOR_READ_ACTIONS,
   ...LOCAL_NODE_READ_ACTIONS,
   ...FETCH_ACTIONS,
+  ...SKILL_REF_ACTIONS,
   searchMihomoDocs,
   ...WRITE_ACTIONS,
   ...RULE_PROVIDER_WRITE_ACTIONS,

@@ -108,7 +108,7 @@ const ProxyGroupNativeShape = {
  *   - 'manual'     : 手选 — `proxies` list of named picks, no include-all
  *   - 'filter'     : 筛选 — `include-all-proxies` + `filter`(可加 manual 补充)
  *   - 'all'        : 全部 — `include-all-proxies`,无 filter
- *   - 'single-sub' : 绑定一个订阅源,filter 渲染时按 node_prefix 自动生成
+ *   - 'single-sub' : 绑定一个订阅源,`proxies` 渲染时填为该源存活节点名(不派生 filter)
  *   - 'raw'        : 逃生口
  *
  * Legacy values (`region`/`service`/`system`/`rule-set-policy`/`collection-scope`/
@@ -145,16 +145,20 @@ export const ProxyGroupSchema = z.object({
   template_id: z.uuid().optional(),
   /**
    * `kind: single-sub` binding — the subscription whose nodes this group
-   * filters. At resolve time, the group's `filter` is derived from the
-   * bound sub's `node_prefix` (overriding any user-typed filter, since the
-   * preset owns it). Ignored when `kind != single-sub`.
+   * lists. At resolve time, the group's `proxies` is set to the bound sub's
+   * surviving (post-injection) node names, overriding any user-typed
+   * proxies/filter (node names are no longer prefixed, so there is no
+   * `node_prefix`-derived filter). Ignored when `kind != single-sub`.
+   * See resolve.ts (single-sub branch).
    */
   bound_subscription_id: z.uuid().optional(),
   /**
-   * `kind: collection-scope` binding — the Collection whose members this
-   * group's `proxies:` field lists. At resolve time, `proxies` is rebuilt
-   * from the collection's member subs' surviving node names. Ignored when
-   * `kind != collection-scope`.
+   * Deprecated `collection-scope` binding — the Collection whose members
+   * this group's `proxies:` field listed. The `kind` enum no longer carries
+   * `collection-scope` (schema preprocess maps it to `manual`), but a stale
+   * pre-migration `bound_collection_id` is still tolerated: at resolve time
+   * `proxies` is rebuilt from the collection's member subs' surviving node
+   * names. Not settable via the AI tools or current UI.
    */
   bound_collection_id: z.uuid().optional(),
   /** UI grouping hint, e.g. "国家/地区". Not rendered. */

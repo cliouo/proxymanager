@@ -1,0 +1,12 @@
+{
+  "name": "proxymanager-mcp-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Stdio MCP bridge exposing ProxyManager's action registry to skill-aware clients.",
+  "bin": { "proxymanager-mcp": "./proxymanager-mcp.mjs" },
+  "engines": { "node": ">=18" },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  }
+}
