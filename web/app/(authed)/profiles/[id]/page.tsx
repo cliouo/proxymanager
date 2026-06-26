@@ -17,6 +17,7 @@ type ProfileSource =
 interface Profile {
   id: string;
   name: string;
+  display_name?: string;
   source: ProfileSource;
   notes?: string;
   created_at?: number;
@@ -60,6 +61,7 @@ export default function ProfileDetailPage() {
 
   // editable form state
   const [name, setName] = useState('');
+  const [displayName, setDisplayName] = useState('');
   const [notes, setNotes] = useState('');
   const [sourceKind, setSourceKind] = useState<'none' | 'subscription' | 'collection'>('none');
   const [sourceId, setSourceId] = useState('');
@@ -71,6 +73,7 @@ export default function ProfileDetailPage() {
   const hydrate = useCallback((p: Profile) => {
     setProfile(p);
     setName(p.name);
+    setDisplayName(p.display_name ?? '');
     setNotes(p.notes ?? '');
     setSourceKind(p.source.type);
     setSourceId(p.source.type === 'none' ? '' : p.source.id);
@@ -109,6 +112,7 @@ export default function ProfileDetailPage() {
   const dirty = useMemo(() => {
     if (!profile) return false;
     if (name.trim() !== profile.name) return true;
+    if ((displayName.trim() || undefined) !== (profile.display_name || undefined)) return true;
     if ((notes.trim() || undefined) !== (profile.notes || undefined)) return true;
     if (sourceKind !== profile.source.type) return true;
     if (
@@ -117,7 +121,7 @@ export default function ProfileDetailPage() {
     )
       return true;
     return false;
-  }, [profile, name, notes, sourceKind, sourceId]);
+  }, [profile, name, displayName, notes, sourceKind, sourceId]);
 
   // 订阅链接基于**已保存**的名称(下发路径用它),不是编辑框里的草稿名。
   const { subRealUrl, subShownUrl } = useMemo(() => {
@@ -161,7 +165,12 @@ export default function ProfileDetailPage() {
     try {
       const res = await api<{ data: Profile }>(`/api/v1/profiles/${id}`, {
         method: 'PATCH',
-        body: { name: n, source, notes: notes.trim() ? notes.trim() : null },
+        body: {
+          name: n,
+          display_name: displayName.trim() ? displayName.trim() : null,
+          source,
+          notes: notes.trim() ? notes.trim() : null,
+        },
       });
       hydrate(res.data);
       void reloadSwitcher();
@@ -172,7 +181,7 @@ export default function ProfileDetailPage() {
     } finally {
       setSaving(false);
     }
-  }, [id, name, nameValid, notes, sourceId, sourceKind, hydrate, reloadSwitcher]);
+  }, [id, name, nameValid, displayName, notes, sourceId, sourceKind, hydrate, reloadSwitcher]);
 
   const remove = useCallback(async () => {
     if (!confirm(`确认删除配置文件「${profile?.name}」？此操作不可撤销。`)) return;
@@ -286,6 +295,26 @@ export default function ProfileDetailPage() {
                     readOnly
                     style={{ color: 'var(--muted)' }}
                   />
+                </div>
+              </div>
+              <div className="field" style={{ margin: '16px 0 0' }}>
+                <label htmlFor={`${fid}-display`}>
+                  订阅显示名{' '}
+                  <span style={{ color: 'var(--faint)', fontWeight: 400 }}>
+                    · 可选 · 导入客户端后看到的名字
+                  </span>
+                </label>
+                <input
+                  id={`${fid}-display`}
+                  className="input"
+                  value={displayName}
+                  placeholder={`默认：proxymanager-${name.trim() || 'untitled'}`}
+                  maxLength={120}
+                  onChange={(e) => setDisplayName(e.target.value)}
+                />
+                <div className="hint">
+                  支持中文、空格、emoji。导入 mihomo / Clash 后显示这个名字；留空则用默认的{' '}
+                  <span className="mono">proxymanager-{name.trim() || 'untitled'}</span>。
                 </div>
               </div>
               <div className="field" style={{ margin: '16px 0 0' }}>
@@ -405,7 +434,11 @@ export default function ProfileDetailPage() {
               <h2>订阅链接</h2>
               <div className={styles.grow} />
               {profile && (
-                <Link className="btn ghost sm" href={`/api/v1/preview/${encodeURIComponent(profile.name)}`} target="_blank">
+                <Link
+                  className="btn ghost sm"
+                  href={`/api/v1/preview/${encodeURIComponent(profile.name)}`}
+                  target="_blank"
+                >
                   预览生成的配置
                 </Link>
               )}
