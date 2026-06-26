@@ -284,6 +284,54 @@
   color: var(--muted);
 }
 
+/* —— 缓存 TTL 自定义秒数：贴合分段控件高度的单格输入 —— */
+.ttlCustom {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 30px;
+  padding: 0 9px 0 10px;
+  border-radius: var(--r-sm);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px transparent;
+  transition: box-shadow 0.15s ease, background 0.15s ease;
+}
+.ttlCustom:hover {
+  background: color-mix(in srgb, var(--surface-3) 65%, transparent);
+}
+.ttlCustomOn {
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08),
+    inset 0 0 0 1px color-mix(in srgb, var(--accent) 32%, transparent);
+}
+.ttlCustom:focus-within {
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--accent), 0 0 0 3px var(--accent-dim);
+}
+.ttlInput {
+  width: 52px;
+  height: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--fg);
+  text-align: right;
+  font: 13px var(--font-mono);
+  -moz-appearance: textfield;
+}
+.ttlInput:focus {
+  outline: none;
+}
+.ttlInput::-webkit-outer-spin-button,
+.ttlInput::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.ttlUnit {
+  font: 11.5px var(--font-mono);
+  color: var(--muted);
+  pointer-events: none;
+}
+
 /* —— 聚合：成员管理 —— */
 .memBlock {
   background: var(--surface);
