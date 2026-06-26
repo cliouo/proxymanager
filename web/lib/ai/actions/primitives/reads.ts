@@ -104,7 +104,7 @@ const listRulesAction = defineAction({
 const listProxyGroupsAction = defineAction({
   name: 'list_proxy_groups',
   description:
-    '列出当前 hash 中的全部策略组(proxy-groups)和共享模板(templates)。每个策略组含 id(改/删时用)/name/type(mihomo 原生类型)/kind(UI 预设形态:raw/manual/filter/all/single-sub)/proxies/filter/exclude-filter/template_id/dialer-proxy/include-all-* 等字段;single-sub 组的 bound_subscription_id 与 collection-scope 组的 bound_collection_id 在此暴露(渲染时据此自动生成 filter / proxies)。回答"我有哪些策略组""某组怎么配的""有没有用模板"、写规则选 policy、或要 create/update/delete_proxy_group 前拿 id 时调用。',
+    '列出当前 hash 中的全部策略组(proxy-groups)和共享模板(templates)。每个策略组含 id(改/删时用)/name/type(mihomo 原生类型)/kind(UI 预设形态:raw/manual/filter/all/single-sub)/proxies/filter/exclude-filter/template_id/dialer-proxy/include-all-* 等字段;single-sub 组的 bound_subscription_id(及遗留 bound_collection_id)在此暴露(渲染时据此把绑定源的存活节点名直接填入 proxies,不再派生 filter)。回答"我有哪些策略组""某组怎么配的""有没有用模板"、写规则选 policy、或要 create/update/delete_proxy_group 前拿 id 时调用。',
   input: z.object({}),
   risk: 'read',
   async run(ctx) {
