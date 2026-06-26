@@ -5,9 +5,27 @@ export class ApiError extends Error {
     public readonly status: number,
     public readonly problem: { title: string; detail?: string; errors?: unknown[] } & Record<string, unknown>,
   ) {
-    super(problem.detail ?? problem.title ?? `HTTP ${status}`);
+    super(problem.detail ?? formatProblemErrors(problem.errors) ?? problem.title ?? `HTTP ${status}`);
     this.name = 'ApiError';
   }
+}
+
+/**
+ * Best-effort render of RFC9457 `errors` (e.g. Zod issues) into a readable string,
+ * so field-level validation failures surface even when the server omits `detail`.
+ */
+function formatProblemErrors(errors: unknown): string | undefined {
+  if (!Array.isArray(errors) || errors.length === 0) return undefined;
+  const parts = errors
+    .map((issue) => {
+      if (!issue || typeof issue !== 'object') return undefined;
+      const { path, message } = issue as { path?: unknown; message?: unknown };
+      if (typeof message !== 'string') return undefined;
+      const key = Array.isArray(path) ? path.join('.') : '';
+      return key ? `${key}: ${message}` : message;
+    })
+    .filter((part): part is string => Boolean(part));
+  return parts.length ? parts.join('；') : undefined;
 }
 
 export interface ApiOptions extends Omit<RequestInit, 'body' | 'headers'> {

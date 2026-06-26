@@ -30,6 +30,7 @@ function toProblemResponse(err: unknown): Response {
       type: `${PROBLEM_BASE_URL}/validation-error`,
       title: 'Request validation failed',
       status: 422,
+      detail: formatZodIssues(err),
       errors: err.issues,
     });
   }
@@ -43,4 +44,14 @@ function toProblemResponse(err: unknown): Response {
     detail,
   };
   return problemResponse(problem);
+}
+
+/** Turn Zod issues into a single human-readable detail string, e.g. "标识: ...; url: ...". */
+function formatZodIssues(err: ZodError): string {
+  return err.issues
+    .map((issue) => {
+      const path = issue.path.join('.');
+      return path ? `${path}: ${issue.message}` : issue.message;
+    })
+    .join('；');
 }

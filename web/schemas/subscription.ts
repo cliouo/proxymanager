@@ -22,8 +22,8 @@ export const SubscriptionSchema = z.object({
   id: z.uuid(),
   name: z
     .string()
-    .min(1)
-    .regex(/^[a-z0-9-]+$/, 'must contain only lowercase letters, digits, and dashes'),
+    .min(1, '标识不能为空')
+    .regex(/^[a-z0-9-]+$/, '标识只能包含小写字母、数字和短横线（-）'),
   /**
    * Human-facing label shown in the UI (Chinese welcome). Purely cosmetic —
    * `name` remains the stable slug identifier used in public links and group
@@ -73,8 +73,8 @@ export const SubscriptionCreateSchema = z
   .object({
     name: z
       .string()
-      .min(1)
-      .regex(/^[a-z0-9-]+$/, 'must contain only lowercase letters, digits, and dashes'),
+      .min(1, '标识不能为空')
+      .regex(/^[a-z0-9-]+$/, '标识只能包含小写字母、数字和短横线（-）'),
     display_name: z.string().optional(),
     enabled: z.boolean().default(true),
     kind: SubscriptionKindSchema.default('remote'),
@@ -94,8 +94,8 @@ export const SubscriptionCreateSchema = z
 export const SubscriptionUpdateSchema = z.object({
   name: z
     .string()
-    .min(1)
-    .regex(/^[a-z0-9-]+$/, 'must contain only lowercase letters, digits, and dashes')
+    .min(1, '标识不能为空')
+    .regex(/^[a-z0-9-]+$/, '标识只能包含小写字母、数字和短横线（-）')
     .optional(),
   display_name: z.string().optional(),
   enabled: z.boolean().optional(),

@@ -1194,18 +1194,21 @@ function TtlSeg({
           {p.label}
         </button>
       ))}
-      <input
-        type="number"
-        min={1}
-        className="input"
-        style={{ width: 96 }}
-        value={Math.round(sec)}
-        onChange={(e) => onChange(Math.max(1, Number(e.target.value) || 0))}
-        disabled={disabled}
+      <label
+        className={`${styles.ttlCustom}${!matched ? ` ${styles.ttlCustomOn}` : ''}`}
         title="自定义秒数"
-        aria-label="缓存 TTL（秒）"
-      />
-      {!matched && <span className={styles.swNote}>{Math.round(sec)}s</span>}
+      >
+        <input
+          type="number"
+          min={1}
+          className={styles.ttlInput}
+          value={Math.round(sec)}
+          onChange={(e) => onChange(Math.max(1, Number(e.target.value) || 0))}
+          disabled={disabled}
+          aria-label="缓存 TTL（秒）"
+        />
+        <span className={styles.ttlUnit}>秒</span>
+      </label>
     </div>
   );
 }
@@ -1225,6 +1228,15 @@ function AddForm({ onAdded, onCancel }: { onAdded: () => void; onCancel: () => v
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    const slug = name.trim();
+    if (!slug) {
+      setError('请填写标识');
+      return;
+    }
+    if (!/^[a-z0-9-]+$/.test(slug)) {
+      setError('标识只能包含小写字母、数字和短横线（-），不能有空格、大写或中文');
+      return;
+    }
     setPending(true);
     setError(null);
     try {
@@ -1233,7 +1245,7 @@ function AddForm({ onAdded, onCancel }: { onAdded: () => void; onCancel: () => v
         .map((t) => t.trim())
         .filter((t) => t.length > 0);
       const body: Record<string, unknown> = {
-        name: name.trim(),
+        name: slug,
         kind,
         enabled,
         ttl_ms: Math.max(1000, ttlSec * 1000),
