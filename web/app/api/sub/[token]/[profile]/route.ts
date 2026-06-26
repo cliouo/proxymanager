@@ -25,10 +25,12 @@ export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
     noCache,
   });
 
-  // The filename is what proxy clients display as the subscription name. A
-  // profile's custom display_name wins; otherwise fall back to the generated
-  // `proxymanager-{name}` default. `.yaml` is kept so clients treat it as YAML.
-  const filename = `${displayName?.trim() || `proxymanager-${profile}`}.yaml`;
+  // The filename is what proxy clients display as the subscription name. When a
+  // profile sets a custom display_name we use it VERBATIM — no `.yaml` suffix,
+  // since the user named it deliberately and clients show the name as-is. Only
+  // the generated fallback keeps `.yaml` (it's a bare slug, not a chosen name).
+  const custom = displayName?.trim();
+  const filename = custom || `proxymanager-${profile}.yaml`;
 
   // buildId is content-addressed, so it doubles as a strong ETag — Mihomo /
   // clients polling on Profile-Update-Interval can skip the body transfer.
