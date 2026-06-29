@@ -37,17 +37,38 @@ description: >-
 
 > `single-sub` / `collection-scope` 的成员是**渲染时算的**，别手填 filter / proxies。
 
+> 另一根正交轴是 `type`（健康检查行为）：`select` 手动切换、**无健康检查**；`url-test` 自动选速；
+> `fallback` 有序故障转移；`load-balance` 多路并发；`relay` 链式——后三者需配 `url`+`interval`。
+
 ## 2. 成员合成三来源
 
 手选 `proxies` ｜ `include_all_proxies` + `filter` ｜ 绑定来源自动算。
 
 ## 3. filter 单词边界坑（本 spoke 招牌）
 
-裸 `us` 会顺带吃进 A-**us**-tralia / R-**us**-sia。改用单词边界 `\bUS\b` 或国旗 emoji 锚定。
+裸 `us` 会顺带吃进 A-**us**-tralia / R-**us**-sia。三种锚定策略（优先级递减）：
+
+| 场景 | 写法 | 说明 |
+|------|------|------|
+| 节点含旗帜 emoji 或中文地名 | `🇺🇸\|United States\|美国` | 绕开字母子串，最安全 |
+| 只有字母缩写 | `\bUS\b` | 单词边界隔开 Australia / Russia |
+| 双代码地区（英国 UK/GB） | `\b(UK\|GB\|GBR)\b\|英国` | 交替组避免漏匹配；`\b` 同时挡住 `80GB` |
+
+**纯中文命名陷阱**：真实节点池常有只含中文地名、无任何 ASCII 缩写的节点（如「日本 东京 02」「新加坡 狮城」）。
+只写 `JP|JPN` / `SG|SGP` 会漏掉它们——filter 必须**同时含中文别名**。常用模板：
+
+| 地区 | filter |
+|------|--------|
+| 美国 | `(?i)(\bUS\b\|USA\|美国\|🇺🇸)` |
+| 日本 | `(?i)(\bJP\b\|JPN\|日本)` |
+| 香港 | `(?i)(\bHK\b\|HKG\|香港)` |
+| 新加坡 | `(?i)(\bSG\b\|SGP\|新加坡\|狮城)` |
+| 台湾 | `(?i)(\bTW\b\|TWN\|台湾\|台北)` |
+| 韩国 | `(?i)(\bKR\b\|KOR\|韩国\|首尔)` |
 
 **改 filter / exclude_filter 之前必须** `preview_proxy_group_members` 对真实节点试算，确认命中的
-正是想要的节点，再发起 `update_proxy_group`。（`preview_proxy_group_members` 在浏览器本地纯正则
-匹配，零往返；非浏览器客户端经同名 MCP 工具走。）
+正是想要的节点，再发起 `create_proxy_group` / `update_proxy_group`。（浏览器本地纯正则匹配，零往返；
+非浏览器客户端经同名 MCP 工具走。）
 
 ## 4. 改名级联 / 删除守卫
 
