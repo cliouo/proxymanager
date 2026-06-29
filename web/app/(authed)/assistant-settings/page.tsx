@@ -26,6 +26,38 @@ const EFFORT_OPTS: { value: AssistantConfig['reasoningEffort']; label: string }[
 ];
 
 /**
+ * The assistant is organised as 4 Agent Skills (1 hub + 3 deep-dive spokes)
+ * sitting on one `proxymanager` MCP server — see plugin/skills/*. Keep these
+ * labels in sync with the SKILL.md frontmatter if the skill set changes.
+ */
+const SKILLS: { name: string; label: string; kind: string; desc: string }[] = [
+  {
+    name: 'managing-clash-config',
+    label: '配置中枢',
+    kind: 'hub',
+    desc: '常驻入口：分流规则 / 规则集库 / dns·sniffer·tun 等骨架 / 节点真相，并把复合任务路由到下面三个深水区技能。',
+  },
+  {
+    name: 'synthesizing-proxy-groups',
+    label: '策略组合成',
+    kind: 'spoke',
+    desc: '设计策略组成员与 filter（地区组 / select·url-test·fallback…），写入前先对真实节点试算，避免组吃错节点。',
+  },
+  {
+    name: 'editing-node-operators',
+    label: '节点处理',
+    kind: 'spoke',
+    desc: '订阅源 / 聚合订阅的算子管线：过滤 / 改名 / 去重 / 排序 / 加旗 / 类型·地区过滤，以及所有节点改名（含本地源）。',
+  },
+  {
+    name: 'optimizing-whole-config',
+    label: '整体优化',
+    kind: 'spoke',
+    desc: '通盘审查与清理：死规则 / 无用规则集 / 悬空引用 / 缺兜底，给出编号改动清单后逐条落地（单点小改不触发）。',
+  },
+];
+
+/**
  * 「AI 配置」 — the user's own DeepSeek credentials. The assistant runs its
  * agent loop in the browser and calls the model API directly, so the key set
  * here is what the browser uses. Stored in KV and cached to localStorage on
@@ -233,18 +265,27 @@ export default function AssistantSettingsPage() {
         <aside className={styles.aside}>
           <section className="panel">
             <div className="panel-head">
-              <h2>助手能力</h2>
+              <h2>技能与工具</h2>
+              <span className="sub">Agent Skills · 31 工具</span>
             </div>
             <div className="panel-body" style={{ padding: '12px 18px' }}>
-              <div className={styles.toolLi}>search_mihomo_docs · 查文档</div>
-              <div className={styles.toolLi}>get_base_overview · 读配置概览</div>
-              <div className={styles.toolLi}>list_rules / get_config_section · 读取</div>
-              <div className={styles.toolLi}>fetch_url · 抓取外部链接</div>
-              <div className={`${styles.toolLi} write`}>add / update / delete_rule</div>
-              <div className={`${styles.toolLi} write`}>create / update_rule_provider</div>
-              <div className={`${styles.toolLi} write`}>set_config_section</div>
+              {SKILLS.map((s) => (
+                <div key={s.name} className={styles.skillRow}>
+                  <div className={styles.skillName}>
+                    <span>{s.label}</span>
+                    <span className={styles.skillKind}>{s.kind}</span>
+                  </div>
+                  <div className={styles.skillDesc}>
+                    <code>{s.name}</code> — {s.desc}
+                  </div>
+                </div>
+              ))}
               <div className={styles.toolNote}>
-                ✎ 写操作一律先出 diff，经你确认后才执行，并写入操作历史。
+                助手按你的意图自动加载对应技能，并按需展开各技能的参考文档（渐进披露）。
+                旧版扁平工具清单已被技能取代。
+                <br />
+                <br />✎ 任何写操作都先出 diff、经你在确认卡里授权（服务端铸一次性 token）后才执行，
+                并写入可撤销的操作历史。
               </div>
             </div>
           </section>
@@ -275,6 +316,69 @@ export default function AssistantSettingsPage() {
           </section>
         </aside>
       </div>
+
+      <section className="panel" style={{ marginTop: 18 }}>
+        <div className="panel-head">
+          <h2>接入第三方客户端（MCP）</h2>
+          <span className="sub">同一套技能 · 同一个后端 · 同一套写入门控</span>
+        </div>
+        <div className={`panel-body ${styles.prose}`}>
+          网页内 AI 只是这套能力的一个客户端。相同的 <b>4 个技能 + 1 个 <code>proxymanager</code> MCP
+          server</b> 已打包成可移植插件（仓库 <code>plugin/</code>），任何支持 Agent Skills 的客户端
+          （Claude Code / Codex）都能驱动<b>同一个 ProxyManager 后端</b>，且写操作同样要过服务端确认门控。
+          <h3>Claude Code（插件方式）</h3>
+          <pre className={styles.code}>{`# 1) 装桥接依赖（首次）
+cd plugin/servers && npm install
+
+# 2) 以插件加载，注入你的管理员密钥
+PROXYMANAGER_ADMIN_KEY=xxxx \\
+PROXYMANAGER_BASE_URL=http://localhost:3000 \\
+claude --plugin-dir ./plugin
+
+# 3) 会话内核对
+/help   # 应见 4 个 proxymanager 技能
+/mcp    # 应见 proxymanager (stdio) 已连接`}</pre>
+          <h3>其它客户端（Codex / 手动 .mcp.json）</h3>
+          <pre className={styles.code}>{`{
+  "mcpServers": {
+    "proxymanager": {
+      "command": "node",
+      "args": ["/绝对路径/proxymanager/plugin/servers/proxymanager-mcp.mjs"],
+      "env": {
+        "PROXYMANAGER_BASE_URL": "http://localhost:3000",
+        "PROXYMANAGER_ADMIN_KEY": "xxxx",
+        "PROXYMANAGER_PROFILE": "default"
+      }
+    }
+  }
+}`}</pre>
+          <table className={styles.envTable}>
+            <thead>
+              <tr>
+                <th>环境变量</th>
+                <th>说明</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>PROXYMANAGER_BASE_URL</td>
+                <td>ProxyManager 实例地址（默认 http://localhost:3000）</td>
+              </tr>
+              <tr>
+                <td>PROXYMANAGER_ADMIN_KEY</td>
+                <td>管理员密钥，作 Authorization: Bearer 注入</td>
+              </tr>
+              <tr>
+                <td>PROXYMANAGER_PROFILE</td>
+                <td>作用的配置文件（默认 default）</td>
+              </tr>
+            </tbody>
+          </table>
+          接线细节与安全说明见仓库 <code>plugin/README.md</code> 与{' '}
+          <code>plugin/servers/README.md</code>。技能正文以 <code>plugin/skills/*/SKILL.md</code>{' '}
+          为单一真相源——改动后跑 <code>npm run build:skills</code> 让网页内 AI 同步。
+        </div>
+      </section>
     </>
   );
 }

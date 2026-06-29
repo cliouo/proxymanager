@@ -11,29 +11,80 @@
   gap: 18px;
 }
 
-.toolLi {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  padding: 5px 0;
-  font: 11.5px var(--font-mono);
-  color: var(--muted);
-}
-.toolLi::before {
-  content: '⚙';
-  color: var(--faint);
-}
-.toolLi.write::before {
-  content: '✎';
-  color: var(--warn);
-}
-
 .toolNote {
   font: 11px var(--font-mono);
   color: var(--faint);
   margin-top: 10px;
   padding-top: 10px;
   border-top: 1px solid var(--border);
+}
+
+.skillRow {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+.skillRow:last-of-type {
+  border-bottom: none;
+}
+.skillName {
+  display: flex;
+  gap: 7px;
+  align-items: baseline;
+  font: 12px var(--font-mono);
+  color: var(--fg);
+}
+.skillKind {
+  flex: none;
+  font: 10px var(--font-mono);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--faint);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+.skillDesc {
+  margin-top: 3px;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+.code {
+  display: block;
+  margin: 8px 0;
+  padding: 10px 12px;
+  overflow-x: auto;
+  white-space: pre;
+  font: 11.5px / 1.65 var(--font-mono);
+  color: var(--code-fg);
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+}
+.envTable {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 8px 0 4px;
+  font: 11.5px var(--font-mono);
+}
+.envTable th,
+.envTable td {
+  text-align: left;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+.envTable th {
+  color: var(--faint);
+  font-weight: 500;
+}
+.envTable td:first-child {
+  color: var(--fg);
+  white-space: nowrap;
+}
+.envTable td:last-child {
+  color: var(--muted);
 }
 
 .prose {
@@ -43,6 +94,19 @@
 }
 .prose b {
   color: var(--fg);
+}
+.prose h3 {
+  margin: 16px 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg);
+}
+.prose code {
+  font: 11.5px var(--font-mono);
+  color: var(--code-fg);
+  background: var(--code-bg);
+  border-radius: 4px;
+  padding: 1px 4px;
 }
 
 .saveRow {
@@ -86,7 +150,7 @@
   .grid {
     gap: 14px;
   }
-  .toolLi {
-    word-break: break-all;
+  .code {
+    font-size: 11px;
   }
 }
