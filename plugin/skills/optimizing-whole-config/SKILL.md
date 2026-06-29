@@ -30,8 +30,18 @@ description: >-
 
 ## 3. Audit（逐项检查）
 
-走 `references/review-checklist.md` 逐项过：死规则 / 重复规则、未被引用的规则集、空或重叠的组、
-裸国家码 filter、孤儿引用、缺 MATCH 兜底、dns 合理性、规则顺序与锚点。
+走 `references/review-checklist.md` 逐项过。高信号项与**后果**（按严重度排）：
+
+- **dialer-proxy / 链式后端孤儿**——组的 `dialer-proxy` 或链式后端指向已不存在的节点/组 →
+  **mihomo 加载失败**（整份配置打不开），最优先修；
+- **悬空引用**——规则 `policy`、组成员引用的策略组必须**真实存在**，逐一核对（落地时 `add_rule`
+  也会 422 拒绝不存在的 policy）；
+- **死规则**——被前面更宽的规则 shadow 而永不命中；`MATCH` 兜底必须是规则列表**最后一条**；
+- **裸国家码 filter**——组 `filter` 用裸两位码（`us`/`hk`）会误吞 A-us-tralia 等，交
+  `synthesizing-proxy-groups` 修；
+- **规则集未生效 / 缺 no-resolve**——规则集要两步生效（入库 + `RULE-SET` 引用）；IP 类规则集
+  （GEOIP / IP-CIDR）应加 `no-resolve` 避免抢跑 DNS；
+- 未被引用的规则集、空或重叠的组、dns 合理性、规则顺序与锚点。
 
 ## 4. Plan（编号清单，先不写）
 

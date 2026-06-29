@@ -31,6 +31,22 @@ mihomo 写法。这些 load-bearing 部分由服务端强制。
 （先重命名再过滤 ≠ 先过滤再重命名）。算子只**过滤 / 改写 / 排序已有节点，绝不新增节点**——
 要真正多 / 少节点仍得改订阅源本身。
 
+### 算子 kind 速查（9 种 · 完整字段与示例见 `references/operator-kinds.md`）
+
+| kind | 作用 | 关键参数 |
+|------|------|----------|
+| `filter-regex` | 按名称正则保留 / 丢弃 | `mode` keep·drop · `pattern` |
+| `filter-useless` | 去掉流量 / 到期 / 官网等说明性节点 | `extra`（追加关键词）|
+| `rename-regex` | 按正则改名（`replacement` 留空 = 删名段）| `pattern` · `replacement`（`$1` 引用捕获组）|
+| `flag-emoji` | 按地区码加 / 去国旗 | `action` add·remove · `tw2cn`（台湾显 🇨🇳）|
+| `filter-type` | 按协议类型保留 / 丢弃 | `mode` · `types` |
+| `filter-region` | 按地区码保留 / 丢弃 | `mode` · `regions: [HK, JP, US]` |
+| `dedup` | 重复节点去重 / 编号 | `by` name·server-port · `action` drop·rename |
+| `sort` | 排序 | `by` name·type·server·region · `order` asc·desc |
+| `set-prop` | 强制 udp / tfo / skip-cert | `udp` · `tfo` · `skipCertVerify` |
+
+典型清洗管线顺序：`filter-useless` → `rename-regex`（去前缀）→ `filter-region` → `flag-emoji`（台湾加 `tw2cn`）→ `dedup` → `sort`。
+
 ## 2. 改正则前必做 preview
 
 **改任何正则前必须** `preview_node_operators` 把整条候选管线对该源真实节点试算：看 before/after、
@@ -43,7 +59,8 @@ mihomo 写法。这些 load-bearing 部分由服务端强制。
 
 ## 4. 本地 vs 远程改名
 
-- **远程源**：节点来自上游、不可直接编辑，用 `rename-regex` 算子。
+- **远程源**：节点来自上游、不可直接编辑，用 `rename-regex` 算子。对远程源调用
+  `rename_local_node` 会被服务端拒绝（返回 422）——远程源没有可直接编辑的本地节点。
 - **本地源**（kind=local，内容用户自填）：可直接改源内容——`list_local_nodes` 列其节点
   （只给 name+type+referencedBy，**凭证已脱敏**）、`rename_local_node` 改某节点名（永久生效，仅动
   name 字段、其它配置与密码原样保留，需确认）。本地源要批量 / 按正则改名也可用 `rename-regex` 算子。
