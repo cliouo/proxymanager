@@ -26,17 +26,22 @@ const SIZES: Record<Size, string> = {
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: Variant;
   size?: Size;
+  busy?: boolean;
 }
 
 export function Button({
   variant = 'primary',
   size = 'md',
+  busy = false,
   className = '',
+  disabled,
   ...props
 }: ButtonProps) {
   return (
     <button
-      className={`${BASE} ${VARIANTS[variant]} ${SIZES[size]} ${className}`}
+      className={`${BASE} ${VARIANTS[variant]} ${SIZES[size]} ${busy ? 'is-busy' : ''} ${className}`}
+      aria-busy={busy || undefined}
+      disabled={disabled || busy}
       {...props}
     />
   );

@@ -6,6 +6,7 @@ import QRCode from 'qrcode';
 import { ApiError, api } from '@/lib/client/api';
 import { PageTopbar } from '@/components/PageChrome';
 import { ScopePill } from '@/components/Topbar';
+import { Placeholder, SkeletonStat } from '@/components/ui/Reveal';
 import styles from './page.module.css';
 
 /* ---------- API shapes (kept local; only the fields the dashboard reads) ---------- */
@@ -120,10 +121,10 @@ export default function DashboardPage() {
   const [meta, setMeta] = useState<Meta | null>(null);
   const [counts, setCounts] = useState<Counts | null>(null);
   const [groups, setGroups] = useState<ProxyGroup[]>([]);
-  const [ruleSets, setRuleSets] = useState<RuleSet[]>([]);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
   const [copied, setCopied] = useState(false);
   const [qrOpen, setQrOpen] = useState(false);
 
@@ -148,7 +149,6 @@ export default function DashboardPage() {
         if (cancelled) return;
         setMeta(metaRes.data);
         setGroups(pgs.data);
-        setRuleSets(sets.data);
         setEvents(hist.data);
         setSnapshot(prev?.data ?? null);
         setCounts({
@@ -161,6 +161,8 @@ export default function DashboardPage() {
       } catch (err) {
         if (cancelled) return;
         setError(err instanceof ApiError ? err.message : String(err));
+      } finally {
+        if (!cancelled) setLoaded(true);
       }
     })();
     return () => {
@@ -188,7 +190,7 @@ export default function DashboardPage() {
   const subsInjected = snapshot?.subscriptions?.reduce((s, x) => s + (x.injectedCount ?? 0), 0);
 
   /* ---------- alerts (computed from real conditions) ---------- */
-  const alerts = buildAlerts(meta, snapshot, ruleSets);
+  const alerts = buildAlerts(meta, snapshot);
 
   return (
     <>
@@ -240,8 +242,14 @@ export default function DashboardPage() {
           </div>
 
           <div className={styles.url}>
-            {meta ? meta.subscriptionUrl : '—'}
-            <span className={styles.cursor} />
+            {meta ? (
+              <>
+                {meta.subscriptionUrl}
+                <span className={styles.cursor} />
+              </>
+            ) : (
+              <span className="pm-skeleton line" style={{ width: 'min(620px, 86%)' }} />
+            )}
           </div>
 
           <div className={styles.quick}>
@@ -271,26 +279,37 @@ export default function DashboardPage() {
           </span>
         </div>
         <section className="stat-row">
-          <Link className="stat" href={R.base}>
-            <div className="k">锚点 anchors</div>
-            <div className="v">{counts ? counts.anchors : '—'}</div>
-            <div className="d">base 结构中可注入位</div>
-          </Link>
-          <Link className="stat" href={R.proxyGroups}>
-            <div className="k">策略组</div>
-            <div className="v">{counts ? counts.proxyGroups : '—'}</div>
-            <div className="d">{groups.length > 0 ? groupBreakdown : '尚无策略组'}</div>
-          </Link>
-          <Link className="stat" href={R.rules}>
-            <div className="k">规则</div>
-            <div className="v">{counts ? counts.rules : '—'}</div>
-            <div className="d">{rulesDesc}</div>
-          </Link>
-          <Link className="stat" href={R.chained}>
-            <div className="k">规则集</div>
-            <div className="v">{counts ? counts.ruleSets : '—'}</div>
-            <div className="d">规则集库 · 被规则引用</div>
-          </Link>
+          {!counts ? (
+            <>
+              <SkeletonStat />
+              <SkeletonStat />
+              <SkeletonStat />
+              <SkeletonStat />
+            </>
+          ) : (
+            <>
+              <Link className="stat" href={R.base}>
+                <div className="k">锚点 anchors</div>
+                <div className="v">{counts.anchors}</div>
+                <div className="d">base 结构中可注入位</div>
+              </Link>
+              <Link className="stat" href={R.proxyGroups}>
+                <div className="k">策略组</div>
+                <div className="v">{counts.proxyGroups}</div>
+                <div className="d">{groups.length > 0 ? groupBreakdown : '尚无策略组'}</div>
+              </Link>
+              <Link className="stat" href={R.rules}>
+                <div className="k">规则</div>
+                <div className="v">{counts.rules}</div>
+                <div className="d">{rulesDesc}</div>
+              </Link>
+              <Link className="stat" href={R.chained}>
+                <div className="k">规则集</div>
+                <div className="v">{counts.ruleSets}</div>
+                <div className="d">规则集库 · 被规则引用</div>
+              </Link>
+            </>
+          )}
         </section>
       </div>
 
@@ -303,20 +322,29 @@ export default function DashboardPage() {
           <span className={styles.sh}>· 订阅源直接注入 proxies</span>
         </div>
         <section className="stat-row" style={{ gridTemplateColumns: 'repeat(2, 1fr)' }}>
-          <Link className="stat" href={R.subscriptions}>
-            <div className="k">订阅源</div>
-            <div className="v">{counts ? counts.subscriptions : '—'}</div>
-            <div className="d">
-              {subsInjected !== undefined
-                ? `上次渲染注入 ${subsInjected} 个节点`
-                : '机场 / 自建订阅'}
-            </div>
-          </Link>
-          <Link className="stat" href={R.ruleSets}>
-            <div className="k">引用规则集</div>
-            <div className="v">{counts ? counts.ruleSets : '—'}</div>
-            <div className="d">rule-set 库，按需注入 rule-providers</div>
-          </Link>
+          {!counts ? (
+            <>
+              <SkeletonStat />
+              <SkeletonStat />
+            </>
+          ) : (
+            <>
+              <Link className="stat" href={R.subscriptions}>
+                <div className="k">订阅源</div>
+                <div className="v">{counts.subscriptions}</div>
+                <div className="d">
+                  {subsInjected !== undefined
+                    ? `上次渲染注入 ${subsInjected} 个节点`
+                    : '机场 / 自建订阅'}
+                </div>
+              </Link>
+              <Link className="stat" href={R.ruleSets}>
+                <div className="k">引用规则集</div>
+                <div className="v">{counts.ruleSets}</div>
+                <div className="d">rule-set 库，按需注入 rule-providers</div>
+              </Link>
+            </>
+          )}
         </section>
       </div>
 
@@ -331,7 +359,11 @@ export default function DashboardPage() {
             </Link>
           </div>
           <div className="panel-body" style={{ padding: '10px 8px' }}>
-            {events.length === 0 ? (
+            {!loaded ? (
+              <div style={{ padding: '10px 12px' }}>
+                <Placeholder rows={4} />
+              </div>
+            ) : events.length === 0 ? (
               <div className={styles.empty}>暂无操作记录。</div>
             ) : (
               events.map((e) => {
@@ -369,7 +401,9 @@ export default function DashboardPage() {
             ) : null}
           </div>
           <div className="panel-body">
-            {alerts.length === 0 ? (
+            {!loaded ? (
+              <Placeholder rows={3} />
+            ) : alerts.length === 0 ? (
               <div className={styles.allOk}>
                 <span className="pill ok plain">●</span>
                 <span>暂无需要处理的问题：base 已初始化、订阅源拉取正常、锚点全部匹配。</span>
@@ -381,9 +415,7 @@ export default function DashboardPage() {
                     <span className={`pill ${a.tone}`}>{a.tag}</span>
                     <div className={styles.txt}>
                       {a.body}
-                      {a.href && (
-                        <Link href={a.href}>{a.cta ?? '去处理 →'}</Link>
-                      )}
+                      {a.href && <Link href={a.href}>{a.cta ?? '去处理 →'}</Link>}
                     </div>
                   </div>
                 ))}
@@ -408,7 +440,7 @@ interface Alert {
   cta?: string;
 }
 
-function buildAlerts(meta: Meta | null, snapshot: Snapshot | null, ruleSets: RuleSet[]): Alert[] {
+function buildAlerts(meta: Meta | null, snapshot: Snapshot | null): Alert[] {
   const out: Alert[] = [];
 
   // 1) base 未初始化 — highest priority, blocks render.
@@ -416,11 +448,7 @@ function buildAlerts(meta: Meta | null, snapshot: Snapshot | null, ruleSets: Rul
     out.push({
       tone: 'err',
       tag: '未初始化',
-      body: (
-        <>
-          base 结构尚未初始化，下发的订阅是空骨架。先建立 base 才能渲染出可用配置。
-        </>
-      ),
+      body: <>base 结构尚未初始化，下发的订阅是空骨架。先建立 base 才能渲染出可用配置。</>,
       href: '/base',
       cta: '去初始化 →',
     });
@@ -432,9 +460,7 @@ function buildAlerts(meta: Meta | null, snapshot: Snapshot | null, ruleSets: Rul
       tone: 'acc',
       tag: '未渲染',
       body: (
-        <>
-          还没有渲染记录。打开「最终配置」或让客户端访问订阅地址后，这里会显示注入与告警摘要。
-        </>
+        <>还没有渲染记录。打开「最终配置」或让客户端访问订阅地址后，这里会显示注入与告警摘要。</>
       ),
       href: '/config',
       cta: '去渲染 →',

@@ -58,6 +58,9 @@
   --r-lg: 14px;
   --side-w: 228px;
   --ease: cubic-bezier(0.2, 0, 0, 1);
+  --motion-fast: 140ms;
+  --motion-med: 220ms;
+  --motion-slow: 360ms;
 
   /* ---------- Legacy「Heritage Atelier」别名 → v2 等价值 ----------
      过渡期让仍引用旧 token 名的内容页自动套上 v2 配色（随主题翻转）；
@@ -232,16 +235,18 @@ html {
 @keyframes pm-reveal {
   from {
     opacity: 0;
+    transform: translateY(4px);
   }
   to {
     opacity: 1;
+    transform: translateY(0);
   }
 }
 .pm-reveal {
-  animation: pm-reveal 220ms ease-out both;
+  animation: pm-reveal var(--motion-med) var(--ease) both;
 }
 .pm-reveal-slow {
-  animation: pm-reveal 320ms ease-out both;
+  animation: pm-reveal var(--motion-slow) var(--ease) both;
 }
 
 @keyframes pm-progress-stage1 {
@@ -318,13 +323,58 @@ html {
   animation: pm-spin 700ms linear infinite;
 }
 
+@keyframes pm-skeleton-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+.pm-skeleton {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  color: transparent;
+  background: var(--surface-3);
+  border-radius: var(--r-sm);
+}
+.pm-skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--surface) 70%, transparent),
+    transparent
+  );
+  animation: pm-skeleton-sweep 1500ms var(--ease) infinite;
+}
+.pm-skeleton.line {
+  height: 12px;
+}
+.pm-skeleton.block {
+  min-height: 96px;
+}
+.pm-busy-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: pm-pulse 1000ms ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .pm-slide-in-right,
   .pm-reveal,
   .pm-reveal-slow,
   .pm-route-progress::after,
   .pm-pulse,
-  .pm-spin {
+  .pm-spin,
+  .pm-skeleton::after,
+  .pm-busy-dot {
     animation: none;
   }
 }

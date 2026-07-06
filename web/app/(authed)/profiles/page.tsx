@@ -5,6 +5,7 @@ import { useCallback, useEffect, useId, useMemo, useState } from 'react';
 import { ApiError, api } from '@/lib/client/api';
 import { PageTopbar } from '@/components/PageChrome';
 import { useProfiles } from '@/components/profile/ProfileContext';
+import { Placeholder } from '@/components/ui/Reveal';
 import styles from './profiles.module.css';
 
 /** —— 真实数据形态（见 schemas/profile.ts / collection.ts / subscription.ts）—— */
@@ -158,7 +159,11 @@ export default function ProfilesPage() {
       {error && <div className={styles.errBanner}>{error}</div>}
 
       {!loaded ? (
-        <div className={styles.pageIntro}>加载中 …</div>
+        <div className="pf-grid" aria-busy="true">
+          <ProfileCardSkeleton />
+          <ProfileCardSkeleton />
+          <ProfileCardSkeleton />
+        </div>
       ) : (
         <div className="pf-grid">
           {profiles.map((p) => {
@@ -508,6 +513,7 @@ function NewProfileModal({
             type="button"
             className="btn primary"
             onClick={submit}
+            aria-busy={pending || undefined}
             disabled={pending || !name.trim()}
           >
             {pending ? '创建中 …' : '创建配置文件'}
@@ -515,5 +521,26 @@ function NewProfileModal({
         </div>
       </div>
     </div>
+  );
+}
+
+function ProfileCardSkeleton() {
+  return (
+    <article className="pf-card" aria-hidden>
+      <div className="pf-top">
+        <div className="pm-skeleton" style={{ width: 42, height: 42, borderRadius: 10 }} />
+        <div className="pf-id" style={{ flex: 1 }}>
+          <div className="pm-skeleton line" style={{ width: '46%', height: 14 }} />
+          <div className="pm-skeleton line" style={{ width: '64%', height: 10, marginTop: 8 }} />
+        </div>
+      </div>
+      <div className="pf-bind">
+        <Placeholder rows={2} compact />
+      </div>
+      <div className="pf-foot">
+        <div className="pm-skeleton line" style={{ width: 58, height: 26 }} />
+        <div className="pm-skeleton line" style={{ width: '38%', height: 10 }} />
+      </div>
+    </article>
   );
 }
