@@ -989,11 +989,12 @@ function SubSkeleton() {
 function CompactTraffic({
   traffic,
 }: {
-  traffic: { upload: number; download: number; total: number };
+  traffic: { upload: number; download: number; total: number; expire: number };
 }) {
   const used = traffic.upload + traffic.download;
   const pct = traffic.total > 0 ? Math.min(100, (used / traffic.total) * 100) : 0;
   const hot = pct >= 90;
+  const expiry = fmtExpiry(traffic.expire);
   return (
     <div className="traffic">
       <div className="lbl">
@@ -1009,8 +1010,23 @@ function CompactTraffic({
         </span>
         <span>{pct.toFixed(pct < 10 ? 1 : 0)}%</span>
       </div>
+      {expiry && (
+        <div className="lbl">
+          <span>到期</span>
+          <span>{expiry}</span>
+        </div>
+      )}
     </div>
   );
+}
+
+function fmtExpiry(s: number): string | null {
+  if (!s || s <= 0) return null;
+  return new Date(s * 1000).toLocaleDateString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
 }
 
 function fmtBytes(n: number): string {
