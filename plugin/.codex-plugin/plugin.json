@@ -1,0 +1,41 @@
+{
+  "name": "proxymanager",
+  "version": "0.1.0",
+  "description": "Manage a ProxyManager clash/mihomo configuration through skills and the ProxyManager MCP bridge.",
+  "author": {
+    "name": "cliouo",
+    "url": "https://github.com/cliouo"
+  },
+  "homepage": "https://github.com/cliouo/proxymanager",
+  "repository": "https://github.com/cliouo/proxymanager",
+  "license": "MIT",
+  "keywords": [
+    "clash",
+    "mihomo",
+    "proxy",
+    "subscription",
+    "mcp",
+    "config"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "ProxyManager 配置助手",
+    "shortDescription": "Manage clash/mihomo config via ProxyManager",
+    "longDescription": "Use ProxyManager skills to inspect and safely edit routing rules, rule sets, proxy groups, subscriptions, DNS, sniffer, TUN, and node-processing operators through the ProxyManager backend.",
+    "developerName": "cliouo",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/cliouo/proxymanager",
+    "defaultPrompt": [
+      "检查我的 ProxyManager 配置并解释当前分流",
+      "把一个域名加入 ProxyManager 分流规则",
+      "优化 clash/mihomo 规则和策略组"
+    ],
+    "brandColor": "#2563EB",
+    "screenshots": []
+  }
+}
