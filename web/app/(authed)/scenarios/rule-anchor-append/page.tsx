@@ -62,6 +62,9 @@ interface RuleFields {
 
 export default function RulesPage() {
   const [rules, setRules] = useState<Rule[]>([]);
+  // P3-26: server-reported total, so "共 N 条" is accurate even when only the
+  // first `limit=500` rules were loaded.
+  const [serverTotal, setServerTotal] = useState<number | null>(null);
   const [anchors, setAnchors] = useState<string[]>([]);
   const [policies, setPolicies] = useState<string[]>([]);
   const [ruleSets, setRuleSets] = useState<string[]>([]);
@@ -81,12 +84,13 @@ export default function RulesPage() {
     setError(null);
     try {
       const [r, a, p, rs] = await Promise.all([
-        api<{ data: Rule[] }>('/api/v1/rules?limit=500&sort=rank:asc'),
+        api<{ data: Rule[]; meta?: { total: number } }>('/api/v1/rules?limit=500&sort=rank:asc'),
         api<{ data: string[] }>('/api/v1/anchors').catch(() => ({ data: [] as string[] })),
         api<{ data: string[] }>('/api/v1/policies').catch(() => ({ data: [] as string[] })),
         api<{ data: { name: string }[] }>('/api/v1/rule-sets').catch(() => ({ data: [] as { name: string }[] })),
       ]);
       setRules(r.data);
+      setServerTotal(r.meta?.total ?? r.data.length);
       setAnchors(a.data);
       setPolicies(p.data);
       setRuleSets(rs.data.map((s) => s.name));
@@ -178,19 +182,37 @@ export default function RulesPage() {
 
   /** Swap rank with the rank-adjacent sibling in the same anchor (atomic batch). */
   async function onMove(rule: Rule, dir: 'up' | 'down') {
+    // P3-28: reordering while a filter hides siblings would swap against a row
+    // the user can't see — refuse and explain rather than silently misorder.
+    const hasActiveFilter = !!(
+      filterAnchor ||
+      filterPolicy ||
+      filterType ||
+      query.trim() ||
+      !showDisabled
+    );
+    if (hasActiveFilter) {
+      setError('筛选/搜索激活时无法用 ↑↓ 排序(会与隐藏的规则错位)。请先清除筛选。');
+      return;
+    }
     const siblings = rules.filter((r) => r.anchor === rule.anchor).sort((a, b) => a.rank - b.rank);
     const i = siblings.findIndex((r) => r.id === rule.id);
     const j = dir === 'up' ? i - 1 : i + 1;
     if (j < 0 || j >= siblings.length) return;
     const other = siblings[j];
+    // P3-28: identical ranks make a swap a no-op — give the two rows distinct
+    // ranks (rule takes other's slot, other is nudged one step the other way).
+    const ranksEqual = other.rank === rule.rank;
+    const ruleRank = other.rank;
+    const otherRank = ranksEqual ? (dir === 'up' ? other.rank + 1 : other.rank - 1) : rule.rank;
     setBusy(true);
     try {
       await api('/api/v1/rules/batch', {
         method: 'POST',
         body: {
           ops: [
-            { op: 'update', id: rule.id, patch: { rank: other.rank } },
-            { op: 'update', id: other.id, patch: { rank: rule.rank } },
+            { op: 'update', id: rule.id, patch: { rank: ruleRank } },
+            { op: 'update', id: other.id, patch: { rank: otherRank } },
           ],
         },
       });
@@ -446,7 +468,12 @@ export default function RulesPage() {
             {loaded && groups.length === 0 ? (
               <tr>
                 <td colSpan={7}>
-                  <div className={styles.empty}>没有匹配当前筛选条件的规则。</div>
+                  {/* P2-16: distinguish "no rules at all" from "filter matched none". */}
+                  <div className={styles.empty}>
+                    {rules.length === 0
+                      ? '还没有任何规则。用上方「新增规则」开始添加。'
+                      : '没有匹配当前筛选条件的规则。'}
+                  </div>
                 </td>
               </tr>
             ) : null}
@@ -455,7 +482,11 @@ export default function RulesPage() {
       </div>
 
       <div className={styles.foot}>
-        共 {counts.total} 条 · {groups.length} 个锚点 · 点「编辑」修改规则，↑↓ 在同锚点内调整顺序
+        {/* P3-26: show the true server total; flag when only the first 500 loaded. */}
+        {serverTotal !== null && serverTotal > rules.length
+          ? `已加载 ${rules.length} / 共 ${serverTotal} 条`
+          : `共 ${serverTotal ?? counts.total} 条`}{' '}
+        · {groups.length} 个锚点 · 点「编辑」修改规则，↑↓ 在同锚点内调整顺序
       </div>
     </>
   );
@@ -572,6 +603,10 @@ function GroupBody({
                   className="input mono"
                   value={r.policy}
                   onChange={(e) => onPatch(r.id, { policy: e.target.value })}
+                  // P3-29: while the inline editor is open, its form owns these
+                  // fields — disable the row's live controls so the two can't
+                  // diverge (row patch vs unsaved form draft).
+                  disabled={editing}
                   style={{ height: 26, fontSize: 11.5 }}
                 >
                   {policies.includes(r.policy) ? null : <option>{r.policy}</option>}
@@ -585,7 +620,8 @@ function GroupBody({
                   type="button"
                   className={`${styles.stateBtn} ${active ? styles.on : styles.off}`}
                   onClick={() => onToggle(r)}
-                  title={active ? '点击停用' : '点击启用'}
+                  disabled={editing}
+                  title={editing ? '编辑中,请用下方表单' : active ? '点击停用' : '点击启用'}
                 >
                   {active ? '生效' : '停用'}
                 </button>

@@ -15,18 +15,29 @@ let highlighterPromise: Promise<HighlighterCore> | null = null;
 async function getHighlighter(): Promise<HighlighterCore> {
   if (!highlighterPromise) {
     highlighterPromise = (async () => {
-      const [{ createHighlighterCore }, { createJavaScriptRegexEngine }, yaml, json, bash, ts, ghDark] =
-        await Promise.all([
-          import('shiki/core'),
-          import('@shikijs/engine-javascript'),
-          import('@shikijs/langs/yaml'),
-          import('@shikijs/langs/json'),
-          import('@shikijs/langs/bash'),
-          import('@shikijs/langs/typescript'),
-          import('@shikijs/themes/github-dark-default'),
-        ]);
+      // P3-39: 注册 light + dark 两套主题，codeToHtml 以双主题输出
+      // （浅色内联为默认，深色写进 --shiki-dark），由 globals.css 按 data-theme 翻转。
+      const [
+        { createHighlighterCore },
+        { createJavaScriptRegexEngine },
+        yaml,
+        json,
+        bash,
+        ts,
+        ghDark,
+        ghLight,
+      ] = await Promise.all([
+        import('shiki/core'),
+        import('@shikijs/engine-javascript'),
+        import('@shikijs/langs/yaml'),
+        import('@shikijs/langs/json'),
+        import('@shikijs/langs/bash'),
+        import('@shikijs/langs/typescript'),
+        import('@shikijs/themes/github-dark-default'),
+        import('@shikijs/themes/github-light-default'),
+      ]);
       return createHighlighterCore({
-        themes: [ghDark.default],
+        themes: [ghLight.default, ghDark.default],
         langs: [yaml.default, json.default, bash.default, ts.default],
         engine: createJavaScriptRegexEngine(),
       });
@@ -39,7 +50,6 @@ interface ShikiBlockProps {
   code: string;
   lang?: 'yaml' | 'json' | 'bash' | 'typescript';
   className?: string;
-  inline?: boolean;
   maxHeight?: string;
 }
 
@@ -47,7 +57,6 @@ export function ShikiBlock({
   code,
   lang = 'yaml',
   className = '',
-  inline = false,
   maxHeight,
 }: ShikiBlockProps) {
   const [html, setHtml] = useState<string | null>(null);
@@ -58,9 +67,11 @@ export function ShikiBlock({
       .then((hl) => {
         if (cancelled) return;
         try {
+          // P3-39: 双主题输出，浅色为默认色、深色进 --shiki-dark CSS 变量
           const out = hl.codeToHtml(code, {
             lang,
-            theme: 'github-dark-default',
+            themes: { light: 'github-light-default', dark: 'github-dark-default' },
+            defaultColor: 'light',
           });
           setHtml(out);
         } catch {
@@ -73,11 +84,9 @@ export function ShikiBlock({
     };
   }, [code, lang]);
 
-  const surface = inline
-    ? 'bg-[var(--color-surface-dark-soft)]'
-    : 'bg-[var(--color-surface-dark)]';
-
-  const baseClasses = `surface-dark ${surface} text-[var(--color-on-dark)] font-mono text-[12px] leading-[1.6] rounded-xl overflow-auto`;
+  // P3-39: 主题感知底色 —— 深/浅由 --code-bg/--code-fg 翻转，取代写死的暖褐 surface-dark；
+  // P3-38: 顺手去掉从未定义的 surface-dark 空类。
+  const baseClasses = `bg-[var(--code-bg)] text-[var(--code-fg)] border border-[var(--color-border)] font-mono text-[12px] leading-[1.6] rounded-xl overflow-auto`;
   const style = maxHeight ? { maxHeight } : undefined;
 
   if (html) {

@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import QRCode from 'qrcode';
 import { ApiError, api } from '@/lib/client/api';
+import { copyText } from '@/lib/client/clipboard';
 import { PageTopbar } from '@/components/PageChrome';
 import { ScopePill } from '@/components/Topbar';
 import { Placeholder, SkeletonStat } from '@/components/ui/Reveal';
@@ -122,10 +123,12 @@ export default function DashboardPage() {
   const [counts, setCounts] = useState<Counts | null>(null);
   const [groups, setGroups] = useState<ProxyGroup[]>([]);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
+  const [snapshotError, setSnapshotError] = useState(false);
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
   const [qrOpen, setQrOpen] = useState(false);
 
   useEffect(() => {
@@ -144,13 +147,18 @@ export default function DashboardPage() {
           })),
           // 告警/注入摘要读上次渲染的快照(1 次 Redis GET)——概览绝不触发
           // 渲染管线与上游订阅拉取;新鲜产物只在真正使用时生成(/api/sub、最终配置)。
-          api<{ data: Snapshot | null }>('/api/v1/resolved-snapshot').catch(() => null),
+          // P3-35: distinguish "no render yet" (200 + data:null) from a fetch
+          // FAILURE — conflating them showed a misleading "还没有渲染记录".
+          api<{ data: Snapshot | null }>('/api/v1/resolved-snapshot')
+            .then((r) => ({ ok: true as const, data: r.data }))
+            .catch(() => ({ ok: false as const, data: null })),
         ]);
         if (cancelled) return;
         setMeta(metaRes.data);
         setGroups(pgs.data);
         setEvents(hist.data);
-        setSnapshot(prev?.data ?? null);
+        setSnapshot(prev.data ?? null);
+        setSnapshotError(!prev.ok);
         setCounts({
           anchors: anchors.data.length,
           subscriptions: subs.meta.total,
@@ -172,7 +180,13 @@ export default function DashboardPage() {
 
   async function copy() {
     if (!meta) return;
-    await navigator.clipboard.writeText(meta.subscriptionUrl);
+    // P3-31: handle clipboard failure instead of silently flashing "已复制".
+    const ok = await copyText(meta.subscriptionUrl);
+    if (!ok) {
+      setCopyFailed(true);
+      setTimeout(() => setCopyFailed(false), 2000);
+      return;
+    }
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   }
@@ -184,13 +198,18 @@ export default function DashboardPage() {
     return [...by.entries()].map(([t, n]) => `${t} ×${n}`).join(' · ');
   })();
 
+  // P1-4: the 4th 配置资源 card links to /scenarios/chained-proxy (R.chained) but
+  // was mislabelled as 规则集 (a duplicate of the 共享资源 card). It's meant to be
+  // the chained-proxy stat — a chain wrap is a group carrying `dialer-proxy`.
+  const chainCount = groups.filter((g) => (g as { 'dialer-proxy'?: string })['dialer-proxy']).length;
+
   const anchorsApplied = snapshot?.anchorsApplied ?? 0;
   const rulesDesc =
     counts && anchorsApplied > 0 ? `分布于 ${anchorsApplied} 个锚点` : 'base 锚点注入位';
   const subsInjected = snapshot?.subscriptions?.reduce((s, x) => s + (x.injectedCount ?? 0), 0);
 
   /* ---------- alerts (computed from real conditions) ---------- */
-  const alerts = buildAlerts(meta, snapshot);
+  const alerts = buildAlerts(meta, snapshot, snapshotError);
 
   return (
     <>
@@ -254,7 +273,7 @@ export default function DashboardPage() {
 
           <div className={styles.quick}>
             <button className="btn primary" onClick={copy} disabled={!meta}>
-              {copied ? '已复制 ✓' : '复制 URL'}
+              {copyFailed ? '复制失败' : copied ? '已复制 ✓' : '复制 URL'}
             </button>
             <button className="btn" onClick={() => setQrOpen(true)} disabled={!meta}>
               显示二维码
@@ -304,9 +323,9 @@ export default function DashboardPage() {
                 <div className="d">{rulesDesc}</div>
               </Link>
               <Link className="stat" href={R.chained}>
-                <div className="k">规则集</div>
-                <div className="v">{counts.ruleSets}</div>
-                <div className="d">规则集库 · 被规则引用</div>
+                <div className="k">链式代理</div>
+                <div className="v">{chainCount}</div>
+                <div className="d">前置池 / 链式出站</div>
               </Link>
             </>
           )}
@@ -440,7 +459,7 @@ interface Alert {
   cta?: string;
 }
 
-function buildAlerts(meta: Meta | null, snapshot: Snapshot | null): Alert[] {
+function buildAlerts(meta: Meta | null, snapshot: Snapshot | null, snapshotError = false): Alert[] {
   const out: Alert[] = [];
 
   // 1) base 未初始化 — highest priority, blocks render.
@@ -454,17 +473,30 @@ function buildAlerts(meta: Meta | null, snapshot: Snapshot | null): Alert[] {
     });
   }
 
-  // 1.5) 从未渲染过:快照缺失,如实提示(而不是替用户偷偷跑一次渲染)。
+  // 1.5) 快照缺失。P3-35: 区分「拉取失败」与「从未渲染」——别把网络/服务错误
+  // 说成「还没渲染」误导用户。
   if (meta?.hasBase && !snapshot) {
-    out.push({
-      tone: 'acc',
-      tag: '未渲染',
-      body: (
-        <>还没有渲染记录。打开「最终配置」或让客户端访问订阅地址后，这里会显示注入与告警摘要。</>
-      ),
-      href: '/config',
-      cta: '去渲染 →',
-    });
+    out.push(
+      snapshotError
+        ? {
+            tone: 'warn',
+            tag: '快照读取失败',
+            body: (
+              <>无法读取渲染摘要(网络或服务异常)。稍后刷新重试;这不代表配置本身有问题。</>
+            ),
+          }
+        : {
+            tone: 'acc',
+            tag: '未渲染',
+            body: (
+              <>
+                还没有渲染记录。打开「最终配置」或让客户端访问订阅地址后，这里会显示注入与告警摘要。
+              </>
+            ),
+            href: '/config',
+            cta: '去渲染 →',
+          },
+    );
   }
 
   // 2) 订阅源拉取失败 / 沿用缓存 — 来自上次渲染快照。

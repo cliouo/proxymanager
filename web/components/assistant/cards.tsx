@@ -66,8 +66,10 @@ function DocCitationCard({ data }: CardProps) {
   }
   return (
     <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
+      {/* P3-43: 10–11px 眉标 / 微文原用 --color-muted-strong(=--faint，对比不足)，
+          全部改吃 --color-muted 以过 WCAG AA（本文件共 7 处）。 */}
       <div className="mb-1.5 flex items-center gap-2">
-        <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-muted-strong)]">
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-muted)]">
           mihomo 文档
         </span>
         {d.repo && <Chip label={d.repo.replace('MetaCubeX/', '')} tone="primary" />}
@@ -106,7 +108,7 @@ function RuleListCard({ data }: CardProps) {
   const rules = d.rules ?? [];
   return (
     <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
-      <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-[var(--color-muted-strong)]">
+      <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-[var(--color-muted)]">
         规则 {d.count ?? rules.length} 条{d.anchor ? ` · 锚点 ${d.anchor}` : ''}
       </div>
       {rules.length === 0 ? (
@@ -156,7 +158,7 @@ function OverviewSection({
 }) {
   return (
     <div>
-      <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-[var(--color-muted-strong)]">
+      <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-[var(--color-muted)]">
         {title}（{items?.length ?? 0}）
       </div>
       <div className="flex flex-wrap gap-1">
@@ -326,7 +328,7 @@ function ConfigDiffView({ diff }: { diff: unknown }) {
           row.t === 'gap' ? (
             <div
               key={k}
-              className="select-none px-2 py-0.5 text-center text-[10px] text-[var(--color-muted-strong)]"
+              className="select-none px-2 py-0.5 text-center text-[10px] text-[var(--color-muted)]"
             >
               ⋯ {row.n} 行未变 ⋯
             </div>
@@ -401,19 +403,17 @@ function ConfirmWriteCard({ data, onResolved }: CardProps) {
       {state === 'error' && (
         <div className="mt-2 text-[12px] text-[var(--color-danger)]">{error}</div>
       )}
+      {/* P3-37: 统一到 v2 全局 .btn / .btn.primary,取代手写按钮类(disabled 态由 .btn[disabled] 处理) */}
       <div className="mt-3 flex items-center gap-2">
         <button
+          type="button"
           onClick={() => void approve()}
           disabled={state === 'busy'}
-          className="h-8 rounded-lg bg-[var(--color-primary)] px-3 text-[13px] font-medium text-[var(--color-on-primary)] transition-colors hover:bg-[var(--color-primary-hover)] disabled:opacity-40"
+          className="btn primary"
         >
           {state === 'busy' ? '执行中…' : '批准并执行'}
         </button>
-        <button
-          onClick={cancel}
-          disabled={state === 'busy'}
-          className="h-8 rounded-lg px-3 text-[13px] text-[var(--color-muted)] hover:text-[var(--color-fg)] disabled:opacity-40"
-        >
+        <button type="button" onClick={cancel} disabled={state === 'busy'} className="btn ghost">
           取消
         </button>
       </div>
@@ -489,7 +489,7 @@ function ConfigOutlineCard({ data }: CardProps) {
   const sections = d.sections ?? [];
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
-      <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-muted-strong)]">
+      <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-muted)]">
         配置目录
       </div>
       <ul className="flex flex-col gap-1.5">
@@ -542,8 +542,9 @@ function ConfigSectionCard({ data }: CardProps) {
         </span>
         {d.redacted && <span className="text-[11px] text-[var(--color-warn)]">🔒 凭证已脱敏</span>}
       </div>
+      {/* P3-39: 主题感知代码底色（--code-bg/--code-fg），取代写死暖褐 surface-dark */}
       <pre
-        className="overflow-auto rounded bg-[var(--color-surface-dark)] p-2.5 text-[12px] leading-relaxed text-[var(--color-on-dark)]"
+        className="overflow-auto rounded border border-[var(--color-border)] bg-[var(--code-bg)] p-2.5 text-[12px] leading-relaxed text-[var(--code-fg)]"
         style={{ fontFamily: 'var(--font-mono)' }}
       >
         {d.yaml}
@@ -557,13 +558,14 @@ function ConfigFullCard({ data }: CardProps) {
   return (
     <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
       <div className="mb-1.5 flex items-center gap-2">
-        <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-muted-strong)]">
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-muted)]">
           完整配置
         </span>
         <span className="text-[11px] text-[var(--color-warn)]">🔒 已脱敏</span>
       </div>
+      {/* P3-39: 主题感知代码底色 */}
       <pre
-        className="max-h-96 overflow-auto rounded bg-[var(--color-surface-dark)] p-2.5 text-[12px] leading-relaxed text-[var(--color-on-dark)]"
+        className="max-h-96 overflow-auto rounded border border-[var(--color-border)] bg-[var(--code-bg)] p-2.5 text-[12px] leading-relaxed text-[var(--code-fg)]"
         style={{ fontFamily: 'var(--font-mono)' }}
       >
         {d.yaml}
@@ -610,8 +612,9 @@ export function ResultCard({
   if (Component) return <Component data={data} onResolved={onResolved} onUndone={onUndone} />;
   // Fallback: render unknown envelopes as compact JSON so nothing is lost.
   return (
+    // P3-39: 主题感知代码底色
     <pre
-      className="overflow-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-dark)] p-3 text-[12px] text-[var(--color-on-dark)]"
+      className="overflow-auto rounded-lg border border-[var(--color-border)] bg-[var(--code-bg)] p-3 text-[12px] text-[var(--code-fg)]"
       style={{ fontFamily: 'var(--font-mono)' }}
     >
       {JSON.stringify(data, null, 2)}
@@ -643,7 +646,7 @@ export function CollapsibleResult({
       >
         <span className="text-[var(--color-success)]">✓</span>
         {label}
-        <span className="text-[10px] text-[var(--color-muted-strong)]">
+        <span className="text-[10px] text-[var(--color-muted)]">
           {open ? '收起 ▾' : '展开 ▸'}
         </span>
       </button>

@@ -73,7 +73,9 @@ export default function AssistantSettingsPage() {
   const [reasoningEffort, setReasoningEffort] = useState<AssistantConfig['reasoningEffort']>(
     DEFAULTS.reasoningEffort,
   );
-  const [maxTokens, setMaxTokens] = useState<number>(DEFAULTS.maxTokens);
+  // P3-33: held as a string so the field can be cleared / re-typed while editing
+  // (an empty value no longer snaps back to the default on every keystroke).
+  const [maxTokens, setMaxTokens] = useState<string>(String(DEFAULTS.maxTokens));
 
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -87,7 +89,7 @@ export default function AssistantSettingsPage() {
       setModel(c.model);
       setThinking(c.thinking);
       setReasoningEffort(c.reasoningEffort);
-      setMaxTokens(c.maxTokens);
+      setMaxTokens(String(c.maxTokens)); // P3-33: string-backed field
       setHasStoredKey(Boolean(c.apiKey));
     } catch (err) {
       if (!(err instanceof ApiError && err.status === 404)) {
@@ -107,13 +109,20 @@ export default function AssistantSettingsPage() {
     setBusy(true);
     setStatus(null);
     try {
+      // P3-33: parse the free-text field here, falling back to the default only
+      // at submit time (never on keystroke). Normalise the field to the applied
+      // value so a cleared input visibly shows what was saved.
+      const parsed = Number(maxTokens);
+      const maxTokensNum =
+        maxTokens.trim() && Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULTS.maxTokens;
+      setMaxTokens(String(maxTokensNum));
       // Omit apiKey when left blank so we don't overwrite a stored key with "".
       const body: Record<string, unknown> = {
         baseUrl,
         model,
         thinking,
         reasoningEffort,
-        maxTokens,
+        maxTokens: maxTokensNum,
       };
       if (apiKey.trim()) body.apiKey = apiKey.trim();
       if (!apiKey.trim() && !hasStoredKey) {
@@ -234,7 +243,13 @@ export default function AssistantSettingsPage() {
                     className="input mono num"
                     type="number"
                     value={maxTokens}
-                    onChange={(e) => setMaxTokens(Number(e.target.value) || DEFAULTS.maxTokens)}
+                    // P3-33: keep the raw string while typing (empty allowed);
+                    // only normalise a valid entry on blur, never force a value.
+                    onChange={(e) => setMaxTokens(e.target.value)}
+                    onBlur={() => {
+                      const n = Number(maxTokens);
+                      if (maxTokens.trim() && Number.isFinite(n) && n > 0) setMaxTokens(String(n));
+                    }}
                     min={256}
                     max={65536}
                     style={{ maxWidth: 160 }}

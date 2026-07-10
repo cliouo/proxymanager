@@ -45,8 +45,9 @@ export default function ScenariosIndexPage() {
         每个场景聚焦 Clash 配置的一个切片。每个场景在 sidebar 里有独立入口。
       </p>
 
+      {/* P1-11: 弃用写死暖粉底（深色发浑），改用主题感知的 danger-dim 约定 */}
       {error && (
-        <div className="rounded-xl border border-[var(--color-danger)]/40 bg-[#F4D8D2]/30 px-4 py-3 text-[13px] text-[var(--color-danger)]">
+        <div className="rounded-xl border border-[var(--color-danger)]/40 bg-[var(--color-danger-dim)] px-4 py-3 text-[13px] text-[var(--color-danger)]">
           {error}
         </div>
       )}
@@ -68,18 +69,14 @@ export default function ScenariosIndexPage() {
             const desc = DESC_OVERRIDES[s.id] ?? s.description;
             const inner = (
               <article className="group grid grid-cols-[3rem_1fr] gap-4 py-6 border-b border-[var(--color-border)] hover:bg-[var(--color-bg-sunk)]/40 -mx-4 px-4 transition-colors active:scale-[0.998]">
-                <div
-                  className="font-serif text-[24px] font-medium tabular-nums leading-none tracking-[-0.015em] text-[var(--color-muted-strong)] group-hover:text-[var(--color-primary)] transition-colors pt-0.5"
-                  style={{ fontVariationSettings: '"opsz" 48, "SOFT" 50' }}
-                >
+                {/* P1-11: 去 font-serif（Fraunces 从未接入，落到 Georgia）+ 去 opsz/SOFT
+                    可变字轴，回默认 sans；--color-muted-strong→--muted、--color-ink→--fg */}
+                <div className="text-[24px] font-medium tabular-nums leading-none tracking-[-0.015em] text-[var(--muted)] group-hover:text-[var(--color-primary)] transition-colors pt-0.5">
                   {String(idx + 1).padStart(2, '0')}
                 </div>
                 <div className="min-w-0">
                   <div className="flex items-baseline justify-between gap-4">
-                    <h2
-                      className="font-serif text-[24px] font-medium tracking-[-0.015em] leading-[1.2] text-[var(--color-ink)] group-hover:text-[var(--color-primary)] transition-colors"
-                      style={{ fontVariationSettings: '"opsz" 48, "SOFT" 50' }}
-                    >
+                    <h2 className="text-[24px] font-medium tracking-[-0.015em] leading-[1.2] text-[var(--fg)] group-hover:text-[var(--color-primary)] transition-colors">
                       {title}
                     </h2>
                     <code className="shrink-0 font-mono text-[11px] text-[var(--color-muted)] tracking-[0.04em]">

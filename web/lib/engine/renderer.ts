@@ -14,6 +14,14 @@ export interface RenderResult {
   unmatchedAnchors: string[];
   /** Names of rule-sets emitted into the `rule-providers:` block (referenced + enabled). */
   ruleProvidersApplied: string[];
+  /**
+   * True when the config references rule-sets (RULE-SET rules or base
+   * `rule-set:` keys) that needed a `rule-providers:` declaration, but the base
+   * has no `# === RULE-PROVIDERS ===` marker to inject at — so the declarations
+   * were silently dropped and mihomo would abort with `not found rule-set`.
+   * The caller must surface this as a warning (never report success). See P0-4.
+   */
+  ruleProvidersMarkerMissing: boolean;
 }
 
 export interface RenderOptions {
@@ -149,6 +157,12 @@ export function renderBase(
     refs,
     opts.providerUrlBase ?? PLACEHOLDER_URL_BASE,
   );
+  // If there's a block to inject but no marker to inject it at, `replace` is a
+  // silent no-op — the config keeps its RULE-SET references with no matching
+  // `rule-providers:` declaration (mihomo: `not found rule-set: <name>`). Detect
+  // that and report it truthfully rather than claiming the providers applied.
+  const markerPresent = RULE_PROVIDERS_MARKER.test(content);
+  const ruleProvidersMarkerMissing = block.length > 0 && !markerPresent;
   content = content.replace(RULE_PROVIDERS_MARKER, () => block);
 
   const unmatchedAnchors: string[] = [];
@@ -163,6 +177,8 @@ export function renderBase(
     buildId,
     anchorsApplied: stats,
     unmatchedAnchors,
-    ruleProvidersApplied: applied,
+    // Only claim providers were applied if they actually reached the config.
+    ruleProvidersApplied: ruleProvidersMarkerMissing ? [] : applied,
+    ruleProvidersMarkerMissing,
   };
 }

@@ -39,6 +39,7 @@ export function DistributeDrawer({
   subBase,
   onClose,
   onToggleEnabled,
+  pending = false,
 }: {
   /** null = 关闭。 */
   target: DistributeTarget | null;
@@ -47,6 +48,8 @@ export function DistributeDrawer({
   onClose: () => void;
   /** 翻转资源的启用状态(= 公开访问开关)。 */
   onToggleEnabled?: (next: boolean) => void;
+  /** P2-9: 该资源的翻转请求进行中 —— 禁用开关,避免连点造成两次 PATCH 抵消。 */
+  pending?: boolean;
 }) {
   const toast = useToast();
   const [reveal, setReveal] = useState(false);
@@ -133,14 +136,16 @@ export function DistributeDrawer({
           <button
             type="button"
             className="switch"
+            aria-label="公开访问开关"
             aria-pressed={target.enabled}
-            disabled={!onToggleEnabled}
+            disabled={!onToggleEnabled || pending}
             onClick={() => onToggleEnabled?.(!target.enabled)}
           />
         </div>
 
         <div className={`dist-body${target.enabled ? '' : ' off'}`}>
-          <div className="dist-fld">
+          {/* P3-41: 去孤儿类 dist-fld(无 CSS 定义,纯 no-op 包裹) */}
+          <div>
             <div className="df-cap">
               输出格式<span className="df-h">provider YAML · 只含节点</span>
             </div>
@@ -151,7 +156,8 @@ export function DistributeDrawer({
             </div>
           </div>
 
-          <div className="dist-fld">
+          {/* P3-41: 去孤儿类 dist-fld(无 CSS 定义,纯 no-op 包裹) */}
+          <div>
             <div className="df-cap">
               公开节点链接
               <span className="df-h">

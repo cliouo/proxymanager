@@ -324,6 +324,23 @@ const updatePoolMembers: OpHandler = async (ctx, raw) => {
   if (!group) {
     throw ProblemDetailsError.notFound(`proxy-group "${poolName}" not found.`);
   }
+  // P3-9: a front that routes back through this very pool creates a traffic
+  // loop (pool → wrap → dialer-proxy: pool → pool → …). Reject self-membership
+  // and any member group whose dialer-proxy points at this pool.
+  if (fronts.includes(poolName)) {
+    throw ProblemDetailsError.unprocessable(
+      `前置池「${poolName}」不能把自己作为成员(会造成流量回环)。`,
+    );
+  }
+  const allGroups = await listProxyGroups(ctx.profileId);
+  const loopers = allGroups
+    .filter((g) => fronts.includes(g.name) && g['dialer-proxy'] === poolName)
+    .map((g) => g.name);
+  if (loopers.length > 0) {
+    throw ProblemDetailsError.unprocessable(
+      `成员 ${loopers.join('、')} 通过 dialer-proxy 又指回前置池「${poolName}」,会造成流量回环,已拒绝。`,
+    );
+  }
   const prevMembers = group.proxies ?? [];
   await patchProxyGroup(ctx.profileId, group.id, { proxies: fronts });
   return {

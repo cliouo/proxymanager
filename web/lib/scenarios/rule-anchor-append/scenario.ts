@@ -33,6 +33,7 @@ import {
   nowSeconds,
 } from '@/lib/services/rulesService';
 import {
+  assertMergedRuleRenderable,
   RuleCreateSchema,
   RulePatchSchema,
   RuleReplaceSchema,
@@ -151,6 +152,9 @@ const patch: OpHandler = async (ctx, raw) => {
     const parsedBase = await loadParsedBase(ctx.profileId);
     ensureValidAnchorAndPolicy({ anchor: updated.anchor, policy: updated.policy }, parsedBase);
   }
+  // P2-3 / P2-4: RulePatchSchema alone lets `value:''` (empty a DOMAIN rule) or
+  // a newline through — the MERGED rule is what gets rendered, so re-check it.
+  assertMergedRuleRenderable(updated);
   if ((body.type !== undefined || body.value !== undefined) && updated.type === 'RULE-SET') {
     ensureValidRuleSetRef(updated, await loadProviderNames());
   }

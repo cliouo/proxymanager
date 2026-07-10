@@ -46,6 +46,49 @@ describe('applyOperators · filter-useless', () => {
     const { proxies } = applyOperators(sample, [op({ kind: 'filter-useless', extra: ['Tokyo'] })]);
     expect(proxies.find((p) => p.name === '日本 Tokyo 01')).toBeUndefined();
   });
+
+  // P0-5: schema rejects bad fragments at write, but legacy operators stored
+  // before the guard can still reach applyOperators — buildUselessRe must never
+  // throw and must never nuke every node from one malformed fragment.
+  it('P0-5: an invalid extra fragment "(" is skipped, not thrown (built-ins still apply)', () => {
+    const { proxies } = applyOperators(sample, [
+      op({ kind: 'filter-useless', extra: ['('] }),
+    ]);
+    // Built-in junk still dropped, real nodes kept — no crash, no total wipe.
+    expect(proxies.length).toBe(4);
+    expect(proxies.find((p) => p.name === '剩余流量：88.8 GB')).toBeUndefined();
+  });
+
+  it('P0-5: an empty-matching fragment "a|" does not drop all nodes', () => {
+    const { proxies } = applyOperators(sample, [
+      op({ kind: 'filter-useless', extra: ['a|'] }),
+    ]);
+    // Would match every name if the empty branch leaked → all dropped. Guarded.
+    expect(proxies.length).toBe(4);
+  });
+});
+
+describe('FilterUselessOpSchema.extra validation (P0-5)', () => {
+  it('rejects a fragment that fails to compile', async () => {
+    const { FilterUselessOpSchema } = await import('@/schemas/operator');
+    expect(() =>
+      FilterUselessOpSchema.parse({ id: 'x', kind: 'filter-useless', extra: ['('] }),
+    ).toThrow();
+  });
+  it('rejects a fragment that matches the empty string', async () => {
+    const { FilterUselessOpSchema } = await import('@/schemas/operator');
+    expect(() =>
+      FilterUselessOpSchema.parse({ id: 'x', kind: 'filter-useless', extra: ['a|'] }),
+    ).toThrow();
+    expect(() =>
+      FilterUselessOpSchema.parse({ id: 'x', kind: 'filter-useless', extra: ['.*'] }),
+    ).toThrow();
+  });
+  it('accepts a normal keyword fragment', async () => {
+    const { FilterUselessOpSchema } = await import('@/schemas/operator');
+    const r = FilterUselessOpSchema.parse({ id: 'x', kind: 'filter-useless', extra: ['官网', 'Tokyo'] });
+    expect(r.extra).toEqual(['官网', 'Tokyo']);
+  });
 });
 
 describe('applyOperators · rename-regex', () => {

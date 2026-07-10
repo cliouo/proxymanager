@@ -7,6 +7,7 @@ import { PageTopbar } from '@/components/PageChrome';
 import { ScopePill } from '@/components/Topbar';
 import { CodeEditor } from '@/components/ui/CodeEditor';
 import { ApiError, api } from '@/lib/client/api';
+import { useToast } from '@/components/ui/Toast';
 import { type Collection } from '@/lib/types/collection';
 import type { Operator } from '@/schemas/operator';
 import styles from './subscriptions.module.css';
@@ -53,6 +54,7 @@ function fmtTime(s: number | undefined): string {
 }
 
 export default function SubscriptionsPage() {
+  const toast = useToast();
   const [subs, setSubs] = useState<Subscription[]>([]);
   const [collections, setCollections] = useState<Collection[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -117,7 +119,12 @@ export default function SubscriptionsPage() {
     setCollectionEditingId(null);
   }, [tab]);
 
+  // P2-10: guard against out-of-order responses. A slow in-flight reload() must
+  // not overwrite a newer one (which would e.g. bounce a just-toggled switch
+  // back to its old state). Only the latest request's result is applied.
+  const reloadSeq = useRef(0);
   const reload = useCallback(async () => {
+    const seq = ++reloadSeq.current;
     setError(null);
     try {
       const [list, cl, meta] = await Promise.all([
@@ -126,13 +133,15 @@ export default function SubscriptionsPage() {
         // 分发链接前缀(含 SUB_TOKEN)。失败不挡列表,抽屉里显示占位。
         api<{ data: { subBase?: string } }>('/api/v1/meta').catch(() => null),
       ]);
+      if (seq !== reloadSeq.current) return; // a newer reload superseded this one
       setSubs(list.data);
       setCollections(cl.data);
       if (meta?.data.subBase) setSubBase(meta.data.subBase);
     } catch (err) {
+      if (seq !== reloadSeq.current) return;
       setError(err instanceof ApiError ? err.message : String(err));
     } finally {
-      setLoaded(true);
+      if (seq === reloadSeq.current) setLoaded(true);
     }
   }, []);
 
@@ -153,11 +162,28 @@ export default function SubscriptionsPage() {
   }
 
   async function onDelete(id: string) {
-    if (!confirm('确定删除该订阅源？')) return;
+    // P1-12: name the resource + state the consequence (the old confirm was the
+    // weakest in the app — no name, and repo delete has no reference block).
+    const sub = subs.find((s) => s.id === id);
+    const label = sub ? sub.display_name?.trim() || sub.name : '该订阅源';
+    if (
+      !confirm(
+        `确定删除订阅源「${label}」?\n若有配置文件绑定它、或聚合订阅包含它,删除后这些将失去节点来源。此操作不可撤销。`,
+      )
+    )
+      return;
     startBusy(id);
     try {
-      await api(`/api/v1/subscriptions/${id}`, { method: 'DELETE' });
+      // P0-2b: the API returns 200 + warnings when the deletion left references
+      // dangling; surface them so the user knows what just lost its source.
+      const res = await api<{ data?: { warnings?: string[] } } | undefined>(
+        `/api/v1/subscriptions/${id}`,
+        { method: 'DELETE' },
+      );
       setSubs((prev) => prev.filter((s) => s.id !== id));
+      const warnings = res?.data?.warnings;
+      if (warnings && warnings.length > 0) toast(warnings.join(' '));
+      else toast(`已删除订阅源「${label}」`);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     } finally {
@@ -291,8 +317,14 @@ export default function SubscriptionsPage() {
   const q = query.trim().toLowerCase();
   const filteredSubs = useMemo(() => {
     if (!q) return subs;
+    // P2-7: the UI prompts users to fill (and boldly displays) the 显示名称, so
+    // search must match it too — otherwise searching "香港" finds nothing and
+    // the sub looks lost. Also match the slug/name and tags.
     return subs.filter(
-      (s) => s.name.toLowerCase().includes(q) || s.tags.some((t) => t.toLowerCase().includes(q)),
+      (s) =>
+        s.name.toLowerCase().includes(q) ||
+        (s.display_name ?? '').toLowerCase().includes(q) ||
+        s.tags.some((t) => t.toLowerCase().includes(q)),
     );
   }, [subs, q]);
   const filteredCollections = useMemo(() => {
@@ -300,6 +332,7 @@ export default function SubscriptionsPage() {
     return collections.filter(
       (c) =>
         c.name.toLowerCase().includes(q) ||
+        (c.slug ?? '').toLowerCase().includes(q) ||
         c.subscription_tags.some((t) => t.toLowerCase().includes(q)),
     );
   }, [collections, q]);
@@ -495,6 +528,9 @@ export default function SubscriptionsPage() {
         subBase={subBase}
         onClose={() => setDist(null)}
         onToggleEnabled={onDistToggle && (() => onDistToggle())}
+        // P2-9: disable the toggle while its PATCH is in flight (the row switch
+        // already had this guard; the drawer switch was missing it).
+        pending={dist ? busyIds.has(dist.id) : false}
       />
     </>
   );
@@ -713,6 +749,10 @@ function PipelineLink({ href, count }: { href: string; count: number }) {
     <a
       href={href}
       onClick={(e) => {
+        // P3-32: don't hijack modified clicks / non-left buttons — let the
+        // browser open a new tab (Cmd/Ctrl/middle click). Only plain left
+        // clicks get SPA navigation.
+        if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
         e.preventDefault();
         router.push(href);
       }}
@@ -790,7 +830,9 @@ function CollectionForm({
         type: 'select',
         subscription_ids: [...selected],
         subscription_tags: tagList,
-        notes: notes.trim() || undefined,
+        // P1-5: on edit, send null to CLEAR an emptied note (undefined would be
+        // dropped and the old note kept); on create, omit it entirely.
+        notes: notes.trim() ? notes.trim() : initial ? null : undefined,
       });
     } catch (err) {
       setError(err instanceof ApiError ? (err.problem.detail ?? err.message) : String(err));

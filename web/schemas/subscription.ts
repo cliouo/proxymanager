@@ -1,5 +1,16 @@
 import { z } from 'zod';
 import { OperatorSchema } from './operator';
+import { MAX_SUBSCRIPTION_CONTENT } from './base';
+
+/**
+ * P3-19: restrict remote subscription URLs to http/https. The upstream is
+ * fetched server-side, so allowing arbitrary schemes (file:, gopher:, etc.) is
+ * an SSRF footgun. `safeFetch` additionally blocks private IP ranges. Self-
+ * hosters who intentionally point at an internal host can still use http(s).
+ */
+const httpUrl = z.url().refine((u) => /^https?:\/\//i.test(u), {
+  message: 'URL 必须是 http(s) 协议',
+});
 
 /**
  * Default TTL for the fetch cache — within this window subsequent reads of
@@ -37,7 +48,7 @@ export const SubscriptionSchema = z.object({
    */
   kind: SubscriptionKindSchema.default('remote'),
   /** Required when kind=remote. */
-  url: z.url().optional(),
+  url: httpUrl.optional(),
   /** Per-sub UA override (legacy: ua_override). */
   ua_override: z.string().optional(),
   /** Extra request headers attached to remote fetches. */
@@ -45,7 +56,7 @@ export const SubscriptionSchema = z.object({
   /** Per-sub fetch cache TTL in ms. */
   ttl_ms: z.number().int().positive().default(DEFAULT_SUBSCRIPTION_TTL_MS),
   /** Required when kind=local — inline Clash provider YAML (just a `proxies:` block). */
-  content: z.string().optional(),
+  content: z.string().max(MAX_SUBSCRIPTION_CONTENT, '订阅内容过大').optional(),
   /** Tags used by Collections for `subscription_tags` auto-inclusion. */
   tags: z.array(z.string()).default([]),
   /**
@@ -55,6 +66,13 @@ export const SubscriptionSchema = z.object({
    * by global first-writer-wins dedup — there is no separate name prefix.
    */
   operators: z.array(OperatorSchema).default([]),
+  /**
+   * P2-2: optimistic-concurrency version (epoch seconds). Bumped on every
+   * create/replace/patch edit so an If-Match PATCH can detect a concurrent
+   * overwrite. Optional for backward-compat with records written before it
+   * existed (they simply carry no version until first edited).
+   */
+  updated_at: z.number().int().optional(),
   /** Last successful sync time (ms epoch via Date.now). */
   last_synced_at: z.number().int().optional(),
   /** Sub-Userinfo header parse from the last successful fetch. */
@@ -78,11 +96,11 @@ export const SubscriptionCreateSchema = z
     display_name: z.string().optional(),
     enabled: z.boolean().default(true),
     kind: SubscriptionKindSchema.default('remote'),
-    url: z.url().optional(),
+    url: httpUrl.optional(),
     ua_override: z.string().optional(),
     custom_headers: z.record(z.string(), z.string()).optional(),
     ttl_ms: z.number().int().positive().default(DEFAULT_SUBSCRIPTION_TTL_MS),
-    content: z.string().optional(),
+    content: z.string().max(MAX_SUBSCRIPTION_CONTENT, '订阅内容过大').optional(),
     tags: z.array(z.string()).default([]),
     operators: z.array(OperatorSchema).default([]),
   })
@@ -100,11 +118,11 @@ export const SubscriptionUpdateSchema = z.object({
   display_name: z.string().optional(),
   enabled: z.boolean().optional(),
   kind: SubscriptionKindSchema.optional(),
-  url: z.url().optional(),
+  url: httpUrl.optional(),
   ua_override: z.string().optional(),
   custom_headers: z.record(z.string(), z.string()).optional(),
   ttl_ms: z.number().int().positive().optional(),
-  content: z.string().optional(),
+  content: z.string().max(MAX_SUBSCRIPTION_CONTENT, '订阅内容过大').optional(),
   tags: z.array(z.string()).optional(),
   operators: z.array(OperatorSchema).optional(),
 });

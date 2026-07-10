@@ -138,6 +138,17 @@ describe('ruleSetService', () => {
     expect((await svc.getRuleSet(a.id))?.content).toBe('v1');
   });
 
+  it('P1-5: patch with note:null clears the note (undefined would keep it)', async () => {
+    const a = await svc.createRuleSet({ name: 'emby', format: 'yaml', content: 'v1', note: 'first' });
+    // undefined = unchanged
+    const keep = await svc.patchRuleSet(a.id, { content: 'v2' });
+    expect(keep.note).toBe('first');
+    // null = clear
+    const cleared = await svc.patchRuleSet(a.id, { note: null });
+    expect(cleared.note).toBeUndefined();
+    expect((await svc.getRuleSet(a.id))?.note).toBeUndefined();
+  });
+
   it('rejects rename to existing name', async () => {
     await svc.createRuleSet({ name: 'a', format: 'yaml', content: '' });
     const b = await svc.createRuleSet({ name: 'b', format: 'yaml', content: '' });

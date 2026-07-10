@@ -1,16 +1,20 @@
+import { ZodError } from 'zod';
 import { withProblemDetails } from '@/lib/http/handler';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { resolveScopeProfile } from '@/lib/profileScope';
-import { recordEvent } from '@/lib/repos/auditRepo';
+import { recordEvents } from '@/lib/repos/auditRepo';
 import { batchUpsertAndDelete, listRules } from '@/lib/repos/rulesRepo';
 import {
   computeNextRank,
   ensureValidAnchorAndPolicy,
+  ensureValidRuleSetRef,
   generateRuleId,
   loadParsedBase,
+  loadProviderNames,
   nowSeconds,
   resolveActor,
 } from '@/lib/services/rulesService';
+import { assertMergedRuleRenderable } from '@/schemas/rule';
 import { BatchRequestSchema, type BatchOpResult, type Rule } from '@/schemas';
 
 export const dynamic = 'force-dynamic';
@@ -25,6 +29,14 @@ export const POST = withProblemDetails(async (request: Request) => {
   const parsedBase = await loadParsedBase(profileId);
   const existing = await listRules(profileId);
   const existingMap = new Map(existing.map((r) => [r.id, r]));
+
+  // Load the rule-set library names once, only if any op could reference one.
+  const needsProviderNames = ops.some(
+    (op) =>
+      (op.op === 'create' && op.rule.type === 'RULE-SET') ||
+      (op.op === 'update' && (op.patch.type === 'RULE-SET' || op.patch.value !== undefined)),
+  );
+  const providerNames = needsProviderNames ? await loadProviderNames() : new Set<string>();
 
   const writes: Rule[] = [];
   const removes: string[] = [];
@@ -56,6 +68,10 @@ export const POST = withProblemDetails(async (request: Request) => {
     try {
       if (op.op === 'create') {
         ensureValidAnchorAndPolicy(op.rule, parsedBase);
+        // P0-3: batch must enforce the same RULE-SET reference check as the
+        // single-rule path — else `{type:'RULE-SET',value:'不存在'}` lands as a
+        // dangling reference mihomo rejects at load.
+        if (op.rule.type === 'RULE-SET') ensureValidRuleSetRef(op.rule, providerNames);
         const rank = op.rule.rank ?? (await nextRankFor(op.rule.anchor));
         const now = nowSeconds();
         const rule: Rule = {
@@ -69,6 +85,10 @@ export const POST = withProblemDetails(async (request: Request) => {
           added_at: now,
           updated_at: now,
           note: op.rule.note,
+          // P0-3: these were silently dropped — a `{enabled:false}` import went
+          // live, a `no-resolve` modifier vanished. Carry them through.
+          options: op.rule.options,
+          enabled: op.rule.enabled,
         };
         writes.push(rule);
         pendingEvents.push({ op: 'rule.create', after: rule });
@@ -86,6 +106,11 @@ export const POST = withProblemDetails(async (request: Request) => {
         if (op.patch.anchor !== undefined || op.patch.policy !== undefined) {
           ensureValidAnchorAndPolicy({ anchor: merged.anchor, policy: merged.policy }, parsedBase);
         }
+        // P2-3 / P2-4: a PATCH can empty a non-MATCH value or smuggle a newline;
+        // re-validate the MERGED rule (not just the patch fragment) before commit.
+        assertMergedRuleRenderable(merged);
+        // P0-3: RULE-SET reference must stay valid after the merge, too.
+        if (merged.type === 'RULE-SET') ensureValidRuleSetRef(merged, providerNames);
         writes.push(merged);
         pendingEvents.push({ op: 'rule.update', before: current, after: merged });
         results.push({ status: 200, data: merged });
@@ -109,6 +134,16 @@ export const POST = withProblemDetails(async (request: Request) => {
           status: err.problem.status,
           error: { title: err.problem.title, detail: err.problem.detail },
         });
+      } else if (err instanceof ZodError) {
+        // Per-op validation failure (empty value, YAML-hostile chars) → a 422
+        // result for that op, not a whole-batch 500.
+        results.push({
+          status: 422,
+          error: {
+            title: 'Validation failed',
+            detail: err.issues.map((i) => i.message).join('；'),
+          },
+        });
       } else {
         throw err;
       }
@@ -117,32 +152,31 @@ export const POST = withProblemDetails(async (request: Request) => {
 
   await batchUpsertAndDelete(profileId, writes, removes);
 
-  // Emit audit events serially after the commit lands. recordEvent is fast on
-  // Upstash pipelines, and at batch sizes we expect (tens, not thousands) the
-  // extra latency is acceptable.
+  // P2-8: emit all audit events in one pipeline after the commit lands, instead
+  // of a per-op serial loop that could take tens of seconds for a large batch.
   const actor = resolveActor(request);
-  for (const ev of pendingEvents) {
-    if (ev.op === 'rule.create') {
-      await recordEvent({ op: 'rule.create', actor, ruleId: ev.after.id, after: ev.after, profileId });
-    } else if (ev.op === 'rule.update') {
-      await recordEvent({
-        op: 'rule.update',
-        actor,
-        ruleId: ev.after.id,
-        before: ev.before,
-        after: ev.after,
-        profileId,
-      });
-    } else {
-      await recordEvent({
-        op: 'rule.delete',
-        actor,
-        ruleId: ev.before.id,
-        before: ev.before,
-        profileId,
-      });
-    }
-  }
+  await recordEvents(
+    pendingEvents.map((ev) =>
+      ev.op === 'rule.create'
+        ? { op: 'rule.create' as const, actor, ruleId: ev.after.id, after: ev.after, profileId }
+        : ev.op === 'rule.update'
+          ? {
+              op: 'rule.update' as const,
+              actor,
+              ruleId: ev.after.id,
+              before: ev.before,
+              after: ev.after,
+              profileId,
+            }
+          : {
+              op: 'rule.delete' as const,
+              actor,
+              ruleId: ev.before.id,
+              before: ev.before,
+              profileId,
+            },
+    ),
+  );
 
   const allSucceeded = results.every((r) => r.status < 400);
   return Response.json({ results }, { status: allSucceeded ? 200 : 207 });

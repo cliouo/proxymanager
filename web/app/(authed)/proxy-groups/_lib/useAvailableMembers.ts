@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { ApiError, api } from '@/lib/client/api';
+import { useProfiles } from '@/components/profile/ProfileContext';
 import { matchFilter, type FilterMatch } from '@/lib/proxies/filterMatch';
 import type { ProxyGroup } from '@/schemas';
 import { type SubscriptionLite } from './model';
@@ -12,9 +13,14 @@ export type NodesBySub = Record<string, string[]>;
 /**
  * The only authoritative source of real node names is the resolved preview —
  * subscriptions are fetched/parsed at resolve time, so node names don't exist
- * until then. We read `/api/v1/preview/default` once and reuse `node_names`
- * (flat) + `nodes_by_sub` (per-sub attribution) for the member picker and every
- * membership preview.
+ * until then. We read `/api/v1/preview/<active profile>` once and reuse
+ * `node_names` (flat) + `nodes_by_sub` (per-sub attribution) for the member
+ * picker and every membership preview.
+ *
+ * P1-9: this MUST target the active profile, not a hardcoded `default`. Groups
+ * are edited in the active profile's scope, so previewing against `default`
+ * showed the wrong node universe (or an empty list) whenever the active profile
+ * bound a different source.
  *
  * Degrades gracefully: if the preview fails (upstream down, base missing),
  * `nodeNames` is empty and `error` is set — the composer falls back to manual
@@ -28,6 +34,8 @@ export function usePreviewNodes(): {
   computedAt: number | null;
   reload: () => Promise<void>;
 } {
+  const { activeProfile, loaded } = useProfiles();
+  const activeName = activeProfile?.name ?? 'default';
   const [nodeNames, setNodeNames] = useState<string[]>([]);
   const [nodesBySub, setNodesBySub] = useState<NodesBySub>({});
   const [loading, setLoading] = useState(true);
@@ -38,7 +46,7 @@ export function usePreviewNodes(): {
     setLoading(true);
     try {
       const res = await api<{ data: { node_names: string[]; nodes_by_sub?: NodesBySub } }>(
-        '/api/v1/preview/default',
+        `/api/v1/preview/${encodeURIComponent(activeName)}`,
       );
       setNodeNames(res.data.node_names ?? []);
       setNodesBySub(res.data.nodes_by_sub ?? {});
@@ -49,11 +57,14 @@ export function usePreviewNodes(): {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [activeName]);
 
   useEffect(() => {
+    // Wait until the profile context has resolved so we fetch the right scope
+    // once (not default first, then re-fetch).
+    if (!loaded) return;
     reload();
-  }, [reload]);
+  }, [loaded, reload]);
 
   return { nodeNames, nodesBySub, loading, error, computedAt, reload };
 }

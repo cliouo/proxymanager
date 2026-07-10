@@ -45,8 +45,8 @@ const listProxyNodes = defineAction({
     '列出渲染后实际可用的代理节点名（手写节点 + 全部 enabled 订阅源注入的节点，已应用节点前缀与算子）。读自上次 resolveConfig 的快照——若快照缺失（系统刚启动 / 未渲染过），返回空列表并提示用户先打开「最终配置」预览一次。回答"我有哪些节点可用"、写涉及具体节点名的 proxy-group 之前必查。仅返回名字，不含任何节点凭证。',
   input: z.object({}),
   risk: 'read',
-  async run() {
-    const snapshot = await getResolvedSnapshot();
+  async run(ctx) {
+    const snapshot = await getResolvedSnapshot(ctx.profileId);
     if (!snapshot) {
       return {
         kind: 'proxy-nodes',

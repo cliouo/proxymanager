@@ -155,6 +155,16 @@ export function AssistantPanel() {
   // Index of the message whose pending confirm-write cards are being bulk-approved
   // ("全部同意"), or null. Only one bulk run at a time.
   const [bulkBusy, setBulkBusy] = useState<number | null>(null);
+  // P3-21: whether the view is pinned near the bottom. Streamed tokens only
+  // auto-scroll while pinned, so the user can scroll up to read earlier content
+  // mid-stream; `showJump` toggles the floating 回到最新 button when unpinned.
+  const pinnedRef = useRef(true);
+  const [showJump, setShowJump] = useState(false);
+  // P3-22: debounce the localStorage persist during streaming (a write per token
+  // is wasteful). `stateRef` keeps the latest snapshot for the unmount flush.
+  const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stateRef = useRef({ conversationId, messages, convo });
+  stateRef.current = { conversationId, messages, convo };
 
   useEffect(() => {
     const p = loadPersisted();
@@ -169,14 +179,67 @@ export function AssistantPanel() {
     void loadAssistantConfig();
   }, []);
 
+  function scrollToBottom(behavior: ScrollBehavior = 'smooth') {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior });
+  }
+
+  // P3-21: recompute pinned state on scroll — "near bottom" = within ~80px.
+  function onBodyScroll() {
+    const el = scrollRef.current;
+    if (!el) return;
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const pinned = distance <= 80;
+    pinnedRef.current = pinned;
+    setShowJump(!pinned);
+  }
+
+  // P3-22: persist the conversation, but debounce (~400ms) while streaming so a
+  // single token doesn't hammer localStorage. When settled (not busy) we write
+  // immediately, so the final state is always saved.
   useEffect(() => {
     if (!hydrated) return; // don't clobber stored state before restore runs
-    persist(conversationId, messages, convo);
-  }, [hydrated, conversationId, messages, convo]);
+    if (persistTimer.current) {
+      clearTimeout(persistTimer.current);
+      persistTimer.current = null;
+    }
+    if (!busy) {
+      persist(conversationId, messages, convo);
+      return;
+    }
+    persistTimer.current = setTimeout(() => {
+      const s = stateRef.current;
+      persist(s.conversationId, s.messages, s.convo);
+      persistTimer.current = null;
+    }, 400);
+  }, [hydrated, busy, conversationId, messages, convo]);
+
+  // P3-22: flush any pending debounced write on unmount so nothing is lost.
+  useEffect(
+    () => () => {
+      if (persistTimer.current) {
+        clearTimeout(persistTimer.current);
+        const s = stateRef.current;
+        persist(s.conversationId, s.messages, s.convo);
+      }
+    },
+    [],
+  );
+
+  // P3-21: follow the stream only while pinned near the bottom; otherwise leave
+  // the user's scroll position alone. Reopening the drawer jumps to the latest.
+  useEffect(() => {
+    if (pinnedRef.current) scrollToBottom('auto');
+  }, [messages]);
 
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
-  }, [messages, open]);
+    if (open) {
+      pinnedRef.current = true;
+      setShowJump(false);
+      scrollToBottom('auto');
+    }
+  }, [open]);
 
   /**
    * Replace a confirm-write block with its terminal form once the user acts, so
@@ -216,10 +279,15 @@ export function AssistantPanel() {
     );
     if (pending.length === 0) return;
     setBulkBusy(mIndex);
+    // P3-23: count cards that didn't execute so 全部同意 isn't silent on failure.
+    let failed = 0;
     try {
       for (const b of pending) {
         const token = (b.data as { token?: string } | undefined)?.token;
-        if (!token) continue;
+        if (!token) {
+          failed++;
+          continue;
+        }
         try {
           const res = await api<{ data: { kind: string; data: unknown } }>(
             '/api/v1/assistant/confirm',
@@ -228,10 +296,24 @@ export function AssistantPanel() {
           resolveConfirm(b.id, { status: 'executed', result: res.data });
         } catch {
           // Leave this card pending — its own 批准并执行 surfaces the real error.
+          failed++;
         }
       }
     } finally {
       setBulkBusy(null);
+    }
+    // P3-23: surface an aggregate failure notice (the per-card retry still works).
+    if (failed > 0) {
+      setMessages((prev) =>
+        prev.map((m, i) =>
+          i === mIndex && m.role === 'assistant'
+            ? {
+                role: 'assistant',
+                blocks: [...m.blocks, { type: 'error', message: `${failed} 项确认失败，可逐条重试。` }],
+              }
+            : m,
+        ),
+      );
     }
   }
 
@@ -416,7 +498,7 @@ export function AssistantPanel() {
         </button>
       </div>
 
-      <div className="ai-body" ref={scrollRef}>
+      <div className="ai-body" ref={scrollRef} onScroll={onBodyScroll}>
         {messages.length === 0 ? (
           <>
             <div className="ai-msg bot">
@@ -523,6 +605,30 @@ export function AssistantPanel() {
               </div>
             )}
           </>
+        )}
+        {/* P3-21: floating jump-to-latest, shown only when scrolled away from bottom. */}
+        {showJump && messages.length > 0 && (
+          <button
+            type="button"
+            onClick={() => scrollToBottom('smooth')}
+            aria-label="回到最新"
+            style={{
+              position: 'sticky',
+              bottom: 8,
+              alignSelf: 'center',
+              zIndex: 5,
+              padding: '4px 12px',
+              borderRadius: 999,
+              border: '1px solid var(--border)',
+              background: 'var(--surface-3)',
+              color: 'var(--fg)',
+              fontSize: 12,
+              boxShadow: '0 4px 12px rgba(0, 0, 0, 0.25)',
+              cursor: 'pointer',
+            }}
+          >
+            ↓ 回到最新
+          </button>
         )}
       </div>
 

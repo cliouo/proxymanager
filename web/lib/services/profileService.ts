@@ -152,7 +152,25 @@ export async function createProfile(input: ProfileCreate): Promise<Profile> {
   } as Profile;
   await upsertProfile(profile);
   if (srcId) {
-    await cloneProfileConfig(srcId, profile.id, includeGroupsRules);
+    // P3-20: if the config clone fails mid-way, we'd otherwise leave a profile
+    // record with no base — it resolves to a 404 "uninitialised" state the user
+    // can't fix. Roll the record (and any partial owned config) back so a failed
+    // create leaves no half-baked profile behind.
+    try {
+      await cloneProfileConfig(srcId, profile.id, includeGroupsRules);
+    } catch (err) {
+      await repoDelete(profile.id).catch(() => undefined);
+      await getRedis()
+        .multi()
+        .del(REDIS_KEYS.base.content(profile.id))
+        .del(REDIS_KEYS.base.meta(profile.id))
+        .del(REDIS_KEYS.rules(profile.id))
+        .del(REDIS_KEYS.proxyGroups(profile.id))
+        .del(REDIS_KEYS.taxonomy.groups(profile.id))
+        .exec()
+        .catch(() => undefined);
+      throw err;
+    }
   }
   invalidateSnapshot();
   return profile;
@@ -170,6 +188,15 @@ export async function patchProfile(id: string, patch: ProfileUpdate): Promise<Pr
     throw ProblemDetailsError.notFound(`profile ${id} 不存在。`);
   }
   if (validated.name && validated.name !== current.name) {
+    // P1-1: the `default` profile is the always-present anchor — the scope
+    // resolver and unbound-new-profile seed both look it up BY NAME, so renaming
+    // it silently breaks those. Guard by the current record's name (the previous
+    // guard checked the wrong object / count).
+    if (current.name === DEFAULT_PROFILE_NAME) {
+      throw ProblemDetailsError.conflict(
+        `「${DEFAULT_PROFILE_NAME}」是默认配置文件,不能改名(作用域解析与新建种子都按此名查找)。`,
+      );
+    }
     const dup = await getProfileByName(validated.name);
     if (dup && dup.id !== id) {
       throw ProblemDetailsError.conflict(`profile 名称 "${validated.name}" 已存在。`);
@@ -196,9 +223,15 @@ export async function patchProfile(id: string, patch: ProfileUpdate): Promise<Pr
 export async function deleteProfile(id: string): Promise<boolean> {
   const current = await getProfile(id);
   if (!current) return false;
-  // Phase 1 guard: don't let the user nuke the single "default" profile via
-  // the API; preview lookups would fall back to "all enabled" which is
-  // probably unintended in a setup where bindings were deliberate.
+  // P1-1: never delete the `default` profile — it's the anchor the scope
+  // resolver, the public /api/sub redirect and unbound-new-profile seeding all
+  // depend on. (The old guard only blocked deleting the LAST profile, which let
+  // `default` be deleted whenever ≥2 existed.)
+  if (current.name === DEFAULT_PROFILE_NAME) {
+    throw ProblemDetailsError.conflict(
+      `「${DEFAULT_PROFILE_NAME}」是默认配置文件,不能删除。`,
+    );
+  }
   const all = await listProfiles();
   if (all.length <= 1) {
     throw ProblemDetailsError.conflict('至少保留一个 profile;无法删除最后一个。');

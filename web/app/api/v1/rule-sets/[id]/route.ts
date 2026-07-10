@@ -38,10 +38,16 @@ export const PATCH = withProblemDetails(async (request: Request, ctx: Ctx) => {
   const raw = await request.json().catch(() => {
     throw ProblemDetailsError.badRequest('Request body must be valid JSON.');
   });
+  // P2-2: If-Match carries the client's last-known updated_at (optimistic
+  // version). Absent → undefined → unchanged last-write-wins behavior. Threaded
+  // through the dispatch payload → patch handler → patchRuleSet.
+  const ifMatch = request.headers.get('if-match');
+  const parsed = ifMatch ? Number(ifMatch.replace(/^W\//, '').replace(/^"|"$/g, '')) : NaN;
+  const expectedUpdatedAt = Number.isFinite(parsed) ? parsed : undefined;
   const res = await dispatch({
     scenario: 'rule-provider',
     op: 'patch',
-    payload: { id, patch: raw },
+    payload: { id, patch: raw, expectedUpdatedAt },
     actor: resolveActor(request),
     profileId,
   });

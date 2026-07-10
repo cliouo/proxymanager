@@ -2,6 +2,9 @@ import { renderProfileConfig } from '@/lib/engine/renderCache';
 import { withProblemDetails } from '@/lib/http/handler';
 
 export const dynamic = 'force-dynamic';
+// P3-18: the final-config preview runs the full resolve pipeline (upstream
+// fetches + render); give it an explicit ceiling over the platform default.
+export const maxDuration = 60;
 
 type Ctx = RouteContext<'/api/v1/preview/[profile]'>;
 

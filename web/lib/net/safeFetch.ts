@@ -97,7 +97,7 @@ async function assertPublicHost(hostname: string): Promise<void> {
 }
 
 /** Read a response body, stopping at `maxBytes` (so an unbounded stream can't OOM us). */
-async function readCapped(res: Response, maxBytes: number): Promise<{ buf: Uint8Array; truncated: boolean }> {
+export async function readCapped(res: Response, maxBytes: number): Promise<{ buf: Uint8Array; truncated: boolean }> {
   if (!res.body) {
     const all = new Uint8Array(await res.arrayBuffer());
     return all.byteLength > maxBytes

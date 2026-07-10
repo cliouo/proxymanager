@@ -11,6 +11,20 @@ describe('parseBase', () => {
     expect(result.anchors).toEqual(['prelude', 'manual', 'late']);
   });
 
+  it('P3-11: only reports anchors whose comment occupies its own line (renderer-injectable)', () => {
+    const content = [
+      'rules:',
+      '  # === ANCHOR: good ===', // own line → injectable, reported
+      '  - DOMAIN,x.com,直连  # === ANCHOR: inline === ', // trailing on a rule line → renderer won't inject here
+      'dns:',
+      '  note: "text === ANCHOR: invalue === more"', // buried in a value → not an anchor
+    ].join('\n');
+    const result = parseBase(content);
+    expect(result.anchors).toEqual(['good']);
+    expect(result.anchors).not.toContain('inline');
+    expect(result.anchors).not.toContain('invalue');
+  });
+
   it('extracts proxy-groups, standalone proxies, and built-in keywords as policies', () => {
     const result = parseBase(FIXTURE);
     expect(result.policies).toEqual([

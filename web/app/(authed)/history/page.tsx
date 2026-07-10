@@ -281,7 +281,9 @@ export default function HistoryPage() {
     <>
       <PageTopbar contentMaxWidth={860}>
         <h1>操作历史</h1>
-        <ScopePill />
+        {/* P2-19: the audit log is account-wide (history/route.ts has no profile
+            filter), so a per-profile pill was misleading — use the neutral one. */}
+        <ScopePill neutral />
         <span className="crumb">每次写操作都有快照 · 可撤销</span>
         <div className="grow" />
         <div className={`search ${styles.search}`}>

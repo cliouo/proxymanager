@@ -24,8 +24,24 @@ function bucket(key: string): Map<string, unknown> {
 
 const fakeRedis = {
   get: async (key: string) => counters.get(key) ?? kv.get(key) ?? null,
+  mget: async (...keys: string[]) => keys.map((k) => counters.get(k) ?? kv.get(k) ?? null),
   set: async (key: string, value: unknown) => {
     kv.set(key, value);
+  },
+  // Faithful simulation of baseRepo's CAS_SET_BASE Lua script (P2-1): compare
+  // the stored meta etag, and only on match write content + meta + bump version.
+  eval: async (_script: string, keys: string[], args: (string | number)[]) => {
+    const [metaKey, contentKey, versionKey] = keys;
+    const [check, expectedEtag, content, metaJson] = args.map(String);
+    if (check === '1') {
+      const cur = kv.get(metaKey) as { etag?: string } | undefined;
+      const curEtag = cur?.etag ?? '';
+      if (curEtag !== expectedEtag) return [0, curEtag];
+    }
+    kv.set(contentKey, content);
+    kv.set(metaKey, JSON.parse(metaJson));
+    counters.set(versionKey, (counters.get(versionKey) ?? 0) + 1);
+    return [1, ''];
   },
   hgetall: async (key: string) => {
     const m = bucket(key);

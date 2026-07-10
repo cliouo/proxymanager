@@ -6,6 +6,13 @@
  * subscriptions invalidate it explicitly. A long Redis EX acts as a safety
  * net in case an invalidation call is missed somewhere (the snapshot is
  * advisory — readers can still recompute live by calling resolveConfig).
+ *
+ * Per-profile (P2-5): stored as a single Redis HASH keyed by profile id, so a
+ * render of profile B can't overwrite profile A's node list (which used to
+ * happen with one global key — a public /api/sub poll for one profile would
+ * leave the overview/AI of another profile showing the wrong nodes). Reads take
+ * the profile id; invalidation clears the whole hash because a shared-resource
+ * write (a subscription edit) can invalidate every profile's snapshot at once.
  */
 
 import { getRedis } from '@/lib/redis/client';
@@ -37,6 +44,8 @@ export interface SnapshotSubStatus {
 }
 
 export interface ResolvedSnapshot {
+  /** Profile id this snapshot was rendered for (defensive; the hash field key). */
+  profileId?: string;
   /** Final node names in `proxies:`, in resolution order. */
   nodeNames: string[];
   collisions: SnapshotCollision[];
@@ -53,13 +62,19 @@ export interface ResolvedSnapshot {
   buildId: string;
 }
 
-export async function getResolvedSnapshot(): Promise<ResolvedSnapshot | null> {
-  const value = await getRedis().get<ResolvedSnapshot>(REDIS_KEYS.resolvedSnapshot);
+export async function getResolvedSnapshot(profileId: string): Promise<ResolvedSnapshot | null> {
+  const value = await getRedis().hget<ResolvedSnapshot>(REDIS_KEYS.resolvedSnapshot, profileId);
   return value ?? null;
 }
 
-export async function setResolvedSnapshot(snapshot: ResolvedSnapshot): Promise<void> {
-  await getRedis().set(REDIS_KEYS.resolvedSnapshot, snapshot, { ex: SNAPSHOT_TTL_SECONDS });
+export async function setResolvedSnapshot(
+  profileId: string,
+  snapshot: ResolvedSnapshot,
+): Promise<void> {
+  const redis = getRedis();
+  await redis.hset(REDIS_KEYS.resolvedSnapshot, { [profileId]: snapshot });
+  // Whole-hash GC EX (per-field TTL isn't available on Upstash hashes).
+  await redis.expire(REDIS_KEYS.resolvedSnapshot, SNAPSHOT_TTL_SECONDS);
 }
 
 export async function invalidateResolvedSnapshot(): Promise<void> {

@@ -142,8 +142,13 @@ export default function ProxyGroupsPage() {
   const [draggingId, setDraggingId] = useState<string | null>(null);
   // Per-section working order during a drag (id arrays keyed by section).
   const [dragOrder, setDragOrder] = useState<Record<string, string[]>>({});
+  // P2-12: with a search/kind filter active the section shows a SUBSET, so
+  // recomputing ranks from the visible order would collide with hidden rows /
+  // cross partitions. Disable reordering until the filter is cleared.
+  const dragDisabled = query.trim().length > 0 || kindFilter !== null;
 
   const onDragStart = (section: string, id: string) => {
+    if (dragDisabled) return;
     dragId.current = id;
     setDraggingId(id);
     setDragOrder((prev) => ({
@@ -168,7 +173,11 @@ export default function ProxyGroupsPage() {
     });
   };
 
-  const onDragEnd = async (section: string) => {
+  const onDragEnd = async (section: string, e?: React.DragEvent) => {
+    // P2-12: Escape or dropping outside a valid target leaves dropEffect ==='none'
+    // (HTML5 still fires dragend). Discard instead of committing the last-hovered
+    // order as if it were an intentional drop.
+    const cancelled = e?.dataTransfer?.dropEffect === 'none';
     const id = dragId.current;
     dragId.current = null;
     setDraggingId(null);
@@ -177,7 +186,7 @@ export default function ProxyGroupsPage() {
       const { [section]: _drop, ...rest } = prev;
       return rest;
     });
-    if (!id || !order) return;
+    if (cancelled || !id || !order) return;
 
     const sec = sections.find((s) => s.section === section);
     if (!sec) return;
@@ -210,7 +219,13 @@ export default function ProxyGroupsPage() {
       await reload();
       setRankOverride({});
     } catch (err) {
-      showToast(err instanceof ApiError ? `保存失败:${err.message}` : '保存失败,已回滚');
+      // P2-12: some PATCHes may already have landed, so this isn't a clean
+      // rollback — reload to the server truth and say so.
+      showToast(
+        err instanceof ApiError
+          ? `保存失败:${err.message} · 已刷新为最新顺序`
+          : '保存失败 · 部分顺序可能已保存,已刷新为最新',
+      );
       setRankOverride({});
       await reload();
     }
@@ -375,9 +390,9 @@ export default function ProxyGroupsPage() {
                     key={g.id}
                     href={`/proxy-groups/${g.id}`}
                     className={`${styles.row}${draggingId === g.id ? ' ' + styles.dragging : ''}`}
-                    draggable
+                    draggable={!dragDisabled}
                     onDragStart={() => onDragStart(section, g.id)}
-                    onDragEnd={() => onDragEnd(section)}
+                    onDragEnd={(e) => onDragEnd(section, e)}
                     onDragOver={(e) => {
                       e.preventDefault();
                       const rect = e.currentTarget.getBoundingClientRect();

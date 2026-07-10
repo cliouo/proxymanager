@@ -162,7 +162,13 @@ function parseSS(uri: string): ClashProxy {
     let hostPart = main.slice(atIdx + 1);
     // SIP002 allows a trailing '/' before the query; strip it
     if (hostPart.endsWith('/')) hostPart = hostPart.slice(0, -1);
-    const decoded = tryBase64Decode(userPart) ?? safeDecode(userPart);
+    // P3-2: the base64 userinfo is sometimes percent-encoded (…%2B…%3D), which
+    // fails a direct base64 decode. Retry by percent-decoding first, then fall
+    // back to a plain percent-decode (already-plain method:password form).
+    const decoded =
+      tryBase64Decode(userPart) ??
+      tryBase64Decode(safeDecode(userPart)) ??
+      safeDecode(userPart);
     const colon = decoded.indexOf(':');
     if (colon === -1) throw new Error('missing method:password');
     cipher = decoded.slice(0, colon);
@@ -395,22 +401,39 @@ function parseVMess(uri: string): ClashProxy {
     cipher: get('scy') || 'auto',
     udp: true,
   };
-  if (get('tls') === 'tls') {
+  // P3-3: some emitters carry a boolean `"tls": true` (or "1") rather than the
+  // string "tls"; treat all truthy variants as TLS so a secured node isn't
+  // silently downgraded to plaintext.
+  if (['tls', 'true', '1'].includes(get('tls').toLowerCase())) {
     proxy.tls = true;
     if (get('sni')) proxy.servername = get('sni');
     if (get('alpn')) proxy.alpn = splitList(get('alpn'));
   }
-  const net = get('net') || 'tcp';
-  proxy.network = net;
-  if (net === 'ws') {
-    const opts: Record<string, unknown> = { path: get('path') || '/' };
+  // P3-5: mirror the SS ws-opts handling — map `httpupgrade` onto network `ws`
+  // with the v2ray-http-upgrade flag, and lift ws early-data (`…?ed=N`) out of
+  // the path into max-early-data / early-data-header-name.
+  const net = (get('net') || 'tcp').toLowerCase();
+  const isHttpUpgrade = net === 'httpupgrade';
+  const network = isHttpUpgrade ? 'ws' : net;
+  proxy.network = network;
+  if (network === 'ws') {
+    const opts: Record<string, unknown> = {};
+    const { path: cleanedPath, ed } = extractEarlyDataFromPath(get('path') || '/');
+    if (isHttpUpgrade) {
+      opts['v2ray-http-upgrade'] = true;
+      if (ed) opts['v2ray-http-upgrade-fast-open'] = true;
+    } else if (ed) {
+      opts['max-early-data'] = parseInt(ed, 10);
+      opts['early-data-header-name'] = 'Sec-WebSocket-Protocol';
+    }
+    opts.path = cleanedPath;
     if (get('host')) opts.headers = { Host: get('host') };
     proxy['ws-opts'] = opts;
-  } else if (net === 'h2') {
+  } else if (network === 'h2') {
     const opts: Record<string, unknown> = { path: get('path') || '/' };
     if (get('host')) opts.host = splitList(get('host'));
     proxy['h2-opts'] = opts;
-  } else if (net === 'grpc') {
+  } else if (network === 'grpc') {
     proxy['grpc-opts'] = { 'grpc-service-name': get('path') };
   }
   return proxy;
@@ -432,7 +455,16 @@ function parseVLESS(uri: string): ClashProxy {
     uuid,
     udp: true,
   };
-  if (params.flow) proxy.flow = params.flow;
+  // mihomo lowercases flow: `vless["flow"] = strings.ToLower(flow)`.
+  if (params.flow) proxy.flow = params.flow.toLowerCase();
+  // VLESS Encryption. mihomo common/convert/converter.go:
+  //   if encryption := query.Get("encryption"); encryption != "" {
+  //     vless["encryption"] = encryption
+  //   }
+  // Emitted verbatim when non-empty; "none" is NOT special-cased (kept as-is).
+  // The value may be a long ML-KEM/x25519 string — `params` is already
+  // single-decoded by URLSearchParams, so we must not decode or rewrite it.
+  if (params.encryption) proxy.encryption = params.encryption;
 
   const security = params.security || 'none';
   if (security === 'tls' || security === 'reality') {
@@ -450,22 +482,206 @@ function parseVLESS(uri: string): ClashProxy {
     }
   }
 
-  const type = params.type || 'tcp';
-  proxy.network = type;
-  if (type === 'ws') {
+  // Packet encoding. mihomo common/convert/v.go:
+  //   switch packetEncoding { case "none": ; case "packet": packet-addr=true;
+  //                           default: xudp=true }
+  // Absent / empty / any value other than "none"|"packet" ⇒ xudp (the default).
+  if (params.packetEncoding === 'packet') proxy['packet-addr'] = true;
+  else if (params.packetEncoding !== 'none') proxy.xudp = true;
+
+  // Transport. mihomo common/convert/v.go lowercases `type`, then remaps
+  // `type=http` → h2 (HTTP/2) and `type=tcp` + `headerType=http` → http
+  // (HTTP/1.1 obfs over TCP) before switching on the network.
+  let network = (params.type || 'tcp').toLowerCase();
+  const headerType = (params.headerType || '').toLowerCase();
+  if (network === 'tcp' && headerType === 'http') network = 'http';
+  else if (network === 'http') network = 'h2';
+  proxy.network = network;
+  if (network === 'ws') {
     const opts: Record<string, unknown> = { path: params.path || '/' };
     if (params.host) opts.headers = { Host: params.host };
     proxy['ws-opts'] = opts;
-  } else if (type === 'grpc') {
+  } else if (network === 'grpc') {
     proxy['grpc-opts'] = {
       'grpc-service-name': params.serviceName || params.path || '',
     };
-  } else if (type === 'h2') {
+  } else if (network === 'h2') {
     const opts: Record<string, unknown> = { path: params.path || '/' };
     if (params.host) opts.host = splitList(params.host);
     proxy['h2-opts'] = opts;
+  } else if (network === 'http') {
+    // mihomo v.go http case: path is a string list (default ["/"]); the Host
+    // header is a list; optional method. Empty header map is omitted (a bare
+    // `headers: {}` is functionally identical to absent).
+    const opts: Record<string, unknown> = {
+      path: params.path ? [params.path] : ['/'],
+    };
+    if (params.method) opts.method = params.method;
+    if (params.host) opts.headers = { Host: [params.host] };
+    proxy['http-opts'] = opts;
+  } else if (network === 'xhttp') {
+    // mihomo v.go xhttp case: network=xhttp + xhttp-opts{path,host,mode}.
+    // host/mode only when present; path defaults to "/" (mihomo's http/h2
+    // converter default and this parser's ws/h2 convention).
+    const opts: Record<string, unknown> = { path: params.path || '/' };
+    if (params.host) opts.host = params.host;
+    if (params.mode) opts.mode = params.mode;
+    // Advanced xray `extra` JSON → xmux / padding / session / download-settings.
+    // mihomo only applies it when the JSON parses cleanly (`if err == nil`).
+    if (params.extra) {
+      try {
+        const parsed: unknown = JSON.parse(params.extra);
+        if (isPlainObject(parsed)) applyXHTTPExtra(parsed, opts);
+      } catch {
+        /* malformed extra JSON — ignore, matching mihomo's err guard */
+      }
+    }
+    proxy['xhttp-opts'] = opts;
   }
   return proxy;
+}
+
+/**
+ * Faithful port of mihomo `common/convert/v.go` parseXHTTPExtra: map an
+ * xray-core XHTTP `extra` JSON object onto mihomo `xhttp-opts` fields. Only
+ * keys with a stable mihomo mapping are copied; unknown keys are ignored.
+ * Values come from JSON.parse, so numbers are JS numbers and maps are objects.
+ */
+function applyXHTTPExtra(extra: Record<string, unknown>, opts: Record<string, unknown>): void {
+  const str = (k: string): string | undefined => {
+    const v = extra[k];
+    return typeof v === 'string' && v !== '' ? v : undefined;
+  };
+  const num = (k: string): number | undefined => {
+    const v = extra[k];
+    return typeof v === 'number' ? v : undefined;
+  };
+  // xmux map → reuse-settings (string kept if non-empty; number → decimal string)
+  const xmuxToReuse = (xmux: Record<string, unknown>): Record<string, unknown> => {
+    const reuse: Record<string, unknown> = {};
+    const set = (src: string, dst: string): void => {
+      const v = xmux[src];
+      if (typeof v === 'string') {
+        if (v !== '') reuse[dst] = v;
+      } else if (typeof v === 'number') {
+        reuse[dst] = String(Math.trunc(v));
+      }
+    };
+    set('maxConnections', 'max-connections');
+    set('maxConcurrency', 'max-concurrency');
+    set('cMaxReuseTimes', 'c-max-reuse-times');
+    set('hMaxRequestTimes', 'h-max-request-times');
+    set('hMaxReusableSecs', 'h-max-reusable-secs');
+    const keepAlive = xmux['hKeepAlivePeriod'];
+    if (typeof keepAlive === 'number') reuse['h-keep-alive-period'] = Math.trunc(keepAlive);
+    return reuse;
+  };
+
+  if (extra['noGRPCHeader'] === true) opts['no-grpc-header'] = true;
+  const xpb = str('xPaddingBytes');
+  if (xpb) opts['x-padding-bytes'] = xpb;
+  if (typeof extra['xPaddingObfsMode'] === 'boolean')
+    opts['x-padding-obfs-mode'] = extra['xPaddingObfsMode'];
+  const xpk = str('xPaddingKey');
+  if (xpk) opts['x-padding-key'] = xpk;
+  const xph = str('xPaddingHeader');
+  if (xph) opts['x-padding-header'] = xph;
+  const xpp = str('xPaddingPlacement');
+  if (xpp) opts['x-padding-placement'] = xpp;
+  const xpm = str('xPaddingMethod');
+  if (xpm) opts['x-padding-method'] = xpm;
+  const uhm = str('uplinkHttpMethod');
+  if (uhm) opts['uplink-http-method'] = uhm;
+
+  const sPlacement = str('sessionIDPlacement') ?? str('sessionPlacement');
+  if (sPlacement) opts['session-placement'] = sPlacement;
+  const sKey = str('sessionIDKey') ?? str('sessionKey');
+  if (sKey) opts['session-key'] = sKey;
+  const sTable = str('sessionIDTable');
+  if (sTable) opts['session-table'] = sTable;
+  const sLenStr = str('sessionIDLength');
+  if (sLenStr) opts['session-length'] = sLenStr;
+  else {
+    const sLenNum = num('sessionIDLength');
+    if (sLenNum !== undefined) opts['session-length'] = String(Math.trunc(sLenNum));
+  }
+
+  const seqP = str('seqPlacement');
+  if (seqP) opts['seq-placement'] = seqP;
+  const seqK = str('seqKey');
+  if (seqK) opts['seq-key'] = seqK;
+  const udP = str('uplinkDataPlacement');
+  if (udP) opts['uplink-data-placement'] = udP;
+  const udK = str('uplinkDataKey');
+  if (udK) opts['uplink-data-key'] = udK;
+  const ucs = num('uplinkChunkSize');
+  if (ucs !== undefined) opts['uplink-chunk-size'] = Math.trunc(ucs);
+  const scMax = num('scMaxEachPostBytes');
+  if (scMax !== undefined) opts['sc-max-each-post-bytes'] = Math.trunc(scMax);
+  const scMin = num('scMinPostsIntervalMs');
+  if (scMin !== undefined) opts['sc-min-posts-interval-ms'] = Math.trunc(scMin);
+
+  const xmux = extra['xmux'];
+  if (isPlainObject(xmux)) {
+    const reuse = xmuxToReuse(xmux);
+    if (Object.keys(reuse).length > 0) opts['reuse-settings'] = reuse;
+  }
+
+  const dsAny = extra['downloadSettings'];
+  if (isPlainObject(dsAny)) {
+    const ds: Record<string, unknown> = {};
+    const addr = dsAny['address'];
+    if (typeof addr === 'string' && addr !== '') ds['server'] = addr;
+    const port = dsAny['port'];
+    if (typeof port === 'number') ds['port'] = Math.trunc(port);
+    const secRaw = dsAny['security'];
+    const sec = typeof secRaw === 'string' ? secRaw.toLowerCase() : '';
+    if (sec === 'tls' || sec === 'reality') {
+      ds['tls'] = true;
+      const tlsAny = dsAny['tlsSettings'];
+      if (isPlainObject(tlsAny)) {
+        const sn = tlsAny['serverName'];
+        if (typeof sn === 'string' && sn !== '') ds['servername'] = sn;
+        const fp = tlsAny['fingerprint'];
+        if (typeof fp === 'string' && fp !== '') ds['client-fingerprint'] = fp;
+        const alpnAny = tlsAny['alpn'];
+        if (Array.isArray(alpnAny)) {
+          const alpnList = alpnAny.filter((a): a is string => typeof a === 'string');
+          if (alpnList.length > 0) ds['alpn'] = alpnList;
+        }
+        if (tlsAny['allowInsecure'] === true) ds['skip-cert-verify'] = true;
+      }
+      if (sec === 'reality') {
+        const realityAny = dsAny['realitySettings'];
+        if (isPlainObject(realityAny)) {
+          const realityOpts: Record<string, unknown> = {};
+          const pk = realityAny['publicKey'];
+          if (typeof pk === 'string' && pk !== '') realityOpts['public-key'] = pk;
+          const sid = realityAny['shortId'];
+          if (typeof sid === 'string' && sid !== '') realityOpts['short-id'] = sid;
+          if (Object.keys(realityOpts).length > 0) ds['reality-opts'] = realityOpts;
+        }
+      }
+    }
+    const xhttpAny = dsAny['xhttpSettings'];
+    if (isPlainObject(xhttpAny)) {
+      const path = xhttpAny['path'];
+      if (typeof path === 'string' && path !== '') ds['path'] = path;
+      const host = xhttpAny['host'];
+      if (typeof host === 'string' && host !== '') ds['host'] = host;
+      const headers = xhttpAny['headers'];
+      if (isPlainObject(headers) && Object.keys(headers).length > 0) ds['headers'] = headers;
+      const dsExtra = xhttpAny['extra'];
+      if (isPlainObject(dsExtra)) {
+        const xmux2 = dsExtra['xmux'];
+        if (isPlainObject(xmux2)) {
+          const reuse = xmuxToReuse(xmux2);
+          if (Object.keys(reuse).length > 0) ds['reuse-settings'] = reuse;
+        }
+      }
+    }
+    if (Object.keys(ds).length > 0) opts['download-settings'] = ds;
+  }
 }
 
 function parseTrojan(uri: string): ClashProxy {
@@ -538,13 +754,25 @@ function parseHysteria2(uri: string): ClashProxy {
   // Use a hand-rolled regex (not URL constructor) because Hysteria2 supports
   // port-hopping syntax `host:443,8443-8500` which URL.port rejects as invalid.
   const body = uri.replace(/^(hysteria2|hy2):\/\//i, '');
-  // password @ host (: port-or-port-set)? (/)? (? addons)? (# name)?
+
+  // P3-1: The userinfo (password) is OPTIONAL — a bare `hysteria2://host:port`
+  // link has no auth — and a password may itself contain '@'. Peel the
+  // userinfo off the front by splitting on the LAST '@' that precedes the host
+  // section (bounded by the first '?' or '#' so an '@' inside the query or
+  // fragment can't be mistaken for the separator). Everything before it is the
+  // password; when there's no such '@', there's no auth.
+  const cut = body.search(/[?#]/);
+  const head = cut === -1 ? body : body.slice(0, cut);
+  const atIdx = head.lastIndexOf('@');
+  const rawPassword = atIdx === -1 ? '' : body.slice(0, atIdx);
+  const rest = atIdx === -1 ? body : body.slice(atIdx + 1);
+  // host (: port-or-port-set)? (/)? (? addons)? (# name)?
   // Host is either a bracketed IPv6 literal or anything up to :/?#
   const re =
-    /^(.*?)@(\[[^\]]+\]|[^/?#:]+)(?::((?:\d+(?:-\d+)?)(?:[,;]\d+(?:-\d+)?)*))?\/?(?:\?([^#]*))?(?:#(.*))?$/;
-  const m = re.exec(body);
+    /^(\[[^\]]+\]|[^/?#:]+)(?::((?:\d+(?:-\d+)?)(?:[,;]\d+(?:-\d+)?)*))?\/?(?:\?([^#]*))?(?:#(.*))?$/;
+  const m = re.exec(rest);
   if (!m) throw new Error('malformed hysteria2 URI');
-  const [, rawPassword, rawHost, portSpec, query, frag] = m;
+  const [, rawHost, portSpec, query, frag] = m;
   const host = stripBrackets(rawHost);
   if (!host) throw new Error('hysteria2 missing host');
 
@@ -676,6 +904,29 @@ function parseSocks(uri: string): ClashProxy {
   return proxy;
 }
 
+// P3-4: query addons carry a type — a bare string passthrough turns `?tfo=true`
+// into the string "true" and numeric knobs into strings, so mihomo sees the
+// wrong YAML scalar. Coerce the well-known typed keys (grounded in mihomo's
+// BasicOption / WireGuardOption fields); leave genuinely-unknown keys as raw
+// strings so we never invent a mapping.
+const BOOL_ADDON_KEYS = new Set([
+  'tfo',
+  'mptcp',
+  'udp',
+  'skip-cert-verify',
+  'remote-dns-resolve',
+]);
+const NUM_ADDON_KEYS = new Set(['persistent-keepalive']);
+
+function coerceAddonValue(key: string, value: string): unknown {
+  if (BOOL_ADDON_KEYS.has(key)) return /^(1|true)$/i.test(value);
+  if (NUM_ADDON_KEYS.has(key)) {
+    const n = parseInt(value, 10);
+    return Number.isFinite(n) ? n : value;
+  }
+  return value;
+}
+
 function parseAnyTLS(uri: string): ClashProxy {
   // anytls://password@server[:port]?addons#name  — port defaults to 443
   const u = safeUrl(uri);
@@ -706,7 +957,7 @@ function parseAnyTLS(uri: string): ClashProxy {
     if (!value || handled.has(rawKey)) continue;
     const key = rawKey.replace(/_/g, '-');
     if (key in proxy) continue;
-    proxy[key] = value;
+    proxy[key] = coerceAddonValue(key, value); // P3-4: type-coerce known keys
   }
   return proxy;
 }
@@ -750,7 +1001,7 @@ function parseWireGuard(uri: string): ClashProxy {
     } else if (key === 'udp') {
       proxy.udp = /^(1|true)$/i.test(value);
     } else if (!(key in proxy) && key !== 'flag') {
-      proxy[key] = value;
+      proxy[key] = coerceAddonValue(key, value); // P3-4: type-coerce known keys
     }
   }
   return proxy;
@@ -879,6 +1130,11 @@ function splitList(s: string): string[] {
     .split(',')
     .map((p) => p.trim())
     .filter((p) => p.length > 0);
+}
+
+/** Narrow to a non-null, non-array object (a JSON "map"). */
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
 function uniqueName(base: string, used: Set<string>): string {

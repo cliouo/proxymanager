@@ -300,14 +300,14 @@ function NewProfileModal({
   const slugPreview = useMemo(() => slugFor(name.trim()), [name]);
   const nameValid = /^[a-z0-9-]+$/.test(name.trim());
 
-  // Esc 关闭
+  // Esc 关闭 — P3-34: 但创建进行中不允许关闭(否则可能中途丢失/重复提交)。
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape' && !pending) onClose();
     }
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose, pending]);
 
   const submit = useCallback(async () => {
     setErr(null);
@@ -339,7 +339,7 @@ function NewProfileModal({
   }, [name, nameValid, displayName, notes, sourceId, sourceKind, seed, copyFrom, onCreated]);
 
   return (
-    <div className="modal-bg open" onClick={onClose}>
+    <div className="modal-bg open" onClick={() => !pending && onClose()}>
       <div className={`modal ${styles.npModal}`} onClick={(e) => e.stopPropagation()}>
         <h3>新建配置文件</h3>
         <p className="sub">命名（kebab-case），按需预绑一个节点来源。</p>

@@ -1,6 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { parse } from 'yaml';
-import type { Collection, ProxyGroup, ProxyGroupTemplate, Rule, Subscription } from '@/schemas';
+import type {
+  Collection,
+  ProxyGroup,
+  ProxyGroupTemplate,
+  Rule,
+  RuleSet,
+  Subscription,
+} from '@/schemas';
 
 /**
  * The repo modules read process.env at import time via getRedis(); short-
@@ -238,15 +245,28 @@ describe('resolveConfig — subscription injection', () => {
     expect(result.anchorsApplied.find((a) => a.anchor === 'manual')?.ruleCount).toBe(1);
   });
 
-  it('writes the resolved snapshot by default', async () => {
+  it('writes the resolved snapshot keyed by the given profile id (P2-5)', async () => {
+    resolveSubMock.mockResolvedValueOnce({
+      proxies: providerProxies([{ name: 'HK-01' }]),
+      proxyCount: 1,
+    });
+    await resolveConfig(BASE_WITH_LITERAL, [], [makeSub({ name: 'a' })], [], [], {
+      snapshotProfileId: 'prof-1',
+    });
+    expect(snapshotMock).toHaveBeenCalledTimes(1);
+    const [profileId, snapshot] = snapshotMock.mock.calls[0];
+    expect(profileId).toBe('prof-1');
+    expect(snapshot.profileId).toBe('prof-1');
+    expect(snapshot.nodeNames).toContain('HK-01');
+  });
+
+  it('does not persist a snapshot when no snapshotProfileId is given (P2-5)', async () => {
     resolveSubMock.mockResolvedValueOnce({
       proxies: providerProxies([{ name: 'HK-01' }]),
       proxyCount: 1,
     });
     await resolveConfig(BASE_WITH_LITERAL, [], [makeSub({ name: 'a' })], [], [], {});
-    expect(snapshotMock).toHaveBeenCalledTimes(1);
-    const [snapshot] = snapshotMock.mock.calls[0];
-    expect(snapshot.nodeNames).toContain('HK-01');
+    expect(snapshotMock).not.toHaveBeenCalled();
   });
 
   it('skips snapshot persistence when persistSnapshot is false', async () => {
@@ -256,6 +276,7 @@ describe('resolveConfig — subscription injection', () => {
     });
     await resolveConfig(BASE_WITH_LITERAL, [], [makeSub({ name: 'a' })], [], [], {
       persistSnapshot: false,
+      snapshotProfileId: 'prof-1',
     });
     expect(snapshotMock).not.toHaveBeenCalled();
   });
@@ -681,9 +702,13 @@ rules:
     expect(result.warnings.some((w) => w.includes('air-empty') && w.includes('无可用节点'))).toBe(
       true,
     );
-    // Group rendered but with no injected proxies list.
+    // P0-2: render final defense — the group falls back to [DIRECT] so the
+    // config stays mihomo-loadable (never an empty / stale proxies list).
     expect(result.content).toContain('name: sub-empty');
-    expect(result.content).not.toMatch(/name: sub-empty[^]*proxies:/);
+    const parsed = parse(result.content) as {
+      'proxy-groups': Array<{ name: string; proxies: string[] }>;
+    };
+    expect(parsed['proxy-groups'].find((x) => x.name === 'sub-empty')?.proxies).toEqual(['DIRECT']);
   });
 
   it('single-sub warns when bound subscription id is dangling', async () => {
@@ -916,5 +941,121 @@ describe('resolveConfig — profile binding (boundSource)', () => {
     const b = makeSub({ name: 'sub-b' });
     const result = await resolveConfig(BASE_WITH_LITERAL, [], [a, b], [], [], {});
     expect(result.nodeNames).toEqual(['直连', 'HK', 'US']);
+  });
+});
+
+/* ─── P0-2 / P0-4 render final-defense (config must always load) ─────── */
+
+describe('resolveConfig — render must always be mihomo-loadable', () => {
+  it('P0-2: a single-sub group whose bound sub has no live nodes falls back to [DIRECT], not stale/empty', async () => {
+    // Sub 'air' resolves to zero nodes this render.
+    resolveSubMock.mockResolvedValueOnce({ proxies: providerProxies([]), proxyCount: 0 });
+    const sub = makeSub({ name: 'air' });
+    const g = makeGroup({
+      name: '机场A',
+      type: 'select',
+      kind: 'single-sub',
+      bound_subscription_id: sub.id,
+      proxies: ['旧节点-会消失'], // stale names that would dangle
+      rank: 10,
+    });
+    const result = await resolveConfig(BASE_WITH_MARKER, [], [sub], [g], [], {});
+    const parsed = parse(result.content) as { 'proxy-groups': Array<{ name: string; proxies: string[] }> };
+    const group = parsed['proxy-groups'].find((x) => x.name === '机场A');
+    expect(group?.proxies).toEqual(['DIRECT']);
+    expect(result.content).not.toContain('旧节点-会消失');
+    expect(result.warnings.some((w) => w.includes('DIRECT'))).toBe(true);
+  });
+
+  it('P0-2: an empty manual group ([] members, no include-all) falls back to [DIRECT]', async () => {
+    const g = makeGroup({ name: '空组', type: 'select', kind: 'manual', proxies: [], rank: 10 });
+    const result = await resolveConfig(BASE_WITH_MARKER, [], [], [g], [], {});
+    const parsed = parse(result.content) as { 'proxy-groups': Array<{ name: string; proxies: string[] }> };
+    const group = parsed['proxy-groups'].find((x) => x.name === '空组');
+    expect(group?.proxies).toEqual(['DIRECT']);
+    // never emit an empty proxies list
+    expect(result.content).not.toMatch(/proxies:\s*\[\s*\]/);
+    expect(result.warnings.some((w) => w.includes('DIRECT'))).toBe(true);
+  });
+
+  it('P0-2: an include-all group with no explicit proxies is left untouched (has a member source)', async () => {
+    const g = makeGroup({
+      name: '全部',
+      type: 'url-test',
+      kind: 'all',
+      'include-all-proxies': true,
+      url: 'http://www.gstatic.com/generate_204',
+      interval: 300,
+      rank: 10,
+    });
+    const result = await resolveConfig(BASE_WITH_MARKER, [], [], [g], [], {});
+    // include-all is a valid member source → no DIRECT injection for this group
+    expect(result.warnings.some((w) => w.includes('全部') && w.includes('DIRECT'))).toBe(false);
+  });
+
+  it('P0-4: a RULE-SET rule with no RULE-PROVIDERS marker warns and does NOT report applied', async () => {
+    const provider: RuleSet = {
+      id: crypto.randomUUID(),
+      name: 'ads',
+      source: 'remote',
+      behavior: 'domain',
+      format: 'yaml',
+      url: 'https://example.com/ads.yaml',
+      interval: 86400,
+      content: '',
+      updated_at: 0,
+    } as RuleSet;
+    const rule: Rule = {
+      id: crypto.randomUUID(),
+      anchor: 'manual',
+      type: 'RULE-SET',
+      value: 'ads',
+      policy: 'REJECT',
+      rank: 1,
+      source: 'manual',
+      added_at: 0,
+      updated_at: 0,
+    } as Rule;
+    // BASE_WITH_LITERAL has an ANCHOR:manual but NO `# === RULE-PROVIDERS ===`.
+    const result = await resolveConfig(BASE_WITH_LITERAL, [rule], [], [], [], {
+      providers: [provider],
+    });
+    expect(result.ruleProvidersApplied).toEqual([]);
+    expect(result.warnings.some((w) => w.includes('RULE-PROVIDERS'))).toBe(true);
+    // The rendered config must not carry an undeclared RULE-SET reference silently claimed as fine.
+    expect(result.content).toContain('RULE-SET,ads,REJECT');
+    expect(result.content).not.toContain('rule-providers:');
+  });
+
+  it('P0-5: a collection whose operator throws degrades to a warning instead of 500-ing the render', async () => {
+    resolveSubMock.mockResolvedValueOnce({
+      proxies: providerProxies([{ name: 'HK-01' }]),
+      proxyCount: 1,
+    });
+    const sub = makeSub({ name: 'air' });
+    // A legacy/hand-crafted rename-regex with an invalid pattern (schema would
+    // reject it today, but pre-guard data can carry it). `new RegExp('(')`
+    // throws inside applyOperators.
+    const col: Collection = {
+      id: crypto.randomUUID(),
+      name: '聚合',
+      subscription_ids: [sub.id],
+      subscription_tags: [],
+      operators: [{ id: 'op1', kind: 'rename-regex', pattern: '(', replacement: '' }],
+      updated_at: 0,
+    } as unknown as Collection;
+
+    let result: Awaited<ReturnType<typeof resolveConfig>> | undefined;
+    await expect(
+      (async () => {
+        result = await resolveConfig(BASE_WITH_MARKER, [], [sub], [], [], {
+          collections: [col],
+          boundSource: { type: 'collection', id: col.id },
+        });
+      })(),
+    ).resolves.not.toThrow();
+    expect(result!.warnings.some((w) => w.includes('流水线执行失败'))).toBe(true);
+    // The unprocessed node still made it in — degrade, don't drop everything.
+    expect(result!.nodeNames).toContain('HK-01');
   });
 });

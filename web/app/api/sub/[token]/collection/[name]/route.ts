@@ -1,6 +1,6 @@
-import { requireSubToken } from '@/lib/auth';
 import { withProblemDetails } from '@/lib/http/handler';
 import { ProblemDetailsError } from '@/lib/http/problem';
+import { guardSubToken } from '@/lib/http/subGuard';
 import { nodeExportResponse } from '@/lib/http/providerResponse';
 import { exportCollectionNodes } from '@/lib/services/nodeExportService';
 import {
@@ -11,6 +11,7 @@ import {
 import { listSubscriptions } from '@/lib/services/subscriptionService';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 60;
 
 type Ctx = RouteContext<'/api/sub/[token]/collection/[name]'>;
 
@@ -25,7 +26,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
  */
 export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
   const { token, name } = await ctx.params;
-  requireSubToken(token);
+  await guardSubToken(request, token, name);
 
   const collection =
     (await getCollectionBySlug(name)) ??

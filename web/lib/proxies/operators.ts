@@ -85,8 +85,30 @@ const USELESS_PATTERNS = [
 ];
 
 function buildUselessRe(extra: string[]): RegExp {
-  const parts = [...USELESS_PATTERNS, ...extra.filter((e) => e.trim().length > 0)];
-  return new RegExp(parts.join('|'), 'i');
+  // The schema (uselessExtraPattern) already rejects fragments that don't
+  // compile or match the empty string, but legacy operators stored before that
+  // guard existed can still carry a bad fragment. Wrap each user fragment in a
+  // non-capturing group (so its internal `|` can't spill into a sibling branch)
+  // and drop any that fail to compile standalone — a malformed junk filter must
+  // degrade to "filter fewer nodes", never throw and 500 the whole render.
+  const safeExtra: string[] = [];
+  for (const e of extra) {
+    if (e.trim().length === 0) continue;
+    try {
+      new RegExp(e); // standalone compile check
+      if (new RegExp(e).test('')) continue; // empty-matching → would drop everything
+      safeExtra.push(`(?:${e})`);
+    } catch {
+      // skip the malformed fragment
+    }
+  }
+  const parts = [...USELESS_PATTERNS, ...safeExtra];
+  try {
+    return new RegExp(parts.join('|'), 'i');
+  } catch {
+    // Last-resort fallback: built-ins only (they are known-good literals).
+    return new RegExp(USELESS_PATTERNS.join('|'), 'i');
+  }
 }
 
 /** Compile a user regex; `test`-safe (no sticky/global state leakage). */

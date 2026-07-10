@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useId, useMemo, useState } from 'react';
 import { ApiError, api } from '@/lib/client/api';
+import { useUnsavedGuard } from '@/lib/client/useUnsavedGuard';
 import { PageTopbar } from '@/components/PageChrome';
 import { useProfiles } from '@/components/profile/ProfileContext';
 import { useToast } from '@/components/ui/Toast';
@@ -48,7 +49,8 @@ export default function ProfileDetailPage() {
   const fid = useId();
   const toast = useToast();
   // Keep the sidebar switcher (shared ProfileContext) in sync after rename/delete.
-  const { reload: reloadSwitcher, activeProfile, clearActiveProfile } = useProfiles();
+  const { reload: reloadSwitcher, activeProfile, clearActiveProfile, setActiveProfile } =
+    useProfiles();
 
   const [profile, setProfile] = useState<Profile | null>(null);
   const [subs, setSubs] = useState<SubscriptionLite[]>([]);
@@ -122,6 +124,7 @@ export default function ProfileDetailPage() {
       return true;
     return false;
   }, [profile, name, displayName, notes, sourceKind, sourceId]);
+  useUnsavedGuard(dirty); // P1-6
 
   // 订阅链接基于**已保存**的名称(下发路径用它),不是编辑框里的草稿名。
   const { subRealUrl, subShownUrl } = useMemo(() => {
@@ -172,6 +175,13 @@ export default function ProfileDetailPage() {
           notes: notes.trim() ? notes.trim() : null,
         },
       });
+      // P1-8: if we just renamed the profile that's currently active, the
+      // `pm.active_profile` cookie still holds the OLD name → every scoped
+      // request (/base, /proxy-groups, /scenarios/*) would 404. Re-point the
+      // cookie at the new name so the scope stays consistent.
+      if (activeProfile?.id === id && res.data.name !== activeProfile.name) {
+        setActiveProfile(res.data.name);
+      }
       hydrate(res.data);
       void reloadSwitcher();
       setSaveMsg('已保存');
@@ -181,7 +191,19 @@ export default function ProfileDetailPage() {
     } finally {
       setSaving(false);
     }
-  }, [id, name, nameValid, displayName, notes, sourceId, sourceKind, hydrate, reloadSwitcher]);
+  }, [
+    id,
+    name,
+    nameValid,
+    displayName,
+    notes,
+    sourceId,
+    sourceKind,
+    hydrate,
+    reloadSwitcher,
+    activeProfile,
+    setActiveProfile,
+  ]);
 
   const remove = useCallback(async () => {
     if (!confirm(`确认删除配置文件「${profile?.name}」？此操作不可撤销。`)) return;
@@ -197,7 +219,7 @@ export default function ProfileDetailPage() {
       setError(e instanceof ApiError ? e.message : '删除失败');
       setDeleting(false);
     }
-  }, [id, profile?.name, router, reloadSwitcher, activeProfile?.id, clearActiveProfile]);
+  }, [id, profile, router, reloadSwitcher, activeProfile, clearActiveProfile]);
 
   // ⌘S 保存
   useEffect(() => {

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { BaseOrphan, BaseValidationResult } from '@/schemas';
 import { BaseParseError, type ParsedBase, parseBase } from '@/lib/engine/parser';
 import { validateBase } from '@/lib/engine/validator';
+import { referencedProviderNamesInText } from '@/lib/engine/renderer';
 import { listProxyGroups } from '@/lib/repos/proxyGroupsRepo';
 import { listRules } from '@/lib/repos/rulesRepo';
 import { listRuleSets } from '@/lib/repos/ruleSetsRepo';
@@ -104,6 +105,32 @@ export async function parseAndValidate(
   const blockViolations = [...rulesBlockViolations(content), ...ruleProvidersBlockViolations(content)];
   if (blockViolations.length > 0) {
     validation.orphans = [...validation.orphans, ...blockViolations];
+    validation.valid = false;
+  }
+
+  // P0-4: if enabled RULE-SET rules (or base-body `rule-set:` keys) reference a
+  // library rule-set, the base MUST carry the `# === RULE-PROVIDERS ===` marker
+  // — that's the only place the `rule-providers:` declarations get injected.
+  // Saving a base that drops the marker while references exist yields a config
+  // mihomo rejects with `not found rule-set`. Block the save with a clear reason.
+  const referencedSets = new Set<string>();
+  for (const r of rules) {
+    if (r.enabled !== false && r.type === 'RULE-SET' && r.value && providerNames.has(r.value)) {
+      referencedSets.add(r.value);
+    }
+  }
+  for (const name of referencedProviderNamesInText(content)) {
+    if (providerNames.has(name)) referencedSets.add(name);
+  }
+  const markerPresent = /^[ \t]*#\s*===\s*RULE-PROVIDERS\s*===[ \t]*$/m.test(content);
+  if (referencedSets.size > 0 && !markerPresent) {
+    validation.orphans = [
+      ...validation.orphans,
+      {
+        rule_id: 'rule-providers:marker',
+        reason: `有 ${referencedSets.size} 个被引用的规则集(${[...referencedSets].slice(0, 3).join('、')}${referencedSets.size > 3 ? '…' : ''})需要注入，但结构里缺少 # === RULE-PROVIDERS === 标记；请插入该标记，否则渲染出的配置会被 mihomo 以 not found rule-set 拒载。`,
+      },
+    ];
     validation.valid = false;
   }
   return { parsedBase, validation };

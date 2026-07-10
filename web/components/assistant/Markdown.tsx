@@ -70,7 +70,9 @@ function renderInline(text: string): ReactNode[] {
 function CodeBlock({ code }: { code: string }) {
   return (
     <pre
-      className="my-1.5 overflow-auto rounded-lg bg-[var(--color-surface-dark)] p-3 text-[12px] leading-relaxed text-[var(--color-on-dark)]"
+      // P3-39: 主题感知代码块 —— 用 --code-bg/--code-fg 随主题翻转，
+      // 取代写死的暖褐 --color-surface-dark（深色 UI 里不翻转）。
+      className="my-1.5 overflow-auto rounded-lg border border-[var(--color-border)] bg-[var(--code-bg)] p-3 text-[12px] leading-relaxed text-[var(--code-fg)]"
       style={{ fontFamily: 'var(--font-mono)' }}
     >
       <code>{code}</code>

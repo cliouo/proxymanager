@@ -28,6 +28,18 @@ export function compileGoRegex(pattern: string): RegExp {
     for (const f of m[1]) if ('ism'.includes(f) && !flags.includes(f)) flags += f;
     body = body.slice(m[0].length);
   }
+  // P3-6: Go's RE2 (what mihomo actually loads) has no lookaround or
+  // backreferences, but JS RegExp accepts both — so a pattern can "preview
+  // fine" here yet make mihomo refuse to load the config. Reject those
+  // constructs up front so the preview mirrors RE2's stricter grammar. `(?=`
+  // `(?!` `(?<=` `(?<!` cover look-ahead/behind; `\1`..`\9` are backreferences.
+  // (Named groups `(?<name>` and non-capturing `(?:` are left untouched.)
+  if (/\(\?<?[=!]/.test(body)) {
+    throw new Error('RE2 (mihomo) 不支持环视 (lookahead/lookbehind)');
+  }
+  if (/\\[1-9]/.test(body)) {
+    throw new Error('RE2 (mihomo) 不支持反向引用 (backreference)');
+  }
   return new RegExp(body, flags);
 }
 

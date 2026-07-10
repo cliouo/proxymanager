@@ -8,24 +8,36 @@ import { useProfiles } from '@/components/profile/ProfileContext';
 import { ThemeToggle } from '@/components/theme/ThemeToggle';
 
 /** 账户级共享资源路由 —— 这些页不属于某个配置文件,所有配置文件共用。 */
-const SHARED_PREFIXES = ['/subscriptions', '/rule-sets', '/collections'];
+// P2-19: /collections 已并入订阅源页,该前缀不再对应任何路由 —— 移除死前缀。
+const SHARED_PREFIXES = ['/subscriptions', '/rule-sets'];
 
 /**
  * 作用域标签。页面注入自定义 topbar 时按原型自带:
- * 默认 = 青色当前配置文件名;`shared` = 紫色「账户共享」(订阅源 / 规则集等账户级资源页)。
+ * 默认 = 青色当前配置文件名;`shared` = 紫色「账户共享」(订阅源 / 规则集等账户级资源页);
+ * `neutral` = 中性灰「全账户」(不属于任何配置文件、也非共享资源的账户级视图)。
  */
-export function ScopePill({ shared }: { shared?: boolean }) {
+// P3-41: 去掉全站无 CSS 定义的孤儿类 tb-scope(纯 no-op className)。
+export function ScopePill({ shared, neutral }: { shared?: boolean; neutral?: boolean }) {
   const { activeProfile } = useProfiles();
+  // P2-19: 账户级视图(如操作历史 —— 审计日志按账户全量记录,后端 app/api/v1/history/route.ts
+  // 无配置文件过滤)应传 neutral,渲染中性徽标,避免误导为「当前配置文件」作用域。
+  if (neutral) {
+    return (
+      <span className="pill idle plain" title="账户级视图 · 不区分配置文件">
+        全账户
+      </span>
+    );
+  }
   if (shared) {
     return (
-      <span className="pill ai plain tb-scope" title="账户级共享资源 · 所有配置文件共用">
+      <span className="pill ai plain" title="账户级共享资源 · 所有配置文件共用">
         账户共享
       </span>
     );
   }
   if (!activeProfile) return null;
   return (
-    <span className="pill acc plain tb-scope" title="正在编辑的配置文件">
+    <span className="pill acc plain" title="正在编辑的配置文件">
       {activeProfile.name}
     </span>
   );
@@ -67,14 +79,15 @@ export function Topbar({ onMenu }: { onMenu: () => void }) {
       {chrome?.topbar ?? (
         <>
           <h1>{title}</h1>
+          {/* P3-41: 去孤儿类 tb-scope(无 CSS 定义) */}
           {shared ? (
-            <span className="pill ai plain tb-scope" title="账户级共享资源 · 所有配置文件共用">
+            <span className="pill ai plain" title="账户级共享资源 · 所有配置文件共用">
               账户共享
             </span>
           ) : (
             !managementOnly &&
             activeProfile && (
-              <span className="pill acc plain tb-scope" title="正在编辑的配置文件">
+              <span className="pill acc plain" title="正在编辑的配置文件">
                 {activeProfile.name}
               </span>
             )
