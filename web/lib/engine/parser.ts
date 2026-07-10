@@ -7,7 +7,11 @@ export interface ParsedBase {
   ruleProviders: string[];
 }
 
-const ANCHOR_PATTERN = /===\s*ANCHOR:\s*([\w-]+)\s*===/g;
+// Must match the renderer's ANCHOR_LINE_PATTERN exactly: an anchor is only
+// injectable when its `# === ANCHOR: name ===` comment occupies its own line.
+// A looser whole-text match (P3-11) would advertise anchors the renderer never
+// injects at → rules targeting them pass validation but silently never render.
+const ANCHOR_PATTERN = /^[ \t]*#\s*===\s*ANCHOR:\s*([\w-]+)\s*===[ \t]*$/gm;
 
 /**
  * Mihomo/Clash built-in policy keywords. A rule may target any of these

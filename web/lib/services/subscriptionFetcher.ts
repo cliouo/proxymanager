@@ -1,5 +1,6 @@
 import { parse, stringify } from 'yaml';
 import { ProblemDetailsError } from '@/lib/http/problem';
+import { readCapped } from '@/lib/net/safeFetch';
 import { applyOperators, type ClashProxy } from '@/lib/proxies/operators';
 import {
   looksLikeProxyUriList,
@@ -16,6 +17,8 @@ import type { Subscription, SubscriptionTraffic } from '@/schemas';
 
 const DEFAULT_UA = 'clash.meta/1.18.0';
 const FETCH_TIMEOUT_MS = 15_000;
+/** P2-6: hard cap on an upstream subscription body (a slow/huge source can't OOM or hang the render). */
+const MAX_SUBSCRIPTION_BODY_BYTES = 10 * 1024 * 1024;
 /**
  * Upper bound on how long we keep a stale cache entry around as a fallback
  * for stale-on-error. The Redis EX is set to `max(ttl_ms, STALE_TTL_MS)` so
@@ -343,15 +346,27 @@ async function fetchSubscriptionInternal(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-  let response: Response;
+  let text: string;
+  let traffic: SubscriptionTraffic | undefined;
   try {
-    response = await fetch(url, {
+    const response = await fetch(url, {
       headers: { 'User-Agent': userAgent, ...(options.customHeaders ?? {}) },
       redirect: 'follow',
       cache: 'no-store',
       signal: controller.signal,
     });
+    if (!response.ok) {
+      throw ProblemDetailsError.badRequest(`Upstream returned HTTP ${response.status}`);
+    }
+    traffic = parseTrafficHeader(response.headers.get('subscription-userinfo'));
+    // P2-6: the body read must stay INSIDE the same timeout window (don't clear
+    // the timer until it's consumed — a slow-drip upstream could otherwise hang
+    // the render past the platform function limit) and is size-capped so a huge
+    // upstream can't OOM the worker. Reuse safeFetch's capped reader.
+    const { buf } = await readCapped(response, MAX_SUBSCRIPTION_BODY_BYTES);
+    text = new TextDecoder().decode(buf);
   } catch (err) {
+    if (err instanceof ProblemDetailsError) throw err;
     if (err instanceof DOMException && err.name === 'AbortError') {
       throw ProblemDetailsError.badRequest(`Upstream fetch timed out after ${timeoutMs}ms`);
     }
@@ -362,12 +377,6 @@ async function fetchSubscriptionInternal(
     clearTimeout(timer);
   }
 
-  if (!response.ok) {
-    throw ProblemDetailsError.badRequest(`Upstream returned HTTP ${response.status}`);
-  }
-
-  const text = await response.text();
-  const traffic = parseTrafficHeader(response.headers.get('subscription-userinfo'));
   const { proxies, proxyCount } = normaliseToClashProxies(text);
   return rawFromProxies(proxies, { traffic, proxyCount });
 }
@@ -451,11 +460,22 @@ function normaliseToClashProxies(text: string): { proxies: unknown[]; proxyCount
     return { proxies: fromYaml, proxyCount: fromYaml.length };
   }
 
+  // P3-12: the body may itself be base64 of a FULL Clash YAML (`proxies:`
+  // block), not just a URI list — decode once and reuse it for both the YAML
+  // and URI-list paths. (A base64 blob parses as a YAML scalar string, so the
+  // plain-YAML check above never trips on it.)
+  const decoded = tryBase64Decode(cleaned);
+  if (decoded) {
+    const fromDecodedYaml = tryExtractProxiesFromYaml(decoded);
+    if (fromDecodedYaml) {
+      return { proxies: fromDecodedYaml, proxyCount: fromDecodedYaml.length };
+    }
+  }
+
   // 2) Line-delimited proxy URIs — optionally wrapped in base64
   let uriText = cleaned;
-  if (!looksLikeProxyUriList(uriText)) {
-    const decoded = tryBase64Decode(uriText);
-    if (decoded && looksLikeProxyUriList(decoded)) uriText = decoded;
+  if (!looksLikeProxyUriList(uriText) && decoded && looksLikeProxyUriList(decoded)) {
+    uriText = decoded;
   }
   if (looksLikeProxyUriList(uriText)) {
     const { proxies, errors } = parseProxyUriList(uriText);

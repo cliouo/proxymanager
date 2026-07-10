@@ -36,7 +36,15 @@ function toProblemResponse(err: unknown): Response {
   }
 
   console.error('[unhandled-route-error]', err);
-  const detail = err instanceof Error ? err.message : undefined;
+  // P3-15: don't leak internal error text (which can carry Redis hostnames /
+  // stack details) to clients in production. The full error is always logged
+  // above; the response detail is only echoed outside production.
+  const detail =
+    process.env.NODE_ENV === 'production'
+      ? undefined
+      : err instanceof Error
+        ? err.message
+        : undefined;
   const problem: ProblemDetails = {
     type: `${PROBLEM_BASE_URL}/internal`,
     title: 'Internal Server Error',

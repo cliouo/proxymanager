@@ -1,16 +1,21 @@
-import { requireSubToken } from '@/lib/auth';
 import { renderProfileConfig } from '@/lib/engine/renderCache';
 import { attachmentDisposition } from '@/lib/http/contentDisposition';
 import { etagMatches } from '@/lib/http/etag';
 import { withProblemDetails } from '@/lib/http/handler';
+import { guardSubToken } from '@/lib/http/subGuard';
 
 export const dynamic = 'force-dynamic';
+// P3-18: a cold render (8 concurrent upstream fetches + full YAML build) can run
+// long; give it an explicit ceiling instead of the platform's 10s default.
+export const maxDuration = 60;
 
 type Ctx = RouteContext<'/api/sub/[token]/[profile]'>;
 
 export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
   const { token, profile } = await ctx.params;
-  requireSubToken(token);
+  // Accept the master token, a token derived for THIS profile, or a rotated
+  // one; rate-limit failed attempts by IP (P1-2/P1-3).
+  await guardSubToken(request, token, profile);
 
   // Any profile is distributable by name — renderProfileConfig binds its
   // source and 404s an unknown name (see lib/engine/renderCache).

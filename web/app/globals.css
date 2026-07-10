@@ -45,6 +45,15 @@
   --cm-punc: #66707c;
   --scrim: rgba(22, 30, 40, 0.3);
 
+  /* P3-43: --faint（对比 ~2.4–3:1）仅用于装饰性元素（分隔线 / 占位圆点 / 大号序号）；
+     承载信息的微型文字（≤12px 说明 / 眉标）请用 --muted 以过 WCAG AA。 */
+
+  /* P3-40: overlay 阴影 token —— 浅色用中性偏冷的柔和投影，深色见下方 dark 覆盖。
+     取代散落在 popover / drawer / modal 里的硬编码 rgba(0,0,0,.35–.5)。 */
+  --shadow-pop: 0 10px 30px rgba(22, 30, 40, 0.12);
+  --shadow-drawer: -18px 0 48px rgba(22, 30, 40, 0.16);
+  --shadow-modal: 0 24px 70px rgba(22, 30, 40, 0.22);
+
   /* ---------- 结构性 token（与主题无关） ---------- */
   --font-sans:
     -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', var(--font-noto-sc),
@@ -61,6 +70,13 @@
   --motion-fast: 140ms;
   --motion-med: 220ms;
   --motion-slow: 360ms;
+
+  /* P3-44: z-index 层级 token —— 低→高一条清晰栈，取代散落的魔数
+     （原分发抽屉 90 < 移动侧栏 110 的层叠 bug 在此归位）。 */
+  --z-sidebar: 110;
+  --z-drawer: 120;
+  --z-modal: 150;
+  --z-toast: 200;
 
   /* ---------- Legacy「Heritage Atelier」别名 → v2 等价值 ----------
      过渡期让仍引用旧 token 名的内容页自动套上 v2 配色（随主题翻转）；
@@ -86,8 +102,8 @@
   --color-success: var(--ok);
   --color-border-strong: var(--border-2);
   --color-border-active: var(--accent);
-  --color-surface-dark: #1f1e1b;
-  --color-surface-dark-soft: #2a2823;
+  /* P3-41: --color-surface-dark / -soft 的唯一消费者(YamlEditor / InlineUrl)已随死组件删除,
+     余下为孤儿 token 定义 —— 移除。其余 legacy 别名仍被 cards / Markdown / 场景页等引用,保留。 */
   --color-dot-on: var(--ok);
   --color-dot-warn: var(--warn);
   --color-dot-off: var(--faint);
@@ -130,6 +146,11 @@
   --cm-com: #525a66;
   --cm-punc: #6b7480;
   --scrim: rgba(5, 7, 9, 0.5);
+
+  /* P3-40: 深色 overlay 阴影 —— 更重的纯黑投影撑起层次。 */
+  --shadow-pop: 0 8px 32px rgba(0, 0, 0, 0.45);
+  --shadow-drawer: -24px 0 64px rgba(0, 0, 0, 0.45);
+  --shadow-modal: 0 24px 80px rgba(0, 0, 0, 0.5);
 }
 
 /* ---------- Tailwind v4 token 映射 ----------
@@ -210,6 +231,15 @@ textarea {
   font: inherit;
   color: inherit;
 }
+
+/* P3-38: 全局键盘可见焦点环。此前唯一的焦点样式只在 .input 上（且用 :focus），
+   键盘 Tab 到按钮 / 链接 / 芯片时不可见。用 :focus-visible 只在键盘态显示，
+   accent 描边随主题翻转；:focus（含鼠标点击）不受影响。 */
+:focus-visible {
+  /* outline 自动跟随元素自身圆角（现代浏览器），不写 border-radius 以免压掉胶囊按钮的圆角 */
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 code,
 pre,
 kbd,
@@ -226,6 +256,17 @@ kbd,
 /* ---------- 全局滚动条预留位 ---------- */
 html {
   scrollbar-gutter: stable;
+}
+/* P3-44(c): 自定义滚动条样式目前仅作用于 .app 作用域内
+   （见 v2-components.css `.app *::-webkit-scrollbar`），此处不改。 */
+
+/* P3-39: Shiki 双主题。ShikiBlock 以 { light, dark } 双主题渲染，
+   浅色内联为默认色，深色值写进 --shiki-dark；此处按 data-theme 翻到深色。
+   容器底色走主题感知的 --code-bg（见 ShikiBlock），故这里只翻文字色。 */
+:root[data-theme='dark'] .shiki,
+:root[data-theme='dark'] .shiki span {
+  color: var(--shiki-dark) !important;
+  background-color: transparent !important;
 }
 
 /* ============================================================

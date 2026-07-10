@@ -59,6 +59,9 @@ interface ModelTurn {
   reasoning: string;
   toolCalls: ToolCall[];
   streamed: boolean;
+  // P3-24: set when the user aborted mid-stream; the partial `content` above is
+  // still returned so the caller can persist it (rather than discarding it).
+  aborted: boolean;
 }
 
 /** One streamed chat completion straight to the model API. */
@@ -101,54 +104,66 @@ async function streamModelTurn(
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const parts = buffer.split('\n\n');
-    buffer = parts.pop() ?? '';
-    for (const part of parts) {
-      const line = part.trim();
-      if (!line.startsWith('data:')) continue;
-      const payload = line.slice(5).trim();
-      if (!payload || payload === '[DONE]') continue;
-      let chunk: { choices?: Array<{ delta?: Record<string, unknown> }> };
-      try {
-        chunk = JSON.parse(payload);
-      } catch {
-        continue;
-      }
-      const delta = chunk.choices?.[0]?.delta;
-      if (!delta) continue;
-      if (typeof delta.content === 'string' && delta.content) {
-        content += delta.content;
-        streamed = true;
-        onDelta(delta.content);
-      }
-      if (typeof delta.reasoning_content === 'string' && delta.reasoning_content) {
-        reasoning += delta.reasoning_content;
-      }
-      if (Array.isArray(delta.tool_calls)) {
-        for (const tc of delta.tool_calls as Array<{
-          index?: number;
-          id?: string;
-          function?: { name?: string; arguments?: string };
-        }>) {
-          const idx = tc.index ?? 0;
-          const cur = byIndex.get(idx) ?? { id: '', name: '', args: '' };
-          if (tc.id) cur.id = tc.id;
-          if (tc.function?.name) cur.name = tc.function.name;
-          if (tc.function?.arguments) cur.args += tc.function.arguments;
-          byIndex.set(idx, cur);
+  let aborted = false;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split('\n\n');
+      buffer = parts.pop() ?? '';
+      for (const part of parts) {
+        const line = part.trim();
+        if (!line.startsWith('data:')) continue;
+        const payload = line.slice(5).trim();
+        if (!payload || payload === '[DONE]') continue;
+        let chunk: { choices?: Array<{ delta?: Record<string, unknown> }> };
+        try {
+          chunk = JSON.parse(payload);
+        } catch {
+          continue;
+        }
+        const delta = chunk.choices?.[0]?.delta;
+        if (!delta) continue;
+        if (typeof delta.content === 'string' && delta.content) {
+          content += delta.content;
+          streamed = true;
+          onDelta(delta.content);
+        }
+        if (typeof delta.reasoning_content === 'string' && delta.reasoning_content) {
+          reasoning += delta.reasoning_content;
+        }
+        if (Array.isArray(delta.tool_calls)) {
+          for (const tc of delta.tool_calls as Array<{
+            index?: number;
+            id?: string;
+            function?: { name?: string; arguments?: string };
+          }>) {
+            const idx = tc.index ?? 0;
+            const cur = byIndex.get(idx) ?? { id: '', name: '', args: '' };
+            if (tc.id) cur.id = tc.id;
+            if (tc.function?.name) cur.name = tc.function.name;
+            if (tc.function?.arguments) cur.args += tc.function.arguments;
+            byIndex.set(idx, cur);
+          }
         }
       }
+    }
+  } catch (err) {
+    // P3-24: a mid-stream abort should preserve whatever we streamed so far (the
+    // caller records it), not throw the partial answer away. Re-throw anything
+    // that isn't an abort.
+    if (signal?.aborted || (err instanceof DOMException && err.name === 'AbortError')) {
+      aborted = true;
+    } else {
+      throw err;
     }
   }
 
   const toolCalls: ToolCall[] = [...byIndex.entries()]
     .sort((a, b) => a[0] - b[0])
     .map(([, c]) => ({ id: c.id, type: 'function', function: { name: c.name, arguments: c.args } }));
-  return { content, reasoning, toolCalls, streamed };
+  return { content, reasoning, toolCalls, streamed, aborted };
 }
 
 async function dispatch(name: string, rawInput: unknown, signal?: AbortSignal): Promise<ToolDispatchResult> {
@@ -167,11 +182,31 @@ async function dispatch(name: string, rawInput: unknown, signal?: AbortSignal): 
 }
 
 /**
+ * P3-24: record an interruption in the transcript (and echo a marker to the UI),
+ * then RETURN the convo so the caller persists it. Any half-formed tool_calls are
+ * dropped (they were never executed and would dangle without tool results). This
+ * keeps the stored conversation consistent with what the model sees next turn —
+ * previously an abort threw, so the UI showed the aborted content but the model
+ * "forgot" it.
+ */
+function finishInterrupted(
+  convo: ChatMessage[],
+  partial: string,
+  onEvent: (e: AgentEvent) => void,
+): ChatMessage[] {
+  const note = partial ? '\n\n_（已中断）_' : '_（已中断）_';
+  convo.push({ role: 'assistant', content: partial + note });
+  onEvent({ type: 'assistant_delta', content: note });
+  return convo;
+}
+
+/**
  * Run one user turn to completion (possibly many model round-trips + tool
- * calls). Streams events out via `onEvent`. Returns the FULL updated transcript
- * (for persistence) only on success — on error/abort it throws and the caller
- * keeps its prior transcript, so a failed/interrupted turn isn't persisted
- * (mirrors the old server semantics; the next message resends cleanly).
+ * calls). Streams events out via `onEvent`. On success it returns the FULL
+ * updated transcript for persistence. On a real error it throws and the caller
+ * keeps its prior transcript, so a failed turn isn't persisted. On user abort it
+ * instead returns the transcript WITH the partial answer + an interrupted marker
+ * (see finishInterrupted), so the persisted convo == what the model sees next.
  */
 export async function runAgentTurn(opts: {
   priorMessages: ChatMessage[];
@@ -186,16 +221,29 @@ export async function runAgentTurn(opts: {
   const convo: ChatMessage[] = [...opts.priorMessages, { role: 'user', content: opts.userMessage }];
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
-    if (opts.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+    // P3-24: interrupted between round-trips — persist a marker turn and return.
+    if (opts.signal?.aborted) return finishInterrupted(convo, '', opts.onEvent);
 
-    const turn = await streamModelTurn(
-      cfg,
-      systemPrompt,
-      tools,
-      convo,
-      (chunk) => opts.onEvent({ type: 'assistant_delta', content: chunk }),
-      opts.signal,
-    );
+    let turn: ModelTurn;
+    try {
+      turn = await streamModelTurn(
+        cfg,
+        systemPrompt,
+        tools,
+        convo,
+        (chunk) => opts.onEvent({ type: 'assistant_delta', content: chunk }),
+        opts.signal,
+      );
+    } catch (err) {
+      // P3-24: abort during the fetch, before any stream body — no partial text.
+      if (opts.signal?.aborted || (err instanceof DOMException && err.name === 'AbortError')) {
+        return finishInterrupted(convo, '', opts.onEvent);
+      }
+      throw err;
+    }
+
+    // P3-24: abort mid-stream — keep the partial text that was already streamed.
+    if (turn.aborted) return finishInterrupted(convo, turn.content, opts.onEvent);
 
     convo.push({
       role: 'assistant',

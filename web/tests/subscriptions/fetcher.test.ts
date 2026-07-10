@@ -67,6 +67,23 @@ describe('normaliseToClashProviderYaml', () => {
     expect(result.yaml).toContain('US-01');
   });
 
+  // P3-12: some airports base64-wrap a FULL Clash YAML config (not a URI list).
+  it('decodes a base64-wrapped full Clash YAML config', () => {
+    const wrapped = Buffer.from(SAMPLE_CLASH_YAML, 'utf-8').toString('base64');
+    const result = normaliseToClashProviderYaml(wrapped);
+    expect(result.proxyCount).toBe(2);
+    expect(result.yaml).toContain('HK-01');
+    expect(result.yaml).toContain('JP-02');
+    expect(result.yaml).not.toContain('mixed-port');
+  });
+
+  it('decodes a base64-wrapped proxies-only document', () => {
+    const wrapped = Buffer.from(SAMPLE_PROXIES_ONLY, 'utf-8').toString('base64');
+    const result = normaliseToClashProviderYaml(wrapped);
+    expect(result.proxyCount).toBe(1);
+    expect(result.yaml).toContain('US-01');
+  });
+
   it('throws ProblemDetailsError on invalid yaml', () => {
     expect(() => normaliseToClashProviderYaml('proxies:\n  - {{{')).toThrow(ProblemDetailsError);
   });

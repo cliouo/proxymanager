@@ -4,7 +4,18 @@ import { ProxyGroupSchema, type ProxyGroup } from '@/schemas';
 
 function normalise(raw: unknown): ProxyGroup | null {
   const parsed = ProxyGroupSchema.safeParse(raw);
-  return parsed.success ? parsed.data : null;
+  if (!parsed.success) {
+    // P3-10: don't silently drop a corrupt record — an invisible disappearing
+    // proxy-group is far harder to diagnose than a log line.
+    const name = (raw as { name?: unknown })?.name;
+    console.warn(
+      `[proxyGroupsRepo] skipping unparseable proxy-group${
+        typeof name === 'string' ? ` "${name}"` : ''
+      }: ${parsed.error.issues.map((i) => i.message).join('; ')}`,
+    );
+    return null;
+  }
+  return parsed.data;
 }
 
 /** Sort by `rank` ascending so render order matches storage. Ties broken by name for determinism. */

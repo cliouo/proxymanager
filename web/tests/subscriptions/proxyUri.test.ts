@@ -5,6 +5,8 @@ import {
   tryBase64Decode,
 } from '@/lib/proxies/uriToClash';
 import { normaliseToClashProviderYaml } from '@/lib/services/subscriptionFetcher';
+import { matchFilter } from '@/lib/proxies/filterMatch';
+import { parse as parseYaml } from 'yaml';
 
 describe('looksLikeProxyUriList', () => {
   it('matches a single ss:// line', () => {
@@ -567,5 +569,424 @@ describe('normaliseToClashProviderYaml — URI fallback', () => {
     expect(result.proxyCount).toBe(2);
     expect(result.yaml).toContain('A');
     expect(result.yaml).toContain('B');
+  });
+});
+
+// Grounded in mihomo source (Meta branch):
+//   common/convert/converter.go — VLESS `encryption` param
+//   common/convert/v.go handleVShareLink — transport switch (xhttp/http/h2/ws/grpc)
+describe('vless:// transport + VLESS Encryption (mihomo mapping)', () => {
+  // Non-secret placeholder UUID; no real credentials appear in these tests.
+  const UUID = '00000000-0000-0000-0000-000000000000';
+
+  it('xhttp: basic parse — network + full xhttp-opts (path/host/mode)', () => {
+    const uri =
+      `vless://${UUID}@example.com:443?encryption=none&security=tls&sni=example.com` +
+      `&type=xhttp&path=%2Fapi&host=cdn.example.com&mode=auto#XH`;
+    const { proxies, errors } = parseProxyUriList(uri);
+    expect(errors).toHaveLength(0);
+    expect(proxies[0]).toMatchObject({
+      name: 'XH',
+      type: 'vless',
+      server: 'example.com',
+      port: 443,
+      network: 'xhttp',
+      'xhttp-opts': { path: '/api', host: 'cdn.example.com', mode: 'auto' },
+    });
+  });
+
+  it('xhttp: mode=packet-up + custom path + host + alpn=h2 + flow=xtls-rprx-vision together', () => {
+    const uri =
+      `vless://${UUID}@a.example:443?encryption=none&security=tls&sni=a.example` +
+      `&alpn=h2&flow=xtls-rprx-vision&type=xhttp&path=%2Fapi%2Fv3%2Fsync&host=a.example&mode=packet-up#PU`;
+    const { proxies, errors } = parseProxyUriList(uri);
+    expect(errors).toHaveLength(0);
+    expect(proxies[0]).toMatchObject({
+      type: 'vless',
+      flow: 'xtls-rprx-vision',
+      tls: true,
+      servername: 'a.example',
+      alpn: ['h2'],
+      network: 'xhttp',
+      'xhttp-opts': { path: '/api/v3/sync', host: 'a.example', mode: 'packet-up' },
+    });
+  });
+
+  it('encryption: short value passed through verbatim', () => {
+    const enc = 'mlkem768x25519plus.native';
+    const uri = `vless://${UUID}@h.example:443?encryption=${encodeURIComponent(enc)}&type=tcp#E`;
+    const { proxies, errors } = parseProxyUriList(uri);
+    expect(errors).toHaveLength(0);
+    expect(proxies[0].encryption).toBe(enc);
+  });
+
+  it('encryption: long (>1600 char) synthetic value survives char-for-char', () => {
+    // Synthetic, NON-SECRET. Includes + / = . to exercise the percent-encoding
+    // round-trip through URLSearchParams (which decodes exactly once). Never a
+    // real key: this is a repeated literal, not key material.
+    const SYNTH = 'mlkem768x25519plus.native/xorpub.' + 'AbC+/9zZ.1rtt='.repeat(120);
+    expect(SYNTH.length).toBeGreaterThan(1600);
+    const uri =
+      `vless://${UUID}@h.example:443?encryption=${encodeURIComponent(SYNTH)}` +
+      `&type=xhttp&path=%2Fx&mode=packet-up#L`;
+    const { proxies, errors } = parseProxyUriList(uri);
+    expect(errors).toHaveLength(0);
+    expect(proxies[0].encryption).toBe(SYNTH);
+    expect(proxies[0].encryption).toHaveLength(SYNTH.length);
+  });
+
+  it('xhttp: percent-encoded path is decoded exactly once (no double-decode)', () => {
+    // %2F → "/" once.
+    const { proxies } = parseProxyUriList(
+      `vless://${UUID}@h.example:443?type=xhttp&path=%2Fapi%2Fv3&mode=auto#P1`,
+    );
+    expect((proxies[0]['xhttp-opts'] as Record<string, unknown>).path).toBe('/api/v3');
+    // %252F must stop at "%2F" — a second decode (bug) would yield "/".
+    const { proxies: p2 } = parseProxyUriList(
+      `vless://${UUID}@h.example:443?type=xhttp&path=%252Fdbl#P2`,
+    );
+    expect((p2[0]['xhttp-opts'] as Record<string, unknown>).path).toBe('%2Fdbl');
+  });
+
+  it('encryption=none is emitted verbatim (mihomo keeps any non-empty value as-is)', () => {
+    const uri = `vless://${UUID}@h.example:443?encryption=none&security=tls&sni=h.example&type=tcp#N`;
+    const { proxies, errors } = parseProxyUriList(uri);
+    expect(errors).toHaveLength(0);
+    expect(proxies[0].encryption).toBe('none');
+  });
+
+  it('encryption absent or empty is omitted (mihomo writes only when != "")', () => {
+    const { proxies } = parseProxyUriList(
+      `vless://${UUID}@h.example:443?security=tls&sni=h.example&type=tcp#NoEnc`,
+    );
+    expect('encryption' in proxies[0]).toBe(false);
+    const { proxies: pe } = parseProxyUriList(
+      `vless://${UUID}@h.example:443?encryption=&type=tcp#Empty`,
+    );
+    expect('encryption' in pe[0]).toBe(false);
+  });
+
+  it('type=http remaps to network h2 with h2-opts (mihomo v.go)', () => {
+    const uri =
+      `vless://${UUID}@h.example:443?encryption=none&security=tls&type=http&path=%2Fh2&host=cdn.example#H2R`;
+    const { proxies, errors } = parseProxyUriList(uri);
+    expect(errors).toHaveLength(0);
+    expect(proxies[0]).toMatchObject({
+      network: 'h2',
+      'h2-opts': { path: '/h2', host: ['cdn.example'] },
+    });
+    expect(proxies[0]['http-opts']).toBeUndefined();
+  });
+
+  it('type=tcp + headerType=http remaps to network http with http-opts', () => {
+    const uri =
+      `vless://${UUID}@h.example:443?encryption=none&type=tcp&headerType=http&path=%2Fp&host=cdn.example#HTTP`;
+    const { proxies, errors } = parseProxyUriList(uri);
+    expect(errors).toHaveLength(0);
+    expect(proxies[0]).toMatchObject({
+      network: 'http',
+      'http-opts': { path: ['/p'], headers: { Host: ['cdn.example'] } },
+    });
+  });
+
+  it('ws/grpc/h2/tcp transports remain unchanged', () => {
+    const ws = parseProxyUriList(
+      `vless://${UUID}@h.example:443?encryption=none&type=ws&path=%2Fws&host=cdn#W`,
+    ).proxies[0];
+    expect(ws).toMatchObject({
+      network: 'ws',
+      'ws-opts': { path: '/ws', headers: { Host: 'cdn' } },
+    });
+
+    const grpc = parseProxyUriList(
+      `vless://${UUID}@h.example:443?encryption=none&type=grpc&serviceName=gs#G`,
+    ).proxies[0];
+    expect(grpc).toMatchObject({ network: 'grpc', 'grpc-opts': { 'grpc-service-name': 'gs' } });
+
+    const h2 = parseProxyUriList(
+      `vless://${UUID}@h.example:443?encryption=none&type=h2&path=%2Fh&host=cdn#H`,
+    ).proxies[0];
+    expect(h2).toMatchObject({ network: 'h2', 'h2-opts': { path: '/h', host: ['cdn'] } });
+
+    const tcp = parseProxyUriList(`vless://${UUID}@h.example:443?encryption=none&type=tcp#T`)
+      .proxies[0];
+    expect(tcp.network).toBe('tcp');
+    expect(tcp['xhttp-opts']).toBeUndefined();
+  });
+
+  it('full delivery chain: parse → provider YAML → re-parse keeps encryption + xhttp-opts', () => {
+    const SYNTH = 'mlkem768x25519plus.native/xorpub.' + 'Zz9+/8yY.0rtt='.repeat(120);
+    expect(SYNTH.length).toBeGreaterThan(1600);
+    const uri =
+      `vless://${UUID}@edge.example:443?encryption=${encodeURIComponent(SYNTH)}` +
+      `&security=tls&sni=edge.example&type=xhttp&path=%2Fapi%2Fv3%2Fsync&host=edge.example&mode=packet-up#E2E`;
+    const { yaml, proxyCount } = normaliseToClashProviderYaml(uri);
+    expect(proxyCount).toBe(1);
+    const parsed = parseYaml(yaml) as { proxies: Record<string, unknown>[] };
+    const p = parsed.proxies[0];
+    expect(p.encryption).toBe(SYNTH);
+    expect(p.network).toBe('xhttp');
+    expect(p['xhttp-opts']).toEqual({
+      path: '/api/v3/sync',
+      host: 'edge.example',
+      mode: 'packet-up',
+    });
+  });
+
+  it('packet encoding: absent → xudp:true; packet → packet-addr; none → neither', () => {
+    const def = parseProxyUriList(`vless://${UUID}@h.example:443?encryption=none&type=tcp#PE0`)
+      .proxies[0];
+    expect(def.xudp).toBe(true);
+    expect(def['packet-addr']).toBeUndefined();
+
+    const packet = parseProxyUriList(
+      `vless://${UUID}@h.example:443?encryption=none&type=tcp&packetEncoding=packet#PE1`,
+    ).proxies[0];
+    expect(packet['packet-addr']).toBe(true);
+    expect(packet.xudp).toBeUndefined();
+
+    const none = parseProxyUriList(
+      `vless://${UUID}@h.example:443?encryption=none&type=tcp&packetEncoding=none#PE2`,
+    ).proxies[0];
+    expect(none.xudp).toBeUndefined();
+    expect(none['packet-addr']).toBeUndefined();
+  });
+
+  it('flow is lowercased (mihomo strings.ToLower)', () => {
+    const p = parseProxyUriList(
+      `vless://${UUID}@h.example:443?encryption=none&flow=XTLS-RPRX-Vision&type=tcp#FL`,
+    ).proxies[0];
+    expect(p.flow).toBe('xtls-rprx-vision');
+  });
+
+  it('xhttp extra JSON maps xmux → reuse-settings and scalar fields', () => {
+    const extra = {
+      xPaddingBytes: '100-1000',
+      scMaxEachPostBytes: 1000000,
+      xmux: { maxConnections: 4, maxConcurrency: '16', hKeepAlivePeriod: 30 },
+    };
+    const uri =
+      `vless://${UUID}@h.example:443?encryption=none&type=xhttp&mode=auto&host=h.example` +
+      `&extra=${encodeURIComponent(JSON.stringify(extra))}#XE`;
+    const { proxies, errors } = parseProxyUriList(uri);
+    expect(errors).toHaveLength(0);
+    expect(proxies[0]['xhttp-opts']).toMatchObject({
+      mode: 'auto',
+      host: 'h.example',
+      'x-padding-bytes': '100-1000',
+      'sc-max-each-post-bytes': 1000000,
+      'reuse-settings': {
+        'max-connections': '4',
+        'max-concurrency': '16',
+        'h-keep-alive-period': 30,
+      },
+    });
+  });
+
+  it('xhttp extra JSON maps downloadSettings → download-settings (reality)', () => {
+    const extra = {
+      downloadSettings: {
+        address: 'dl.example',
+        port: 8443,
+        security: 'reality',
+        realitySettings: { publicKey: 'PBK', shortId: 'ab12' },
+        xhttpSettings: { path: '/dl', host: 'dl.example' },
+      },
+    };
+    const uri =
+      `vless://${UUID}@h.example:443?encryption=none&type=xhttp&mode=packet-up` +
+      `&extra=${encodeURIComponent(JSON.stringify(extra))}#XD`;
+    const { proxies, errors } = parseProxyUriList(uri);
+    expect(errors).toHaveLength(0);
+    expect((proxies[0]['xhttp-opts'] as Record<string, unknown>)['download-settings']).toEqual({
+      server: 'dl.example',
+      port: 8443,
+      tls: true,
+      'reality-opts': { 'public-key': 'PBK', 'short-id': 'ab12' },
+      path: '/dl',
+      host: 'dl.example',
+    });
+  });
+
+  it('xhttp extra: malformed JSON is ignored, node still parses', () => {
+    const uri = `vless://${UUID}@h.example:443?encryption=none&type=xhttp&mode=auto&extra=%7Bnot-json#XM`;
+    const { proxies, errors } = parseProxyUriList(uri);
+    expect(errors).toHaveLength(0);
+    expect(proxies[0].network).toBe('xhttp');
+    expect((proxies[0]['xhttp-opts'] as Record<string, unknown>).mode).toBe('auto');
+    expect(
+      (proxies[0]['xhttp-opts'] as Record<string, unknown>)['reuse-settings'],
+    ).toBeUndefined();
+  });
+});
+
+// P3-1: hysteria2 userinfo/'@' handling — optional auth + last-'@' split.
+describe('P3-1 hysteria2:// optional userinfo + @ in password', () => {
+  it('accepts a no-auth link (hysteria2://host:port, no @)', () => {
+    const uri = 'hysteria2://h.example:8443?sni=h.example#NoAuth';
+    const { proxies, errors } = parseProxyUriList(uri);
+    expect(errors).toHaveLength(0);
+    expect(proxies[0]).toMatchObject({
+      name: 'NoAuth',
+      type: 'hysteria2',
+      server: 'h.example',
+      port: 8443,
+      password: '',
+      sni: 'h.example',
+    });
+  });
+
+  it('splits on the LAST @ so a password containing @ round-trips', () => {
+    const uri = 'hy2://pa@ss@h.example:8443?sni=h.example#AtPw';
+    const { proxies, errors } = parseProxyUriList(uri);
+    expect(errors).toHaveLength(0);
+    expect(proxies[0]).toMatchObject({
+      type: 'hysteria2',
+      server: 'h.example',
+      port: 8443,
+      password: 'pa@ss',
+      sni: 'h.example',
+    });
+  });
+});
+
+// P3-2: SS SIP002 percent-encoded base64 userinfo.
+describe('P3-2 ss:// SIP002 percent-encoded base64 userinfo', () => {
+  it('decodes a URL-encoded base64 method:password userinfo', () => {
+    // base64('aes-256-gcm:pass') ends with '==' → percent-encoded to %3D%3D,
+    // which a direct base64 decode rejects.
+    const b64 = Buffer.from('aes-256-gcm:pass', 'utf-8').toString('base64');
+    expect(b64).toContain('=');
+    const uri = `ss://${encodeURIComponent(b64)}@h.example:8388#PctB64`;
+    const { proxies, errors } = parseProxyUriList(uri);
+    expect(errors).toHaveLength(0);
+    expect(proxies[0]).toMatchObject({
+      type: 'ss',
+      server: 'h.example',
+      port: 8388,
+      cipher: 'aes-256-gcm',
+      password: 'pass',
+    });
+  });
+});
+
+// P3-3: vmess boolean "tls": true (not the string "tls").
+describe('P3-3 vmess:// boolean tls field', () => {
+  it('treats "tls": true (boolean) as TLS enabled', () => {
+    const payload = {
+      v: '2',
+      ps: 'BoolTLS',
+      add: 'jp.example.com',
+      port: '443',
+      id: '00000000-0000-0000-0000-000000000000',
+      aid: '0',
+      net: 'tcp',
+      tls: true, // boolean, not the string "tls"
+      sni: 'sni.example.com',
+    };
+    const uri = `vmess://${Buffer.from(JSON.stringify(payload), 'utf-8').toString('base64')}`;
+    const { proxies, errors } = parseProxyUriList(uri);
+    expect(errors).toHaveLength(0);
+    expect(proxies[0]).toMatchObject({
+      type: 'vmess',
+      tls: true,
+      servername: 'sni.example.com',
+    });
+  });
+});
+
+// P3-4: anytls / wireguard typed query passthrough (booleans + numbers).
+describe('P3-4 typed query passthrough (anytls + wireguard)', () => {
+  it('anytls://: ?tfo=true becomes a boolean, not the string "true"', () => {
+    const uri = 'anytls://pwd@h.example:8443?sni=h.example&tfo=true#AT-tfo';
+    const { proxies, errors } = parseProxyUriList(uri);
+    expect(errors).toHaveLength(0);
+    expect(proxies[0].tfo).toBe(true);
+  });
+
+  it('wireguard://: booleans/numbers coerced; unknown keys stay strings', () => {
+    const priv = encodeURIComponent('aP+xQzG/Tz9+xQzG/Tz9+xQzG/Tz9+xQzG/Tz9=');
+    const uri =
+      `wireguard://${priv}@wg.example:51820` +
+      `?publickey=PUBKEY&remote-dns-resolve=true&persistent-keepalive=25&label=edge#WG`;
+    const { proxies, errors } = parseProxyUriList(uri);
+    expect(errors).toHaveLength(0);
+    expect(proxies[0]['remote-dns-resolve']).toBe(true);
+    expect(proxies[0]['persistent-keepalive']).toBe(25);
+    // Genuinely-unknown key is left as a raw string (no invented mapping).
+    expect(proxies[0].label).toBe('edge');
+  });
+});
+
+// P3-5: vmess httpupgrade network + ws early-data (?ed=).
+describe('P3-5 vmess:// httpupgrade + ws early-data', () => {
+  const base = {
+    v: '2',
+    add: 'jp.example.com',
+    port: '443',
+    id: '00000000-0000-0000-0000-000000000000',
+    aid: '0',
+  };
+
+  it('maps net=httpupgrade to ws + v2ray-http-upgrade flag', () => {
+    const payload = { ...base, ps: 'HU', net: 'httpupgrade', path: '/up', host: 'cdn.example.com' };
+    const uri = `vmess://${Buffer.from(JSON.stringify(payload), 'utf-8').toString('base64')}`;
+    const { proxies, errors } = parseProxyUriList(uri);
+    expect(errors).toHaveLength(0);
+    expect(proxies[0]).toMatchObject({
+      type: 'vmess',
+      network: 'ws',
+      'ws-opts': {
+        path: '/up',
+        'v2ray-http-upgrade': true,
+        headers: { Host: 'cdn.example.com' },
+      },
+    });
+  });
+
+  it('lifts ws ?ed=N out of the path into max-early-data', () => {
+    const payload = { ...base, ps: 'ED', net: 'ws', path: '/ws?ed=2048', host: 'cdn.example.com' };
+    const uri = `vmess://${Buffer.from(JSON.stringify(payload), 'utf-8').toString('base64')}`;
+    const { proxies, errors } = parseProxyUriList(uri);
+    expect(errors).toHaveLength(0);
+    expect(proxies[0]).toMatchObject({
+      network: 'ws',
+      'ws-opts': {
+        path: '/ws',
+        'max-early-data': 2048,
+        'early-data-header-name': 'Sec-WebSocket-Protocol',
+        headers: { Host: 'cdn.example.com' },
+      },
+    });
+  });
+});
+
+// P3-6: matchFilter must reject RE2-incompatible constructs (lookaround /
+// backreferences) that JS RegExp accepts, so the preview matches mihomo.
+describe('P3-6 matchFilter RE2 compatibility', () => {
+  const nodes = ['🇺🇸 US-01', '🇭🇰 HK-01', 'Australia-1'];
+
+  it('rejects lookahead (?=…)', () => {
+    const res = matchFilter(nodes, 'US(?=-)');
+    expect(res.matched).toHaveLength(0);
+    expect(res.error).toBeTruthy();
+  });
+
+  it('rejects negative lookbehind (?<!…)', () => {
+    const res = matchFilter(nodes, '(?<!A)US');
+    expect(res.matched).toHaveLength(0);
+    expect(res.error).toBeTruthy();
+  });
+
+  it('rejects backreferences (\\1)', () => {
+    const res = matchFilter(nodes, '(US)-\\1');
+    expect(res.matched).toHaveLength(0);
+    expect(res.error).toBeTruthy();
+  });
+
+  it('still accepts RE2-valid word boundaries + inline (?i) flag', () => {
+    const res = matchFilter(nodes, '(?i)\\bus\\b');
+    expect(res.error).toBeNull();
+    expect(res.matched).toEqual(['🇺🇸 US-01']);
   });
 });

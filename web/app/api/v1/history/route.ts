@@ -3,6 +3,11 @@ import { listEvents } from '@/lib/repos/auditRepo';
 
 export const dynamic = 'force-dynamic';
 
+// P2-19: 操作历史/审计日志按【账户】全量记录 —— listEvents 不接受、也不做任何配置文件过滤。
+// 因此历史页(app/(authed)/history/page.tsx)上的 <ScopePill /> 会误导为「当前配置文件」作用域;
+// 正确做法是该页改用 <ScopePill neutral />(中性「全账户」徽标,见 components/Topbar.tsx)。
+// 该页为 page.tsx,不在本次改动范围内,仅在此记录后端无过滤的事实与前端修法。
+
 function parseIntParam(value: string | null, fallback: number): number {
   if (value === null) return fallback;
   const n = Number(value);

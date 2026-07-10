@@ -33,8 +33,23 @@ const fakeRedis = {
     return n;
   },
   get: async (key: string) => kv.get(key) ?? null,
+  mget: async (...keys: string[]) => keys.map((k) => kv.get(k) ?? counters.get(k) ?? null),
   set: async (key: string, value: unknown) => {
     kv.set(key, value);
+  },
+  // Simulate baseRepo's CAS_SET_BASE Lua (P2-1): CAS on the meta etag, then
+  // write content + meta + bump version.
+  eval: async (_script: string, keys: string[], args: (string | number)[]) => {
+    const [metaKey, contentKey, versionKey] = keys;
+    const [check, expectedEtag, content, metaJson] = args.map(String);
+    if (check === '1') {
+      const cur = kv.get(metaKey) as { etag?: string } | undefined;
+      if ((cur?.etag ?? '') !== expectedEtag) return [0, cur?.etag ?? ''];
+    }
+    kv.set(contentKey, content);
+    kv.set(metaKey, JSON.parse(metaJson));
+    counters.set(versionKey, (counters.get(versionKey) ?? 0) + 1);
+    return [1, ''];
   },
   del: async (key: string) => {
     kv.delete(key);
@@ -227,12 +242,27 @@ describe('profileService — patch', () => {
       }),
     ).rejects.toThrow(/绑定的订阅源不存在/);
   });
+
+  it('P1-1: refuses to rename the default profile', async () => {
+    const def = seedProfile({ name: 'default' });
+    seedProfile({ name: 'work' });
+    await expect(svc.patchProfile(def.id, { name: 'home' })).rejects.toThrow(/默认配置文件/);
+  });
+
+  it('P1-1: still allows renaming a non-default profile', async () => {
+    seedProfile({ name: 'default' });
+    const work = seedProfile({ name: 'work' });
+    const next = await svc.patchProfile(work.id, { name: 'home' });
+    expect(next.name).toBe('home');
+  });
 });
 
 describe('profileService — delete', () => {
-  it('refuses to delete the last remaining profile', async () => {
+  it('refuses to delete the last remaining profile (which is default)', async () => {
+    // The sole profile is `default`, so the P1-1 default guard refuses first —
+    // either way the deletion is blocked, which is the point.
     const p = seedProfile({ name: 'default' });
-    await expect(svc.deleteProfile(p.id)).rejects.toThrow(/至少保留一个/);
+    await expect(svc.deleteProfile(p.id)).rejects.toThrow(/默认配置文件|至少保留一个/);
   });
 
   it('deletes a non-last profile', async () => {
@@ -241,6 +271,13 @@ describe('profileService — delete', () => {
     const removed = await svc.deleteProfile(other.id);
     expect(removed).toBe(true);
     expect(await svc.getProfile(other.id)).toBeNull();
+  });
+
+  it('P1-1: refuses to delete the default profile even when others exist', async () => {
+    const def = seedProfile({ name: 'default' });
+    seedProfile({ name: 'work' });
+    await expect(svc.deleteProfile(def.id)).rejects.toThrow(/默认配置文件/);
+    expect(await svc.getProfile(def.id)).not.toBeNull();
   });
 
   it('returns false for an unknown id', async () => {

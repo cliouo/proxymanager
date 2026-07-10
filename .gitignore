@@ -1,8 +1,14 @@
 # OS
 .DS_Store
 
+# Dependencies
+node_modules/
+
 # Local scratch (screenshots, throwaway artifacts)
 .tmp/
+
+# Codex CLI local config (per-machine, not part of the project)
+.codex/
 
 # External reference projects (cloned separately — see REQUIREMENTS.md §8)
 reference/

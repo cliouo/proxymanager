@@ -84,6 +84,15 @@ export class ProblemDetailsError extends Error {
     });
   }
 
+  static tooManyRequests(detail?: string): ProblemDetailsError {
+    return new ProblemDetailsError({
+      type: `${PROBLEM_BASE_URL}/rate-limited`,
+      title: 'Too Many Requests',
+      status: 429,
+      detail,
+    });
+  }
+
   static internal(detail?: string): ProblemDetailsError {
     return new ProblemDetailsError({
       type: `${PROBLEM_BASE_URL}/internal`,

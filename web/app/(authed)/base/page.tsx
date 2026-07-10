@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { ApiError, api } from '@/lib/client/api';
+import { useUnsavedGuard } from '@/lib/client/useUnsavedGuard';
 import { PageTopbar } from '@/components/PageChrome';
 import { ScopePill } from '@/components/Topbar';
 import { CodeEditor } from '@/components/ui/CodeEditor';
@@ -44,11 +45,23 @@ export default function BasePage() {
       setValidation(null);
       setStatus(null);
     } catch (err) {
+      // P1-8: distinguish a SCOPE 404 (the active-profile cookie points at a
+      // profile that no longer exists) from a genuine "base uninitialized"
+      // 404. The former must NOT show an empty editor (saving would target a
+      // missing profile) — tell the user to switch profiles instead.
       if (err instanceof ApiError && err.status === 404) {
-        setData(null);
-        setContent('');
-        setEtag(null);
-        setStatus({ kind: 'info', message: '尚未设置基础配置，请粘贴 base.yaml 内容后保存。' });
+        const scopeMissing = (err.problem.detail ?? '').includes('配置文件');
+        if (scopeMissing) {
+          setData(null);
+          setLoadError(
+            '当前配置文件不存在(可能已被删除或改名)。请在右上角切换到一个有效的配置文件。',
+          );
+        } else {
+          setData(null);
+          setContent('');
+          setEtag(null);
+          setStatus({ kind: 'info', message: '尚未设置基础配置，请粘贴 base.yaml 内容后保存。' });
+        }
       } else {
         setLoadError(err instanceof Error ? err.message : String(err));
       }
@@ -62,6 +75,7 @@ export default function BasePage() {
   }, [load]);
 
   const dirty = data ? content !== data.content : content.length > 0;
+  useUnsavedGuard(dirty); // P1-6
   const lineCount = content ? content.split('\n').length : 0;
   const byteLen = new TextEncoder().encode(content).length;
 

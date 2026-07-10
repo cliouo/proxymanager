@@ -1,7 +1,6 @@
 'use client';
 
 import { useCallback, useState } from 'react';
-import { Button } from '@/components/ui/Button';
 import { ShikiBlock } from '@/components/ui/ShikiBlock';
 import { ApiError, api } from '@/lib/client/api';
 import { PageTopbar } from '@/components/PageChrome';
@@ -63,12 +62,13 @@ export default function EchoScenarioPage() {
           </span>
           <span className="text-[11px] font-mono text-[var(--color-muted)]">json</span>
         </header>
+        {/* P1-11: 主题感知代码底色（--code-bg/--code-fg），取代写死暖褐 surface-dark + 空类 */}
         <textarea
           value={payload}
           onChange={(e) => setPayload(e.target.value)}
           rows={6}
           spellCheck={false}
-          className="w-full surface-dark bg-[var(--color-surface-dark)] text-[var(--color-on-dark)] font-mono text-[12px] leading-[1.6] rounded-xl px-4 py-3 caret-[var(--color-primary)] focus:outline-none focus:ring-[3px] focus:ring-[var(--color-primary)]/30"
+          className="w-full bg-[var(--code-bg)] text-[var(--code-fg)] border border-[var(--color-border)] font-mono text-[12px] leading-[1.6] rounded-lg px-4 py-3 caret-[var(--color-primary)] focus:outline-none focus:border-[var(--color-primary)] focus:ring-[3px] focus:ring-[var(--color-primary)]/20"
           style={{ tabSize: 2 }}
           onKeyDown={(e) => {
             if (e.key === 'Tab') {
@@ -85,12 +85,13 @@ export default function EchoScenarioPage() {
           }}
         />
         <div className="flex items-center gap-2 mt-3">
-          <Button onClick={() => call('ping')} disabled={pending}>
+          {/* P1-11: 旧 ui/Button → v2 .btn 类，与其它 v2 场景页一致 */}
+          <button type="button" className="btn primary" onClick={() => call('ping')} disabled={pending}>
             {pending && lastOp === 'ping' ? '…' : 'POST · ping'}
-          </Button>
-          <Button variant="secondary" onClick={() => call('mark')} disabled={pending}>
+          </button>
+          <button type="button" className="btn" onClick={() => call('mark')} disabled={pending}>
             {pending && lastOp === 'mark' ? '…' : 'POST · mark'}
-          </Button>
+          </button>
           <span className="ml-auto text-[11px] font-mono text-[var(--color-muted)]">
             scenario: <span className="text-[var(--color-primary)]">dev-echo</span>
           </span>

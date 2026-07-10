@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { MAX_RULESET_CONTENT } from './base';
 
 /**
  * A platform-managed rule-set — the single library entry the project owns end
@@ -31,7 +32,7 @@ export const RuleSetSchema = z.object({
   /** Maps to mihomo's rule-provider `behavior:`. */
   behavior: RuleSetBehaviorSchema.optional(),
   /** local only: served verbatim at /api/rule-providers/{token}/{name}. */
-  content: z.string().default(''),
+  content: z.string().max(MAX_RULESET_CONTENT, '规则集内容过大').default(''),
   /** remote only: the external URL mihomo fetches directly. */
   url: z.string().optional(),
   /** Emitted as the declaration's `interval:` (seconds). Defaults to a day at render. */
@@ -82,7 +83,23 @@ export function assertRuleSetInvariants(v: RuleSetFields, ctx: z.RefinementCtx):
 export const RuleSetCreateSchema = RuleSetSchema.omit({ id: true, updated_at: true }).superRefine(
   assertRuleSetInvariants,
 );
-export const RuleSetUpdateSchema = RuleSetSchema.omit({ id: true, updated_at: true }).partial();
+/**
+ * P1-5: optional fields accept `null` to CLEAR them. The client used to send
+ * `undefined` for an emptied field, which `JSON.stringify` drops entirely, so
+ * the service merge kept the old value ("save succeeds but nothing changed, the
+ * button stays lit forever"). Sending an explicit `null` lets patchRuleSet
+ * delete the field. `behavior`/`interval` are enum/number so an empty string
+ * can't express "cleared" — null is the signal.
+ */
+export const RuleSetUpdateSchema = RuleSetSchema.omit({ id: true, updated_at: true })
+  .partial()
+  .extend({
+    behavior: RuleSetBehaviorSchema.nullable().optional(),
+    interval: z.number().int().positive().nullable().optional(),
+    proxy: z.string().nullable().optional(),
+    note: z.string().nullable().optional(),
+    url: z.string().nullable().optional(),
+  });
 
 /**
  * The list-view shape: everything except `content`. Content is stored in its

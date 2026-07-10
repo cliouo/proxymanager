@@ -61,6 +61,12 @@
     opacity: 0;
   }
 }
+/* P3-44: 减少动态偏好下停掉 URL 光标闪烁（模块类名被哈希，无法从 globals 命中，故就地守卫）。 */
+@media (prefers-reduced-motion: reduce) {
+  .cursor {
+    animation: none;
+  }
+}
 .quick {
   display: flex;
   gap: 8px;

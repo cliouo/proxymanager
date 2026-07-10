@@ -4,6 +4,7 @@ import { resolveSubscriptionContent } from '@/lib/services/subscriptionFetcher';
 import {
   getSubscription,
   nowSeconds,
+  recordSubscriptionError,
   recordSubscriptionSync,
 } from '@/lib/services/subscriptionService';
 
@@ -24,7 +25,21 @@ export const POST = withProblemDetails(async (_request: Request, ctx: Ctx) => {
     throw ProblemDetailsError.unprocessable(`Subscription "${sub.name}" is disabled.`);
   }
 
-  const { traffic, proxyCount } = await resolveSubscriptionContent(sub, { noCache: true });
+  let traffic;
+  let proxyCount;
+  try {
+    ({ traffic, proxyCount } = await resolveSubscriptionContent(sub, { noCache: true }));
+  } catch (err) {
+    // P3-8: record why the refresh failed so the status badge can surface it.
+    const msg =
+      err instanceof ProblemDetailsError
+        ? (err.problem.detail ?? err.problem.title)
+        : err instanceof Error
+          ? err.message
+          : String(err);
+    await recordSubscriptionError(id, msg).catch(() => undefined);
+    throw err;
+  }
   const updated = await recordSubscriptionSync(id, nowSeconds(), traffic);
 
   return Response.json({ data: updated, meta: { proxyCount } });

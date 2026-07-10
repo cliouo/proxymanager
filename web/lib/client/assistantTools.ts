@@ -18,18 +18,45 @@ import type { ProxyGroup } from '@/schemas';
 
 const MAX_PREVIEW_NAMES = 200;
 
-/** Cache the resolved node list for the page session; the model may call preview many times. */
-let nodeNamesPromise: Promise<string[]> | null = null;
+/**
+ * Active editing profile from the `pm.active_profile` cookie (P1-9). The
+ * assistant tools run in the page but aren't inside the React ProfileContext,
+ * so we read the cookie the switcher writes. Falls back to `default`.
+ */
+function activeProfileName(): string {
+  if (typeof document === 'undefined') return 'default';
+  for (const part of document.cookie.split(';')) {
+    const eq = part.indexOf('=');
+    if (eq === -1) continue;
+    if (part.slice(0, eq).trim() === 'pm.active_profile') {
+      const v = decodeURIComponent(part.slice(eq + 1).trim());
+      if (v) return v;
+    }
+  }
+  return 'default';
+}
+
+/**
+ * Cache the resolved node list per profile for the page session; the model may
+ * call preview many times. Keyed by profile so switching scope doesn't serve a
+ * stale other-profile node list (P1-9).
+ */
+const nodeNamesByProfile = new Map<string, Promise<string[]>>();
 function getNodeNames(): Promise<string[]> {
-  if (!nodeNamesPromise) {
-    nodeNamesPromise = api<{ data: { node_names?: string[] } }>('/api/v1/preview/default')
+  const profile = activeProfileName();
+  let promise = nodeNamesByProfile.get(profile);
+  if (!promise) {
+    promise = api<{ data: { node_names?: string[] } }>(
+      `/api/v1/preview/${encodeURIComponent(profile)}`,
+    )
       .then((r) => r.data.node_names ?? [])
       .catch(() => {
-        nodeNamesPromise = null; // allow retry on next call
+        nodeNamesByProfile.delete(profile); // allow retry on next call
         return [];
       });
+    nodeNamesByProfile.set(profile, promise);
   }
-  return nodeNamesPromise;
+  return promise;
 }
 
 interface PreviewInput {

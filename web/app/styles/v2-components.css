@@ -1046,7 +1046,7 @@ textarea.input {
   bottom: 22px;
   left: 50%;
   translate: -50% 0;
-  z-index: 200;
+  z-index: var(--z-toast); /* P3-44 */
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -1058,8 +1058,8 @@ textarea.input {
   border-radius: var(--r-md);
   padding: 9px 16px;
   font-size: 13px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
-  animation: toast-in 0.22s var(--ease);
+  box-shadow: var(--shadow-pop); /* P3-40 */
+  animation: toast-in var(--motion-med) var(--ease); /* P3-40 */
 }
 @keyframes toast-in {
   from {
@@ -1076,7 +1076,7 @@ textarea.input {
 .modal-bg {
   position: fixed;
   inset: 0;
-  z-index: 150;
+  z-index: var(--z-modal); /* P3-44 */
   background: var(--scrim);
   backdrop-filter: blur(4px);
   display: none;
@@ -1092,7 +1092,7 @@ textarea.input {
   border: 1px solid var(--border-2);
   border-radius: var(--r-lg);
   padding: 22px;
-  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--shadow-modal); /* P3-40 */
   animation: modal-in 0.18s var(--ease);
 }
 @keyframes modal-bg-in {
@@ -1183,12 +1183,12 @@ textarea.input {
   border-radius: var(--r-md);
   background: var(--surface);
   border: 1px solid var(--border-2);
-  box-shadow: 0 14px 34px var(--scrim);
+  box-shadow: var(--shadow-pop); /* P3-40 */
   display: none;
 }
 .theme-pop.open {
   display: block;
-  animation: theme-pop-in 0.14s var(--ease);
+  animation: theme-pop-in var(--motion-fast) var(--ease); /* P3-40 */
 }
 @keyframes theme-pop-in {
   from {
@@ -1243,7 +1243,7 @@ textarea.input {
   top: 0;
   right: 0;
   bottom: 0;
-  z-index: 120;
+  z-index: var(--z-drawer); /* P3-44 */
   width: min(420px, 100vw);
   display: flex;
   flex-direction: column;
@@ -1251,7 +1251,7 @@ textarea.input {
   border-left: 1px solid var(--border-2);
   translate: 100% 0;
   transition: translate 0.25s var(--ease);
-  box-shadow: -24px 0 64px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--shadow-drawer); /* P3-40 */
 }
 .ai-drawer.open {
   translate: 0 0;
@@ -1516,7 +1516,7 @@ textarea.input {
     left: 0;
     top: 0;
     width: 68px;
-    z-index: 110;
+    z-index: var(--z-sidebar); /* P3-44 */
     overflow: hidden;
     transition: width 0.18s var(--ease);
   }
@@ -1575,9 +1575,9 @@ textarea.input {
     position: fixed;
     left: 0;
     top: 0;
-    z-index: 110;
+    z-index: var(--z-sidebar); /* P3-44 */
     translate: -100% 0;
-    transition: translate 0.22s var(--ease);
+    transition: translate var(--motion-med) var(--ease); /* P3-40 */
     box-shadow: 24px 0 64px rgba(0, 0, 0, 0.4);
     padding-bottom: env(safe-area-inset-bottom, 0);
   }
@@ -1819,9 +1819,17 @@ textarea.input {
   .toast,
   .modal-bg.open,
   .modal,
-  .theme-pop.open {
+  .theme-pop.open,
+  /* P3-44: 抽屉滑入 / 侧栏抽屉 / 分发抽屉 / 工具运行脉冲一并停掉 */
+  .ai-drawer,
+  .side,
+  .dist,
+  .profile-pop {
     animation: none;
     transition: none;
+  }
+  .ai-tool .st.run {
+    animation: none;
   }
   .btn:active:not([disabled]),
   .stat:hover {
@@ -1903,7 +1911,7 @@ textarea.input {
   background: var(--surface-2);
   border: 1px solid var(--border-2);
   border-radius: var(--r-md);
-  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--shadow-pop); /* P3-40 */
   padding: 6px;
   opacity: 0;
   visibility: hidden;
@@ -2281,7 +2289,7 @@ textarea.input {
 .dist-bg {
   position: fixed;
   inset: 0;
-  z-index: 90;
+  z-index: var(--z-drawer); /* P3-44: 原 90 低于移动侧栏 110，归入 drawer 层 */
   background: color-mix(in srgb, var(--bg) 60%, transparent);
   backdrop-filter: blur(2px);
   opacity: 0;

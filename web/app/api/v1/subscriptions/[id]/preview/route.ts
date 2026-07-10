@@ -6,6 +6,8 @@ import { getSubscription } from '@/lib/services/subscriptionService';
 import { OperatorListSchema } from '@/schemas';
 
 export const dynamic = 'force-dynamic';
+// P3-18: fetches the upstream + runs the operator pipeline; explicit ceiling.
+export const maxDuration = 60;
 
 type Ctx = RouteContext<'/api/v1/subscriptions/[id]/preview'>;
 

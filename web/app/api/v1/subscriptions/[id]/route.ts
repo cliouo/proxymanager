@@ -35,13 +35,21 @@ export const PATCH = withProblemDetails(async (request: Request, ctx: Ctx) => {
     throw ProblemDetailsError.badRequest('Request body must be valid JSON.');
   });
   const patch = SubscriptionUpdateSchema.parse(raw);
-  const next = await patchSubscription(id, patch);
+  // P2-2: If-Match carries the client's last-known updated_at (optimistic
+  // version). Absent → undefined → unchanged last-write-wins behavior.
+  const ifMatch = request.headers.get('if-match');
+  const parsed = ifMatch ? Number(ifMatch.replace(/^W\//, '').replace(/^"|"$/g, '')) : NaN;
+  const expectedUpdatedAt = Number.isFinite(parsed) ? parsed : undefined;
+  const next = await patchSubscription(id, patch, expectedUpdatedAt);
   return Response.json({ data: next });
 });
 
 export const DELETE = withProblemDetails(async (_request: Request, ctx: Ctx) => {
   const { id } = await ctx.params;
-  const removed = await deleteSubscription(id);
+  const { removed, warnings } = await deleteSubscription(id);
   if (!removed) throw ProblemDetailsError.notFound(`Subscription ${id} not found.`);
+  // P0-2: delete-but-warn. When the deletion left references dangling, return
+  // 200 + the warnings so the UI can tell the user; otherwise a clean 204.
+  if (warnings.length > 0) return Response.json({ data: { warnings } }, { status: 200 });
   return new Response(null, { status: 204 });
 });

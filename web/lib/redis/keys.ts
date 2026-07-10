@@ -13,7 +13,6 @@ export const REDIS_KEYS = {
   subscriptions: 'subscriptions',
   proxies: 'proxies',
   ruleSets: 'rule-sets',
-  idempotency: (key: string) => `idem:${key}`,
   /**
    * Audit log. `events` is a ZSET (score=ts ms, member=event id) used for
    * time-ordered listing. `byId` is a Hash keyed by event id storing the
@@ -68,9 +67,10 @@ export const REDIS_KEYS = {
    * Cached summary of the most recent successful resolveConfig() — node
    * names, collisions, per-sub status. Readers (UI pickers, AI tools) that
    * only need the resolved node list can hit this instead of re-running the
-   * pipeline. Invalidated on subscription mutations and on every successful
-   * resolveConfig (which rewrites it). Plain Redis key with a long EX as a
-   * safety net in case an invalidation call is missed.
+   * pipeline. A Redis HASH keyed by profile id (P2-5): each profile owns its
+   * own field so a render of one profile can't overwrite another's node list.
+   * Invalidated (whole hash DEL) on subscription mutations and rewritten (HSET)
+   * on every successful resolveConfig. A long whole-hash EX is a GC safety net.
    */
   resolvedSnapshot: 'resolved:snapshot',
   /**

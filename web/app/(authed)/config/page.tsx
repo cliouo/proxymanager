@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ApiError, api } from '@/lib/client/api';
+import { copyText } from '@/lib/client/clipboard';
 import { PageTopbar } from '@/components/PageChrome';
 import { ScopePill } from '@/components/Topbar';
 import { useProfiles } from '@/components/profile/ProfileContext';
@@ -98,14 +99,15 @@ export default function ConfigPage() {
 
   async function copyConfig() {
     if (!content) return;
-    await navigator.clipboard.writeText(content);
+    // P3-31: don't flash "已复制" when the clipboard write actually failed.
+    if (!(await copyText(content))) return;
     setCopied('config');
     setTimeout(() => setCopied(null), 1500);
   }
 
   async function copyUrl() {
     if (!subUrl) return;
-    await navigator.clipboard.writeText(subUrl);
+    if (!(await copyText(subUrl))) return;
     setCopied('url');
     setTimeout(() => setCopied(null), 1500);
   }

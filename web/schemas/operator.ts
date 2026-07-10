@@ -51,6 +51,25 @@ const regexPattern = z
     { message: '不是合法的正则表达式' },
   );
 
+/**
+ * A single `filter-useless` extra fragment. Beyond compiling as a RegExp it
+ * must NOT match the empty string: fragments like `a|`, `|`, `.*` or `(?:)`
+ * are joined into the junk pattern with `|`, and an empty-matching branch there
+ * makes the whole regex match every node name → the operator silently drops
+ * ALL nodes (and a bare `(` used to throw at RegExp construction, 500-ing every
+ * profile bound to the aggregate). See P0-5.
+ */
+const uselessExtraPattern = regexPattern.refine(
+  (p) => {
+    try {
+      return !new RegExp(p).test('');
+    } catch {
+      return false;
+    }
+  },
+  { message: '过滤片段不能匹配空串（会误删全部节点），也不能是空分支如 "a|"' },
+);
+
 /** Optional flag string limited to JS regex flags. */
 const regexFlags = z
   .string()
@@ -80,7 +99,7 @@ export const FilterUselessOpSchema = z.object({
   ...idFields,
   kind: z.literal('filter-useless'),
   /** Extra keyword/regex fragments appended to the built-in junk list. */
-  extra: z.array(z.string()).default([]),
+  extra: z.array(uselessExtraPattern).default([]),
 });
 
 /** 3 · 正则重命名/删除 — replace matches in the name (empty replacement = delete). */

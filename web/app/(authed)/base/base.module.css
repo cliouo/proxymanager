@@ -38,7 +38,9 @@
   padding: 8px 16px;
   font-size: 12px;
   line-height: 1.6;
-  color: var(--accent-dim);
+  /* P1-10: --accent-dim is a 12%-alpha BACKGROUND tint; using it as text color
+     made the hint nearly invisible on the 8%-accent strip. Use full --accent. */
+  color: var(--accent);
   background: color-mix(in srgb, var(--accent) 8%, transparent);
   border-bottom: 1px solid var(--border);
 }
@@ -62,7 +64,8 @@
   background: color-mix(in srgb, var(--ok) 8%, transparent);
 }
 .status.info {
-  color: var(--accent-dim);
+  /* P1-10: same fix as .hint — --accent-dim is a background tint, not text. */
+  color: var(--accent);
   background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 

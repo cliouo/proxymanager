@@ -1,15 +1,15 @@
-import { requireSubToken } from '@/lib/auth';
 import { withProblemDetails } from '@/lib/http/handler';
 import { ProblemDetailsError } from '@/lib/http/problem';
+import { guardSubToken } from '@/lib/http/subGuard';
 import { getRuleSetByName } from '@/lib/services/ruleSetService';
 
 export const dynamic = 'force-dynamic';
 
 type Ctx = RouteContext<'/api/rule-providers/[token]/[name]'>;
 
-export const GET = withProblemDetails(async (_request: Request, ctx: Ctx) => {
+export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
   const { token, name } = await ctx.params;
-  requireSubToken(token);
+  await guardSubToken(request, token, name);
 
   const set = await getRuleSetByName(name);
   if (!set) {

@@ -34,6 +34,14 @@ import { listSubscriptions } from '@/lib/repos/subscriptionsRepo';
  * Ceiling for the freshness window. With no participating subscriptions the
  * render only changes via repo writes (covered by the version check), so
  * 24h is purely a safety net.
+ *
+ * P3-13 (known behaviour, documented not fixed): two independent TTLs stack —
+ * the per-sub FETCH cache (subscriptionFetcher, ttl_ms) and this RENDER cache
+ * (freshForMs, derived from the same ttl_ms). An upstream node-list change that
+ * happens with no accompanying repo write (so config:version doesn't bump) can
+ * take up to the fetch TTL to be re-fetched AND up to the render TTL to be
+ * re-rendered — worst case ≈ 2×ttl_ms before it appears. `?noCache=1` bypasses
+ * both for an on-demand fresh render; acceptable for a personal tool.
  */
 const MAX_FRESH_MS = 24 * 60 * 60 * 1000;
 /** Slack added to the Redis EX over the freshness window (GC, not validity). */
@@ -214,6 +222,9 @@ export async function renderProfileConfig(
     collections,
     // Profile binding — which subscription(s) this profile injects.
     boundSource: profileRecord.source,
+    // Key the resolved-snapshot by this profile so concurrent renders of other
+    // profiles don't overwrite its node list (P2-5).
+    snapshotProfileId: profileRecord.id,
   });
 
   // 新鲜度窗口 = 实际参与注入的订阅(resolveConfig 已做过 enabled + boundSource

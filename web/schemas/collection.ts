@@ -71,7 +71,8 @@ export const CollectionUpdateSchema = z.object({
   subscription_ids: z.array(z.uuid()).optional(),
   subscription_tags: z.array(z.string()).optional(),
   operators: z.array(OperatorSchema).optional(),
-  notes: z.string().optional(),
+  // P1-5: null clears the note (undefined = unchanged).
+  notes: z.string().nullable().optional(),
 });
 
 export type Collection = z.infer<typeof CollectionSchema>;

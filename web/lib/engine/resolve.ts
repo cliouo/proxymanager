@@ -71,6 +71,13 @@ export interface ResolveOptions extends RenderOptions {
   /** When false, the resolved-snapshot is not persisted. Default true. */
   persistSnapshot?: boolean;
   /**
+   * Profile id this render belongs to. The resolved-snapshot is keyed by it so
+   * concurrent renders of different profiles (incl. public /api/sub polling)
+   * don't clobber each other's node lists. When absent, no snapshot is written
+   * (direct engine callers / tests that don't care). See P2-5.
+   */
+  snapshotProfileId?: string;
+  /**
    * Collections used by `kind: collection-scope` proxy-groups to resolve
    * their `proxies:` list. Defaults to []; groups bound to an unknown
    * collection id emit a warning and render with their existing fields.
@@ -235,7 +242,19 @@ export async function resolveConfig(
   if (boundSource?.type === 'collection') {
     const col = (opts.collections ?? []).find((c) => c.id === boundSource.id);
     if (col && col.operators.length > 0 && candidates.length > 0) {
-      candidates = applyOperatorsToCandidates(candidates, col.operators);
+      // An aggregate operator can throw (e.g. a malformed `filter-useless`
+      // fragment reaching `new RegExp`). Unlike the per-sub pipeline (caught by
+      // the fetch worker), this runs inline — an uncaught throw here 500s every
+      // profile bound to this collection AND the public /api/sub route. Degrade
+      // to "skip the aggregate pipeline + warn" so the config still renders. P0-5.
+      try {
+        candidates = applyOperatorsToCandidates(candidates, col.operators);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        warnings.push(
+          `聚合订阅 "${col.name}" 的节点处理流水线执行失败(${msg}),本次已跳过该流水线、按未处理的节点渲染。请检查其算子(常见:过滤片段不是合法正则)。`,
+        );
+      }
     }
   }
 
@@ -345,6 +364,11 @@ export async function resolveConfig(
   }
 
   const rendered = renderBase(expandedContent, effectiveRules, opts);
+  if (rendered.ruleProvidersMarkerMissing) {
+    warnings.push(
+      'base.yaml 缺少 `# === RULE-PROVIDERS ===` 标记;有 RULE-SET 规则引用了规则集,但对应的 `rule-providers:` 声明无处注入 → mihomo 会以 `not found rule-set` 拒载整份配置。请在 base 里插入该标记。',
+    );
+  }
 
   const nodeNames: string[] = [];
   for (const name of baseProxyNames) nodeNames.push(name);
@@ -353,8 +377,9 @@ export async function resolveConfig(
 
   const collisions = Array.from(collisionMap.values());
 
-  if (opts.persistSnapshot !== false) {
+  if (opts.persistSnapshot !== false && opts.snapshotProfileId) {
     const snapshot: ResolvedSnapshot = {
+      profileId: opts.snapshotProfileId,
       nodeNames,
       collisions,
       subscriptions: subStatuses,
@@ -365,7 +390,7 @@ export async function resolveConfig(
       computedAt: Date.now(),
       buildId: rendered.buildId,
     };
-    await setResolvedSnapshot(snapshot).catch(() => undefined);
+    await setResolvedSnapshot(opts.snapshotProfileId, snapshot).catch(() => undefined);
   }
 
   return {
@@ -415,16 +440,22 @@ function applyKindBindings(
       const sub = subById.get(g.bound_subscription_id);
       if (!sub) {
         warnings.push(
-          `策略组 "${g.name}" 绑定的订阅源 ${g.bound_subscription_id} 不存在,成员未自动生成`,
+          `策略组 "${g.name}" 绑定的订阅源 ${g.bound_subscription_id} 不存在,成员填入 DIRECT 以保证配置可加载`,
         );
-        return g;
+        // Don't keep the group's stale `proxies` — those names may no longer
+        // exist and would render as dangling references (mihomo: proxy not
+        // found). DIRECT keeps the whole config loadable. See P0-2.
+        return { ...g, proxies: ['DIRECT'] };
       }
       // 直接列出该订阅源注入存活的节点名(去前缀后,名字不再带可过滤的统一
-      // 前缀,改用渲染时算出的真实成员集)。空集时给告警、保留原字段。
+      // 前缀,改用渲染时算出的真实成员集)。空集时给告警,并填入 DIRECT——
+      // 保留原字段会渲染出可能已失效的旧节点名,导致整份配置拒载(P0-2)。
       const nodes = nodesBySub.get(sub.name) ?? [];
       if (nodes.length === 0) {
-        warnings.push(`策略组 "${g.name}" 绑定的订阅源 "${sub.name}" 当前无可用节点,成员为空`);
-        return g;
+        warnings.push(
+          `策略组 "${g.name}" 绑定的订阅源 "${sub.name}" 当前无可用节点,成员填入 DIRECT 以保证配置可加载`,
+        );
+        return { ...g, proxies: ['DIRECT'] };
       }
       return { ...g, proxies: nodes };
     }
@@ -699,11 +730,40 @@ function renderProxyGroupsBlock(
     }
     const map = mergeWithTemplate(g, template);
     excludeChainClonesFromIncludeAll(map, chainCloneNames);
+    // Render final defense (P0-2): mihomo rejects a proxy-group with no member
+    // source (`proxies or providers missing` / empty `proxies: []`). Any group
+    // that reaches here without a non-empty proxies list, a `use:` provider
+    // list, or an include-all* flag would poison the whole config, so fall back
+    // to `[DIRECT]` and warn rather than emit an unloadable group.
+    if (!groupHasMemberSource(map)) {
+      warnings.push(
+        `策略组 "${g.name}" 没有任何成员来源(proxies/use/include-all 均为空),已临时填入 DIRECT 以保证配置可加载。`,
+      );
+      map.proxies = ['DIRECT'];
+    }
     emitted.push(map);
   }
 
   const block = stringifyYaml({ 'proxy-groups': emitted }).trimEnd();
   return { block, count: emitted.length };
+}
+
+/**
+ * Whether an emitted proxy-group map has at least one way to source members:
+ * an explicit non-empty `proxies` list, a non-empty `use` provider list, or
+ * any include-all* flag. A group with none renders as `proxies: []`, which
+ * mihomo refuses to load. See the render final defense in renderProxyGroupsBlock.
+ */
+function groupHasMemberSource(map: Record<string, unknown>): boolean {
+  const proxies = map.proxies;
+  if (Array.isArray(proxies) && proxies.length > 0) return true;
+  const use = map.use;
+  if (Array.isArray(use) && use.length > 0) return true;
+  return (
+    map['include-all'] === true ||
+    map['include-all-proxies'] === true ||
+    map['include-all-providers'] === true
+  );
 }
 
 function escapeRegExp(s: string): string {

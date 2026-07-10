@@ -77,6 +77,61 @@ export async function recordEvent(input: RecordInput): Promise<AuditEvent> {
 }
 
 /**
+ * Record many events in a single Redis round-trip (P2-8). The per-op serial
+ * `recordEvent` loop the batch route used could take 500 × a few RTTs — tens of
+ * seconds, long enough for the client to hit a 504 and retry (duplicating the
+ * whole batch). Here every ZADD + one bulk HSET go out in one pipeline, with a
+ * single opportunistic trim at the end.
+ *
+ * Each event's score is `baseTs + index` so a batch landing inside one
+ * millisecond still gets strictly-increasing scores — preserving intra-batch
+ * order and keeping the events distinct for exclusive-bound pagination.
+ */
+export async function recordEvents(inputs: RecordInput[]): Promise<AuditEvent[]> {
+  if (inputs.length === 0) return [];
+  const baseTs = nowMs();
+  const events: AuditEvent[] = inputs.map((input, i) => ({
+    id: generateEventId(),
+    ts: baseTs + i,
+    op: input.op,
+    actor: input.actor,
+    ruleId: input.ruleId ?? (input.target?.kind === 'rule' ? input.target.id : undefined),
+    target: input.target,
+    before: input.before,
+    after: input.after,
+    undoes: input.undoes,
+    profileId: input.profileId,
+  }));
+
+  const redis = getRedis();
+  const tx = redis.multi();
+  for (const event of events) {
+    tx.zadd(REDIS_KEYS.audit.events, { score: event.ts, member: event.id });
+  }
+  tx.hset(
+    REDIS_KEYS.audit.byId,
+    Object.fromEntries(events.map((e) => [e.id, e])),
+  );
+  await tx.exec();
+
+  // One trim for the whole batch (not per event).
+  const card = await redis.zcard(REDIS_KEYS.audit.events);
+  if (card > MAX_EVENTS) {
+    const overflow = card - MAX_EVENTS;
+    const evictIds =
+      (await redis.zrange<string[]>(REDIS_KEYS.audit.events, 0, overflow - 1)) ?? [];
+    if (evictIds.length > 0) {
+      const trim = redis.multi();
+      trim.zremrangebyrank(REDIS_KEYS.audit.events, 0, overflow - 1);
+      trim.hdel(REDIS_KEYS.audit.byId, ...evictIds);
+      await trim.exec();
+    }
+  }
+
+  return events;
+}
+
+/**
  * Mark an event as having been undone, persisting the link to the undo event.
  * No-op if the event no longer exists (e.g. trimmed). Returns whether it was
  * updated.

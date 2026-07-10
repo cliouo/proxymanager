@@ -24,13 +24,20 @@ export const PATCH = withProblemDetails(async (request: Request, ctx: Ctx) => {
     throw ProblemDetailsError.badRequest('Request body must be valid JSON.');
   });
   const patch = CollectionUpdateSchema.parse(raw);
-  const updated = await patchCollection(id, patch);
+  // P2-2: If-Match carries the client's last-known updated_at (optimistic
+  // version). Absent → undefined → unchanged last-write-wins behavior.
+  const ifMatch = request.headers.get('if-match');
+  const parsed = ifMatch ? Number(ifMatch.replace(/^W\//, '').replace(/^"|"$/g, '')) : NaN;
+  const expectedUpdatedAt = Number.isFinite(parsed) ? parsed : undefined;
+  const updated = await patchCollection(id, patch, expectedUpdatedAt);
   return Response.json({ data: updated });
 });
 
 export const DELETE = withProblemDetails(async (_request: Request, ctx: Ctx) => {
   const { id } = await ctx.params;
-  const removed = await deleteCollection(id);
+  const { removed, warnings } = await deleteCollection(id);
   if (!removed) throw ProblemDetailsError.notFound(`Collection ${id} not found.`);
+  // P0-2: delete-but-warn (see subscription DELETE).
+  if (warnings.length > 0) return Response.json({ data: { warnings } }, { status: 200 });
   return new Response(null, { status: 204 });
 });

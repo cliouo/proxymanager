@@ -19,6 +19,8 @@
 
 import { z } from 'zod';
 import { ProblemDetailsError } from '@/lib/http/problem';
+import { referencedProviderNamesInText } from '@/lib/engine/renderer';
+import { getBase } from '@/lib/repos/baseRepo';
 import { listProfiles } from '@/lib/repos/profilesRepo';
 import { listRules } from '@/lib/repos/rulesRepo';
 import { getRuleSetByName, upsertRuleSet } from '@/lib/repos/ruleSetsRepo';
@@ -36,7 +38,13 @@ import type { InverseHandler, OpHandler, Scenario } from '../_shared/types';
 
 const CreatePayloadSchema = RuleSetCreateSchema;
 const ReplacePayloadSchema = z.object({ id: z.uuid(), set: RuleSetCreateSchema });
-const PatchPayloadSchema = z.object({ id: z.uuid(), patch: RuleSetUpdateSchema });
+// P2-2: expectedUpdatedAt threads the route's If-Match version down to
+// patchRuleSet for the optimistic-concurrency check.
+const PatchPayloadSchema = z.object({
+  id: z.uuid(),
+  patch: RuleSetUpdateSchema,
+  expectedUpdatedAt: z.number().optional(),
+});
 const DeletePayloadSchema = z.object({ id: z.uuid() });
 
 /* ─── Handlers ──────────────────────────────────────────────────────── */
@@ -62,10 +70,10 @@ const replace: OpHandler = async (_ctx, raw) => {
 };
 
 const patch: OpHandler = async (_ctx, raw) => {
-  const { id, patch: body } = PatchPayloadSchema.parse(raw);
+  const { id, patch: body, expectedUpdatedAt } = PatchPayloadSchema.parse(raw);
   const before = await getRuleSet(id);
   if (!before) throw ProblemDetailsError.notFound(`Rule set ${id} not found.`);
-  const after = await patchRuleSet(id, body);
+  const after = await patchRuleSet(id, body, expectedUpdatedAt); // P2-2
   return {
     data: after,
     events: [{ action: 'update', target: { kind: 'rule-set', name: after.name }, before, after }],
@@ -86,6 +94,18 @@ const del: OpHandler = async (_ctx, raw) => {
   if (refs.length > 0) {
     throw ProblemDetailsError.conflict(
       `规则集 "${before.name}" 仍被 ${refs.length} 条 RULE-SET 规则引用，无法删除；请先修改或删除这些规则。`,
+    );
+  }
+  // P0-1: also refuse while any profile's base body references it via a
+  // `rule-set:` key (e.g. DNS nameserver-policy) — deleting would leave that
+  // reference dangling and mihomo would abort at load.
+  const bases = await Promise.all(profiles.map((p) => getBase(p.id)));
+  const baseRefCount = bases.filter((b) =>
+    referencedProviderNamesInText(b?.content ?? '').has(before.name),
+  ).length;
+  if (baseRefCount > 0) {
+    throw ProblemDetailsError.conflict(
+      `规则集 "${before.name}" 仍被 ${baseRefCount} 个配置文件的 base 正文以 \`rule-set:\` 引用，无法删除；请先在这些 base 中移除引用。`,
     );
   }
   const removed = await deleteRuleSet(id);

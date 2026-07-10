@@ -21,14 +21,16 @@ async function checkRedis(): Promise<CheckResult> {
   try {
     const pong = await getRedis().ping();
     if (pong !== 'PONG') {
-      return { ok: false, error: `unexpected ping response: ${String(pong)}` };
+      console.error('[health] unexpected redis ping response:', pong);
+      return { ok: false, error: 'unavailable' };
     }
     return { ok: true };
   } catch (err) {
-    return {
-      ok: false,
-      error: err instanceof Error ? err.message : String(err),
-    };
+    // P3-15: /api/v1/health is a PUBLIC endpoint. The raw error can carry a
+    // Redis hostname / connection string, so log it server-side and expose only
+    // a generic marker to the caller.
+    console.error('[health] redis check failed:', err);
+    return { ok: false, error: 'unavailable' };
   }
 }
 

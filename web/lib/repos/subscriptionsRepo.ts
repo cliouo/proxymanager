@@ -9,7 +9,17 @@ import { SubscriptionSchema, type Subscription } from '@/schemas';
  */
 function normalise(raw: unknown): Subscription | null {
   const parsed = SubscriptionSchema.safeParse(raw);
-  return parsed.success ? parsed.data : null;
+  if (!parsed.success) {
+    // P3-10: a silently-dropped subscription looks like data loss to the user.
+    const name = (raw as { name?: unknown })?.name;
+    console.warn(
+      `[subscriptionsRepo] skipping unparseable subscription${
+        typeof name === 'string' ? ` "${name}"` : ''
+      }: ${parsed.error.issues.map((i) => i.message).join('; ')}`,
+    );
+    return null;
+  }
+  return parsed.data;
 }
 
 export async function listSubscriptions(): Promise<Subscription[]> {

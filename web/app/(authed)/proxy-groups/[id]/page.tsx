@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ApiError, api } from '@/lib/client/api';
+import { useUnsavedGuard } from '@/lib/client/useUnsavedGuard';
 import { PageTopbar } from '@/components/PageChrome';
 import type { ProxyGroup } from '@/schemas';
 import { GroupEditor } from '../_components/GroupEditor';
@@ -61,9 +62,13 @@ export default function ProxyGroupDetailPage() {
     if (!group || !form) return false;
     return JSON.stringify(toPayload(form)) !== JSON.stringify(toPayload(fromGroup(group)));
   }, [group, form]);
+  useUnsavedGuard(dirty); // P1-6
 
   async function onSubmit() {
     if (!form || !group) return;
+    // P2-11: never double-save (⌘S while a save is in flight) or write a no-op
+    // history entry for a clean form.
+    if (busy || !dirty) return;
     if (!form.name.trim()) {
       setError('请填写策略组名称。');
       return;
@@ -90,8 +95,13 @@ export default function ProxyGroupDetailPage() {
   }
 
   // ⌘S / Ctrl+S → 保存(与 topbar 按钮等价)。
+  // P2-11: keep the latest onSubmit in a ref, but assign it from an effect (not
+  // during render — that tripped the react-hooks/refs lint error). onSubmit
+  // itself guards busy/dirty, so ⌘S can't double-save or write a no-op.
   const submitRef = useRef(onSubmit);
-  submitRef.current = onSubmit;
+  useEffect(() => {
+    submitRef.current = onSubmit;
+  });
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { RuleCreateSchema, RulePatchSchema, RuleReplaceSchema, RuleSchema } from '@/schemas';
+import { assertMergedRuleRenderable } from '@/schemas/rule';
 
 const baseCreate = { anchor: 'manual', policy: '香港', source: 'manual' as const };
 
@@ -72,5 +73,67 @@ describe('RulePatchSchema', () => {
   it('allows toggling enabled and editing options without other fields', () => {
     expect(RulePatchSchema.parse({ enabled: false })).toEqual({ enabled: false });
     expect(RulePatchSchema.parse({ options: ['no-resolve'] })).toEqual({ options: ['no-resolve'] });
+  });
+});
+
+/* ─── P2-4: YAML-injection guard on the rendered rule line ──────────── */
+
+describe('rule value/policy YAML-safety (P2-4)', () => {
+  it('rejects a newline in the value (would smuggle a second rule)', () => {
+    expect(() =>
+      RuleCreateSchema.parse({
+        ...baseCreate,
+        type: 'DOMAIN',
+        value: 'a.com\n  - MATCH,REJECT',
+      }),
+    ).toThrow();
+  });
+
+  it('rejects a ": " map trigger in the value (reparses the entry into a map)', () => {
+    expect(() =>
+      RuleCreateSchema.parse({ ...baseCreate, type: 'DOMAIN', value: 'foo, bar: baz' }),
+    ).toThrow();
+  });
+
+  it('rejects a control character in the policy', () => {
+    expect(() =>
+      RuleCreateSchema.parse({ ...baseCreate, type: 'DOMAIN', value: 'a.com', policy: 'x\ty' }),
+    ).toThrow();
+  });
+
+  it('still accepts an IPv6 IP-CIDR value (colon without a following space)', () => {
+    const r = RuleCreateSchema.parse({
+      ...baseCreate,
+      type: 'IP-CIDR6',
+      value: '2001:db8::/32',
+      policy: '直连',
+      options: ['no-resolve'],
+    });
+    expect(r.value).toBe('2001:db8::/32');
+  });
+});
+
+/* ─── P2-3: merged PATCH must re-validate value/injection ───────────── */
+
+describe('assertMergedRuleRenderable (P2-3)', () => {
+  const base = {
+    anchor: 'manual',
+    type: 'DOMAIN',
+    value: 'example.com',
+    policy: '香港',
+    rank: 10,
+    source: 'manual',
+  };
+
+  it('accepts a valid merged rule', () => {
+    expect(() => assertMergedRuleRenderable(base)).not.toThrow();
+  });
+
+  it('rejects a PATCH that empties a non-MATCH value', () => {
+    expect(() => assertMergedRuleRenderable({ ...base, value: '' })).toThrow();
+  });
+
+  it('rejects a PATCH that injects a newline into the value', () => {
+    expect(() => assertMergedRuleRenderable({ ...base, value: 'a\n- MATCH,REJECT' })).toThrow();
   });
 });

@@ -66,8 +66,8 @@ async function mustGet(profileId: string, id: string): Promise<ProxyGroup> {
   return g;
 }
 
-async function nodePool(): Promise<{ names: string[]; hint?: string }> {
-  const snapshot = await getResolvedSnapshot();
+async function nodePool(profileId: string): Promise<{ names: string[]; hint?: string }> {
+  const snapshot = await getResolvedSnapshot(profileId);
   if (!snapshot) {
     return {
       names: [],
@@ -130,7 +130,7 @@ const previewMembers = defineAction({
   input: PreviewInput,
   risk: 'read',
   async run(ctx, input) {
-    const { names, hint } = await nodePool();
+    const { names, hint } = await nodePool(ctx.profileId);
     let filter = input.filter;
     let excludeFilter = input.exclude_filter;
     let groupName: string | null = null;

@@ -5,6 +5,7 @@ import { PageTopbar } from '@/components/PageChrome';
 import { ScopePill } from '@/components/Topbar';
 import { CodeEditor } from '@/components/ui/CodeEditor';
 import { ApiError, api } from '@/lib/client/api';
+import { useUnsavedGuard } from '@/lib/client/useUnsavedGuard';
 import styles from './ruleSets.module.css';
 
 type Format = 'yaml' | 'text' | 'mrs';
@@ -59,6 +60,11 @@ export default function RuleSetsPage() {
   const [sets, setSets] = useState<RuleSet[]>([]);
   const [meta, setMeta] = useState<Meta | null>(null);
   const [usage, setUsage] = useState<Record<string, number>>({});
+  // P3-27: whether the usage counts above the whole rule set (not just the
+  // first 500 rules / a failed fetch). When false, a 0 count means "unknown",
+  // NOT "unused" — showing "未被使用" then could lure the user into deleting a
+  // set that's actually referenced.
+  const [usageComplete, setUsageComplete] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -72,9 +78,11 @@ export default function RuleSetsPage() {
       const [list, m, rules] = await Promise.all([
         api<{ data: RuleSet[] }>('/api/v1/rule-sets'),
         api<{ data: Meta }>('/api/v1/meta'),
-        api<{ data: { type: string; value: string }[] }>('/api/v1/rules?limit=500').catch(() => ({
-          data: [] as { type: string; value: string }[],
-        })),
+        api<{ data: { type: string; value: string }[]; meta?: { total: number } }>(
+          '/api/v1/rules?limit=500',
+        )
+          .then((r) => ({ ok: true as const, data: r.data, total: r.meta?.total ?? r.data.length }))
+          .catch(() => ({ ok: false as const, data: [] as { type: string; value: string }[], total: 0 })),
       ]);
       setSets(list.data);
       setMeta(m.data);
@@ -83,6 +91,7 @@ export default function RuleSetsPage() {
         if (r.type === 'RULE-SET' && r.value) counts[r.value] = (counts[r.value] ?? 0) + 1;
       }
       setUsage(counts);
+      setUsageComplete(rules.ok && rules.data.length >= rules.total);
       setSelectedId((prev) => {
         if (selectName) return list.data.find((s) => s.name === selectName)?.id ?? prev;
         if (prev && list.data.some((s) => s.id === prev)) return prev;
@@ -150,7 +159,18 @@ export default function RuleSetsPage() {
   }
 
   async function onDelete(id: string) {
-    if (!confirm('确定删除该规则集？')) return;
+    // P1-12: name the set and its reference count in the confirm (the server
+    // refuses a delete that would orphan a reference, so warn up front instead
+    // of letting the user confirm then bounce off a 409).
+    const set = sets.find((s) => s.id === id);
+    const label = set?.name ?? '该规则集';
+    const used = set ? usage[set.name] ?? 0 : 0;
+    const inBase = set?.referenced_in_base ?? false;
+    const consequence =
+      used > 0 || inBase
+        ? `\n它当前被 ${used} 条规则${inBase ? ' + base 正文' : ''}引用,服务端会拒绝删除,请先解除引用。`
+        : '\n此操作不可撤销。';
+    if (!confirm(`确定删除规则集「${label}」?${consequence}`)) return;
     try {
       await api(`/api/v1/rule-sets/${id}`, { method: 'DELETE' });
       await reload();
@@ -247,10 +267,22 @@ export default function RuleSetsPage() {
                     <b>
                       {s.name}
                       <span
-                        className={`pill ${used > 0 || inBase ? 'ai' : 'warn'} plain`}
+                        className={`pill ${used > 0 || inBase ? 'ai' : usageComplete ? 'warn' : 'plain'} plain`}
                         style={{ marginLeft: 'auto' }}
+                        title={
+                          !usageComplete && used === 0 && !inBase
+                            ? '规则数超过一次加载上限,引用统计不完整'
+                            : undefined
+                        }
                       >
-                        {used > 0 ? `被 ${used} 引用` : inBase ? 'base 引用' : '未被使用'}
+                        {/* P3-27: don't claim "未被使用" when the usage scan was incomplete. */}
+                        {used > 0
+                          ? `被 ${used} 引用`
+                          : inBase
+                            ? 'base 引用'
+                            : usageComplete
+                              ? '未被使用'
+                              : '引用未知'}
                       </span>
                     </b>
                     <span>
@@ -356,6 +388,7 @@ function LocalDetail({
     (behavior || undefined) !== set.behavior ||
     intervalToNum(interval) !== set.interval ||
     (note.trim() || undefined) !== set.note;
+  useUnsavedGuard(dirty); // P1-6
 
   async function save() {
     if (!dirty || saving) return;
@@ -367,9 +400,11 @@ function LocalDetail({
           source: 'local',
           content,
           format,
-          behavior: behavior || undefined,
-          interval: intervalToNum(interval),
-          note: note.trim() || undefined,
+          // P1-5: send null (not undefined) to CLEAR — undefined is dropped by
+          // JSON and the server would keep the old value.
+          behavior: behavior || null,
+          interval: intervalToNum(interval) ?? null,
+          note: note.trim() || null,
         },
       });
       await onSaved();
@@ -520,6 +555,7 @@ function RemoteDetail({
     intervalToNum(interval) !== set.interval ||
     (proxy.trim() || undefined) !== set.proxy ||
     (note.trim() || undefined) !== set.note;
+  useUnsavedGuard(dirty); // P1-6
 
   async function save() {
     setSaving(true);
@@ -530,10 +566,11 @@ function RemoteDetail({
           source: 'remote',
           url: url.trim(),
           format,
-          behavior: behavior || undefined,
-          interval: intervalToNum(interval),
-          proxy: proxy.trim() || undefined,
-          note: note.trim() || undefined,
+          // P1-5: null clears; undefined would be silently dropped.
+          behavior: behavior || null,
+          interval: intervalToNum(interval) ?? null,
+          proxy: proxy.trim() || null,
+          note: note.trim() || null,
         },
       });
       await onSaved();
