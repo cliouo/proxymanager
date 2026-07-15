@@ -457,37 +457,40 @@ function parseVLESS(uri: string): ClashProxy {
   };
   // mihomo lowercases flow: `vless["flow"] = strings.ToLower(flow)`.
   if (params.flow) proxy.flow = params.flow.toLowerCase();
-  // VLESS Encryption. mihomo common/convert/converter.go:
-  //   if encryption := query.Get("encryption"); encryption != "" {
-  //     vless["encryption"] = encryption
-  //   }
-  // Emitted verbatim when non-empty; "none" is NOT special-cased (kept as-is).
-  // The value may be a long ML-KEM/x25519 string — `params` is already
-  // single-decoded by URLSearchParams, so we must not decode or rewrite it.
-  if (params.encryption) proxy.encryption = params.encryption;
+  // VLESS share links use `encryption=none` as the legacy no-encryption
+  // sentinel, while current Meta-Docs represents the same state as an empty
+  // YAML value. Preserve real ML-KEM/x25519 encryption strings byte-for-byte.
+  // `params` is already single-decoded by URLSearchParams, so do not decode it
+  // again here.
+  if (params.encryption) {
+    proxy.encryption = params.encryption === 'none' ? '' : params.encryption;
+  }
 
-  const security = params.security || 'none';
-  if (security === 'tls' || security === 'reality') {
+  const security = (params.security || 'none').toLowerCase();
+  if (security.endsWith('tls') || security === 'reality') {
     proxy.tls = true;
     if (params.sni) proxy.servername = params.sni;
-    if (params.fp) proxy['client-fingerprint'] = params.fp;
+    proxy['client-fingerprint'] = params.fp || 'chrome';
+    if (params.pcs) proxy.fingerprint = params.pcs;
     if (params.alpn) proxy.alpn = splitList(params.alpn);
     if (params.allowInsecure === '1' || params.insecure === '1')
       proxy['skip-cert-verify'] = true;
-    if (security === 'reality') {
+    if (security === 'reality' && params.pbk) {
       const opts: Record<string, unknown> = {};
-      if (params.pbk) opts['public-key'] = params.pbk;
+      opts['public-key'] = params.pbk;
       if (params.sid) opts['short-id'] = params.sid;
       proxy['reality-opts'] = opts;
     }
   }
 
-  // Packet encoding. mihomo common/convert/v.go:
-  //   switch packetEncoding { case "none": ; case "packet": packet-addr=true;
-  //                           default: xudp=true }
-  // Absent / empty / any value other than "none"|"packet" ⇒ xudp (the default).
-  if (params.packetEncoding === 'packet') proxy['packet-addr'] = true;
-  else if (params.packetEncoding !== 'none') proxy.xudp = true;
+  // Preserve mihomo share-link semantics but emit the canonical current YAML
+  // field. `xudp` / `packet-addr` remain accepted legacy aliases in the core;
+  // Meta-Docs uses packet-encoding: xudp|packetaddr.
+  if (params.packetEncoding === 'packet' || params.packetEncoding === 'packetaddr') {
+    proxy['packet-encoding'] = 'packetaddr';
+  } else if (params.packetEncoding !== 'none') {
+    proxy['packet-encoding'] = 'xudp';
+  }
 
   // Transport. mihomo common/convert/v.go lowercases `type`, then remaps
   // `type=http` → h2 (HTTP/2) and `type=tcp` + `headerType=http` → http
