@@ -1061,6 +1061,16 @@ textarea.input {
   box-shadow: var(--shadow-pop); /* P3-40 */
   animation: toast-in var(--motion-med) var(--ease); /* P3-40 */
 }
+/* Danger variant — a rejected op's reason can be long, so allow it to wrap
+   and cap the width instead of stretching the fixed, centred toast-wrap. */
+.toast-err {
+  background: var(--danger-dim);
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
+  max-width: min(560px, calc(100vw - 32px));
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 @keyframes toast-in {
   from {
     opacity: 0;

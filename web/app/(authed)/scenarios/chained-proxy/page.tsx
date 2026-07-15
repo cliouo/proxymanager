@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ApiError, api } from '@/lib/client/api';
 import { PageTopbar } from '@/components/PageChrome';
 import { ScopePill } from '@/components/Topbar';
+import { useToast } from '@/components/ui/Toast';
 import styles from './chainedProxy.module.css';
 
 interface ProxySummary {
@@ -60,6 +61,21 @@ export default function ChainedProxyPage() {
   const [addingFixed, setAddingFixed] = useState(false);
   const [addingPool, setAddingPool] = useState(false);
   const [editingPool, setEditingPool] = useState<string | null>(null);
+  const toast = useToast();
+
+  // Mutations (delete/clear/create/edit) are triggered from controls that can
+  // sit far below the fold, but the error banner renders at the top of the page
+  // — so a rejected op (e.g. deleting a chain still referenced by a group, 409)
+  // would scroll out of sight and look like nothing happened. Mirror the reason
+  // into the fixed toast overlay so it's always visible; keep the banner for the
+  // full text.
+  const showError = useCallback(
+    (msg: string | null) => {
+      setError(msg);
+      if (msg) toast(msg, { variant: 'error' });
+    },
+    [toast],
+  );
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -158,7 +174,7 @@ export default function ChainedProxyPage() {
                   setAddingFixed(false);
                   await reload();
                 } catch (err) {
-                  setError(err instanceof ApiError ? err.message : String(err));
+                  showError(err instanceof ApiError ? err.message : String(err));
                 }
               }}
               onCancel={() => setAddingFixed(false)}
@@ -172,7 +188,7 @@ export default function ChainedProxyPage() {
           </p>
         ) : (
           view.fixedChains.map((c) => (
-            <FixedFlow key={c.chainName} chain={c} onChanged={reload} onError={setError} />
+            <FixedFlow key={c.chainName} chain={c} onChanged={reload} onError={showError} />
           ))
         )}
       </section>
@@ -199,7 +215,7 @@ export default function ChainedProxyPage() {
                 await reload();
               }}
               onCancel={() => setAddingPool(false)}
-              onError={setError}
+              onError={showError}
             />
           </div>
         )}
@@ -218,7 +234,7 @@ export default function ChainedProxyPage() {
               editing={editingPool === p.chainName}
               onEdit={(v) => setEditingPool(v ? p.chainName : null)}
               onChanged={reload}
-              onError={setError}
+              onError={showError}
             />
           ))
         )}

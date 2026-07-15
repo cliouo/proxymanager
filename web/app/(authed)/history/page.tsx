@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ApiError, api } from '@/lib/client/api';
 import { PageTopbar } from '@/components/PageChrome';
 import { ScopePill } from '@/components/Topbar';
+import { useToast } from '@/components/ui/Toast';
 import styles from './history.module.css';
 
 interface RuleSnapshot {
@@ -211,6 +212,7 @@ export default function HistoryPage() {
   const [hasMore, setHasMore] = useState(false);
   const [undoing, setUndoing] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState('');
+  const toast = useToast();
 
   const load = useCallback(async (beforeTs?: number) => {
     setLoading(true);
@@ -246,7 +248,13 @@ export default function HistoryPage() {
         return [res.data.inverse, ...next];
       });
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : String(err));
+      // The undo button lives on a row that may be scrolled far below the
+      // top-of-page banner; an undo can be refused (e.g. 409 when the
+      // recreated group is still referenced). Toast the reason so it's seen
+      // without opening the console — the banner keeps the full text.
+      const msg = err instanceof ApiError ? err.message : String(err);
+      setError(msg);
+      toast(msg, { variant: 'error' });
     } finally {
       setUndoing((prev) => {
         const n = new Set(prev);
