@@ -136,6 +136,8 @@ describe('parseProxyUriList per protocol', () => {
       port: 443,
       uuid: 'uuid-abc',
       flow: 'xtls-rprx-vision',
+      encryption: '',
+      'packet-encoding': 'xudp',
       tls: true,
       servername: 'sni.example',
       'client-fingerprint': 'chrome',
@@ -572,9 +574,8 @@ describe('normaliseToClashProviderYaml — URI fallback', () => {
   });
 });
 
-// Grounded in mihomo source (Meta branch):
-//   common/convert/converter.go — VLESS `encryption` param
-//   common/convert/v.go handleVShareLink — transport switch (xhttp/http/h2/ws/grpc)
+// Grounded in current Meta-Docs for emitted YAML fields, while preserving
+// mihomo share-link semantics for VLESS Encryption and transport mapping.
 describe('vless:// transport + VLESS Encryption (mihomo mapping)', () => {
   // Non-secret placeholder UUID; no real credentials appear in these tests.
   const UUID = '00000000-0000-0000-0000-000000000000';
@@ -648,11 +649,11 @@ describe('vless:// transport + VLESS Encryption (mihomo mapping)', () => {
     expect((p2[0]['xhttp-opts'] as Record<string, unknown>).path).toBe('%2Fdbl');
   });
 
-  it('encryption=none is emitted verbatim (mihomo keeps any non-empty value as-is)', () => {
+  it('encryption=none is normalized to the canonical empty YAML value', () => {
     const uri = `vless://${UUID}@h.example:443?encryption=none&security=tls&sni=h.example&type=tcp#N`;
     const { proxies, errors } = parseProxyUriList(uri);
     expect(errors).toHaveLength(0);
-    expect(proxies[0].encryption).toBe('none');
+    expect(proxies[0].encryption).toBe('');
   });
 
   it('encryption absent or empty is omitted (mihomo writes only when != "")', () => {
@@ -664,6 +665,21 @@ describe('vless:// transport + VLESS Encryption (mihomo mapping)', () => {
       `vless://${UUID}@h.example:443?encryption=&type=tcp#Empty`,
     );
     expect('encryption' in pe[0]).toBe(false);
+  });
+
+  it('normalizes security and applies the TLS fingerprint defaults used by share links', () => {
+    const uri =
+      `vless://${UUID}@h.example:443?security=Reality&sni=h.example` +
+      `&pbk=PBK&sid=ab12&pcs=sha256-pin&type=tcp#TLS-Defaults`;
+    const { proxies, errors } = parseProxyUriList(uri);
+    expect(errors).toHaveLength(0);
+    expect(proxies[0]).toMatchObject({
+      tls: true,
+      servername: 'h.example',
+      'client-fingerprint': 'chrome',
+      fingerprint: 'sha256-pin',
+      'reality-opts': { 'public-key': 'PBK', 'short-id': 'ab12' },
+    });
   });
 
   it('type=http remaps to network h2 with h2-opts (mihomo v.go)', () => {
@@ -733,23 +749,54 @@ describe('vless:// transport + VLESS Encryption (mihomo mapping)', () => {
     });
   });
 
-  it('packet encoding: absent → xudp:true; packet → packet-addr; none → neither', () => {
+  it('full delivery chain emits canonical standard VLESS fields', () => {
+    const uri =
+      `vless://${UUID}@edge.example:443?encryption=none&security=reality` +
+      `&sni=edge.example&pbk=PBK&sid=ab12&type=tcp#Canonical`;
+    const { yaml, proxyCount } = normaliseToClashProviderYaml(uri);
+    expect(proxyCount).toBe(1);
+    const parsed = parseYaml(yaml) as { proxies: Record<string, unknown>[] };
+    expect(parsed.proxies[0]).toMatchObject({
+      encryption: '',
+      'packet-encoding': 'xudp',
+      'client-fingerprint': 'chrome',
+      'reality-opts': { 'public-key': 'PBK', 'short-id': 'ab12' },
+    });
+    expect(parsed.proxies[0].xudp).toBeUndefined();
+    expect(parsed.proxies[0]['packet-addr']).toBeUndefined();
+  });
+
+  it('packet encoding uses the canonical packet-encoding field without legacy aliases', () => {
     const def = parseProxyUriList(`vless://${UUID}@h.example:443?encryption=none&type=tcp#PE0`)
       .proxies[0];
-    expect(def.xudp).toBe(true);
+    expect(def['packet-encoding']).toBe('xudp');
+    expect(def.xudp).toBeUndefined();
     expect(def['packet-addr']).toBeUndefined();
 
     const packet = parseProxyUriList(
       `vless://${UUID}@h.example:443?encryption=none&type=tcp&packetEncoding=packet#PE1`,
     ).proxies[0];
-    expect(packet['packet-addr']).toBe(true);
+    expect(packet['packet-encoding']).toBe('packetaddr');
+    expect(packet['packet-addr']).toBeUndefined();
     expect(packet.xudp).toBeUndefined();
+
+    const packetAddr = parseProxyUriList(
+      `vless://${UUID}@h.example:443?encryption=none&type=tcp&packetEncoding=packetaddr#PE1A`,
+    ).proxies[0];
+    expect(packetAddr['packet-encoding']).toBe('packetaddr');
 
     const none = parseProxyUriList(
       `vless://${UUID}@h.example:443?encryption=none&type=tcp&packetEncoding=none#PE2`,
     ).proxies[0];
+    expect(none['packet-encoding']).toBeUndefined();
     expect(none.xudp).toBeUndefined();
     expect(none['packet-addr']).toBeUndefined();
+
+    const explicitXudp = parseProxyUriList(
+      `vless://${UUID}@h.example:443?encryption=none&type=tcp&packetEncoding=xudp#PE3`,
+    ).proxies[0];
+    expect(explicitXudp['packet-encoding']).toBe('xudp');
+    expect(explicitXudp.xudp).toBeUndefined();
   });
 
   it('flow is lowercased (mihomo strings.ToLower)', () => {

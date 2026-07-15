@@ -9,7 +9,8 @@
  */
 
 import { useState, type ComponentType } from 'react';
-import { api } from '@/lib/client/api';
+import { ApiError, api } from '@/lib/client/api';
+import { useToast } from '@/components/ui/Toast';
 
 /** Terminal outcome of a confirm-write card, lifted to the panel so it persists. */
 export type ConfirmResolution =
@@ -429,6 +430,7 @@ function WriteResultCard({ data, onUndone }: CardProps) {
     undone?: boolean;
   };
   const eventId = d.events?.[0]?.id;
+  const toast = useToast();
   // Seed from persisted data so a restored, already-undone write shows 已撤销
   // instead of offering the (idempotency-guarded, but misleading) undo again.
   const [undo, setUndo] = useState<'no' | 'busy' | 'yes' | 'err'>(d.undone ? 'yes' : 'no');
@@ -443,8 +445,15 @@ function WriteResultCard({ data, onUndone }: CardProps) {
       });
       setUndo('yes');
       onUndone?.();
-    } catch {
+    } catch (err) {
+      // Undo can legitimately be refused (e.g. a 409 when the recreated group
+      // is still referenced elsewhere). The card's tiny footer can only fit a
+      // generic 撤销失败, so surface the real reason via an error toast instead
+      // of dropping it — otherwise it's only visible in the browser console.
       setUndo('err');
+      toast(`撤销失败 · ${err instanceof ApiError ? err.message : String(err)}`, {
+        variant: 'error',
+      });
     }
   }
 
