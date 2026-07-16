@@ -12,11 +12,18 @@ describe('RuleCreateSchema value/MATCH validation', () => {
 
   it('rejects a non-MATCH rule with an empty value', () => {
     expect(() => RuleCreateSchema.parse({ ...baseCreate, type: 'DOMAIN', value: '' })).toThrow();
-    expect(() => RuleCreateSchema.parse({ ...baseCreate, type: 'IP-CIDR', value: '   ' })).toThrow();
+    expect(() =>
+      RuleCreateSchema.parse({ ...baseCreate, type: 'IP-CIDR', value: '   ' }),
+    ).toThrow();
   });
 
   it('accepts MATCH with no value (defaults to empty string)', () => {
-    const r = RuleCreateSchema.parse({ anchor: 'late', policy: '默认', source: 'manual', type: 'MATCH' });
+    const r = RuleCreateSchema.parse({
+      anchor: 'late',
+      policy: '默认',
+      source: 'manual',
+      type: 'MATCH',
+    });
     expect(r.type).toBe('MATCH');
     expect(r.value).toBe('');
   });
@@ -33,12 +40,64 @@ describe('RuleCreateSchema value/MATCH validation', () => {
     expect(r.options).toEqual(['no-resolve']);
     expect(r.enabled).toBe(false);
   });
+
+  it('rejects comma field reordering, ignored params, and invalid typed payloads', () => {
+    for (const candidate of [
+      { ...baseCreate, type: 'DOMAIN' as const, value: 'foo,DIRECT' },
+      { ...baseCreate, type: 'DOMAIN' as const, value: 'foo', policy: 'DIRECT,REJECT' },
+      { ...baseCreate, type: 'DOMAIN' as const, value: 'foo', options: ['no-resolve'] },
+      { ...baseCreate, type: 'IP-CIDR' as const, value: 'not-a-cidr' },
+      { ...baseCreate, type: 'IP-CIDR' as const, value: '192.0.2.0/024' },
+      { ...baseCreate, type: 'IP-CIDR6' as const, value: '1.2.3.4::/64' },
+      { ...baseCreate, type: 'DST-PORT' as const, value: '65536' },
+      { ...baseCreate, type: 'NETWORK' as const, value: 'QUIC' },
+      { ...baseCreate, type: 'IP-ASN' as const, value: 'AS13335' },
+    ]) {
+      expect(RuleCreateSchema.safeParse(candidate).success).toBe(false);
+    }
+  });
+
+  it('accepts only the safe shared regexp2 subset and forbids regex options', () => {
+    expect(
+      RuleCreateSchema.safeParse({
+        ...baseCreate,
+        type: 'DOMAIN-REGEX',
+        value: 'foo,(?=bar)',
+      }).success,
+    ).toBe(true);
+    for (const candidate of [
+      { ...baseCreate, type: 'DOMAIN-REGEX' as const, value: '[]' },
+      { ...baseCreate, type: 'DOMAIN-REGEX' as const, value: '[^]' },
+      { ...baseCreate, type: 'DOMAIN-REGEX' as const, value: '^\\u{1F600}$' },
+      { ...baseCreate, type: 'DOMAIN-REGEX' as const, value: '(a|A)+$' },
+      { ...baseCreate, type: 'DOMAIN-REGEX' as const, value: '(K|KK)+$' },
+      { ...baseCreate, type: 'DOMAIN-REGEX' as const, value: '(ß|\\u1E9Eß)+$' },
+      { ...baseCreate, type: 'DOMAIN-REGEX' as const, value: '(K|[℀-∀]K)+$' },
+      { ...baseCreate, type: 'DOMAIN-REGEX' as const, value: '(K|[\\u2100-\\u2200]K)+$' },
+      { ...baseCreate, type: 'DOMAIN-REGEX' as const, value: '^foo, bar$' },
+      {
+        ...baseCreate,
+        type: 'DOMAIN-REGEX' as const,
+        value: 'foo',
+        options: ['DIRECT'],
+      },
+    ]) {
+      expect(RuleCreateSchema.safeParse(candidate).success).toBe(false);
+    }
+  });
 });
 
 describe('RuleReplaceSchema', () => {
   it('enforces the same value/MATCH rule', () => {
     expect(() =>
-      RuleReplaceSchema.parse({ anchor: 'manual', type: 'DOMAIN', value: '', policy: '香港', rank: 10, source: 'manual' }),
+      RuleReplaceSchema.parse({
+        anchor: 'manual',
+        type: 'DOMAIN',
+        value: '',
+        policy: '香港',
+        rank: 10,
+        source: 'manual',
+      }),
     ).toThrow();
     const ok = RuleReplaceSchema.parse({
       anchor: 'late',

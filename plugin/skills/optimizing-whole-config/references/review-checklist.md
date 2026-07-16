@@ -31,19 +31,19 @@
 
 ## 工具速查（看什么 / 用哪个读）
 
-| 工具 | 能看到什么 | 注意 |
-| --- | --- | --- |
-| `get_config_full` | 完整下发 YAML（脱敏）= 骨架 + 注入各锚点的**生效**规则 + enabled 源注入节点 | **无规则 id、不含已停用规则**；要 id / 停用规则用 `list_rules` |
-| `list_rules` | 每条 `id/type/value/policy/anchor/options/enabled/source/note`，可按 `anchor` 过滤 | `enabled=false` = 已停用、不下发 |
-| `get_config_outline` | 顶层区块 + 子键 / 具名条目（dns 子键、sniffer/tun、端口、proxy-groups、rule-providers）；`rules` 仅给条数 | 规则正文不在此 |
-| `get_config_section(path)` | 某区块 YAML。path：map 用点 `dns` / `dns.enhanced-mode`；具名序列 `proxy-groups[OpenAI]` | `proxies` / `proxy-providers` 自动脱敏为 `***` |
-| `get_base_overview` | `anchors` / `policies` / `proxyProviders` / `ruleProviders`(规则集名) | 不含订阅源注入的节点 |
-| `list_proxy_nodes` | 渲染后**真实**节点名 + `collisions`（跨源同名） | 快照缺失时返回空，需先触发一次渲染 |
-| `list_proxy_groups` | 组 `id/name/type/kind/proxies/filter/exclude-filter/dialer-proxy/bound_subscription_id/bound_collection_id/...` + templates | `single-sub` / collection-scope 组成员**渲染时算**，不手填 |
-| `list_rule_providers` | `id/name/source/format/behavior/url/interval/note` + `referenced`（被几条 RULE-SET 规则引用） | `referenced=0` = 没有任何规则引用它 |
-| `preview_proxy_group_members` | 给定 `filter`(+`exclude_filter`) 对真实节点名试算的命中名 + 数量；可传组 `id` 或候选正则 | 只读、不改配置 |
-| `preview_node_operators` | 算子管线 before/after + 每步增删改 + `orphanedReferences` / `orphanWarning` | 改正则 / 算子前必跑 |
-| `list_local_nodes` | 本地源节点 `name + type + referencedBy`（凭证已脱敏） | 仅 `kind=local` 源，远程源调用报错 |
+| 工具                          | 能看到什么                                                                                                                  | 注意                                                           |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| `get_config_full`             | 完整下发 YAML（脱敏）= 骨架 + 注入各锚点的**生效**规则 + enabled 源注入节点                                                 | **无规则 id、不含已停用规则**；要 id / 停用规则用 `list_rules` |
+| `list_rules`                  | 每条 `id/type/value/policy/anchor/options/enabled/source/note`，可按 `anchor` 过滤                                          | `enabled=false` = 已停用、不下发                               |
+| `get_config_outline`          | 顶层区块 + 子键 / 具名条目（dns 子键、sniffer/tun、端口、proxy-groups、rule-providers）；`rules` 仅给条数                   | 规则正文不在此                                                 |
+| `get_config_section(path)`    | 某区块 YAML。path：map 用点 `dns` / `dns.enhanced-mode`；具名序列 `proxy-groups[OpenAI]`                                    | `proxies` / `proxy-providers` 自动脱敏为 `***`                 |
+| `get_base_overview`           | `anchors` / `policies` / `proxyProviders` / `ruleProviders`(规则集名)                                                       | 不含订阅源注入的节点                                           |
+| `list_proxy_nodes`            | 渲染后**真实**节点名 + `collisions`（跨源同名）                                                                             | 快照缺失时返回空，需先触发一次渲染                             |
+| `list_proxy_groups`           | 组 `id/name/type/kind/proxies/filter/exclude-filter/dialer-proxy/bound_subscription_id/bound_collection_id/...` + templates | `single-sub` / collection-scope 组成员**渲染时算**，不手填     |
+| `list_rule_providers`         | `id/name/source/format/behavior/url/interval/note` + `referenced`（被几条 RULE-SET 规则引用）                               | `referenced=0` = 没有任何规则引用它                            |
+| `preview_proxy_group_members` | 给定 `filter`(+`exclude_filter`) 对真实节点名试算的命中名 + 数量；可传组 `id` 或候选正则                                    | 只读、不改配置                                                 |
+| `preview_node_operators`      | 算子管线 before/after + 每步增删改 + `orphanedReferences` / `orphanWarning`                                                 | 改正则 / 算子前必跑                                            |
+| `list_local_nodes`            | 本地源节点 `name + type + referencedBy`（凭证已脱敏）                                                                       | 仅 `kind=local` 源，远程源调用报错                             |
 
 ## 审查项
 
@@ -106,7 +106,7 @@
 
 - [ ] 组的 `filter` 没有用**裸两位国家码**（如 `us`）做子串匹配——会顺带吃进 `A-us-tralia` / `R-us-sia` 等。
 - **检测**：`list_proxy_groups` 扫各组 `filter` 找裸码 → `preview_proxy_group_members` 试算，确认有没有误命中。
-- **修复方向**：改用单词边界 `\bUS\b` 或国旗 emoji 锚定（system prompt 既定建议）。
+- **修复方向**：改用显式 ASCII 边界 `(?<![A-Za-z])US(?![A-Za-z])` 或国旗 emoji 锚定；产品拒绝 JS/regexp2 语义不同的 `\b`。
 - **落地**：策略组 filter 改动**交回 `synthesizing-proxy-groups` spoke** 走 `update_proxy_group`（本 spoke 不直接改组）。
 
 ### 10. 孤儿引用

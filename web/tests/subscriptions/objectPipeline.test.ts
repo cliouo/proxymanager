@@ -108,6 +108,23 @@ describe('object pipeline ≡ string pipeline', () => {
     expect(obj.proxies.every((p) => p.udp === true)).toBe(true);
   });
 
+  it('rejects a subscription operator result that empties a required node field', async () => {
+    const sub = makeSub({
+      operators: [
+        {
+          id: 'empty-name',
+          kind: 'rename-regex',
+          pattern: '.+',
+          replacement: '',
+          flags: 'g',
+        },
+      ],
+    });
+
+    await expect(resolveSubscriptionProxies(sub)).rejects.toThrow(/field "name"/i);
+    await expect(resolveSubscriptionContent(sub)).rejects.toThrow(/field "name"/i);
+  });
+
   it('remote sub on cache hit: object path parses the cached YAML to the same proxies', async () => {
     const cachedYaml =
       'proxies:\n  - { name: HK-01, type: ss, server: h, port: 1, cipher: aes-128-gcm, password: p }\n  - { name: US-02, type: ss, server: u, port: 2, cipher: aes-128-gcm, password: p }\n';
@@ -128,6 +145,49 @@ describe('object pipeline ≡ string pipeline', () => {
     expect(obj.traffic).toEqual({ upload: 1, download: 2, total: 3, expire: 4 });
   });
 
+  it('derives the cache-hit count from validated YAML instead of untrusted metadata', async () => {
+    getCacheMock.mockResolvedValue({
+      content:
+        'proxies:\n  - { name: SAFE, type: ss, server: h, port: 1, cipher: aes-128-gcm, password: p }\n',
+      proxy_count: 999,
+      fetched_at: Date.now(),
+    });
+    const sub = makeSub({ kind: 'remote', content: undefined, url: 'https://up.example/sub' });
+
+    const objectResult = await resolveSubscriptionProxies(sub);
+    const stringResult = await resolveSubscriptionContent(sub);
+
+    expect(objectResult.proxyCount).toBe(1);
+    expect(stringResult.proxyCount).toBe(1);
+  });
+
+  it('refetches a malformed fresh cache entry on both string and object paths', async () => {
+    getCacheMock.mockResolvedValue({
+      content: 'proxies:\n  - name: FAKE_SECRET_DO_NOT_LOG\n',
+      proxy_count: 1,
+      fetched_at: Date.now(),
+    });
+    const sub = makeSub({ kind: 'remote', content: undefined, url: 'https://up.example/sub' });
+    const upstream =
+      'proxies:\n  - { name: REFRESHED, type: ss, server: h, port: 1, cipher: aes-128-gcm, password: p }\n';
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(
+      async () => new Response(upstream, { status: 200 }),
+    ) as unknown as typeof fetch;
+    try {
+      const objectResult = await resolveSubscriptionProxies(sub);
+      const stringResult = await resolveSubscriptionContent(sub);
+
+      expect(objectResult.proxies.map((proxy) => proxy.name)).toEqual(['REFRESHED']);
+      expect(stringResult.yaml).toContain('REFRESHED');
+      expect(stringResult.yaml).not.toContain('FAKE_SECRET_DO_NOT_LOG');
+      expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+      expect(setCacheMock).toHaveBeenCalledTimes(2);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
   it('remote sub stale-on-error: object path carries the same stale flag + proxies', async () => {
     const cachedYaml =
       'proxies:\n  - { name: HK-01, type: ss, server: h, port: 1, cipher: aes-128-gcm, password: p }\n';
@@ -144,7 +204,7 @@ describe('object pipeline ≡ string pipeline', () => {
       const sub = makeSub({ kind: 'remote', content: undefined, url: 'https://up.example/sub' });
       const obj = await resolveSubscriptionProxies(sub);
       expect(obj.stale).toBe(true);
-      expect(obj.staleReason).toContain('ECONNREFUSED');
+      expect(obj.staleReason).toBe('Upstream fetch failed');
       expect(obj.proxies.map((p) => p.name)).toEqual(['HK-01']);
     } finally {
       globalThis.fetch = realFetch;
@@ -217,23 +277,19 @@ describe('object pipeline ≡ string pipeline', () => {
     try {
       const stale = await resolveSubscriptionProxiesRaw(sub);
       expect(stale.stale).toBe(true);
-      expect(stale.staleReason).toContain('ECONNREFUSED');
+      expect(stale.staleReason).toBe('Upstream fetch failed');
       expect(stale.proxies).toEqual(parseProxies(cachedYaml));
     } finally {
       globalThis.fetch = realFetch;
     }
   });
 
-  it('non-object entries in the proxies array are dropped by the object path (same guard as the old extractProxies)', async () => {
+  it('rejects non-object entries consistently instead of publishing different string/object results', async () => {
     const sub = makeSub({
-      content: 'proxies:\n  - { name: OK, type: ss, server: h, port: 1, cipher: aes-128-gcm, password: p }\n  - 不是对象\n  - null\n',
+      content:
+        'proxies:\n  - { name: OK, type: ss, server: h, port: 1, cipher: aes-128-gcm, password: p }\n  - 不是对象\n  - null\n',
     });
-    const obj = await resolveSubscriptionProxies(sub);
-    expect(obj.proxies.map((p) => p.name)).toEqual(['OK']);
-    expect(obj.proxyCount).toBe(1);
-    // 字符串路径保留原始条目(行为不变),proxyCount 仍按原始数组计数。
-    const str = await resolveSubscriptionContentRaw(sub);
-    expect(str.proxyCount).toBe(3);
-    expect(str.yaml).toContain('不是对象');
+    await expect(resolveSubscriptionProxies(sub)).rejects.toThrow(/proxy entry at index 1/i);
+    await expect(resolveSubscriptionContentRaw(sub)).rejects.toThrow(/proxy entry at index 1/i);
   });
 });

@@ -10,7 +10,7 @@ description: >-
   地区组 / 筛选组 / select / url-test / fallback / load-balance / relay; or
   reports a group catching the wrong nodes (a bare "us" swallowing
   A-us-tralia / R-us-sia). Always previews members before any filter change
-  (word-boundary \bUS\b or flag-emoji anchoring). Deep-dive spoke of the
+  (explicit ASCII lookaround or flag-emoji anchoring). Deep-dive spoke of the
   managing-clash-config hub.
 ---
 
@@ -20,10 +20,11 @@ description: >-
 不获取不猜测；写不立即生效，服务端出确认卡、用户授权才执行，发起后别声称已改好；先 `search_mihomo_docs`
 再答 mihomo 写法。这些 load-bearing 部分由服务端强制。
 
-管理 select / url-test / fallback / load-balance / relay 路由分组。策略组已从 base.yaml 抽到
+管理 select / url-test / fallback / load-balance 路由分组。固定 Mihomo v1.19.28 已移除 relay；
+遇到遗留 relay 时应迁移为具体节点上的 `dialer-proxy` 链式代理，而不是继续下发 relay。策略组已从 base.yaml 抽到
 `proxy-groups` Redis hash，base 只剩 `# === PROXY-GROUPS ===` 标记。
 
-## 1. kind 七形态决策树
+## 1. kind 五种有效形态 + 一种遗留绑定
 
 每个组带 `kind` 字段标记 UI 预设形态（字段矩阵见 `references/kind-taxonomy.md`）：
 
@@ -35,36 +36,41 @@ description: >-
   （无 node_prefix、不自动生成 filter）
 - `collection-scope` 类 — 用 `bound_collection_id` 自动生成 proxies
 
-> `single-sub` / `collection-scope` 的成员是**渲染时算的**，别手填 filter / proxies。
+> `single-sub` / 遗留 `collection-scope` 的成员是**渲染时算的**，别手填 filter / proxies；绑定缺失或本轮没有存活节点会拒绝整次渲染。无显式成员的动态组默认使用 `empty-fallback: REJECT`。
 
 > 另一根正交轴是 `type`（健康检查行为）：`select` 手动切换、**无健康检查**；`url-test` 自动选速；
-> `fallback` 有序故障转移；`load-balance` 多路并发；`relay` 链式——后三者需配 `url`+`interval`。
+> `fallback` 有序故障转移；`load-balance` 多路分流。后三种健康检查类型需配 `url`+`interval`。
+> 链式代理由渲染器把单后端 wrap 转成带 `dialer-proxy` 的 concrete proxy，不是 proxy-group type。
 
 ## 2. 成员合成三来源
 
 手选 `proxies` ｜ `include_all_proxies` + `filter` ｜ 绑定来源自动算。
 
-## 3. filter 单词边界坑（本 spoke 招牌）
+## 3. filter 字母边界坑（本 spoke 招牌）
 
 裸 `us` 会顺带吃进 A-**us**-tralia / R-**us**-sia。三种锚定策略（优先级递减）：
 
-| 场景 | 写法 | 说明 |
-|------|------|------|
-| 节点含旗帜 emoji 或中文地名 | `🇺🇸\|United States\|美国` | 绕开字母子串，最安全 |
-| 只有字母缩写 | `\bUS\b` | 单词边界隔开 Australia / Russia |
-| 双代码地区（英国 UK/GB） | `\b(UK\|GB\|GBR)\b\|英国` | 交替组避免漏匹配；`\b` 同时挡住 `80GB` |
+| 场景                        | 写法                          | 说明                                 |
+| --------------------------- | ----------------------------- | ------------------------------------ | ---------------- | -------------------- | --------------------------------- |
+| 节点含旗帜 emoji 或中文地名 | `🇺🇸                           | United States                        | 美国`            | 绕开字母子串，最安全 |
+| 只有字母缩写                | `(?<![A-Za-z])US(?![A-Za-z])` | 显式 ASCII 边界挡住 Australia/Russia |
+| 双代码地区（英国 UK/GB）    | `(?<![A-Za-z])(?:UK           | GB                                   | GBR)(?![A-Za-z]) | 英国`                | 同时认 UK/GB/GBR，不误命中 `80GB` |
+
+固定 Mihomo v1.19.28 的组筛选引擎是 `dlclark/regexp2`，不是 RE2。产品预览只接受
+JS/固定 regexp2 的有界安全交集：可用环视，但拒绝两边语义不同的 `\b` / `\w` /
+`\d` / `\s` / `\p`。多条独立模式用反引号分隔，不要当成普通 `|`。
 
 **纯中文命名陷阱**：真实节点池常有只含中文地名、无任何 ASCII 缩写的节点（如「日本 东京 02」「新加坡 狮城」）。
 只写 `JP|JPN` / `SG|SGP` 会漏掉它们——filter 必须**同时含中文别名**。常用模板：
 
-| 地区 | filter |
-|------|--------|
-| 美国 | `(?i)(\bUS\b\|USA\|美国\|🇺🇸)` |
-| 日本 | `(?i)(\bJP\b\|JPN\|日本)` |
-| 香港 | `(?i)(\bHK\b\|HKG\|香港)` |
-| 新加坡 | `(?i)(\bSG\b\|SGP\|新加坡\|狮城)` |
-| 台湾 | `(?i)(\bTW\b\|TWN\|台湾\|台北)` |
-| 韩国 | `(?i)(\bKR\b\|KOR\|韩国\|首尔)` |
+| 地区   | filter  |
+| ------ | ------- | ------ | ------------------------------ | ------------------------------ |
+| 美国   | `(?i)🇺🇸 | 美国   | (?<![A-Za-z])USA?(?![A-Za-z])` |
+| 日本   | `(?i)🇯🇵 | 日本   | (?<![A-Za-z])JPN?(?![A-Za-z])` |
+| 香港   | `(?i)🇭🇰 | 香港   | (?<![A-Za-z])HKG?(?![A-Za-z])` |
+| 新加坡 | `(?i)🇸🇬 | 新加坡 | 狮城                           | (?<![A-Za-z])SGP?(?![A-Za-z])` |
+| 台湾   | `(?i)🇹🇼 | 台湾   | 台北                           | (?<![A-Za-z])TWN?(?![A-Za-z])` |
+| 韩国   | `(?i)🇰🇷 | 韩国   | 首尔                           | (?<![A-Za-z])KOR?(?![A-Za-z])` |
 
 **改 filter / exclude_filter 之前必须** `preview_proxy_group_members` 对真实节点试算，确认命中的
 正是想要的节点，再发起 `create_proxy_group` / `update_proxy_group`。（浏览器本地纯正则匹配，零往返；
@@ -94,5 +100,5 @@ description: >-
 
 ## 参考资料
 
-- `references/kind-taxonomy.md` — 七形态 × 字段矩阵；type 语义；bound_subscription_id / bound_collection_id
-- `references/filter-regex.md` — 单词边界 cookbook、常用地区正则、exclude-filter 模式、flag-emoji 锚定
+- `references/kind-taxonomy.md` — 五种有效形态 + 遗留绑定的字段矩阵；type 与 empty-fallback 语义
+- `references/filter-regex.md` — regexp2 安全交集、显式 ASCII 边界、常用地区正则与 exclude-filter

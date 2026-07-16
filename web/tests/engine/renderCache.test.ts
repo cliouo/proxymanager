@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { REDIS_KEYS } from '@/lib/redis/keys';
@@ -13,6 +14,7 @@ import { REDIS_KEYS } from '@/lib/redis/keys';
 
 const kv = new Map<string, unknown>();
 const counters = new Map<string, number>();
+let beforeRepairEval: (() => Promise<void>) | null = null;
 
 function readKey(key: string): unknown {
   if (counters.has(key)) return counters.get(key);
@@ -20,16 +22,41 @@ function readKey(key: string): unknown {
 }
 
 const setCalls: Array<{ key: string; value: unknown; opts: unknown }> = [];
+const evalCalls: Array<{ script: string; keys: string[]; args: string[] }> = [];
 
 const fakeRedis = {
   mget: async (...keys: string[]) => keys.map(readKey),
   get: async (key: string) => readKey(key),
-  set: async (key: string, value: unknown, opts: unknown) => {
+  set: async (key: string, value: unknown, opts?: unknown) => {
     kv.set(key, value);
-    setCalls.push({ key, value, opts });
+    if (key !== REDIS_KEYS.configVersion) setCalls.push({ key, value, opts });
+  },
+  del: async (key: string) => {
+    const removed = Number(kv.delete(key) || counters.delete(key));
+    return removed;
+  },
+  eval: async (script: string, keys: string[], args: string[]) => {
+    evalCalls.push({ script, keys, args });
+    if (beforeRepairEval) await beforeRepairEval();
+    const key = keys[0];
+    const current = readKey(key);
+    const raw = typeof current === 'number' || typeof current === 'string' ? String(current) : '';
+    const canonical = raw === '0' || /^[1-9]\d*$/.test(raw);
+    const parsed = canonical ? Number(raw) : Number.NaN;
+    if (!Number.isSafeInteger(parsed) || parsed < 0) {
+      counters.delete(key);
+      kv.set(key, Number(args[0]));
+      return 1;
+    }
+    return 0;
   },
   incr: async (key: string) => {
-    const next = (counters.get(key) ?? 0) + 1;
+    const current = readKey(key);
+    if (current !== null && (typeof current !== 'number' || !Number.isSafeInteger(current))) {
+      throw new Error('value is not an integer');
+    }
+    const next = (current ?? 0) + 1;
+    kv.delete(key);
     counters.set(key, next);
     return next;
   },
@@ -39,21 +66,30 @@ vi.mock('@/lib/redis/client', () => ({ getRedis: () => fakeRedis }));
 
 // ---- mocked pipeline + repos ------------------------------------------------
 
+const RESOLVED_CONTENT = 'proxies: []\n';
+const RESOLVED_BUILD_ID = createHash('sha256')
+  .update(RESOLVED_CONTENT, 'utf8')
+  .digest('hex')
+  .slice(0, 8);
 const RESOLVED = {
-  content: 'proxies: []\n',
-  buildId: 'build-1',
+  content: RESOLVED_CONTENT,
+  buildId: RESOLVED_BUILD_ID,
   anchorsApplied: [],
   unmatchedAnchors: [],
   ruleProvidersApplied: [],
   subscriptions: [{ name: 'airport-a', injectedCount: 3 }],
   collisions: [],
   nodeNames: ['n1', 'n2', 'n3'],
+  nodesBySub: {},
   warnings: [],
   inlinedProxyCount: 3,
   proxyGroupCount: 0,
 };
 
-const resolveConfigMock = vi.fn(async (..._args: unknown[]) => ({ ...RESOLVED }));
+const resolveConfigMock = vi.fn(async (...args: unknown[]) => {
+  void args;
+  return { ...RESOLVED };
+});
 vi.mock('@/lib/engine/resolve', () => ({
   resolveConfig: (...args: unknown[]) => resolveConfigMock(...args),
 }));
@@ -104,8 +140,18 @@ const DEFAULT_PROFILE = {
   source: { type: 'none' as const },
   updated_at: 0,
 };
+const SECOND_PROFILE = {
+  id: 'prof-secondary',
+  name: 'secondary',
+  source: { type: 'none' as const },
+  updated_at: 0,
+};
 vi.mock('@/lib/repos/profilesRepo', () => ({
-  getProfileByName: async (name: string) => (name === 'default' ? DEFAULT_PROFILE : null),
+  getProfileByName: async (name: string) => {
+    if (name === 'default') return DEFAULT_PROFILE;
+    if (name === 'secondary') return SECOND_PROFILE;
+    return null;
+  },
 }));
 
 let mod: typeof import('@/lib/engine/renderCache');
@@ -114,6 +160,8 @@ beforeEach(async () => {
   kv.clear();
   counters.clear();
   setCalls.length = 0;
+  evalCalls.length = 0;
+  beforeRepairEval = null;
   resolveConfigMock.mockClear();
   getBaseMock.mockClear();
   getBaseMock.mockImplementation(async () => BASE);
@@ -135,6 +183,10 @@ describe('renderProfileConfig — miss then hit', () => {
     expect(out.baseEtag).toBe('etag-1');
     expect(out.baseUpdatedAt).toBe(1_700_000_000);
     expect(resolveConfigMock).toHaveBeenCalledTimes(1);
+    const resolveOptions = resolveConfigMock.mock.calls[0][5] as {
+      ignoreFailedSubs?: boolean;
+    };
+    expect(resolveOptions.ignoreFailedSubs).toBe(false);
 
     // Entry written under render:{profile} with EX = ceil(freshForMs/1000)+60.
     // airport-b (ttl 60s) did NOT participate, so the window is airport-a's 600s.
@@ -150,7 +202,7 @@ describe('renderProfileConfig — miss then hit', () => {
     await mod.renderProfileConfig('default', { providerUrlBase: URL_BASE });
     const out = await mod.renderProfileConfig('default', { providerUrlBase: URL_BASE });
     expect(out.cache).toBe('hit');
-    expect(out.resolved.buildId).toBe('build-1');
+    expect(out.resolved.buildId).toBe(RESOLVED_BUILD_ID);
     expect(out.baseEtag).toBe('etag-1');
     expect(resolveConfigMock).toHaveBeenCalledTimes(1);
     expect(getBaseMock).toHaveBeenCalledTimes(1); // hit path loads no data
@@ -162,9 +214,208 @@ describe('renderProfileConfig — miss then hit', () => {
     const entry = setCalls[0].value as { freshForMs: number };
     expect(entry.freshForMs).toBe(24 * 60 * 60 * 1000);
   });
+
+  it('does not publish a cache entry when the full render fails closed', async () => {
+    resolveConfigMock.mockRejectedValueOnce(new Error('PROXY-GROUPS marker is missing'));
+
+    await expect(mod.renderProfileConfig('default', {})).rejects.toThrow(/PROXY-GROUPS/);
+
+    expect(setCalls).toHaveLength(0);
+    expect(kv.has(REDIS_KEYS.renderCache('default'))).toBe(false);
+  });
 });
 
 describe('renderProfileConfig — invalidation paths', () => {
+  it('rejects epoch 9 entries created before proxy parsing became fail-closed', async () => {
+    await mod.renderProfileConfig('default', { providerUrlBase: URL_BASE });
+    const key = REDIS_KEYS.renderCache('default');
+    const entry = kv.get(key) as { epoch: number };
+    entry.epoch = 9;
+
+    const out = await mod.renderProfileConfig('default', { providerUrlBase: URL_BASE });
+    expect(out.cache).toBe('miss');
+    expect(resolveConfigMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('treats a corrupt cache envelope as a miss instead of serving it', async () => {
+    await mod.renderProfileConfig('default', { providerUrlBase: URL_BASE });
+    const key = REDIS_KEYS.renderCache('default');
+    const entry = kv.get(key) as Record<string, unknown>;
+    entry.content = 42;
+
+    const out = await mod.renderProfileConfig('default', { providerUrlBase: URL_BASE });
+    expect(out.cache).toBe('miss');
+    expect(out.resolved.content).toBe(RESOLVED.content);
+    expect(resolveConfigMock).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ['empty content', (entry: Record<string, unknown>) => (entry.content = '')],
+    ['mismatched build id', (entry: Record<string, unknown>) => (entry.buildId = 'deadbeef')],
+    [
+      'far-future rendered timestamp',
+      (entry: Record<string, unknown>) => (entry.renderedAt = Date.now() + 24 * 60 * 60 * 1000),
+    ],
+    [
+      'freshness above the configured maximum',
+      (entry: Record<string, unknown>) => (entry.freshForMs = 24 * 60 * 60 * 1000 + 1),
+    ],
+    [
+      'malformed anchor metadata',
+      (entry: Record<string, unknown>) => (entry.anchorsApplied = [{ anchor: 'manual' }]),
+    ],
+    [
+      'non-string unmatched anchor',
+      (entry: Record<string, unknown>) => (entry.unmatchedAnchors = [42]),
+    ],
+    [
+      'non-string applied rule provider',
+      (entry: Record<string, unknown>) => (entry.ruleProvidersApplied = [false]),
+    ],
+    [
+      'malformed subscription metadata',
+      (entry: Record<string, unknown>) =>
+        (entry.subscriptions = [{ name: 'airport-a', injectedCount: '3' }]),
+    ],
+    [
+      'malformed collision metadata',
+      (entry: Record<string, unknown>) =>
+        (entry.collisions = [{ name: 'n1', keptFrom: null, droppedFrom: [7] }]),
+    ],
+    ['non-string node name', (entry: Record<string, unknown>) => (entry.nodeNames = [false])],
+    [
+      'malformed per-sub node list',
+      (entry: Record<string, unknown>) => (entry.nodesBySub = { airport: ['n1', 2] }),
+    ],
+    ['non-string warning', (entry: Record<string, unknown>) => (entry.warnings = [{}])],
+  ])('treats %s as a cache miss', async (_label, corrupt) => {
+    await mod.renderProfileConfig('default', { providerUrlBase: URL_BASE });
+    const key = REDIS_KEYS.renderCache('default');
+    corrupt(kv.get(key) as Record<string, unknown>);
+
+    const out = await mod.renderProfileConfig('default', { providerUrlBase: URL_BASE });
+
+    expect(out.cache).toBe('miss');
+    expect(out.resolved.content).toBe(RESOLVED.content);
+    expect(resolveConfigMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not let a present-invalid config version match a legacy version-zero entry', async () => {
+    await mod.renderProfileConfig('default', { providerUrlBase: URL_BASE });
+    kv.set(REDIS_KEYS.configVersion, 'not-a-version');
+
+    const out = await mod.renderProfileConfig('default', { providerUrlBase: URL_BASE });
+
+    expect(out.cache).toBe('miss');
+    expect(resolveConfigMock).toHaveBeenCalledTimes(2);
+    expect(setCalls).toHaveLength(1); // only the initial, pre-corruption write
+    expect(kv.has(REDIS_KEYS.renderCache('default'))).toBe(false);
+  });
+
+  it('repairs an invalid version to a nonzero global generation before the next read', async () => {
+    await mod.renderProfileConfig('default', { providerUrlBase: URL_BASE });
+    const changedContent = 'proxies:\n  - name: CHANGED\n    type: direct\n';
+    const changed = {
+      ...RESOLVED,
+      content: changedContent,
+      buildId: createHash('sha256').update(changedContent, 'utf8').digest('hex').slice(0, 8),
+    };
+    resolveConfigMock.mockResolvedValueOnce(changed).mockResolvedValueOnce(changed);
+    kv.set(REDIS_KEYS.configVersion, 'not-a-version');
+
+    const duringCorruption = await mod.renderProfileConfig('default', {
+      providerUrlBase: URL_BASE,
+    });
+    expect(duringCorruption.cache).toBe('miss');
+    expect(duringCorruption.resolved.content).toBe(changedContent);
+    expect(kv.get(REDIS_KEYS.configVersion)).toEqual(expect.any(Number));
+    expect(kv.get(REDIS_KEYS.configVersion)).not.toBe(0);
+
+    const afterRecovery = await mod.renderProfileConfig('default', {
+      providerUrlBase: URL_BASE,
+    });
+
+    expect(afterRecovery.cache).toBe('miss');
+    expect(afterRecovery.resolved.content).toBe(changedContent);
+    expect(resolveConfigMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('invalidating one profile repairs the global generation for every other profile', async () => {
+    await mod.renderProfileConfig('default', { providerUrlBase: URL_BASE });
+    await mod.renderProfileConfig('secondary', { providerUrlBase: URL_BASE });
+    kv.set(REDIS_KEYS.configVersion, 'not-a-version');
+
+    const detected = await mod.renderProfileConfig('default', { providerUrlBase: URL_BASE });
+    expect(detected.cache).toBe('miss');
+
+    // `secondary` was never requested while the key was corrupt, so its old v0
+    // entry still exists. The repaired global generation must nevertheless
+    // force a miss instead of resurrecting it.
+    const otherProfile = await mod.renderProfileConfig('secondary', {
+      providerUrlBase: URL_BASE,
+    });
+
+    expect(otherProfile.cache).toBe('miss');
+    expect(resolveConfigMock).toHaveBeenCalledTimes(4);
+  });
+
+  it.each(['00', '01'])(
+    'repairs non-canonical Redis integer %s before another profile can reuse v0',
+    async (rawVersion) => {
+      await mod.renderProfileConfig('default', { providerUrlBase: URL_BASE });
+      await mod.renderProfileConfig('secondary', { providerUrlBase: URL_BASE });
+      kv.set(REDIS_KEYS.configVersion, rawVersion);
+
+      const detected = await mod.renderProfileConfig('default', { providerUrlBase: URL_BASE });
+      expect(detected.cache).toBe('miss');
+      expect(kv.get(REDIS_KEYS.configVersion)).toEqual(expect.any(Number));
+      expect(evalCalls.at(-1)?.script).toContain("current == '0'");
+      expect(evalCalls.at(-1)?.script).toContain("'^[1-9]%d*$'");
+
+      const otherProfile = await mod.renderProfileConfig('secondary', {
+        providerUrlBase: URL_BASE,
+      });
+      expect(otherProfile.cache).toBe('miss');
+      expect(resolveConfigMock).toHaveBeenCalledTimes(4);
+    },
+  );
+
+  it('a delayed repair CAS never overwrites a concurrent valid INCR generation', async () => {
+    await mod.renderProfileConfig('default', { providerUrlBase: URL_BASE });
+    await mod.renderProfileConfig('secondary', { providerUrlBase: URL_BASE });
+    kv.set(REDIS_KEYS.configVersion, 'not-a-version');
+
+    let signalEntered: (() => void) | undefined;
+    let releaseRepair: (() => void) | undefined;
+    const entered = new Promise<void>((resolve) => {
+      signalEntered = resolve;
+    });
+    const held = new Promise<void>((resolve) => {
+      releaseRepair = resolve;
+    });
+    beforeRepairEval = async () => {
+      signalEntered?.();
+      await held;
+    };
+
+    const repairing = mod.renderProfileConfig('default', { providerUrlBase: URL_BASE });
+    await entered;
+
+    // Another actor repairs the key, then a normal repo write advances it.
+    // The delayed Lua repair must observe 101 and leave it untouched.
+    kv.set(REDIS_KEYS.configVersion, 100);
+    await fakeRedis.incr(REDIS_KEYS.configVersion);
+    releaseRepair?.();
+    await repairing;
+
+    expect(readKey(REDIS_KEYS.configVersion)).toBe(101);
+    const otherProfile = await mod.renderProfileConfig('secondary', {
+      providerUrlBase: URL_BASE,
+    });
+    expect(otherProfile.cache).toBe('miss');
+    expect(readKey(REDIS_KEYS.configVersion)).toBe(101);
+  });
+
   it('re-renders when config:version was bumped (write invalidation)', async () => {
     await mod.renderProfileConfig('default', { providerUrlBase: URL_BASE });
     await fakeRedis.incr(REDIS_KEYS.configVersion); // simulate a repo write
@@ -220,6 +471,13 @@ describe('renderProfileConfig — noCache bypass', () => {
     const again = await mod.renderProfileConfig('default', { providerUrlBase: URL_BASE });
     expect(again.cache).toBe('hit');
     expect(resolveConfigMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not publish a bypass render under a corrupt config version', async () => {
+    kv.set(REDIS_KEYS.configVersion, 'not-a-version');
+    const out = await mod.renderProfileConfig('default', { noCache: true });
+    expect(out.cache).toBe('bypass');
+    expect(setCalls).toHaveLength(0);
   });
 });
 

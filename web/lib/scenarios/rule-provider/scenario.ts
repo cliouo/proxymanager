@@ -19,7 +19,7 @@
 
 import { z } from 'zod';
 import { ProblemDetailsError } from '@/lib/http/problem';
-import { referencedProviderNamesInText } from '@/lib/engine/renderer';
+import { referencedProviderNamesInBaseYaml } from '@/lib/engine/renderer';
 import { getBase } from '@/lib/repos/baseRepo';
 import { listProfiles } from '@/lib/repos/profilesRepo';
 import { listRules } from '@/lib/repos/rulesRepo';
@@ -88,9 +88,7 @@ const del: OpHandler = async (_ctx, raw) => {
   // here. Rule-sets are a SHARED library, so scan every profile's rules.
   const profiles = await listProfiles();
   const ruleLists = await Promise.all(profiles.map((p) => listRules(p.id)));
-  const refs = ruleLists
-    .flat()
-    .filter((r) => r.type === 'RULE-SET' && r.value === before.name);
+  const refs = ruleLists.flat().filter((r) => r.type === 'RULE-SET' && r.value === before.name);
   if (refs.length > 0) {
     throw ProblemDetailsError.conflict(
       `规则集 "${before.name}" 仍被 ${refs.length} 条 RULE-SET 规则引用，无法删除；请先修改或删除这些规则。`,
@@ -101,7 +99,7 @@ const del: OpHandler = async (_ctx, raw) => {
   // reference dangling and mihomo would abort at load.
   const bases = await Promise.all(profiles.map((p) => getBase(p.id)));
   const baseRefCount = bases.filter((b) =>
-    referencedProviderNamesInText(b?.content ?? '').has(before.name),
+    referencedProviderNamesInBaseYaml(b?.content ?? '').has(before.name),
   ).length;
   if (baseRefCount > 0) {
     throw ProblemDetailsError.conflict(
@@ -138,13 +136,16 @@ const inverseCreate: InverseHandler = async (_ctx, event) => {
   await deleteRuleSet(after.id);
   return {
     data: null,
-    events: [{ action: 'delete', target: { kind: 'rule-set', name: current.name }, before: current }],
+    events: [
+      { action: 'delete', target: { kind: 'rule-set', name: current.name }, before: current },
+    ],
   };
 };
 
 const inverseUpdate: InverseHandler = async (_ctx, event) => {
   const { before, after } = snapshotId(event);
-  if (!before || !after) throw ProblemDetailsError.unprocessable('Event missing before/after-state.');
+  if (!before || !after)
+    throw ProblemDetailsError.unprocessable('Event missing before/after-state.');
   const current = await getRuleSet(after.id);
   if (!current) {
     throw ProblemDetailsError.conflict(`Rule set ${after.id} no longer exists; nothing to revert.`);
@@ -157,7 +158,12 @@ const inverseUpdate: InverseHandler = async (_ctx, event) => {
   return {
     data: reverted,
     events: [
-      { action: 'update', target: { kind: 'rule-set', name: reverted.name }, before: current, after: reverted },
+      {
+        action: 'update',
+        target: { kind: 'rule-set', name: reverted.name },
+        before: current,
+        after: reverted,
+      },
     ],
   };
 };
@@ -176,7 +182,9 @@ const inverseDelete: InverseHandler = async (_ctx, event) => {
   await upsertRuleSet(restored);
   return {
     data: restored,
-    events: [{ action: 'create', target: { kind: 'rule-set', name: restored.name }, after: restored }],
+    events: [
+      { action: 'create', target: { kind: 'rule-set', name: restored.name }, after: restored },
+    ],
   };
 };
 

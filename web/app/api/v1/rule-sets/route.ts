@@ -1,4 +1,4 @@
-import { referencedProviderNamesInText } from '@/lib/engine/renderer';
+import { referencedProviderNamesInBaseYaml } from '@/lib/engine/renderer';
 import { withProblemDetails } from '@/lib/http/handler';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { resolveScopeProfile } from '@/lib/profileScope';
@@ -20,7 +20,7 @@ export const GET = withProblemDetails(async (request: Request) => {
   // `nameserver-policy: { rule-set:foo,bar }`) are real usages the renderer
   // honours but no RULE-SET rule names — the rules-hash usage count alone
   // would mislabel them "未被使用". Surface them so the page can mark them used.
-  const baseRefs = base ? referencedProviderNamesInText(base.content) : new Set<string>();
+  const baseRefs = base ? referencedProviderNamesInBaseYaml(base.content) : new Set<string>();
   const data = sets.map((s) => {
     const { content, ...meta } = s;
     void content;

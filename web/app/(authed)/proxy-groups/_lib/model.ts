@@ -76,7 +76,6 @@ export const TYPE_GLYPH: Record<ProxyGroupType, string> = {
   'url-test': '⚡',
   fallback: '↻',
   'load-balance': '⚖',
-  relay: '⛓',
 };
 
 export const TYPE_LABELS: Record<ProxyGroupType, string> = {
@@ -84,7 +83,6 @@ export const TYPE_LABELS: Record<ProxyGroupType, string> = {
   'url-test': 'url-test',
   fallback: 'fallback',
   'load-balance': 'load-balance',
-  relay: 'relay',
 };
 
 /** Types that health-check and therefore accept url/interval/tolerance/… */
@@ -149,6 +147,7 @@ export type FormState = {
   filter: string;
   'exclude-filter': string;
   'exclude-type': string;
+  'empty-fallback': string;
   // health-check
   url: string;
   interval: string;
@@ -184,6 +183,7 @@ export const EMPTY_FORM: FormState = {
   filter: '',
   'exclude-filter': '',
   'exclude-type': '',
+  'empty-fallback': '',
   url: '',
   interval: '',
   tolerance: '',
@@ -219,6 +219,7 @@ export function fromGroup(g: ProxyGroup): FormState {
     filter: g.filter ?? '',
     'exclude-filter': g['exclude-filter'] ?? '',
     'exclude-type': g['exclude-type'] ?? '',
+    'empty-fallback': g['empty-fallback'] ?? '',
     url: g.url ?? '',
     interval: g.interval !== undefined ? String(g.interval) : '',
     tolerance: g.tolerance !== undefined ? String(g.tolerance) : '',
@@ -280,6 +281,7 @@ export function toPayload(s: FormState): Record<string, unknown> {
   if (str(s.filter)) out.filter = str(s.filter);
   if (str(s['exclude-filter'])) out['exclude-filter'] = str(s['exclude-filter']);
   if (str(s['exclude-type'])) out['exclude-type'] = str(s['exclude-type']);
+  if (str(s['empty-fallback'])) out['empty-fallback'] = str(s['empty-fallback']);
 
   if (HEALTH_TYPES.has(s.type)) {
     if (str(s.url)) out.url = str(s.url);
@@ -320,6 +322,7 @@ export const MIHOMO_FIELD_ORDER = [
   'filter',
   'exclude-filter',
   'exclude-type',
+  'empty-fallback',
   'url',
   'interval',
   'tolerance',

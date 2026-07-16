@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
 import {
   referencedProviderNames,
+  referencedProviderNamesInColonList,
   referencedProviderNamesInText,
   renderBase,
 } from '@/lib/engine/renderer';
@@ -36,7 +37,12 @@ function set(overrides: Partial<RuleSet>): RuleSet {
   };
 }
 
-const BASE = ['mode: rule', '# === RULE-PROVIDERS ===', 'rules:', '  # === ANCHOR: manual ==='].join('\n');
+const BASE = [
+  'mode: rule',
+  '# === RULE-PROVIDERS ===',
+  'rules:',
+  '  # === ANCHOR: manual ===',
+].join('\n');
 const URL_BASE = 'https://host.example/api/rule-providers/TOK';
 
 describe('referencedProviderNames', () => {
@@ -51,24 +57,198 @@ describe('referencedProviderNames', () => {
 });
 
 describe('referencedProviderNamesInText', () => {
-  it('extracts comma-joined rule-set names from DNS nameserver-policy keys', () => {
-    const text = [
-      'dns:',
-      '  nameserver-policy:',
-      '    "rule-set:cn_domain,private":',
-      '      - https://doh.pub/dns-query',
-      '    "rule-set:geolocation-!cn":',
-      '      - https://dns.google/dns-query',
-    ].join('\n');
-    expect([...referencedProviderNamesInText(text)].sort()).toEqual([
+  it('extracts comma-joined names only from an index-zero, case-insensitive prefix', () => {
+    expect([...referencedProviderNamesInText('rule-set:cn_domain,private')].sort()).toEqual([
       'cn_domain',
-      'geolocation-!cn',
       'private',
     ]);
+    expect([...referencedProviderNamesInText('RULE-SET:geolocation-!cn')]).toEqual([
+      'geolocation-!cn',
+    ]);
+    expect([...referencedProviderNamesInText('rule-set:ads:ignored')]).toEqual(['ads:ignored']);
+    expect([...referencedProviderNamesInText('rule-set:')]).toEqual(['']);
+    expect([...referencedProviderNamesInText('rule-set:ads,')]).toEqual(['ads', '']);
+    expect([...referencedProviderNamesInText('rule-set:ads,,private')]).toEqual([
+      'ads',
+      '',
+      'private',
+    ]);
+    expect([...referencedProviderNamesInText('foo-rule-set:ads')]).toEqual([]);
+    expect([...referencedProviderNamesInText(' rule-set:ads')]).toEqual([]);
+  });
+
+  it('mirrors the distinct fixed parseDomain colon truncation for scalar lists', () => {
+    expect([...referencedProviderNamesInColonList('rule-set:ads:ignored')]).toEqual(['ads']);
+    expect([...referencedProviderNamesInColonList('foo-rule-set:ads')]).toEqual([]);
   });
 });
 
 describe('renderBase rule-providers injection', () => {
+  it('does not activate a provider named only inside DOMAIN-REGEX text', () => {
+    const base = [
+      'mode: rule',
+      '# === RULE-PROVIDERS ===',
+      'rules:',
+      '  - DOMAIN-REGEX,^(RULE-SET,ads)$,DIRECT',
+      '  # === ANCHOR: manual ===',
+    ].join('\n');
+    const dormantUrl = 'https://example.invalid/should-stay-dormant.yaml';
+    const res = renderBase(base, [], {
+      providers: [set({ name: 'ads', source: 'remote', url: dormantUrl, content: '' })],
+      providerUrlBase: URL_BASE,
+    });
+    expect(res.ruleProvidersApplied).toEqual([]);
+    expect(res.content).not.toContain(dormantUrl);
+    expect(res.content).not.toContain('rule-providers:');
+  });
+
+  it('does not activate a provider from an embedded contextual rule-set substring', () => {
+    const dormantUrl = 'https://example.invalid/should-stay-dormant.yaml';
+    const base = [
+      'mode: rule',
+      'sniffer:',
+      '  force-domain:',
+      '    - "foo-rule-set:ads"',
+      '# === RULE-PROVIDERS ===',
+      'rules:',
+      '  # === ANCHOR: manual ===',
+    ].join('\n');
+    const res = renderBase(base, [], {
+      providers: [set({ name: 'ads', source: 'remote', url: dormantUrl, content: '' })],
+      providerUrlBase: URL_BASE,
+    });
+
+    expect(res.ruleProvidersApplied).toEqual([]);
+    expect(res.content).not.toContain(dormantUrl);
+    expect(res.content).not.toContain('rule-providers:');
+  });
+
+  it('uses parseDomain colon semantics for a real sniffer rule-set prefix', () => {
+    const providerUrl = 'https://example.invalid/ads.yaml';
+    const base = [
+      'mode: rule',
+      'sniffer:',
+      '  force-domain:',
+      '    - "rule-set:ads:ignored"',
+      '# === RULE-PROVIDERS ===',
+      'rules:',
+      '  # === ANCHOR: manual ===',
+    ].join('\n');
+    const res = renderBase(base, [], {
+      providers: [set({ name: 'ads', source: 'remote', url: providerUrl, content: '' })],
+      providerUrlBase: URL_BASE,
+    });
+
+    expect(res.ruleProvidersApplied).toEqual(['ads']);
+    expect(res.content).toContain(providerUrl);
+  });
+
+  it.each([
+    ['root TUN disabled', ['  enable: false', '  auto-route: true', '  auto-redirect: true']],
+    [
+      'root auto-redirect disabled',
+      ['  enable: true', '  auto-route: true', '  auto-redirect: false'],
+    ],
+    [
+      'root auto-route disabled',
+      ['  enable: true', '  auto-route: false', '  auto-redirect: true'],
+    ],
+  ])('does not activate a dormant provider when %s', (_label, tunOptions) => {
+    const dormantUrl = 'https://example.invalid/should-stay-dormant.yaml';
+    const base = [
+      'mode: rule',
+      'tun:',
+      ...tunOptions,
+      '  route-address-set: [ads]',
+      '# === RULE-PROVIDERS ===',
+      'rules:',
+      '  # === ANCHOR: manual ===',
+    ].join('\n');
+    const res = renderBase(base, [], {
+      providers: [set({ name: 'ads', source: 'remote', url: dormantUrl, content: '' })],
+      providerUrlBase: URL_BASE,
+    });
+
+    expect(res.ruleProvidersApplied).toEqual([]);
+    expect(res.content).not.toContain(dormantUrl);
+  });
+
+  it('activates a TUN route provider only on an enabled auto-route + auto-redirect path', () => {
+    const providerUrl = 'https://example.invalid/ads-ip.yaml';
+    const base = [
+      'mode: rule',
+      'tun:',
+      '  enable: true',
+      // Root RawTun defaults auto-route to true in fixed Mihomo.
+      '  auto-redirect: true',
+      '  route-address-set: [ads]',
+      '# === RULE-PROVIDERS ===',
+      'rules:',
+      '  # === ANCHOR: manual ===',
+    ].join('\n');
+    const res = renderBase(base, [], {
+      providers: [
+        set({
+          name: 'ads',
+          source: 'remote',
+          behavior: 'ipcidr',
+          url: providerUrl,
+          content: '',
+        }),
+      ],
+      providerUrlBase: URL_BASE,
+    });
+
+    expect(res.ruleProvidersApplied).toEqual(['ads']);
+    expect(res.content).toContain(providerUrl);
+  });
+
+  it.each(['redir-host', undefined])(
+    'does not activate fake-ip-filter providers outside fake-IP mode: %s',
+    (enhancedMode) => {
+      const dormantUrl = 'https://example.invalid/should-stay-dormant.yaml';
+      const base = [
+        'mode: rule',
+        'dns:',
+        ...(enhancedMode ? [`  enhanced-mode: ${enhancedMode}`] : []),
+        '  fake-ip-filter:',
+        '    - rule-set:ads',
+        '# === RULE-PROVIDERS ===',
+        'rules:',
+        '  # === ANCHOR: manual ===',
+      ].join('\n');
+      const res = renderBase(base, [], {
+        providers: [set({ name: 'ads', source: 'remote', url: dormantUrl, content: '' })],
+        providerUrlBase: URL_BASE,
+      });
+
+      expect(res.ruleProvidersApplied).toEqual([]);
+      expect(res.content).not.toContain(dormantUrl);
+    },
+  );
+
+  it('honors case-insensitive fake-IP and rule modes when collecting providers', () => {
+    const providerUrl = 'https://example.invalid/ads.yaml';
+    const base = [
+      'mode: rule',
+      'dns:',
+      '  enhanced-mode: FAKE-IP',
+      '  fake-ip-filter-mode: RULE',
+      '  fake-ip-filter:',
+      '    - RULE-SET,ads,fake-ip',
+      '# === RULE-PROVIDERS ===',
+      'rules:',
+      '  # === ANCHOR: manual ===',
+    ].join('\n');
+    const res = renderBase(base, [], {
+      providers: [set({ name: 'ads', source: 'remote', url: providerUrl, content: '' })],
+      providerUrlBase: URL_BASE,
+    });
+
+    expect(res.ruleProvidersApplied).toEqual(['ads']);
+    expect(res.content).toContain(providerUrl);
+  });
+
   it('emits providers referenced only by a base `rule-set:` reference (e.g. DNS policy)', () => {
     // Regression: mihomo `not found rule-set: private` — `private` is named only
     // in a DNS nameserver-policy key, never by a RULE-SET rule, yet must still be
@@ -84,9 +264,27 @@ describe('renderBase rule-providers injection', () => {
       '  # === ANCHOR: manual ===',
     ].join('\n');
     const providers = [
-      set({ name: 'cn_domain', source: 'remote', url: 'https://ext/cn.mrs', format: 'mrs', content: '' }),
-      set({ name: 'private', source: 'remote', url: 'https://ext/private.mrs', format: 'mrs', content: '' }),
-      set({ name: 'unref', source: 'remote', url: 'https://ext/x.mrs', format: 'mrs', content: '' }),
+      set({
+        name: 'cn_domain',
+        source: 'remote',
+        url: 'https://ext/cn.mrs',
+        format: 'mrs',
+        content: '',
+      }),
+      set({
+        name: 'private',
+        source: 'remote',
+        url: 'https://ext/private.mrs',
+        format: 'mrs',
+        content: '',
+      }),
+      set({
+        name: 'unref',
+        source: 'remote',
+        url: 'https://ext/x.mrs',
+        format: 'mrs',
+        content: '',
+      }),
     ];
     // Only cn_domain has a RULE-SET rule; private is referenced solely by the DNS policy.
     const rules = [rule({ type: 'RULE-SET', value: 'cn_domain', policy: '直连' })];
@@ -97,11 +295,17 @@ describe('renderBase rule-providers injection', () => {
     expect(Object.keys(parsed['rule-providers']).sort()).toEqual(['cn_domain', 'private']);
   });
 
-
   it('emits only referenced + enabled providers, alphabetically', () => {
     const providers = [
       set({ name: 'cn_domain', source: 'local', behavior: 'domain' }),
-      set({ name: 'ads', source: 'remote', url: 'https://ext/ads.mrs', format: 'mrs', behavior: 'domain', content: '' }),
+      set({
+        name: 'ads',
+        source: 'remote',
+        url: 'https://ext/ads.mrs',
+        format: 'mrs',
+        behavior: 'domain',
+        content: '',
+      }),
       set({ name: 'unref', source: 'local' }), // not referenced → omitted
     ];
     const rules = [
@@ -111,7 +315,9 @@ describe('renderBase rule-providers injection', () => {
     const res = renderBase(BASE, rules, { providers, providerUrlBase: URL_BASE });
 
     expect(res.ruleProvidersApplied).toEqual(['ads', 'cn_domain']);
-    const parsed = parse(res.content) as { 'rule-providers': Record<string, Record<string, unknown>> };
+    const parsed = parse(res.content) as {
+      'rule-providers': Record<string, Record<string, unknown>>;
+    };
     expect(Object.keys(parsed['rule-providers'])).toEqual(['ads', 'cn_domain']);
     expect(parsed['rule-providers'].cn_domain).toMatchObject({
       type: 'http',
@@ -135,7 +341,9 @@ describe('renderBase rule-providers injection', () => {
     const providers = [set({ name: 'cn_domain', interval: 3600, proxy: '订阅更新' })];
     const rules = [rule({ type: 'RULE-SET', value: 'cn_domain' })];
     const res = renderBase(BASE, rules, { providers, providerUrlBase: URL_BASE });
-    const parsed = parse(res.content) as { 'rule-providers': Record<string, Record<string, unknown>> };
+    const parsed = parse(res.content) as {
+      'rule-providers': Record<string, Record<string, unknown>>;
+    };
     expect(parsed['rule-providers'].cn_domain).toMatchObject({ interval: 3600, proxy: '订阅更新' });
   });
 });

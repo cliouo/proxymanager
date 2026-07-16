@@ -143,13 +143,15 @@ describe('preview_proxy_group_members', () => {
   it('confirms the corrected filter keeps only US nodes', async () => {
     const action = registry.getAction('preview_proxy_group_members')!;
     if (action.risk !== 'read') throw new Error('expected read');
-    const env = await action.run(CTX, { filter: '(?i)🇺🇸|美|\\b(?:USA?|United\\s?States)\\b' });
+    const env = await action.run(CTX, {
+      filter: '(?i)🇺🇸|美|(?<![A-Za-z])(?:USA?|United ?States)(?![A-Za-z])',
+    });
     const data = env.data as { matched: string[]; matchedCount: number };
     expect(data.matchedCount).toBe(3);
     expect(data.matched.every((n) => n.includes('🇺🇸'))).toBe(true);
   });
 
-  it('falls back to a seeded group\'s own filter when only id is given', async () => {
+  it("falls back to a seeded group's own filter when only id is given", async () => {
     const g = seedGroup({ filter: '(?i)美|us|unitedstates|united states' });
     const action = registry.getAction('preview_proxy_group_members')!;
     if (action.risk !== 'read') throw new Error('expected read');
@@ -175,7 +177,7 @@ describe('update_proxy_group', () => {
     const action = registry.getAction('update_proxy_group')!;
     if (action.risk !== 'write') throw new Error('expected write');
 
-    const fixed = '(?i)🇺🇸|美|\\b(?:USA?|United\\s?States)\\b';
+    const fixed = '(?i)🇺🇸|美|(?<![A-Za-z])(?:USA?|United ?States)(?![A-Za-z])';
     const preview = await action.preview(CTX, { id: g.id, filter: fixed });
     const diff = preview.diff as { op: string; beforeYaml: string; afterYaml: string };
     expect(diff.op).toBe('update');
@@ -194,5 +196,19 @@ describe('update_proxy_group', () => {
     await action.execute(CTX, { id: g.id, exclude_filter: null });
     const stored = bucket(`proxy-groups:${PID}`).get(g.id) as ProxyGroup;
     expect(stored['exclude-filter']).toBeUndefined();
+  });
+
+  it('maps empty_fallback to the native field and can clear it', async () => {
+    const g = seedGroup({ 'empty-fallback': 'REJECT' });
+    const action = registry.getAction('update_proxy_group')!;
+    if (action.risk !== 'write') throw new Error('expected write');
+    await action.execute(CTX, { id: g.id, empty_fallback: 'DIRECT' });
+    expect((bucket(`proxy-groups:${PID}`).get(g.id) as ProxyGroup)['empty-fallback']).toBe(
+      'DIRECT',
+    );
+    await action.execute(CTX, { id: g.id, empty_fallback: null });
+    expect(
+      (bucket(`proxy-groups:${PID}`).get(g.id) as ProxyGroup)['empty-fallback'],
+    ).toBeUndefined();
   });
 });

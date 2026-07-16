@@ -7,7 +7,7 @@ import type { Rule } from '@/schemas';
  * when the old name is baked into a profile's base body as a `rule-set:` key.
  *
  * We mock at the repo boundary so the service's cascade logic is exercised in
- * isolation. `referencedProviderNamesInText` (renderer) runs for real.
+ * isolation. `referencedProviderNamesInBaseYaml` (renderer) runs for real.
  */
 
 const profiles = [
@@ -17,7 +17,14 @@ const profiles = [
 
 let rulesByProfile: Record<string, Rule[]>;
 let basesByProfile: Record<string, { content: string } | null>;
-let currentSet: { id: string; name: string; format: string; content: string; source?: string; url?: string };
+let currentSet: {
+  id: string;
+  name: string;
+  format: string;
+  content: string;
+  source?: string;
+  url?: string;
+};
 
 const upsertRulesMock = vi.fn<(id: string, rules: Rule[]) => Promise<void>>();
 const upsertRuleSetMock = vi.fn<(set: unknown) => Promise<void>>();

@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import { parse as parseYaml } from 'yaml';
+import { ipLiteralFamily } from '@/lib/net/ipLiteral';
+import { compileGoRegex } from '@/lib/proxies/filterMatch';
 import { RuleSourceSchema, RuleTypeSchema } from './common';
 
 /**
@@ -110,6 +112,136 @@ function ruleWriteRefine(
 ): void {
   valueRequiredUnlessMatch(data, ctx);
   rendersAsSingleScalar(data, ctx);
+  validateFixedRuleDialect(data, ctx);
+}
+
+const MANAGED_RULE_PARAM_TYPES = new Set(['GEOIP', 'IP-ASN', 'IP-CIDR', 'IP-CIDR6', 'RULE-SET']);
+const MANAGED_IP_PREFIX_TYPES = new Set(['IP-CIDR', 'IP-CIDR6', 'SRC-IP-CIDR']);
+const MANAGED_PORT_TYPES = new Set(['SRC-PORT', 'DST-PORT']);
+
+function validateFixedRuleDialect(
+  data: { type: string; value?: string; policy: string; options?: string[] },
+  ctx: z.RefinementCtx,
+): void {
+  const value = data.value ?? '';
+  const options = data.options ?? [];
+  if (data.policy.includes(',')) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['policy'],
+      message: 'policy 不能包含逗号（会改变 fixed Mihomo 的字段切分）',
+    });
+  }
+  if (options.some((option) => option.includes(','))) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['options'],
+      message: 'rule option 不能包含逗号',
+    });
+  }
+  if (data.type === 'MATCH') {
+    if (value !== '' || options.length > 0) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['value'],
+        message: 'MATCH 不能携带 value 或 options',
+      });
+    }
+    return;
+  }
+  if (data.type !== 'DOMAIN-REGEX' && value.includes(',')) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['value'],
+      message: '该规则 value 不能包含逗号（会把 policy 静默重排）',
+    });
+  }
+  if (data.type === 'DOMAIN-REGEX') {
+    if (options.length > 0) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['options'],
+        message: 'DOMAIN-REGEX payload 可含逗号，因此不能携带 options',
+      });
+    }
+    const fixedPayload = value
+      .split(',')
+      .map((part) => part.replace(/^ +| +$/gu, ''))
+      .join(',');
+    if (fixedPayload !== value) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['value'],
+        message: 'DOMAIN-REGEX 不能在逗号两侧带 ASCII 空格（fixed Mihomo 会静默删除）',
+      });
+    }
+    try {
+      // Fixed rule regex constructors always use regexp2 IgnoreCase.
+      compileGoRegex(value, 'i');
+    } catch {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['value'],
+        message: 'DOMAIN-REGEX 不在 fixed Mihomo 与预览器的安全共同子集内',
+      });
+    }
+    return;
+  }
+  if (MANAGED_RULE_PARAM_TYPES.has(data.type)) {
+    if (
+      options.some((option) => option !== 'src' && option !== 'no-resolve') ||
+      new Set(options).size !== options.length
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['options'],
+        message: 'options 仅允许不重复的小写 src / no-resolve',
+      });
+    }
+  } else if (options.length > 0) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['options'],
+      message: '该 fixed Mihomo 规则类型不读取 options',
+    });
+  }
+
+  if (MANAGED_IP_PREFIX_TYPES.has(data.type) && !isValidRuleIpPrefix(value)) {
+    ctx.addIssue({ code: 'custom', path: ['value'], message: '必须是合法 IP/CIDR prefix' });
+  }
+  if (data.type === 'IP-ASN') {
+    if (!/^[1-9]\d{0,9}$/u.test(value) || Number(value) > 0xffff_ffff) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['value'],
+        message: '必须是 1..4294967295 的十进制 ASN',
+      });
+    }
+  }
+  if (MANAGED_PORT_TYPES.has(data.type) && !isValidRuleRanges(value, 65_535)) {
+    ctx.addIssue({ code: 'custom', path: ['value'], message: '必须是 0..65535 的端口/range 列表' });
+  }
+  if (data.type === 'NETWORK' && !/^(?:TCP|UDP)$/iu.test(value)) {
+    ctx.addIssue({ code: 'custom', path: ['value'], message: 'NETWORK 仅允许 TCP 或 UDP' });
+  }
+}
+
+function isValidRuleIpPrefix(value: string): boolean {
+  const match = /^([^/]+)\/((?:0|[1-9]\d{0,2}))$/u.exec(value);
+  if (!match || match[1].includes('%')) return false;
+  const family = ipLiteralFamily(match[1]);
+  return family !== 0 && Number(match[2]) <= (family === 4 ? 32 : 128);
+}
+
+function isValidRuleRanges(value: string, maximum: number): boolean {
+  const segments = value.split('/');
+  if (segments.length === 0 || segments.length > 28 || segments.some((segment) => segment === '')) {
+    return false;
+  }
+  return segments.every((segment) => {
+    const match = /^(\d+)(?:-(\d+))?$/u.exec(segment);
+    return Boolean(match && Number(match[1]) <= maximum && Number(match[2] ?? match[1]) <= maximum);
+  });
 }
 
 export const RuleCreateSchema = RuleSchema.omit({

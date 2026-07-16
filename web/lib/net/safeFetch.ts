@@ -16,7 +16,8 @@
  */
 
 import { lookup } from 'node:dns/promises';
-import { isIP } from 'node:net';
+import { isIP, SocketAddress, type TcpNetConnectOpts } from 'node:net';
+import { Agent, fetch as undiciFetch } from 'undici';
 import { ProblemDetailsError } from '@/lib/http/problem';
 
 const DEFAULT_MAX_BYTES = 2_000_000;
@@ -56,7 +57,15 @@ function ipv4Blocked(ip: string): boolean {
 }
 
 function ipv6Blocked(raw: string): boolean {
-  const ip = raw.toLowerCase();
+  let ip: string;
+  try {
+    // Node canonicalises both dotted and hexadecimal IPv4-mapped forms, e.g.
+    // ::ffff:7f00:1 -> ::ffff:127.0.0.1. Checking the raw URL spelling alone
+    // lets the hexadecimal form reach a mapped loopback/private IPv4 address.
+    ip = new SocketAddress({ address: raw, port: 0, family: 'ipv6' }).address.toLowerCase();
+  } catch {
+    return true;
+  }
   if (ip === '::1' || ip === '::') return true; // loopback / unspecified
   const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(ip); // IPv4-mapped
   if (mapped) return ipv4Blocked(mapped[1]);
@@ -73,19 +82,24 @@ function ipBlocked(ip: string): boolean {
   return true; // unparseable → refuse
 }
 
-/** Throws if `hostname` is, or resolves to, a non-public address. */
-async function assertPublicHost(hostname: string): Promise<void> {
+export interface PublicAddress {
+  address: string;
+  family: 4 | 6;
+}
+
+/** Resolve once, reject every non-public answer, then return the addresses to pin. */
+export async function resolvePublicHost(hostname: string): Promise<PublicAddress[]> {
   const host = hostname.replace(/^\[|\]$/g, ''); // strip IPv6 brackets
   if (BLOCKED_HOST.test(host)) {
     throw ProblemDetailsError.badRequest(`禁止访问内网/本机地址：${hostname}`);
   }
   if (isIP(host)) {
     if (ipBlocked(host)) throw ProblemDetailsError.badRequest(`禁止访问内网/保留地址：${hostname}`);
-    return;
+    return [{ address: host, family: isIP(host) as 4 | 6 }];
   }
   let addrs: { address: string }[];
   try {
-    addrs = await lookup(host, { all: true });
+    addrs = await lookup(host, { all: true, verbatim: true });
   } catch {
     throw ProblemDetailsError.badRequest(`无法解析主机：${hostname}`);
   }
@@ -94,10 +108,47 @@ async function assertPublicHost(hostname: string): Promise<void> {
       throw ProblemDetailsError.badRequest(`主机解析到内网/保留地址，已拒绝：${hostname}`);
     }
   }
+  if (addrs.length === 0) throw ProblemDetailsError.badRequest(`无法解析主机：${hostname}`);
+  return addrs.map((entry) => ({
+    address: entry.address,
+    family: isIP(entry.address) as 4 | 6,
+  }));
+}
+
+/** A Node lookup callback that can only return the already-validated addresses. */
+export function createPinnedLookup(
+  hostname: string,
+  addresses: readonly PublicAddress[],
+): NonNullable<TcpNetConnectOpts['lookup']> {
+  const expected = hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  return (requested, options, callback) => {
+    if (requested.replace(/^\[|\]$/g, '').toLowerCase() !== expected) {
+      const error = new Error('Pinned DNS hostname mismatch') as NodeJS.ErrnoException;
+      error.code = 'ENOTFOUND';
+      callback(error, '', 0);
+      return;
+    }
+    const family = options.family === 4 || options.family === 6 ? options.family : 0;
+    const candidates = family === 0 ? [...addresses] : addresses.filter((a) => a.family === family);
+    if (candidates.length === 0) {
+      const error = new Error('No validated address for requested family') as NodeJS.ErrnoException;
+      error.code = 'ENOTFOUND';
+      callback(error, '', 0);
+      return;
+    }
+    if (options.all) {
+      callback(null, candidates);
+    } else {
+      callback(null, candidates[0].address, candidates[0].family);
+    }
+  };
 }
 
 /** Read a response body, stopping at `maxBytes` (so an unbounded stream can't OOM us). */
-export async function readCapped(res: Response, maxBytes: number): Promise<{ buf: Uint8Array; truncated: boolean }> {
+export async function readCapped(
+  res: Response,
+  maxBytes: number,
+): Promise<{ buf: Uint8Array; truncated: boolean }> {
   if (!res.body) {
     const all = new Uint8Array(await res.arrayBuffer());
     return all.byteLength > maxBytes
@@ -111,9 +162,14 @@ export async function readCapped(res: Response, maxBytes: number): Promise<{ buf
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
-    if (!value) continue;
+    if (!value || value.byteLength === 0) continue;
     const room = maxBytes - written;
-    if (value.byteLength >= room) {
+    if (room === 0) {
+      truncated = true;
+      await reader.cancel().catch(() => undefined);
+      break;
+    }
+    if (value.byteLength > room) {
       chunks.push(value.subarray(0, room));
       written += room;
       truncated = true;
@@ -132,7 +188,10 @@ export async function readCapped(res: Response, maxBytes: number): Promise<{ buf
   return { buf, truncated };
 }
 
-export async function safeFetchText(rawUrl: string, opts: SafeFetchOptions = {}): Promise<SafeFetchResult> {
+export async function safeFetchText(
+  rawUrl: string,
+  opts: SafeFetchOptions = {},
+): Promise<SafeFetchResult> {
   const maxBytes = opts.maxBytes ?? DEFAULT_MAX_BYTES;
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
@@ -146,6 +205,13 @@ export async function safeFetchText(rawUrl: string, opts: SafeFetchOptions = {})
   if (initial.protocol !== 'http:' && initial.protocol !== 'https:') {
     throw ProblemDetailsError.badRequest(`只支持 http/https：${initial.protocol}`);
   }
+  if (initial.username || initial.password) {
+    throw ProblemDetailsError.badRequest('URL 不允许包含用户凭据。');
+  }
+
+  // Reader mode still validates the user-facing destination. The actual
+  // connection below is separately resolved and pinned to r.jina.ai.
+  await resolvePublicHost(initial.hostname);
 
   let url = opts.reader ? new URL(`https://r.jina.ai/${rawUrl}`) : initial;
 
@@ -156,47 +222,60 @@ export async function safeFetchText(rawUrl: string, opts: SafeFetchOptions = {})
       if (url.protocol !== 'http:' && url.protocol !== 'https:') {
         throw ProblemDetailsError.badRequest(`只支持 http/https：${url.protocol}`);
       }
-      await assertPublicHost(url.hostname);
+      if (url.username || url.password) {
+        throw ProblemDetailsError.badRequest('URL 不允许包含用户凭据。');
+      }
+      const addresses = await resolvePublicHost(url.hostname);
+      const dispatcher = new Agent({
+        connect: { lookup: createPinnedLookup(url.hostname, addresses) },
+      });
 
-      let res: Response;
       try {
-        res = await fetch(url, {
-          method: 'GET',
-          redirect: 'manual',
-          cache: 'no-store',
-          signal: controller.signal,
-          headers: { 'User-Agent': UA, Accept: '*/*' },
-        });
-      } catch (err) {
-        if (err instanceof DOMException && err.name === 'AbortError') {
-          throw ProblemDetailsError.badRequest(`抓取超时（${timeoutMs}ms）`);
+        let res: Response;
+        try {
+          res = (await undiciFetch(url, {
+            method: 'GET',
+            redirect: 'manual',
+            signal: controller.signal,
+            headers: { 'User-Agent': UA, Accept: '*/*' },
+            dispatcher,
+          })) as unknown as Response;
+        } catch (err) {
+          if (err instanceof Error && err.name === 'AbortError') {
+            throw ProblemDetailsError.badRequest(`抓取超时（${timeoutMs}ms）`);
+          }
+          throw ProblemDetailsError.badRequest('抓取失败。');
         }
-        throw ProblemDetailsError.badRequest(
-          `抓取失败：${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
 
-      if (res.status >= 300 && res.status < 400) {
-        const loc = res.headers.get('location');
-        if (!loc) throw ProblemDetailsError.badRequest('重定向缺少 Location 头。');
-        url = new URL(loc, url); // re-validated at the top of the next hop
-        continue;
-      }
-      if (!res.ok) throw ProblemDetailsError.badRequest(`上游返回 HTTP ${res.status}`);
+        if (res.status >= 300 && res.status < 400) {
+          const loc = res.headers.get('location');
+          await res.body?.cancel().catch(() => undefined);
+          if (!loc) throw ProblemDetailsError.badRequest('重定向缺少 Location 头。');
+          url = new URL(loc, url); // re-validated at the top of the next hop
+          continue;
+        }
+        if (!res.ok) {
+          await res.body?.cancel().catch(() => undefined);
+          throw ProblemDetailsError.badRequest(`上游返回 HTTP ${res.status}`);
+        }
 
-      const declared = Number(res.headers.get('content-length') ?? '');
-      if (Number.isFinite(declared) && declared > maxBytes) {
-        throw ProblemDetailsError.badRequest(`内容过大：${declared} 字节 > 上限 ${maxBytes}`);
+        const declared = Number(res.headers.get('content-length') ?? '');
+        if (Number.isFinite(declared) && declared > maxBytes) {
+          await res.body?.cancel().catch(() => undefined);
+          throw ProblemDetailsError.badRequest(`内容过大：${declared} 字节 > 上限 ${maxBytes}`);
+        }
+        const { buf, truncated } = await readCapped(res, maxBytes);
+        const text = new TextDecoder('utf-8', { fatal: false }).decode(buf);
+        return {
+          text,
+          contentType: res.headers.get('content-type'),
+          finalUrl: url.toString(),
+          bytes: buf.byteLength,
+          truncated,
+        };
+      } finally {
+        await dispatcher.close().catch(() => undefined);
       }
-      const { buf, truncated } = await readCapped(res, maxBytes);
-      const text = new TextDecoder('utf-8', { fatal: false }).decode(buf);
-      return {
-        text,
-        contentType: res.headers.get('content-type'),
-        finalUrl: url.toString(),
-        bytes: buf.byteLength,
-        truncated,
-      };
     }
     throw ProblemDetailsError.badRequest(`重定向过多（>${MAX_REDIRECTS}）。`);
   } finally {

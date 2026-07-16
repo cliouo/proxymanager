@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { OperatorSchema } from './operator';
+import { OperatorSchema, StoredOperatorSchema } from './operator';
 
 /**
  * A node pool — an aggregate subscription that merges the nodes of several
@@ -46,7 +46,7 @@ export const CollectionSchema = z.object({
    * Ordered node-processing pipeline (界面「节点处理」). Applied to the merged
    * member nodes before dedup; same operator set as a single subscription.
    */
-  operators: z.array(OperatorSchema).default([]),
+  operators: z.array(StoredOperatorSchema).default([]),
   notes: z.string().optional(),
   created_at: z.number().int().optional(),
   updated_at: z.number().int().optional(),

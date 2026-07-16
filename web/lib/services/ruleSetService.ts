@@ -1,5 +1,5 @@
 import { ProblemDetailsError } from '@/lib/http/problem';
-import { referencedProviderNamesInText } from '@/lib/engine/renderer';
+import { referencedProviderNamesInBaseYaml } from '@/lib/engine/renderer';
 import { getBase } from '@/lib/repos/baseRepo';
 import { listProfiles } from '@/lib/repos/profilesRepo';
 import { listRules, upsertRules } from '@/lib/repos/rulesRepo';
@@ -10,7 +10,13 @@ import {
   listRuleSets,
   upsertRuleSet,
 } from '@/lib/repos/ruleSetsRepo';
-import { ruleSetIssues, type Rule, type RuleSet, type RuleSetCreate, type RuleSetUpdate } from '@/schemas';
+import {
+  ruleSetIssues,
+  type Rule,
+  type RuleSet,
+  type RuleSetCreate,
+  type RuleSetUpdate,
+} from '@/schemas';
 
 export function nowSeconds(): number {
   return Math.floor(Date.now() / 1000);
@@ -35,7 +41,7 @@ async function cascadeRuleSetRename(oldName: string, newName: string): Promise<v
   // be auto-rewritten safely → block the rename with an actionable message.
   const bases = await Promise.all(profiles.map((p) => getBase(p.id)));
   const baseRefProfiles = profiles.filter((_, i) =>
-    referencedProviderNamesInText(bases[i]?.content ?? '').has(oldName),
+    referencedProviderNamesInBaseYaml(bases[i]?.content ?? '').has(oldName),
   );
   if (baseRefProfiles.length > 0) {
     throw ProblemDetailsError.conflict(
@@ -136,9 +142,4 @@ export async function patchRuleSet(
   return next;
 }
 
-export {
-  listRuleSets,
-  getRuleSet,
-  getRuleSetByName,
-  repoDelete as deleteRuleSet,
-};
+export { listRuleSets, getRuleSet, getRuleSetByName, repoDelete as deleteRuleSet };

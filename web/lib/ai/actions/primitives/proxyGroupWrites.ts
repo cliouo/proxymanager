@@ -27,10 +27,15 @@ import {
   getProxyGroup,
   patchProxyGroup,
 } from '@/lib/services/proxyGroupService';
-import type { ProxyGroup, ProxyGroupCreate, ProxyGroupUpdate } from '@/schemas';
+import {
+  ProxyGroupExcludeTypeSchema,
+  type ProxyGroup,
+  type ProxyGroupCreate,
+  type ProxyGroupUpdate,
+} from '@/schemas';
 import { defineAction, defineWriteAction, type ActionEnvelope } from '../types';
 
-const TYPES = ['select', 'url-test', 'fallback', 'load-balance', 'relay'] as const;
+const TYPES = ['select', 'url-test', 'fallback', 'load-balance'] as const;
 const KINDS = ['raw', 'manual', 'filter', 'all', 'single-sub'] as const;
 
 /** How many matched names to inline in a preview before truncating. */
@@ -48,6 +53,7 @@ function groupYaml(g: Partial<ProxyGroup>): string {
   if (g.filter) obj.filter = g.filter;
   if (g['exclude-filter']) obj['exclude-filter'] = g['exclude-filter'];
   if (g['exclude-type']) obj['exclude-type'] = g['exclude-type'];
+  if (g['empty-fallback']) obj['empty-fallback'] = g['empty-fallback'];
   if (g.url) obj.url = g.url;
   if (g.interval) obj.interval = g.interval;
   if (g.tolerance !== undefined) obj.tolerance = g.tolerance;
@@ -80,14 +86,33 @@ async function nodePool(profileId: string): Promise<{ names: string[]; hint?: st
 /* ─── shared editable-field shapes (snake_case → kebab patch) ───────── */
 
 const EDITABLE = {
-  type: z.enum(TYPES).describe('mihomo 原生类型：select 手动 / url-test 自动测速 / fallback / load-balance / relay'),
-  kind: z.enum(KINDS).describe('UI 预设形态：manual 手选 / filter 筛选 / all 全部 / single-sub 绑定订阅 / raw 逃生口'),
+  type: z
+    .enum(TYPES)
+    .describe('mihomo 原生类型：select 手动 / url-test 自动测速 / fallback / load-balance'),
+  kind: z
+    .enum(KINDS)
+    .describe(
+      'UI 预设形态：manual 手选 / filter 筛选 / all 全部 / single-sub 绑定订阅 / raw 逃生口',
+    ),
   section: z.string().max(64).describe('UI 分组标签，如「地区」「规则集」'),
   proxies: z.array(z.string()).describe('手选成员列表（节点名 / 其它策略组名 / DIRECT 等内置）'),
-  filter: z.string().max(2000).describe('正则(Go RE2)，对纳入的节点名做包含匹配；配 include_all_proxies 用'),
-  exclude_filter: z.string().max(2000).describe('正则，从 filter 命中里再排除掉匹配的节点'),
+  filter: z
+    .string()
+    .max(512)
+    .describe('Mihomo regexp2 的产品安全子集，对纳入节点名做包含匹配；配 include_all_proxies 用'),
+  exclude_filter: z
+    .string()
+    .max(512)
+    .describe('regexp2 产品安全子集，从 filter 命中里再排除匹配节点；反引号分隔多条'),
   include_all_proxies: z.boolean().describe('纳入全部可用节点作为候选池（地区/筛选组必开）'),
-  exclude_type: z.string().max(128).describe('按节点类型排除，如 "Direct,Reject"（非正则）'),
+  exclude_type: ProxyGroupExcludeTypeSchema.describe(
+    '按 Mihomo AdapterType 排除，用 | 分隔，如 "Direct|Reject"（非正则）',
+  ),
+  empty_fallback: z
+    .string()
+    .min(1)
+    .max(128)
+    .describe('动态成员为空时使用的具体代理或内置出口，如 REJECT；不能指向策略组'),
   url: z.string().max(2000).describe('健康检查 URL（url-test/fallback/load-balance）'),
   interval: z.number().int().positive().describe('健康检查间隔(秒)'),
   tolerance: z.number().int().nonnegative().describe('url-test 容差(ms)'),
@@ -101,6 +126,7 @@ function toKebab(input: Record<string, unknown>): Record<string, unknown> {
     exclude_filter: 'exclude-filter',
     include_all_proxies: 'include-all-proxies',
     exclude_type: 'exclude-type',
+    empty_fallback: 'empty-fallback',
     dialer_proxy: 'dialer-proxy',
   };
   const out: Record<string, unknown> = {};
@@ -115,9 +141,20 @@ function toKebab(input: Record<string, unknown>): Record<string, unknown> {
 
 const PreviewInput = z
   .object({
-    id: z.uuid().optional().describe('已有策略组 id（先用 list_proxy_groups 拿）；默认取它现有的 filter'),
-    filter: z.string().max(2000).optional().describe('候选 filter 正则；给了就覆盖该组现有 filter 来试算'),
-    exclude_filter: z.string().max(2000).optional().describe('候选 exclude-filter 正则；给了就覆盖现有的'),
+    id: z
+      .uuid()
+      .optional()
+      .describe('已有策略组 id（先用 list_proxy_groups 拿）；默认取它现有的 filter'),
+    filter: z
+      .string()
+      .max(2000)
+      .optional()
+      .describe('候选 filter 正则；给了就覆盖该组现有 filter 来试算'),
+    exclude_filter: z
+      .string()
+      .max(2000)
+      .optional()
+      .describe('候选 exclude-filter 正则；给了就覆盖现有的'),
   })
   .refine((v) => v.id || v.filter || v.exclude_filter, {
     message: '至少给 id 或 filter / exclude_filter 之一',
@@ -163,7 +200,11 @@ const previewMembers = defineAction({
 
 const CreateInput = z
   .object({
-    name: z.string().min(1).max(64).describe('策略组名（唯一；规则的 policy、其它组的 proxies 用它引用）'),
+    name: z
+      .string()
+      .min(1)
+      .max(64)
+      .describe('策略组名（唯一；规则的 policy、其它组的 proxies 用它引用）'),
     type: EDITABLE.type.default('select'),
     kind: EDITABLE.kind.default('manual'),
     section: EDITABLE.section.optional(),
@@ -172,6 +213,7 @@ const CreateInput = z
     exclude_filter: EDITABLE.exclude_filter.optional(),
     include_all_proxies: EDITABLE.include_all_proxies.optional(),
     exclude_type: EDITABLE.exclude_type.optional(),
+    empty_fallback: EDITABLE.empty_fallback.optional(),
     url: EDITABLE.url.optional(),
     interval: EDITABLE.interval.optional(),
     tolerance: EDITABLE.tolerance.optional(),
@@ -214,7 +256,12 @@ const createGroup = defineWriteAction({
 const UpdateInput = z
   .object({
     id: z.uuid().describe('策略组 id（先用 list_proxy_groups 拿）'),
-    name: z.string().min(1).max(64).optional().describe('改名——会级联改写引用它的其它组 proxies / dialer-proxy 与规则 policy'),
+    name: z
+      .string()
+      .min(1)
+      .max(64)
+      .optional()
+      .describe('改名——会级联改写引用它的其它组 proxies / dialer-proxy 与规则 policy'),
     type: EDITABLE.type.optional(),
     kind: EDITABLE.kind.optional(),
     section: EDITABLE.section.nullable().optional(),
@@ -223,6 +270,7 @@ const UpdateInput = z
     exclude_filter: EDITABLE.exclude_filter.nullable().optional(),
     include_all_proxies: EDITABLE.include_all_proxies.optional(),
     exclude_type: EDITABLE.exclude_type.nullable().optional(),
+    empty_fallback: EDITABLE.empty_fallback.nullable().optional(),
     url: EDITABLE.url.optional(),
     interval: EDITABLE.interval.optional(),
     tolerance: EDITABLE.tolerance.optional(),
@@ -263,7 +311,10 @@ const updateGroup = defineWriteAction({
     const before = await mustGet(ctx.profileId, id);
     const patch = toKebab(rest) as ProxyGroupUpdate;
     const updated = await patchProxyGroup(ctx.profileId, id, patch);
-    return writeResult('update', `已修改策略组 ${before.name}`, { id: updated.id, name: updated.name });
+    return writeResult('update', `已修改策略组 ${before.name}`, {
+      id: updated.id,
+      name: updated.name,
+    });
   },
 });
 
@@ -280,7 +331,9 @@ const deleteGroup = defineWriteAction({
   summary: (i) => `删除策略组 ${i.id.slice(0, 8)}…`,
   async preview(ctx, input) {
     const before = await mustGet(ctx.profileId, input.id);
-    return { diff: { op: 'delete', path: `proxy-groups[${before.name}]`, beforeYaml: groupYaml(before) } };
+    return {
+      diff: { op: 'delete', path: `proxy-groups[${before.name}]`, beforeYaml: groupYaml(before) },
+    };
   },
   async execute(ctx, input) {
     const before = await mustGet(ctx.profileId, input.id);
