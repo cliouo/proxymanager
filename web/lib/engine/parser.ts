@@ -1,4 +1,5 @@
-import { isMap, isScalar, isSeq, parseDocument } from 'yaml';
+import { isMap, isScalar, isSeq, parseDocument, visit } from 'yaml';
+import { validateMihomoProxyList } from '@/lib/proxies/mihomoProxyValidator';
 
 export interface ParsedBase {
   anchors: string[];
@@ -18,24 +19,95 @@ const ANCHOR_PATTERN = /^[ \t]*#\s*===\s*ANCHOR:\s*([\w-]+)\s*===[ \t]*$/gm;
  * directly without a matching proxy-group or proxies entry.
  */
 const BUILTIN_POLICIES = ['DIRECT', 'REJECT', 'REJECT-DROP', 'PASS', 'COMPATIBLE'];
+const INVALID_BASE_YAML_MESSAGE = 'Invalid base YAML';
+const INVALID_BASE_ROOT_MESSAGE = 'Invalid base YAML: root must be a mapping';
+const INVALID_BASE_MERGE_MESSAGE = 'Invalid base YAML: merge keys are not supported';
+const SEQUENCE_SECTIONS = ['proxies', 'proxy-groups', 'rules'] as const;
+const MAPPING_SECTIONS = ['proxy-providers', 'rule-providers'] as const;
 
 export class BaseParseError extends Error {
-  constructor(
-    message: string,
-    public readonly cause?: unknown,
-  ) {
+  constructor(message: string) {
     super(message);
     this.name = 'BaseParseError';
   }
 }
 
+/**
+ * Parse a base skeleton without exposing yaml's source excerpts in errors.
+ * Every engine consumer requires a top-level mapping because it reads and
+ * mutates named Mihomo sections (`proxies`, `rules`, ...).
+ */
+export function parseBaseDocument(content: string): ReturnType<typeof parseDocument> {
+  try {
+    const doc = parseDocument(content);
+    if (doc.errors.length > 0) {
+      throw new BaseParseError(INVALID_BASE_YAML_MESSAGE);
+    }
+    if (!isMap(doc.contents)) {
+      throw new BaseParseError(INVALID_BASE_ROOT_MESSAGE);
+    }
+    assertNoMergeKeys(doc);
+    assertKnownSectionShapes(doc);
+    return doc;
+  } catch (err) {
+    if (err instanceof BaseParseError) throw err;
+    throw new BaseParseError(INVALID_BASE_YAML_MESSAGE);
+  }
+}
+
+/**
+ * Fixed Mihomo's Go YAML loader expands `<<` merges, while the JS YAML AST and
+ * mutation pipeline intentionally do not. Reject the construct at the common
+ * boundary so inherited proxies, rules, or contextual rule-set references can
+ * never become invisible to validation.
+ */
+function assertNoMergeKeys(doc: ReturnType<typeof parseDocument>): void {
+  let found = false;
+  visit(doc, {
+    Pair(_key, pair) {
+      if (
+        isScalar(pair.key) &&
+        ((pair.key.value === '<<' &&
+          ((pair.key.tag === undefined && pair.key.type === 'PLAIN') || pair.key.tag === '!')) ||
+          pair.key.tag === 'tag:yaml.org,2002:merge')
+      ) {
+        found = true;
+        return visit.BREAK;
+      }
+    },
+  });
+  if (found) throw new BaseParseError(INVALID_BASE_MERGE_MESSAGE);
+}
+
+function assertKnownSectionShapes(doc: ReturnType<typeof parseDocument>): void {
+  for (const key of SEQUENCE_SECTIONS) {
+    const section = doc.get(key, true);
+    if (section !== undefined && !isSeq(section)) {
+      throw new BaseParseError(`Invalid base YAML: "${key}" must be a sequence`);
+    }
+    if (key === 'proxies' && isSeq(section)) {
+      try {
+        validateMihomoProxyList(section.toJSON() as unknown[], {
+          allowExternalDialerProxy: true,
+          allowLocalFileReferences: true,
+        });
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : 'invalid proxy entry';
+        throw new BaseParseError(`Invalid base YAML: ${detail}`);
+      }
+    }
+  }
+  for (const key of MAPPING_SECTIONS) {
+    const section = doc.get(key, true);
+    if (section !== undefined && !isMap(section)) {
+      throw new BaseParseError(`Invalid base YAML: "${key}" must be a mapping`);
+    }
+  }
+}
+
 export function parseBase(content: string): ParsedBase {
   const anchors = extractAnchors(content);
-
-  const doc = parseDocument(content);
-  if (doc.errors.length > 0) {
-    throw new BaseParseError(`Invalid YAML: ${doc.errors[0].message}`, doc.errors);
-  }
+  const doc = parseBaseDocument(content);
 
   return {
     anchors,

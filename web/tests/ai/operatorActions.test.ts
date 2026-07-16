@@ -77,12 +77,18 @@ vi.mock('@/lib/repos/resolvedRepo', () => ({
 }));
 vi.mock('@/lib/services/subscriptionFetcher', () => ({
   resolveSubscriptionProxiesRaw: vi.fn(async () => ({
-    proxies: [{ name: '🇭🇰HK-1', type: 'ss' }, { name: '🇯🇵JP-1', type: 'ss' }],
+    proxies: [
+      { name: '🇭🇰HK-1', type: 'ss' },
+      { name: '🇯🇵JP-1', type: 'ss' },
+    ],
   })),
 }));
 vi.mock('@/lib/services/nodeExportService', () => ({
   mergeCollectionMemberProxies: vi.fn(async () => ({
-    merged: [{ name: '🇭🇰HK-1', type: 'ss' }, { name: '🇺🇸US-1', type: 'ss' }],
+    merged: [
+      { name: '🇭🇰HK-1', type: 'ss' },
+      { name: '🇺🇸US-1', type: 'ss' },
+    ],
     memberErrors: [],
   })),
 }));
@@ -271,6 +277,20 @@ describe('add_operator', () => {
       position: 0,
     });
     expect(storedSubOps().map((o) => o.kind)).toEqual(['filter-useless', 'sort']);
+  });
+
+  it('preserves refined regex validation while omitting the caller-facing id', async () => {
+    seedSub([]);
+    const action = getAction('add_operator');
+    if (action.risk !== 'write') throw new Error('expected write');
+    await expect(
+      action.execute(ctx, {
+        source_type: 'subscription',
+        id: SUB_ID,
+        operator: { kind: 'filter-regex', mode: 'keep', pattern: '^(a+)+$' },
+      }),
+    ).rejects.toThrow(/过量回溯/);
+    expect(storedSubOps()).toHaveLength(0);
   });
 });
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { applyOperators, type ClashProxy } from '@/lib/proxies/operators';
+import { isSafeRuntimeRegex } from '@/lib/proxies/regexSafety';
 import type { Operator, OperatorKind } from '@/schemas/operator';
 
 let seq = 0;
@@ -20,16 +21,22 @@ const sample: ClashProxy[] = [
 
 describe('applyOperators · filter-regex', () => {
   it('keeps matches', () => {
-    const { proxies } = applyOperators(sample, [op({ kind: 'filter-regex', mode: 'keep', pattern: '香港', flags: 'i' })]);
+    const { proxies } = applyOperators(sample, [
+      op({ kind: 'filter-regex', mode: 'keep', pattern: '香港', flags: 'i' }),
+    ]);
     expect(proxies.map((p) => p.name)).toEqual(['🇭🇰 香港 01', 'HK 香港 02']);
   });
   it('drops matches', () => {
-    const { proxies } = applyOperators(sample, [op({ kind: 'filter-regex', mode: 'drop', pattern: '香港' })]);
+    const { proxies } = applyOperators(sample, [
+      op({ kind: 'filter-regex', mode: 'drop', pattern: '香港' }),
+    ]);
     expect(proxies).toHaveLength(4);
     expect(proxies.find((p) => p.name === '🇭🇰 香港 01')).toBeUndefined();
   });
   it('reports dropped count in the step trace', () => {
-    const { steps } = applyOperators(sample, [op({ kind: 'filter-regex', mode: 'keep', pattern: '香港' })]);
+    const { steps } = applyOperators(sample, [
+      op({ kind: 'filter-regex', mode: 'keep', pattern: '香港' }),
+    ]);
     expect(steps[0]).toMatchObject({ before: 6, after: 2, dropped: 4, applied: true });
   });
 });
@@ -47,24 +54,18 @@ describe('applyOperators · filter-useless', () => {
     expect(proxies.find((p) => p.name === '日本 Tokyo 01')).toBeUndefined();
   });
 
-  // P0-5: schema rejects bad fragments at write, but legacy operators stored
-  // before the guard can still reach applyOperators — buildUselessRe must never
-  // throw and must never nuke every node from one malformed fragment.
-  it('P0-5: an invalid extra fragment "(" is skipped, not thrown (built-ins still apply)', () => {
-    const { proxies } = applyOperators(sample, [
-      op({ kind: 'filter-useless', extra: ['('] }),
-    ]);
-    // Built-in junk still dropped, real nodes kept — no crash, no total wipe.
-    expect(proxies.length).toBe(4);
-    expect(proxies.find((p) => p.name === '剩余流量：88.8 GB')).toBeUndefined();
+  // Legacy values bypassing the write schema must fail closed as well; silently
+  // skipping a configured pattern would publish a different pipeline.
+  it('P0-5: rejects an invalid legacy extra fragment', () => {
+    expect(() => applyOperators(sample, [op({ kind: 'filter-useless', extra: ['('] })])).toThrow(
+      /unsafe|invalid/i,
+    );
   });
 
-  it('P0-5: an empty-matching fragment "a|" does not drop all nodes', () => {
-    const { proxies } = applyOperators(sample, [
-      op({ kind: 'filter-useless', extra: ['a|'] }),
-    ]);
-    // Would match every name if the empty branch leaked → all dropped. Guarded.
-    expect(proxies.length).toBe(4);
+  it('P0-5: rejects an empty-matching legacy fragment instead of dropping all nodes', () => {
+    expect(() => applyOperators(sample, [op({ kind: 'filter-useless', extra: ['a|'] })])).toThrow(
+      /empty string/i,
+    );
   });
 });
 
@@ -86,8 +87,87 @@ describe('FilterUselessOpSchema.extra validation (P0-5)', () => {
   });
   it('accepts a normal keyword fragment', async () => {
     const { FilterUselessOpSchema } = await import('@/schemas/operator');
-    const r = FilterUselessOpSchema.parse({ id: 'x', kind: 'filter-useless', extra: ['官网', 'Tokyo'] });
+    const r = FilterUselessOpSchema.parse({
+      id: 'x',
+      kind: 'filter-useless',
+      extra: ['官网', 'Tokyo'],
+    });
     expect(r.extra).toEqual(['官网', 'Tokyo']);
+  });
+
+  it.each(['^(a+)+$', '(a|aa)+$', '^([a-z]*)([a-m]*)$'])(
+    'rejects a ReDoS-prone pattern: %s',
+    async (pattern) => {
+      const { FilterRegexOpSchema, RenameRegexOpSchema } = await import('@/schemas/operator');
+      expect(() => FilterRegexOpSchema.parse({ id: 'x', kind: 'filter-regex', pattern })).toThrow();
+      expect(() => RenameRegexOpSchema.parse({ id: 'x', kind: 'rename-regex', pattern })).toThrow();
+    },
+  );
+
+  it.each([
+    '(K|KK)+$',
+    '(K|\\u212AK)+$',
+    String.raw`(K|\u{000212A}K)+$`,
+    String.raw`(K|\u{0000212A}K)+$`,
+    `(K|\\u{${'0'.repeat(64)}212A}K)+$`,
+    '(K|[℀-∀]K)+$',
+    '(K|[\\u2100-\\u2200]K)+$',
+    '(K|\\p{L}K)+$',
+    '(K|[\\P{ASCII}]K)+$',
+  ])('rejects a Unicode IgnoreCase bypass under explicit iu flags: %s', async (pattern) => {
+    const { FilterRegexOpSchema, RenameRegexOpSchema } = await import('@/schemas/operator');
+    expect(() =>
+      FilterRegexOpSchema.parse({
+        id: 'x',
+        kind: 'filter-regex',
+        pattern,
+        flags: 'iu',
+      }),
+    ).toThrow();
+    expect(() =>
+      RenameRegexOpSchema.parse({
+        id: 'x',
+        kind: 'rename-regex',
+        pattern,
+        flags: 'iu',
+      }),
+    ).toThrow();
+  });
+
+  it.each([
+    String.raw`(K|\u{000212A}K)+$`,
+    String.raw`(K|\u{0000212A}K)+$`,
+    `(K|\\u{${'0'.repeat(64)}212A}K)+$`,
+  ])('rejects a long braced Kelvin escape at the runtime guard: %s', (pattern) => {
+    expect(isSafeRuntimeRegex(pattern, 'iu')).toBe(false);
+  });
+
+  it('keeps uncased non-ASCII operator patterns usable under explicit iu flags', async () => {
+    const { FilterRegexOpSchema } = await import('@/schemas/operator');
+    expect(() =>
+      FilterRegexOpSchema.parse({
+        id: 'x',
+        kind: 'filter-regex',
+        pattern: '香港|🇺🇸',
+        flags: 'iu',
+      }),
+    ).not.toThrow();
+  });
+
+  it('fails closed on IgnoreCase plus UnicodeSets string classes', () => {
+    expect(isSafeRuntimeRegex(String.raw`[\q{a|aa}]+$`, 'iv')).toBe(false);
+    expect(isSafeRuntimeRegex('香港', 'iv')).toBe(false);
+  });
+
+  it('accepts a bounded safe lookbehind pattern', async () => {
+    const { RenameRegexOpSchema } = await import('@/schemas/operator');
+    expect(() =>
+      RenameRegexOpSchema.parse({
+        id: 'x',
+        kind: 'rename-regex',
+        pattern: '(?<![A-Za-z])US(?![A-Za-z])',
+      }),
+    ).not.toThrow();
   });
 });
 
@@ -112,11 +192,17 @@ describe('applyOperators · flag-emoji', () => {
     expect(proxies[1].name).toBe('🇺🇸 US Los Angeles');
   });
   it('does not double-prefix an existing flag', () => {
-    const { proxies } = applyOperators([{ name: '🇭🇰 香港 01' }], [op({ kind: 'flag-emoji', action: 'add' })]);
+    const { proxies } = applyOperators(
+      [{ name: '🇭🇰 香港 01' }],
+      [op({ kind: 'flag-emoji', action: 'add' })],
+    );
     expect(proxies[0].name).toBe('🇭🇰 香港 01');
   });
   it('removes flags', () => {
-    const { proxies } = applyOperators([{ name: '🇭🇰 香港 01' }], [op({ kind: 'flag-emoji', action: 'remove' })]);
+    const { proxies } = applyOperators(
+      [{ name: '🇭🇰 香港 01' }],
+      [op({ kind: 'flag-emoji', action: 'remove' })],
+    );
     expect(proxies[0].name).toBe('香港 01');
   });
   it('maps Taiwan to the China flag when tw2cn is set', () => {
@@ -129,18 +215,25 @@ describe('applyOperators · flag-emoji', () => {
     expect(proxies[2].name).toBe('🇭🇰 香港'); // other regions untouched
   });
   it('keeps the Taiwan flag when tw2cn is off', () => {
-    const { proxies } = applyOperators([{ name: '台湾 01' }], [op({ kind: 'flag-emoji', action: 'add' })]);
+    const { proxies } = applyOperators(
+      [{ name: '台湾 01' }],
+      [op({ kind: 'flag-emoji', action: 'add' })],
+    );
     expect(proxies[0].name).toBe('🇹🇼 台湾 01');
   });
 });
 
 describe('applyOperators · filter-type', () => {
   it('keeps selected protocols', () => {
-    const { proxies } = applyOperators(sample, [op({ kind: 'filter-type', mode: 'keep', types: ['ss'] })]);
+    const { proxies } = applyOperators(sample, [
+      op({ kind: 'filter-type', mode: 'keep', types: ['ss'] }),
+    ]);
     expect(proxies.every((p) => p.type === 'ss')).toBe(true);
   });
   it('no-ops when no types selected', () => {
-    const { proxies } = applyOperators(sample, [op({ kind: 'filter-type', mode: 'keep', types: [] })]);
+    const { proxies } = applyOperators(sample, [
+      op({ kind: 'filter-type', mode: 'keep', types: [] }),
+    ]);
     expect(proxies).toHaveLength(sample.length);
   });
 });
@@ -178,7 +271,9 @@ describe('applyOperators · dedup', () => {
     { name: 'B', server: 's1', port: 1 },
   ];
   it('drops duplicates by name', () => {
-    const { proxies, steps } = applyOperators(dup, [op({ kind: 'dedup', by: 'name', action: 'drop' })]);
+    const { proxies, steps } = applyOperators(dup, [
+      op({ kind: 'dedup', by: 'name', action: 'drop' }),
+    ]);
     expect(proxies.map((p) => p.name)).toEqual(['A', 'B']);
     expect(steps[0].dropped).toBe(1);
   });
@@ -187,14 +282,18 @@ describe('applyOperators · dedup', () => {
     expect(proxies.map((p) => p.name)).toEqual(['A', 'A #2', 'B']);
   });
   it('dedups by server:port', () => {
-    const { proxies } = applyOperators(dup, [op({ kind: 'dedup', by: 'server-port', action: 'drop' })]);
+    const { proxies } = applyOperators(dup, [
+      op({ kind: 'dedup', by: 'server-port', action: 'drop' }),
+    ]);
     expect(proxies).toHaveLength(2); // s1:1 collapses
   });
 });
 
 describe('applyOperators · filter-region', () => {
   it('keeps only selected regions', () => {
-    const { proxies } = applyOperators(sample, [op({ kind: 'filter-region', mode: 'keep', regions: ['HK'] })]);
+    const { proxies } = applyOperators(sample, [
+      op({ kind: 'filter-region', mode: 'keep', regions: ['HK'] }),
+    ]);
     expect(proxies.map((p) => p.name)).toEqual(['🇭🇰 香港 01', 'HK 香港 02']);
   });
 });

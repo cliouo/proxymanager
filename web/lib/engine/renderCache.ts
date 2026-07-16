@@ -17,6 +17,7 @@
  * Anything else falls through to the real pipeline and rewrites the entry.
  */
 
+import { createHash } from 'node:crypto';
 import { resolveConfig, type ResolveResult } from '@/lib/engine/resolve';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { getRedis } from '@/lib/redis/client';
@@ -44,8 +45,26 @@ import { listSubscriptions } from '@/lib/repos/subscriptionsRepo';
  * both for an on-demand fresh render; acceptable for a personal tool.
  */
 const MAX_FRESH_MS = 24 * 60 * 60 * 1000;
+/** Tolerate small host-clock skew, but reject timestamps that can pin a corrupt entry fresh. */
+const MAX_CLOCK_SKEW_MS = 5 * 60 * 1000;
 /** Slack added to the Redis EX over the freshness window (GC, not validity). */
 const EX_SLACK_SECONDS = 60;
+
+/**
+ * Atomically replace only a still-invalid (or deleted) global generation.
+ * A delayed repair must never overwrite a valid value produced by a concurrent
+ * repo INCR, or the version-before-data race guard would be reversed.
+ */
+const REPAIR_INVALID_CONFIG_VERSION = `
+local current = redis.call('GET', KEYS[1])
+local canonical = current == '0' or (current and string.match(current, '^[1-9]%d*$'))
+if canonical then
+  local parsed = tonumber(current)
+  if parsed and parsed <= 9007199254740991 then return 0 end
+end
+redis.call('SET', KEYS[1], ARGV[1])
+return 1
+`.trim();
 
 /**
  * Code-level cache epoch. `config:version` only bumps on data writes, so a pure
@@ -75,8 +94,10 @@ const EX_SLACK_SECONDS = 60;
  *   9 → cache entry now carries the profile's display_name so the sub route can
  *       set a customisable Content-Disposition filename on a cache hit (no extra
  *       profile load on the fast path).
+ *  10 → proxy URI failures are fail-closed and diagnostics are credential-safe;
+ *       invalidate full configs rendered from pre-hardening fetch-cache data.
  */
-const RENDER_CACHE_EPOCH = 9;
+const RENDER_CACHE_EPOCH = 10;
 
 export type RenderCacheStatus = 'hit' | 'miss' | 'bypass';
 
@@ -136,6 +157,96 @@ export interface RenderProfileResult {
   cache: RenderCacheStatus;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isNonNegativeSafeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string');
+}
+
+function isAnchorStat(value: unknown): boolean {
+  return (
+    isRecord(value) && typeof value.anchor === 'string' && isNonNegativeSafeInteger(value.ruleCount)
+  );
+}
+
+function isSubscriptionStatus(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.name === 'string' &&
+    isNonNegativeSafeInteger(value.injectedCount) &&
+    (value.stale === undefined || typeof value.stale === 'boolean') &&
+    (value.staleReason === undefined || typeof value.staleReason === 'string') &&
+    (value.error === undefined || typeof value.error === 'string')
+  );
+}
+
+function isCollision(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.name === 'string' &&
+    (value.keptFrom === null || typeof value.keptFrom === 'string') &&
+    isStringArray(value.droppedFrom)
+  );
+}
+
+function buildIdForContent(content: string): string {
+  return createHash('sha256').update(content, 'utf8').digest('hex').slice(0, 8);
+}
+
+function isRenderCacheEntry(value: unknown): value is RenderCacheEntry {
+  if (!isRecord(value)) return false;
+  return (
+    isNonNegativeSafeInteger(value.epoch) &&
+    isNonNegativeSafeInteger(value.version) &&
+    (value.providerUrlBase === null || typeof value.providerUrlBase === 'string') &&
+    isNonNegativeSafeInteger(value.renderedAt) &&
+    value.renderedAt <= Date.now() + MAX_CLOCK_SKEW_MS &&
+    isNonNegativeSafeInteger(value.freshForMs) &&
+    value.freshForMs > 0 &&
+    value.freshForMs <= MAX_FRESH_MS &&
+    typeof value.baseEtag === 'string' &&
+    isNonNegativeSafeInteger(value.baseUpdatedAt) &&
+    (value.displayName === null || typeof value.displayName === 'string') &&
+    typeof value.content === 'string' &&
+    value.content.trim().length > 0 &&
+    typeof value.buildId === 'string' &&
+    value.buildId === buildIdForContent(value.content) &&
+    Array.isArray(value.anchorsApplied) &&
+    value.anchorsApplied.every(isAnchorStat) &&
+    isStringArray(value.unmatchedAnchors) &&
+    isStringArray(value.ruleProvidersApplied) &&
+    Array.isArray(value.subscriptions) &&
+    value.subscriptions.every(isSubscriptionStatus) &&
+    Array.isArray(value.collisions) &&
+    value.collisions.every(isCollision) &&
+    isStringArray(value.nodeNames) &&
+    isRecord(value.nodesBySub) &&
+    Object.values(value.nodesBySub).every(isStringArray) &&
+    isStringArray(value.warnings) &&
+    isNonNegativeSafeInteger(value.inlinedProxyCount) &&
+    isNonNegativeSafeInteger(value.proxyGroupCount)
+  );
+}
+
+function readConfigVersion(value: unknown): { version: number; cacheable: boolean } {
+  // Missing is the intentional legacy version 0. A present but malformed value
+  // is not equivalent: treating it as zero can falsely hit an old entry while
+  // Redis is corrupt or partially migrated.
+  if (value === null) return { version: 0, cacheable: true };
+  if (isNonNegativeSafeInteger(value)) return { version: value, cacheable: true };
+  return { version: 0, cacheable: false };
+}
+
+async function repairInvalidConfigVersion(redis: ReturnType<typeof getRedis>): Promise<void> {
+  await redis.eval(REPAIR_INVALID_CONFIG_VERSION, [REDIS_KEYS.configVersion], [String(Date.now())]);
+}
+
 function defaultMissingBaseError(): ProblemDetailsError {
   return ProblemDetailsError.notFound('Base config has not been initialized yet.');
 }
@@ -152,15 +263,26 @@ export async function renderProfileConfig(
   // 期间有并发写(bump),写进缓存的是旧版本号,下次读取时版本比对失配 →
   // 重新渲染。先读数据后读版本则可能把「新版本号 + 旧数据」缓存住,永远不失效。
   let version: number;
+  let cacheableVersion: boolean;
 
   if (!opts.noCache) {
     // 命中路径的全部 Redis 开销:这一次 MGET(版本号 + 缓存条目)。
-    const [rawVersion, entry] = await redis.mget<[number | null, RenderCacheEntry | null]>(
+    const [rawVersion, rawEntry] = await redis.mget<[unknown, unknown]>(
       REDIS_KEYS.configVersion,
       cacheKey,
     );
-    version = rawVersion ?? 0;
+    ({ version, cacheable: cacheableVersion } = readConfigVersion(rawVersion));
+    if (!cacheableVersion) {
+      // Repair the *global* generation to a value no legacy v0 cache can
+      // match. Deleting only this profile's entry is insufficient: another
+      // profile not requested during the incident could otherwise resurrect
+      // its old v0 entry if the corrupt key were merely deleted (= 0).
+      await repairInvalidConfigVersion(redis);
+      await redis.del(cacheKey);
+    }
+    const entry = isRenderCacheEntry(rawEntry) ? rawEntry : null;
     if (
+      cacheableVersion &&
       entry !== null &&
       entry.epoch === RENDER_CACHE_EPOCH &&
       entry.version === version &&
@@ -177,7 +299,12 @@ export async function renderProfileConfig(
     }
   } else {
     // bypass 也要先取版本号 — 渲染结果仍会写回缓存,同样要防上面的竞态。
-    version = (await redis.get<number>(REDIS_KEYS.configVersion)) ?? 0;
+    const rawVersion = await redis.get<unknown>(REDIS_KEYS.configVersion);
+    ({ version, cacheable: cacheableVersion } = readConfigVersion(rawVersion));
+    if (!cacheableVersion) {
+      await repairInvalidConfigVersion(redis);
+      await redis.del(cacheKey);
+    }
   }
 
   // Miss / bypass. base / rules / proxy-groups are now owned per profile
@@ -217,7 +344,11 @@ export async function renderProfileConfig(
   const resolved = await resolveConfig(base.content, rules, subscriptions, proxyGroups, templates, {
     providers,
     providerUrlBase: opts.providerUrlBase,
-    ignoreFailedSubs: true,
+    // A downloadable or cached full config must never look successful after a
+    // source silently disappeared. Stale-on-error still happens inside the
+    // fetcher when an older complete provider is available; otherwise fail the
+    // render and leave the previous render-cache entry untouched.
+    ignoreFailedSubs: false,
     noCache: opts.noCache,
     collections,
     // Profile binding — which subscription(s) this profile injects.
@@ -257,7 +388,9 @@ export async function renderProfileConfig(
     proxyGroupCount: resolved.proxyGroupCount,
   };
   // EX 只是垃圾回收;有效性由 version/renderedAt 判定,所以略宽于窗口即可。
-  await redis.set(cacheKey, entry, { ex: Math.ceil(freshForMs / 1000) + EX_SLACK_SECONDS });
+  if (cacheableVersion) {
+    await redis.set(cacheKey, entry, { ex: Math.ceil(freshForMs / 1000) + EX_SLACK_SECONDS });
+  }
 
   return {
     resolved: entry,

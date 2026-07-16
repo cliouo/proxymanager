@@ -1,6 +1,7 @@
 import { stringify } from 'yaml';
-import { resolveCollectionMemberSubs, settleWithConcurrency } from '@/lib/engine/resolve';
+import { resolveCollectionMemberSubs, settleWithConcurrencyInOrder } from '@/lib/engine/resolve';
 import { ProblemDetailsError } from '@/lib/http/problem';
+import { MAX_PROXY_NODES, validateMihomoProxyList } from '@/lib/proxies/mihomoProxyValidator';
 import { applyOperators, type ClashProxy } from '@/lib/proxies/operators';
 import { resolveSubscriptionProxies } from '@/lib/services/subscriptionFetcher';
 import type { Collection, Subscription, SubscriptionTraffic } from '@/schemas';
@@ -33,7 +34,7 @@ interface ExportOptions {
 /** 同时在途的成员订阅 fetch 上限,与渲染管线保持一致。 */
 const MEMBER_FETCH_CONCURRENCY = 8;
 
-/** 取节点名(非字符串名的项跳过)。 */
+/** 取节点名；非字符串名保留到后续 trust-boundary validator 明确拒绝。 */
 function nameOf(item: Record<string, unknown>): string | null {
   return typeof item.name === 'string' ? item.name : null;
 }
@@ -44,7 +45,11 @@ function dedupByName(proxies: Record<string, unknown>[]): Record<string, unknown
   const survivors: Record<string, unknown>[] = [];
   for (const item of proxies) {
     const name = nameOf(item);
-    if (name === null || seen.has(name)) continue;
+    if (name === null) {
+      survivors.push(item);
+      continue;
+    }
+    if (seen.has(name)) continue;
     seen.add(name);
     survivors.push(item);
   }
@@ -57,7 +62,9 @@ export async function exportSubscriptionNodes(
   options: ExportOptions = {},
 ): Promise<NodeExportResult> {
   const result = await resolveSubscriptionProxies(sub, { noCache: options.noCache });
-  const proxies = dedupByName(result.proxies);
+  const proxies = validateMihomoProxyList(dedupByName(result.proxies), {
+    allowExternalDialerProxy: true,
+  });
   return {
     yaml: stringify({ proxies }, { lineWidth: 0 }),
     proxyCount: proxies.length,
@@ -95,24 +102,31 @@ export async function mergeCollectionMemberProxies(
     );
   }
 
-  const settled = await settleWithConcurrency(members, MEMBER_FETCH_CONCURRENCY, (sub) =>
-    resolveSubscriptionProxies(sub, { noCache: options.noCache }),
-  );
-
   const merged: Record<string, unknown>[] = [];
   const memberErrors: { name: string; error: string }[] = [];
   let stale = false;
-  for (let i = 0; i < members.length; i++) {
-    const outcome = settled[i];
+  let i = 0;
+  for await (const outcome of settleWithConcurrencyInOrder(
+    members,
+    MEMBER_FETCH_CONCURRENCY,
+    (sub) => resolveSubscriptionProxies(sub, { noCache: options.noCache }),
+  )) {
+    const member = members[i];
+    i += 1;
     if (outcome.status === 'rejected') {
       const err = outcome.reason;
       memberErrors.push({
-        name: members[i].name,
+        name: member.name,
         error: err instanceof Error ? err.message : String(err),
       });
       continue;
     }
     if (outcome.value.stale) stale = true;
+    if (merged.length + outcome.value.proxies.length > MAX_PROXY_NODES) {
+      throw ProblemDetailsError.badRequest(
+        `聚合订阅候选节点超过 ${MAX_PROXY_NODES} 个,已拒绝生成。`,
+      );
+    }
     merged.push(...outcome.value.proxies);
   }
 
@@ -146,7 +160,9 @@ export async function exportCollectionNodes(
     collection.operators.length > 0
       ? applyOperators(merged as ClashProxy[], collection.operators).proxies
       : merged;
-  const proxies = dedupByName(processed as Record<string, unknown>[]);
+  const proxies = validateMihomoProxyList(dedupByName(processed), {
+    allowExternalDialerProxy: true,
+  });
   return {
     yaml: stringify({ proxies }, { lineWidth: 0 }),
     proxyCount: proxies.length,

@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { type ProxyGroup, frontPoolGroupNames } from '@/schemas';
+import { type ProxyGroup, frontPoolGroupNames } from '@/schemas/proxyGroup';
 import { BUILTINS, REGIONS, type SubscriptionLite } from '../_lib/model';
 import {
   buildGroupGraph,

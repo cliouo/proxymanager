@@ -1,14 +1,36 @@
 import { z } from 'zod';
-import { OperatorSchema } from './operator';
+import { OperatorSchema, StoredOperatorSchema } from './operator';
 import { MAX_SUBSCRIPTION_CONTENT } from './base';
 
 /**
  * P3-19: restrict remote subscription URLs to http/https. The upstream is
  * fetched server-side, so allowing arbitrary schemes (file:, gopher:, etc.) is
- * an SSRF footgun. `safeFetch` additionally blocks private IP ranges. Self-
- * hosters who intentionally point at an internal host can still use http(s).
+ * an SSRF footgun. This direct subscription-fetch path intentionally permits
+ * private/internal http(s) hosts for self-hosters; the schema still rejects
+ * URL userinfo so credentials cannot leak through redirects or diagnostics.
  */
-const httpUrl = z.url().refine((u) => /^https?:\/\//i.test(u), {
+const httpUrl = z.url().refine(
+  (value) => {
+    try {
+      const parsed = new URL(value);
+      return (
+        (parsed.protocol === 'http:' || parsed.protocol === 'https:') &&
+        parsed.username === '' &&
+        parsed.password === ''
+      );
+    } catch {
+      return false;
+    }
+  },
+  { message: 'URL 必须使用 http(s)，且不得包含用户名或密码' },
+);
+
+/**
+ * Historical persisted rows allowed HTTP(S) userinfo. Keep those rows
+ * manageable after an upgrade; create/update stays on `httpUrl`, while the
+ * fetch boundary independently rejects userinfo before making a request.
+ */
+const storedHttpUrl = z.url().refine((value) => /^https?:\/\//i.test(value), {
   message: 'URL 必须是 http(s) 协议',
 });
 
@@ -48,7 +70,7 @@ export const SubscriptionSchema = z.object({
    */
   kind: SubscriptionKindSchema.default('remote'),
   /** Required when kind=remote. */
-  url: httpUrl.optional(),
+  url: storedHttpUrl.optional(),
   /** Per-sub UA override (legacy: ua_override). */
   ua_override: z.string().optional(),
   /** Extra request headers attached to remote fetches. */
@@ -65,7 +87,7 @@ export const SubscriptionSchema = z.object({
    * Cross-source same-name collisions are handled by the dedup step here and
    * by global first-writer-wins dedup — there is no separate name prefix.
    */
-  operators: z.array(OperatorSchema).default([]),
+  operators: z.array(StoredOperatorSchema).default([]),
   /**
    * P2-2: optimistic-concurrency version (epoch seconds). Bumped on every
    * create/replace/patch edit so an If-Match PATCH can detect a concurrent

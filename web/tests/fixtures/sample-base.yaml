@@ -12,7 +12,6 @@ proxy-providers:
 proxies:
   - name: 直连
     type: direct
-    udp: true
 
 proxy-groups:
   - name: 默认

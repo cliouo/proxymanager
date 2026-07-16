@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import type { BaseOrphan, BaseValidationResult } from '@/schemas';
 import { BaseParseError, type ParsedBase, parseBase } from '@/lib/engine/parser';
 import { validateBase } from '@/lib/engine/validator';
-import { referencedProviderNamesInText } from '@/lib/engine/renderer';
+import { referencedProviderNamesInBaseYaml } from '@/lib/engine/renderer';
 import { listProxyGroups } from '@/lib/repos/proxyGroupsRepo';
 import { listRules } from '@/lib/repos/rulesRepo';
 import { listRuleSets } from '@/lib/repos/ruleSetsRepo';
@@ -84,7 +84,7 @@ export async function parseAndValidate(
     parsedBase = parseBase(content);
   } catch (err) {
     if (err instanceof BaseParseError) {
-      throw ProblemDetailsError.unprocessable(`Invalid YAML: ${err.message}`);
+      throw ProblemDetailsError.unprocessable(err.message);
     }
     throw err;
   }
@@ -102,7 +102,10 @@ export async function parseAndValidate(
     providerNames,
     proxyGroups.map((g) => g.name),
   );
-  const blockViolations = [...rulesBlockViolations(content), ...ruleProvidersBlockViolations(content)];
+  const blockViolations = [
+    ...rulesBlockViolations(content),
+    ...ruleProvidersBlockViolations(content),
+  ];
   if (blockViolations.length > 0) {
     validation.orphans = [...validation.orphans, ...blockViolations];
     validation.valid = false;
@@ -119,7 +122,7 @@ export async function parseAndValidate(
       referencedSets.add(r.value);
     }
   }
-  for (const name of referencedProviderNamesInText(content)) {
+  for (const name of referencedProviderNamesInBaseYaml(content)) {
     if (providerNames.has(name)) referencedSets.add(name);
   }
   const markerPresent = /^[ \t]*#\s*===\s*RULE-PROVIDERS\s*===[ \t]*$/m.test(content);

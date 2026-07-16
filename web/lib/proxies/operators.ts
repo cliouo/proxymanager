@@ -12,6 +12,7 @@
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import type { Operator } from '@/schemas/operator';
 import { detectRegion, flagFromCode, regionByCode, stripFlags } from './regions';
+import { assertSafeRuntimeRegexInput, compileSafeRuntimeRegex } from './regexSafety';
 
 /** Loose Clash proxy shape — we only touch a handful of fields. */
 export interface ClashProxy {
@@ -84,37 +85,32 @@ const USELESS_PATTERNS = [
   'https?://',
 ];
 
-function buildUselessRe(extra: string[]): RegExp {
+function buildUselessRegexes(extra: string[]): RegExp[] {
   // The schema (uselessExtraPattern) already rejects fragments that don't
   // compile or match the empty string, but legacy operators stored before that
   // guard existed can still carry a bad fragment. Wrap each user fragment in a
   // non-capturing group (so its internal `|` can't spill into a sibling branch)
-  // and drop any that fail to compile standalone — a malformed junk filter must
-  // degrade to "filter fewer nodes", never throw and 500 the whole render.
-  const safeExtra: string[] = [];
+  // Fail closed for legacy values as well: silently skipping an unsafe fragment
+  // makes the stored pipeline behave differently from what the user configured.
+  const patterns = [...USELESS_PATTERNS];
   for (const e of extra) {
-    if (e.trim().length === 0) continue;
-    try {
-      new RegExp(e); // standalone compile check
-      if (new RegExp(e).test('')) continue; // empty-matching → would drop everything
-      safeExtra.push(`(?:${e})`);
-    } catch {
-      // skip the malformed fragment
+    if (e.trim().length === 0) {
+      throw new Error('Unsafe or invalid filter-useless regular expression.');
     }
+    const re = compileSafeRuntimeRegex(e, 'i');
+    if (re.test('')) throw new Error('A filter-useless expression matches the empty string.');
+    patterns.push(e);
   }
-  const parts = [...USELESS_PATTERNS, ...safeExtra];
-  try {
-    return new RegExp(parts.join('|'), 'i');
-  } catch {
-    // Last-resort fallback: built-ins only (they are known-good literals).
-    return new RegExp(USELESS_PATTERNS.join('|'), 'i');
-  }
+  // Compile separately instead of joining with `|`: overlapping fixed words
+  // such as "剩余"/"剩余流量" are linear individually, while a combined
+  // alternation is needlessly ambiguous to a backtracking engine.
+  return patterns.map((pattern) => compileSafeRuntimeRegex(pattern, 'i'));
 }
 
 /** Compile a user regex; `test`-safe (no sticky/global state leakage). */
 function compileTest(pattern: string, flags?: string): RegExp {
   const f = (flags ?? 'i').replace(/[gy]/g, ''); // test() must be stateless
-  return new RegExp(pattern, f);
+  return compileSafeRuntimeRegex(pattern, f);
 }
 
 /* ─── per-operator transforms ──────────────────────────────────────── */
@@ -129,15 +125,21 @@ function runOne(
     case 'filter-regex': {
       const re = compileTest(op.pattern, op.flags);
       const kept = proxies.filter((p) => {
-        const hit = re.test(nameOf(p));
+        const name = nameOf(p);
+        assertSafeRuntimeRegexInput(name);
+        const hit = re.test(name);
         return op.mode === 'keep' ? hit : !hit;
       });
       return { proxies: kept, dropped: before - kept.length, changed: 0 };
     }
 
     case 'filter-useless': {
-      const re = buildUselessRe(op.extra ?? []);
-      const kept = proxies.filter((p) => !re.test(nameOf(p)));
+      const regexes = buildUselessRegexes(op.extra ?? []);
+      const kept = proxies.filter((p) => {
+        const name = nameOf(p);
+        assertSafeRuntimeRegexInput(name);
+        return !regexes.some((re) => re.test(name));
+      });
       return { proxies: kept, dropped: before - kept.length, changed: 0 };
     }
 
@@ -163,11 +165,12 @@ function runOne(
     }
 
     case 'rename-regex': {
-      const re = new RegExp(op.pattern, op.flags ?? 'g');
+      const re = compileSafeRuntimeRegex(op.pattern, op.flags ?? 'g');
       let changed = 0;
       const out = proxies.map((p) => {
         const name = nameOf(p);
         if (!name) return p;
+        assertSafeRuntimeRegexInput(name);
         const next = name.replace(re, op.replacement ?? '');
         if (next === name) return p;
         changed += 1;
@@ -206,10 +209,7 @@ function runOne(
         const patch: Partial<ClashProxy> = {};
         if (op.udp !== undefined && p.udp !== op.udp) patch.udp = op.udp;
         if (op.tfo !== undefined && p.tfo !== op.tfo) patch.tfo = op.tfo;
-        if (
-          op.skipCertVerify !== undefined &&
-          p['skip-cert-verify'] !== op.skipCertVerify
-        ) {
+        if (op.skipCertVerify !== undefined && p['skip-cert-verify'] !== op.skipCertVerify) {
           patch['skip-cert-verify'] = op.skipCertVerify;
         }
         if (Object.keys(patch).length === 0) return p;
@@ -297,7 +297,15 @@ export function applyOperators(input: ClashProxy[], operators: Operator[]): Appl
   for (const op of operators) {
     const before = proxies.length;
     if (op.disabled) {
-      steps.push({ id: op.id, kind: op.kind, applied: false, before, after: before, dropped: 0, changed: 0 });
+      steps.push({
+        id: op.id,
+        kind: op.kind,
+        applied: false,
+        before,
+        after: before,
+        dropped: 0,
+        changed: 0,
+      });
       continue;
     }
     const res = runOne(proxies, op);

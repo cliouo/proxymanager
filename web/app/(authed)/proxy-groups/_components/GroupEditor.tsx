@@ -30,7 +30,6 @@ const TYPE_HINT: Record<ProxyGroupType, string> = {
   'url-test': '客户端测延迟选最快',
   fallback: '按顺序取第一个可用',
   'load-balance': '按策略分摊连接',
-  relay: '依次穿过成员成链',
 };
 
 interface GroupEditorProps {
@@ -209,13 +208,6 @@ export function GroupEditor({
                 <span className="ic">ⓘ</span>
                 select 无额外参数。成员的可用性与延迟由客户端运行时测定 —
                 本工作台只组装配置,不做测速。
-              </div>
-            )}
-
-            {form.type === 'relay' && (
-              <div className={styles.lensNote} style={{ marginTop: 14, marginBottom: 0 }}>
-                <span className="ic">⛓</span>
-                relay 会把流量按成员顺序依次转发成一条链路。链路编排建议改到「链式代理」页操作。
               </div>
             )}
 
@@ -419,12 +411,26 @@ export function GroupEditor({
               />
             </div>
             <div className="field">
-              <label>exclude-type(逗号分隔 proxy.type)</label>
+              <label>exclude-type（| 分隔 AdapterType）</label>
               <input
                 className="input mono"
                 value={form['exclude-type']}
                 onChange={(e) => set('exclude-type', e.target.value)}
-                placeholder="如 Direct,Reject"
+                placeholder="如 Direct|Reject"
+              />
+            </div>
+            <div className="field">
+              <label>
+                empty-fallback{' '}
+                <span style={{ color: 'var(--faint)', fontWeight: 400 }}>
+                  动态成员为空时的具体出口
+                </span>
+              </label>
+              <input
+                className="input mono"
+                value={form['empty-fallback']}
+                onChange={(e) => set('empty-fallback', e.target.value)}
+                placeholder="REJECT"
               />
             </div>
             <div className="field">

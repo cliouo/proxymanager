@@ -2,7 +2,9 @@ import { parse, stringify } from 'yaml';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { readCapped } from '@/lib/net/safeFetch';
 import { applyOperators, type ClashProxy } from '@/lib/proxies/operators';
+import { validateMihomoProxyList } from '@/lib/proxies/mihomoProxyValidator';
 import {
+  listSupportedProxyUriSchemes,
   looksLikeProxyUriList,
   parseProxyUriList,
   tryBase64Decode,
@@ -13,10 +15,15 @@ import {
   setFetchCache,
   type FetchCacheEntry,
 } from '@/lib/repos/fetchCacheRepo';
-import type { Subscription, SubscriptionTraffic } from '@/schemas';
+import {
+  SubscriptionTrafficSchema,
+  type Subscription,
+  type SubscriptionTraffic,
+} from '@/schemas/subscription';
 
 const DEFAULT_UA = 'clash.meta/1.18.0';
 const FETCH_TIMEOUT_MS = 15_000;
+const MAX_SUBSCRIPTION_REDIRECTS = 5;
 /** P2-6: hard cap on an upstream subscription body (a slow/huge source can't OOM or hang the render). */
 const MAX_SUBSCRIPTION_BODY_BYTES = 10 * 1024 * 1024;
 /**
@@ -64,7 +71,7 @@ export interface FetchSubscriptionProxiesResult {
  * 对方多付一次 parse / stringify(800 节点一轮 parse ≈35ms,曾经三轮全浪费)。
  *
  *   - 来源是对象(local 内容 / 新鲜 fetch 刚 normalise 完)→ yaml 惰性 stringify
- *   - 来源是缓存字符串(命中 / stale 回退)→ proxies 惰性 parse
+ *   - 来源是缓存字符串(命中 / stale 回退)→ 先严格 parse + validate；yaml 原样复用
  *
  * Both getters memoise, so repeated access costs nothing extra.
  */
@@ -87,31 +94,30 @@ interface RawMeta {
 /** Build a {@link RawResolved} whose source of truth is a parsed proxy list. */
 function rawFromProxies(list: unknown[], meta: RawMeta): RawResolved {
   let yaml: string | undefined;
-  let objects: Record<string, unknown>[] | undefined;
+  const objects = validateProviderProxyList(list);
   return {
     // lineWidth: 0 keeps long vmess/ssr lines unwrapped — same bytes the old
     // normaliseToClashProviderYaml produced, so the cache entry format 不变。
-    getYaml: () => (yaml ??= stringify({ proxies: list }, { lineWidth: 0 })),
-    getProxies: () => (objects ??= filterProxyObjects(list)),
+    getYaml: () => (yaml ??= stringify({ proxies: objects }, { lineWidth: 0 })),
+    getProxies: () => objects,
     ...meta,
   };
 }
 
 /** Build a {@link RawResolved} whose source of truth is a provider-YAML string (cache entries). */
 function rawFromYaml(yamlText: string, meta: RawMeta): RawResolved {
-  let objects: Record<string, unknown>[] | undefined;
+  // Cache bytes are an optimisation, not a trust boundary. Validate eagerly so
+  // the string endpoint cannot serve a corrupt entry that the object endpoint
+  // would reject only later.
+  const objects = extractProxyObjects(yamlText);
   return {
     getYaml: () => yamlText,
-    getProxies: () => (objects ??= extractProxyObjects(yamlText)),
+    getProxies: () => objects,
     ...meta,
+    // Cache metadata is an optimisation and may be stale or corrupt. The
+    // validated payload is authoritative for every downstream count.
+    proxyCount: objects.length,
   };
-}
-
-/** Keep only plain-object entries — same guard resolve.ts's extractProxies used. */
-function filterProxyObjects(list: unknown[]): Record<string, unknown>[] {
-  return list.filter(
-    (p): p is Record<string, unknown> => p !== null && typeof p === 'object' && !Array.isArray(p),
-  );
 }
 
 function extractProxyObjects(yamlText: string): Record<string, unknown>[] {
@@ -119,12 +125,16 @@ function extractProxyObjects(yamlText: string): Record<string, unknown>[] {
   try {
     parsed = parse(yamlText);
   } catch {
-    return [];
+    throw ProblemDetailsError.badRequest('Cached proxy provider YAML is invalid');
   }
-  if (!parsed || typeof parsed !== 'object') return [];
+  if (!parsed || typeof parsed !== 'object') {
+    throw ProblemDetailsError.badRequest('Cached proxy provider YAML has no proxies array');
+  }
   const proxies = (parsed as { proxies?: unknown }).proxies;
-  if (!Array.isArray(proxies)) return [];
-  return filterProxyObjects(proxies);
+  if (!Array.isArray(proxies)) {
+    throw ProblemDetailsError.badRequest('Cached proxy provider YAML has no proxies array');
+  }
+  return validateProviderProxyList(proxies);
 }
 
 /**
@@ -153,7 +163,8 @@ export async function resolveSubscriptionContent(
   // Object-level pipeline, then one stringify at the boundary — the old
   // applyOperatorsToProviderYaml round-trip (parse→ops→stringify) parsed a
   // string we had just produced ourselves.
-  const { proxies } = applyOperators(raw.getProxies() as ClashProxy[], sub.operators);
+  const { proxies: operated } = applyOperators(raw.getProxies() as ClashProxy[], sub.operators);
+  const proxies = validateProviderProxyList(operated);
   return {
     yaml: stringify({ proxies }, { lineWidth: 0 }),
     traffic: raw.traffic,
@@ -185,7 +196,8 @@ export async function resolveSubscriptionProxies(
       staleReason: raw.staleReason,
     };
   }
-  const { proxies } = applyOperators(base as ClashProxy[], sub.operators);
+  const { proxies: operated } = applyOperators(base as ClashProxy[], sub.operators);
+  const proxies = validateProviderProxyList(operated);
   return {
     proxies: proxies as Record<string, unknown>[],
     traffic: raw.traffic,
@@ -223,8 +235,8 @@ export async function resolveSubscriptionContentRaw(
  * string we had just produced (or had cached) ourselves.
  *
  * Note: unlike {@link resolveSubscriptionProxies}, `proxies` here is the raw
- * list; `proxyCount` counts the original entries (string-path semantics),
- * while `proxies` keeps only plain objects (same guard as the object path).
+ * pre-operator list. Every entry is already strictly validated, and
+ * `proxyCount` is derived from that same list on every source/cache path.
  */
 export async function resolveSubscriptionProxiesRaw(
   sub: Subscription,
@@ -282,12 +294,25 @@ async function resolveSubscriptionRaw(
   });
 
   // Read once up front — we may use it as fresh, or as the stale fallback.
+  // Validate the payload before either decision: cache age/envelope validity
+  // alone does not make the embedded provider YAML trustworthy.
   const cached = options.noCache ? null : await getFetchCache(cacheKey);
-  if (cached && Date.now() - cached.fetched_at < sub.ttl_ms) {
-    return rawFromYaml(cached.content, {
-      traffic: cached.traffic,
-      proxyCount: cached.proxy_count,
-    });
+  let cachedRaw: RawResolved | null = null;
+  if (cached) {
+    try {
+      cachedRaw = rawFromYaml(cached.content, {
+        traffic: cached.traffic,
+        proxyCount: cached.proxy_count,
+      });
+    } catch (error) {
+      if (!(error instanceof ProblemDetailsError)) throw error;
+      // A corrupt payload is a cache miss. Continue to the network path and
+      // never let these bytes qualify for stale-on-error fallback.
+      cachedRaw = null;
+    }
+  }
+  if (cachedRaw && cached && Date.now() - cached.fetched_at < sub.ttl_ms) {
+    return cachedRaw;
   }
 
   try {
@@ -306,22 +331,19 @@ async function resolveSubscriptionRaw(
       fetched_at: Date.now(),
     };
     // Keep the entry around long enough to back stale-on-error reads.
-    await setFetchCache(cacheKey, entry, Math.max(sub.ttl_ms, STALE_TTL_MS)).catch(
-      () => undefined,
-    );
+    await setFetchCache(cacheKey, entry, Math.max(sub.ttl_ms, STALE_TTL_MS)).catch(() => undefined);
 
     return fresh;
   } catch (err) {
-    if (cached) {
+    if (cachedRaw) {
       // Stale-on-error: upstream is unreachable but we have a prior fetch.
-      // Better to serve last-known-good than fail the whole render.
+      // Only a payload validated above qualifies as last-known-good.
       const reason = err instanceof Error ? err.message : String(err);
-      return rawFromYaml(cached.content, {
-        traffic: cached.traffic,
-        proxyCount: cached.proxy_count,
+      return {
+        ...cachedRaw,
         stale: true,
         staleReason: reason,
-      });
+      };
     }
     throw err;
   }
@@ -340,6 +362,7 @@ async function fetchSubscriptionInternal(
   url: string,
   options: { userAgent?: string; timeoutMs?: number; customHeaders?: Record<string, string> } = {},
 ): Promise<RawResolved> {
+  const upstreamUrl = parseSubscriptionUrl(url);
   const userAgent = options.userAgent ?? DEFAULT_UA;
   const timeoutMs = options.timeoutMs ?? FETCH_TIMEOUT_MS;
 
@@ -349,30 +372,79 @@ async function fetchSubscriptionInternal(
   let text: string;
   let traffic: SubscriptionTraffic | undefined;
   try {
-    const response = await fetch(url, {
-      headers: { 'User-Agent': userAgent, ...(options.customHeaders ?? {}) },
-      redirect: 'follow',
-      cache: 'no-store',
-      signal: controller.signal,
-    });
+    let currentUrl = upstreamUrl;
+    let response: Response | undefined;
+    for (let hop = 0; hop <= MAX_SUBSCRIPTION_REDIRECTS; hop++) {
+      response = await fetch(currentUrl, {
+        headers: { 'User-Agent': userAgent, ...(options.customHeaders ?? {}) },
+        // Undici strips standard credential headers on a cross-origin redirect,
+        // but forwards arbitrary custom token headers. Handle redirects here so
+        // admin-supplied subscription credentials can never cross an origin.
+        redirect: 'manual',
+        cache: 'no-store',
+        signal: controller.signal,
+      });
+      if (response.status < 300 || response.status >= 400) break;
+
+      const location = response.headers.get('location');
+      await response.body?.cancel().catch(() => undefined);
+      if (!location) {
+        throw ProblemDetailsError.badRequest('Upstream redirect is missing Location');
+      }
+      if (hop === MAX_SUBSCRIPTION_REDIRECTS) {
+        throw ProblemDetailsError.badRequest('Upstream returned too many redirects');
+      }
+
+      let nextUrl: URL;
+      try {
+        nextUrl = parseSubscriptionUrl(new URL(location, currentUrl).toString());
+      } catch (error) {
+        if (error instanceof ProblemDetailsError) throw error;
+        throw ProblemDetailsError.badRequest('Upstream redirect URL is invalid');
+      }
+      if (nextUrl.origin !== currentUrl.origin) {
+        throw ProblemDetailsError.badRequest('Cross-origin upstream redirect is not allowed');
+      }
+      currentUrl = nextUrl;
+    }
+    if (!response) {
+      throw ProblemDetailsError.badRequest('Upstream fetch failed');
+    }
     if (!response.ok) {
       throw ProblemDetailsError.badRequest(`Upstream returned HTTP ${response.status}`);
     }
     traffic = parseTrafficHeader(response.headers.get('subscription-userinfo'));
+    const declaredLength = Number(response.headers.get('content-length') ?? '');
+    if (Number.isFinite(declaredLength) && declaredLength > MAX_SUBSCRIPTION_BODY_BYTES) {
+      throw ProblemDetailsError.badRequest(
+        `Upstream subscription body exceeds ${MAX_SUBSCRIPTION_BODY_BYTES} bytes`,
+      );
+    }
     // P2-6: the body read must stay INSIDE the same timeout window (don't clear
     // the timer until it's consumed — a slow-drip upstream could otherwise hang
     // the render past the platform function limit) and is size-capped so a huge
     // upstream can't OOM the worker. Reuse safeFetch's capped reader.
-    const { buf } = await readCapped(response, MAX_SUBSCRIPTION_BODY_BYTES);
-    text = new TextDecoder().decode(buf);
+    const { buf, truncated } = await readCapped(response, MAX_SUBSCRIPTION_BODY_BYTES);
+    if (truncated) {
+      throw ProblemDetailsError.badRequest(
+        `Upstream subscription body exceeds ${MAX_SUBSCRIPTION_BODY_BYTES} bytes`,
+      );
+    }
+    try {
+      text = new TextDecoder('utf-8', { fatal: true }).decode(buf);
+    } catch {
+      throw ProblemDetailsError.badRequest('Upstream subscription body is not valid UTF-8');
+    }
   } catch (err) {
     if (err instanceof ProblemDetailsError) throw err;
     if (err instanceof DOMException && err.name === 'AbortError') {
       throw ProblemDetailsError.badRequest(`Upstream fetch timed out after ${timeoutMs}ms`);
     }
-    throw ProblemDetailsError.badRequest(
-      `Upstream fetch failed: ${err instanceof Error ? err.message : String(err)}`,
-    );
+    // Fetch implementations routinely include the complete URL (userinfo,
+    // path and query) in their error text. Subscription URLs and custom
+    // headers commonly carry tokens, and this message also feeds staleReason
+    // and persisted last_error, so never forward the underlying diagnostic.
+    throw ProblemDetailsError.badRequest('Upstream fetch failed');
   } finally {
     clearTimeout(timer);
   }
@@ -381,24 +453,45 @@ async function fetchSubscriptionInternal(
   return rawFromProxies(proxies, { traffic, proxyCount });
 }
 
+function parseSubscriptionUrl(raw: string): URL {
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw ProblemDetailsError.badRequest('Invalid upstream subscription URL');
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw ProblemDetailsError.badRequest('Upstream subscription URL must use http(s)');
+  }
+  if (parsed.username !== '' || parsed.password !== '') {
+    throw ProblemDetailsError.badRequest('Upstream subscription URL must not contain userinfo');
+  }
+  return parsed;
+}
+
 export function parseTrafficHeader(value: string | null): SubscriptionTraffic | undefined {
   if (!value) return undefined;
-  const fields: Record<string, number> = {};
+  const fields: SubscriptionTraffic = { upload: 0, download: 0, total: 0, expire: 0 };
+  const acceptedKeys = new Set<keyof SubscriptionTraffic>([
+    'upload',
+    'download',
+    'total',
+    'expire',
+  ]);
+  let recognised = false;
   for (const part of value.split(';')) {
     const trimmed = part.trim();
     const eq = trimmed.indexOf('=');
     if (eq <= 0) continue;
     const key = trimmed.slice(0, eq).trim();
-    const num = Number(trimmed.slice(eq + 1).trim());
-    if (Number.isFinite(num)) fields[key] = num;
+    if (!acceptedKeys.has(key as keyof SubscriptionTraffic)) continue;
+    recognised = true;
+    const raw = trimmed.slice(eq + 1).trim();
+    fields[key as keyof SubscriptionTraffic] = raw === '' ? Number.NaN : Number(raw);
   }
-  if (Object.keys(fields).length === 0) return undefined;
-  return {
-    upload: fields.upload ?? 0,
-    download: fields.download ?? 0,
-    total: fields.total ?? 0,
-    expire: fields.expire ?? 0,
-  };
+  if (!recognised) return undefined;
+  const parsed = SubscriptionTrafficSchema.safeParse(fields);
+  return parsed.success ? parsed.data : undefined;
 }
 
 /**
@@ -422,17 +515,15 @@ export function normaliseToClashProviderYaml(text: string): { yaml: string; prox
 /**
  * Parse a local subscription's `content` into its proxy objects, accepting
  * the same shapes as the resolver (Clash `proxies:` YAML / URI list / base64).
- * Degenerate non-object entries are dropped. Used by the assistant's
- * local-node tools to list + rename source nodes; the editor re-serialises the
- * result back through {@link serialiseLocalProxies}, normalising the stored
- * content to a `proxies:` YAML block (fields preserved, formatting may change).
+ * Invalid or non-object entries reject the entire source. Used by the
+ * assistant's local-node tools to list + rename source nodes; the editor
+ * re-serialises the result back through {@link serialiseLocalProxies},
+ * normalising the stored content to a `proxies:` YAML block (fields preserved,
+ * formatting may change).
  */
 export function parseLocalProxies(content: string): Record<string, unknown>[] {
   const { proxies } = normaliseToClashProxies(content);
-  return proxies.filter(
-    (p): p is Record<string, unknown> =>
-      !!p && typeof p === 'object' && !Array.isArray(p),
-  );
+  return proxies;
 }
 
 /** Serialise proxy objects back into local-subscription content (provider YAML). */
@@ -443,12 +534,13 @@ export function serialiseLocalProxies(proxies: Record<string, unknown>[]): strin
 /**
  * Object-level normaliser: same recognition rules as
  * {@link normaliseToClashProviderYaml} but stops at the parsed proxy list —
- * no stringify. The returned list is the *raw* parsed array (entries not
- * type-narrowed); object consumers filter via {@link filterProxyObjects} so
- * degenerate non-object entries still round-trip through the string path
- * byte-identically.
+ * no stringify. The returned list is strict and complete: any malformed entry
+ * rejects the whole input so string/object consumers cannot diverge.
  */
-function normaliseToClashProxies(text: string): { proxies: unknown[]; proxyCount: number } {
+function normaliseToClashProxies(text: string): {
+  proxies: Record<string, unknown>[];
+  proxyCount: number;
+} {
   const cleaned = stripBom(text).trim();
   if (!cleaned) {
     throw ProblemDetailsError.badRequest('Empty subscription content');
@@ -457,7 +549,8 @@ function normaliseToClashProxies(text: string): { proxies: unknown[]; proxyCount
   // 1) Clash YAML with a `proxies:` array
   const fromYaml = tryExtractProxiesFromYaml(cleaned);
   if (fromYaml) {
-    return { proxies: fromYaml, proxyCount: fromYaml.length };
+    const proxies = validateProviderProxyList(fromYaml);
+    return { proxies, proxyCount: proxies.length };
   }
 
   // P3-12: the body may itself be base64 of a FULL Clash YAML (`proxies:`
@@ -468,7 +561,8 @@ function normaliseToClashProxies(text: string): { proxies: unknown[]; proxyCount
   if (decoded) {
     const fromDecodedYaml = tryExtractProxiesFromYaml(decoded);
     if (fromDecodedYaml) {
-      return { proxies: fromDecodedYaml, proxyCount: fromDecodedYaml.length };
+      const proxies = validateProviderProxyList(fromDecodedYaml);
+      return { proxies, proxyCount: proxies.length };
     }
   }
 
@@ -479,23 +573,35 @@ function normaliseToClashProxies(text: string): { proxies: unknown[]; proxyCount
   }
   if (looksLikeProxyUriList(uriText)) {
     const { proxies, errors } = parseProxyUriList(uriText);
-    if (proxies.length > 0) {
-      return { proxies, proxyCount: proxies.length };
-    }
     if (errors.length > 0) {
       const sample = errors
         .slice(0, 3)
         .map((e) => `"${e.line}" → ${e.error}`)
         .join('; ');
       throw ProblemDetailsError.badRequest(
-        `No proxy URIs parsed (${errors.length} failed): ${sample}`,
+        `Proxy URI list rejected: ${errors.length} of ${proxies.length + errors.length} recognised URI lines failed; no partial provider was produced. ${sample}`,
       );
+    }
+    if (proxies.length > 0) {
+      const validated = validateProviderProxyList(proxies);
+      return { proxies: validated, proxyCount: validated.length };
     }
   }
 
   throw ProblemDetailsError.badRequest(
-    'No recognisable proxies found. Supported: Clash YAML `proxies:` block, line-delimited proxy URIs (ss:// vmess:// vless:// trojan:// hysteria2:// tuic:// ssr:// snell:// socks5:// http://), or base64-encoded variants.',
+    `No recognisable proxies found. Supported: Clash YAML \`proxies:\` block, line-delimited proxy URIs (${listSupportedProxyUriSchemes()
+      .map((scheme) => `${scheme}://`)
+      .join(' ')}), or base64-encoded variants.`,
   );
+}
+
+/**
+ * A provider is intentionally context-free: `dialer-proxy` may name a group
+ * owned by the consuming full config. Validate all node-local structure and
+ * in-provider cycles here, then resolve the external name at final render.
+ */
+function validateProviderProxyList(list: unknown[]): Record<string, unknown>[] {
+  return validateMihomoProxyList(list, { allowExternalDialerProxy: true });
 }
 
 function tryExtractProxiesFromYaml(text: string): unknown[] | null {

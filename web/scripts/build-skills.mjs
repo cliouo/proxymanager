@@ -19,6 +19,7 @@
 import { readFileSync, writeFileSync, readdirSync, existsSync, statSync } from 'node:fs';
 import { dirname, join, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { format, resolveConfig } from 'prettier';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SKILLS_DIR = join(HERE, '..', '..', 'plugin', 'skills');
@@ -46,7 +47,12 @@ function fieldName(fm) {
 function fieldDescription(fm) {
   // block scalar `description: >-` followed by indented lines
   const block = /^description:\s*>-?\s*\n((?:[ \t]+.*\n?)+)/m.exec(fm);
-  if (block) return block[1].split('\n').map((l) => l.trim()).filter(Boolean).join(' ');
+  if (block)
+    return block[1]
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean)
+      .join(' ');
   const inline = /^description:\s*(.+)$/m.exec(fm);
   return inline ? inline[1].trim() : '';
 }
@@ -69,7 +75,11 @@ for (const slug of ORDER) {
     process.exit(1);
   }
   const { frontmatter, body } = splitFrontmatter(readFileSync(skillFile, 'utf8'));
-  bodies[slug] = { name: fieldName(frontmatter) || slug, description: fieldDescription(frontmatter), body };
+  bodies[slug] = {
+    name: fieldName(frontmatter) || slug,
+    description: fieldDescription(frontmatter),
+    body,
+  };
 
   // references/ + assets/ → key `<slug>/<file>`
   for (const sub of ['references', 'assets']) {
@@ -99,7 +109,8 @@ const out =
   `/** Reference / asset bodies keyed as \`<skill-slug>/<file-without-.md>\`. */\n` +
   `export const SKILL_REFERENCES: Record<string, string> = ${JSON.stringify(references, null, 2)};\n`;
 
-writeFileSync(OUT, out);
+const prettierConfig = (await resolveConfig(OUT)) ?? {};
+writeFileSync(OUT, await format(out, { ...prettierConfig, filepath: OUT }));
 console.error(
   `[build-skills] wrote ${OUT}\n  skills: ${ORDER.length}  references: ${Object.keys(references).length}`,
 );

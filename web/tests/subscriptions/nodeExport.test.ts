@@ -50,14 +50,14 @@ function proxiesOf(yaml: string): { name: string }[] {
   return (parse(yaml) as { proxies: { name: string }[] }).proxies;
 }
 
+function proxy(name: string, server = 'edge.invalid'): Record<string, unknown> {
+  return { name, type: 'socks5', server, port: 1080 };
+}
+
 describe('exportSubscriptionNodes', () => {
   it('按名去重 first-writer-wins', async () => {
     fetchMock.mockResolvedValueOnce({
-      proxies: [
-        { name: 'HK-01', type: 'vmess', server: 'a' },
-        { name: 'HK-01', type: 'vmess', server: 'dup' },
-        { name: 'JP-02', type: 'trojan', server: 'b' },
-      ],
+      proxies: [proxy('HK-01', 'a'), proxy('HK-01', 'dup'), proxy('JP-02', 'b')],
       proxyCount: 3,
     });
     const result = await exportSubscriptionNodes(makeSub());
@@ -73,7 +73,7 @@ describe('exportSubscriptionNodes', () => {
   it('透传 traffic 与 stale', async () => {
     const traffic = { upload: 1, download: 2, total: 3, expire: 4 };
     fetchMock.mockResolvedValueOnce({
-      proxies: [{ name: 'N', type: 'ss' }],
+      proxies: [proxy('N')],
       proxyCount: 1,
       traffic,
       stale: true,
@@ -82,6 +82,24 @@ describe('exportSubscriptionNodes', () => {
     const result = await exportSubscriptionNodes(makeSub());
     expect(result.traffic).toEqual(traffic);
     expect(result.stale).toBe(true);
+  });
+
+  it('rejects invalid mocked resolver output at the public export boundary', async () => {
+    fetchMock.mockResolvedValueOnce({
+      proxies: [{ name: '', type: 'socks5', server: 'edge.invalid', port: 1080 }],
+      proxyCount: 1,
+    });
+
+    await expect(exportSubscriptionNodes(makeSub())).rejects.toThrow(/field "name"/i);
+  });
+
+  it('does not hide a non-string name during first-writer-wins deduplication', async () => {
+    fetchMock.mockResolvedValueOnce({
+      proxies: [{ name: 42, type: 'socks5', server: 'edge.invalid', port: 1080 }],
+      proxyCount: 1,
+    });
+
+    await expect(exportSubscriptionNodes(makeSub())).rejects.toThrow(/field "name"/i);
   });
 });
 
@@ -94,14 +112,11 @@ describe('exportCollectionNodes', () => {
 
     fetchMock.mockImplementation(async (sub: Subscription) => {
       if (sub.id === a.id) {
-        return { proxies: [{ name: 'HK-A', type: 'vmess', server: 'a-first' }], proxyCount: 1 };
+        return { proxies: [proxy('HK-A', 'a-first')], proxyCount: 1 };
       }
       // b 自带一个与 a 跨源重名的 HK-A(应被先写者 a 顶掉),外加自身节点 HK-B
       return {
-        proxies: [
-          { name: 'HK-A', type: 'ss', server: 'b-dup' },
-          { name: 'HK-B', type: 'ss', server: 'b-first' },
-        ],
+        proxies: [proxy('HK-A', 'b-dup'), proxy('HK-B', 'b-first')],
         proxyCount: 2,
       };
     });
@@ -137,14 +152,11 @@ describe('exportCollectionNodes', () => {
     fetchMock.mockImplementation(async (sub: Subscription) => {
       if (sub.id === a.id) {
         return {
-          proxies: [
-            { name: 'HK-1', type: 'vmess' },
-            { name: 'US-1', type: 'vmess' },
-          ],
+          proxies: [proxy('HK-1'), proxy('US-1')],
           proxyCount: 2,
         };
       }
-      return { proxies: [{ name: 'US-2', type: 'ss' }], proxyCount: 1 };
+      return { proxies: [proxy('US-2')], proxyCount: 1 };
     });
 
     const result = await exportCollectionNodes(col, [a, b]);
@@ -166,9 +178,9 @@ describe('exportCollectionNodes', () => {
 
     fetchMock.mockImplementation(async (sub: Subscription) => {
       if (sub.id === a.id) {
-        return { proxies: [{ name: 'NODE-a', type: 'vmess', server: 'from-a' }], proxyCount: 1 };
+        return { proxies: [proxy('NODE-a', 'from-a')], proxyCount: 1 };
       }
-      return { proxies: [{ name: 'NODE-b', type: 'ss', server: 'from-b' }], proxyCount: 1 };
+      return { proxies: [proxy('NODE-b', 'from-b')], proxyCount: 1 };
     });
 
     const result = await exportCollectionNodes(col, [a, b]);
@@ -179,6 +191,17 @@ describe('exportCollectionNodes', () => {
     expect(result.proxyCount).toBe(1);
   });
 
+  it('rejects a collection operator result that empties a node name', async () => {
+    const a = makeSub({ name: 'a' });
+    const col = makeCollection({
+      subscription_ids: [a.id],
+      operators: [{ kind: 'rename-regex', id: 'empty-name', pattern: '.+', replacement: '' }],
+    });
+    fetchMock.mockResolvedValueOnce({ proxies: [proxy('NODE')], proxyCount: 1 });
+
+    await expect(exportCollectionNodes(col, [a])).rejects.toThrow(/field "name"/i);
+  });
+
   it('个别成员失败跳过并记入 memberErrors;全员失败抛 400', async () => {
     const a = makeSub({ name: 'a' });
     const b = makeSub({ name: 'b' });
@@ -186,7 +209,7 @@ describe('exportCollectionNodes', () => {
 
     fetchMock.mockImplementation(async (sub: Subscription) => {
       if (sub.id === a.id) throw new Error('Upstream returned HTTP 502');
-      return { proxies: [{ name: 'OK', type: 'ss' }], proxyCount: 1 };
+      return { proxies: [proxy('OK')], proxyCount: 1 };
     });
     const partial = await exportCollectionNodes(col, [a, b]);
     expect(partial.memberErrors).toEqual([{ name: 'a', error: 'Upstream returned HTTP 502' }]);

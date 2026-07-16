@@ -25,11 +25,7 @@ import { applyOperators, type ClashProxy } from '@/lib/proxies/operators';
 import { mergeCollectionMemberProxies } from '@/lib/services/nodeExportService';
 import { findNodeReferences } from '@/lib/services/nodeReferenceService';
 import { resolveSubscriptionProxiesRaw } from '@/lib/services/subscriptionFetcher';
-import {
-  getCollection,
-  listCollections,
-  patchCollection,
-} from '@/lib/services/collectionService';
+import { getCollection, listCollections, patchCollection } from '@/lib/services/collectionService';
 import {
   getSubscription,
   listSubscriptions,
@@ -57,6 +53,18 @@ const SourceType = z
   .enum(['subscription', 'collection'])
   .describe('源类型：subscription 普通订阅源 / collection 聚合订阅');
 
+// `safeExtend` preserves each stored branch's refinements. A defaulted
+// literal keeps the output type assignable to the required stored `id` while
+// letting AI callers omit it; materialize() always overwrites the sentinel
+// with a server-generated/preserved id.
+const GENERATED_OPERATOR_ID = z
+  .literal('__generated_by_server__')
+  .default('__generated_by_server__');
+
+function withGeneratedOperatorId(schema: z.ZodObject): z.ZodObject {
+  return schema.safeExtend({ id: GENERATED_OPERATOR_ID });
+}
+
 /**
  * AI-facing operator spec — the real operator branches with `id` omitted, so
  * the model never has to invent stable ids. We materialise the id server-side
@@ -65,15 +73,15 @@ const SourceType = z
  */
 const AiOperatorSchema = z
   .discriminatedUnion('kind', [
-    FilterRegexOpSchema.omit({ id: true }),
-    FilterUselessOpSchema.omit({ id: true }),
-    RenameRegexOpSchema.omit({ id: true }),
-    FlagEmojiOpSchema.omit({ id: true }),
-    FilterTypeOpSchema.omit({ id: true }),
-    SortOpSchema.omit({ id: true }),
-    SetPropOpSchema.omit({ id: true }),
-    DedupOpSchema.omit({ id: true }),
-    FilterRegionOpSchema.omit({ id: true }),
+    withGeneratedOperatorId(FilterRegexOpSchema),
+    withGeneratedOperatorId(FilterUselessOpSchema),
+    withGeneratedOperatorId(RenameRegexOpSchema),
+    withGeneratedOperatorId(FlagEmojiOpSchema),
+    withGeneratedOperatorId(FilterTypeOpSchema),
+    withGeneratedOperatorId(SortOpSchema),
+    withGeneratedOperatorId(SetPropOpSchema),
+    withGeneratedOperatorId(DedupOpSchema),
+    withGeneratedOperatorId(FilterRegionOpSchema),
   ])
   .describe(
     '一个节点处理算子。kind 之一：filter-regex 正则过滤(mode keep/drop + pattern) / ' +
@@ -145,7 +153,11 @@ async function sourceRawProxies(
   return { proxies: merged as ClashProxy[], memberErrors };
 }
 
-function namesPayload(proxies: ClashProxy[]): { count: number; names: string[]; truncated: boolean } {
+function namesPayload(proxies: ClashProxy[]): {
+  count: number;
+  names: string[];
+  truncated: boolean;
+} {
   const names = proxies
     .slice(0, NAME_CAP)
     .map((p) => (typeof p.name === 'string' ? p.name : '(无名)'));
@@ -242,7 +254,10 @@ const previewOperators = defineAction({
   async run(ctx, input) {
     const handle = await loadSource(input.source_type, input.id);
     const ops = input.operators.map((spec, i) => materialize(spec, `preview-${i}`));
-    const { proxies: before, memberErrors } = await sourceRawProxies(handle, input.no_cache === true);
+    const { proxies: before, memberErrors } = await sourceRawProxies(
+      handle,
+      input.no_cache === true,
+    );
     const { proxies: after, steps } = applyOperators(before, ops);
 
     // Names present before but gone after = renamed-or-dropped. If any was
@@ -334,7 +349,8 @@ const updateOperator = defineWriteAction({
   async preview(_ctx, input) {
     const handle = await loadSource(input.source_type, input.id);
     const idx = handle.operators.findIndex((o) => o.id === input.operator_id);
-    if (idx === -1) throw ProblemDetailsError.notFound(`算子 ${input.operator_id} 不在该源管线里。`);
+    if (idx === -1)
+      throw ProblemDetailsError.notFound(`算子 ${input.operator_id} 不在该源管线里。`);
     const next = [...handle.operators];
     next[idx] = materialize(input.operator, input.operator_id);
     return { diff: opsDiff(handle, handle.operators, next) };
@@ -342,7 +358,8 @@ const updateOperator = defineWriteAction({
   async execute(_ctx, input) {
     const handle = await loadSource(input.source_type, input.id);
     const idx = handle.operators.findIndex((o) => o.id === input.operator_id);
-    if (idx === -1) throw ProblemDetailsError.notFound(`算子 ${input.operator_id} 不在该源管线里。`);
+    if (idx === -1)
+      throw ProblemDetailsError.notFound(`算子 ${input.operator_id} 不在该源管线里。`);
     const next = [...handle.operators];
     next[idx] = materialize(input.operator, input.operator_id);
     await handle.save(next);
@@ -404,7 +421,9 @@ const ReorderInput = z.object({
 function reordered(current: Operator[], orderedIds: string[]): Operator[] {
   const byId = new Map(current.map((o) => [o.id, o]));
   if (orderedIds.length !== current.length || new Set(orderedIds).size !== orderedIds.length) {
-    throw ProblemDetailsError.badRequest('operator_ids 必须是现有算子 id 的一个全排列(不重复、不多不少)。');
+    throw ProblemDetailsError.badRequest(
+      'operator_ids 必须是现有算子 id 的一个全排列(不重复、不多不少)。',
+    );
   }
   const next: Operator[] = [];
   for (const oid of orderedIds) {

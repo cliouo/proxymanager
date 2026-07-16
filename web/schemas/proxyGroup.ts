@@ -26,13 +26,108 @@ import { z } from 'zod';
  *     Comments don't survive a YAML round-trip so we lift them into a field.
  */
 
-export const ProxyGroupTypeSchema = z.enum([
-  'select',
-  'url-test',
-  'fallback',
-  'load-balance',
-  'relay',
-]);
+export const ProxyGroupTypeSchema = z.enum(['select', 'url-test', 'fallback', 'load-balance']);
+
+// constant.AdapterType.String() in fixed Mihomo v1.19.28. GroupBase compares
+// these case-insensitively, but splits the field on `|` without trimming.
+const FIXED_ADAPTER_TYPE_NAMES = new Set(
+  [
+    'Direct',
+    'Reject',
+    'RejectDrop',
+    'Compatible',
+    'Pass',
+    'PassRule',
+    'Rematch',
+    'Dns',
+    'Shadowsocks',
+    'ShadowsocksR',
+    'Snell',
+    'Socks5',
+    'Http',
+    'Vmess',
+    'Vless',
+    'Trojan',
+    'Hysteria',
+    'Hysteria2',
+    'WireGuard',
+    'Tuic',
+    'Ssh',
+    'Mieru',
+    'AnyTLS',
+    'Sudoku',
+    'Masque',
+    'TrustTunnel',
+    'OpenVPN',
+    'Tailscale',
+    'GostRelay',
+    'Relay',
+    'Selector',
+    'Fallback',
+    'URLTest',
+    'LoadBalance',
+  ].map((name) => name.toLowerCase()),
+);
+
+export const ProxyGroupExcludeTypeSchema = z
+  .string()
+  .min(1)
+  .max(512)
+  .superRefine((value, ctx) => {
+    const tokens = value.split('|');
+    const normalized = tokens.map((token) => token.toLowerCase());
+    if (
+      tokens.some(
+        (token, index) =>
+          token === '' ||
+          token !== token.trim() ||
+          !FIXED_ADAPTER_TYPE_NAMES.has(normalized[index]),
+      )
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'exclude-type 必须用 | 分隔固定 Mihomo AdapterType，且不能含空白或空项',
+      });
+    }
+    if (new Set(normalized).size !== normalized.length) {
+      ctx.addIssue({ code: 'custom', message: 'exclude-type 不能包含重复类型' });
+    }
+  });
+
+/**
+ * Persisted groups historically documented comma-separated AdapterTypes and
+ * accepted any string. Canonical comma lists are provably equivalent to the
+ * fixed Mihomo pipe syntax, so normalize only that case; keep every other old
+ * string visible and let the final render validator reject it explicitly.
+ */
+const StoredProxyGroupExcludeTypeSchema = z.string().transform((value) => {
+  if (!value.includes(',') || value.includes('|')) return value;
+  const candidate = value.split(',').join('|');
+  return ProxyGroupExcludeTypeSchema.safeParse(candidate).success ? candidate : value;
+});
+
+/**
+ * Fixed Mihomo removed relay groups. Preserve an upgrade-era row as a
+ * management-visible, quarantined select placeholder instead of dropping it;
+ * mergeWithTemplate refuses to render the marker until an operator explicitly
+ * clears it while choosing a supported type (or deletes/recreates the row).
+ */
+function quarantineStoredRelay(raw: unknown): unknown {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw;
+  const record = raw as Record<string, unknown>;
+  if (record.type !== 'relay' && record.legacy_type !== 'relay') return raw;
+  const legacyDialerProxy = record.legacy_dialer_proxy ?? record['dialer-proxy'];
+  return {
+    ...record,
+    type: 'select',
+    legacy_type: 'relay',
+    ...(typeof legacyDialerProxy === 'string' ? { legacy_dialer_proxy: legacyDialerProxy } : {}),
+    // Chain-wrap realization runs before template merging. Strip this runtime
+    // field so a quarantined relay cannot be cloned and filtered out before
+    // mergeWithTemplate sees the marker and rejects the render.
+    'dialer-proxy': undefined,
+  };
+}
 
 /**
  * Subset of `proxy-group.type` that performs health-checking and therefore
@@ -67,8 +162,10 @@ const ProxyGroupNativeShape = {
   filter: z.string().optional(),
   /** Inverse of `filter` — drop members whose name matches. */
   'exclude-filter': z.string().optional(),
-  /** Drop members whose proxy `type` matches this comma-separated list (e.g. "Direct,Reject"). */
-  'exclude-type': z.string().optional(),
+  /** Drop members whose AdapterType matches this pipe-separated list (e.g. "Direct|Reject"). */
+  'exclude-type': ProxyGroupExcludeTypeSchema.optional(),
+  /** Concrete proxy/built-in selected when dynamic membership resolves empty. */
+  'empty-fallback': z.string().min(1).optional(),
 
   /** Health-check probe URL. Applies to url-test / fallback / load-balance. */
   url: z.string().optional(),
@@ -138,89 +235,100 @@ export const ProxyGroupKindSchema = z
 export type ProxyGroupKind = z.infer<typeof ProxyGroupKindSchema>;
 export type ProxyGroupType = z.infer<typeof ProxyGroupTypeSchema>;
 
-export const ProxyGroupSchema = z.object({
-  id: z.uuid(),
-  kind: ProxyGroupKindSchema.default('raw'),
-  /** Optional shared-defaults template id. Template fields merge underneath the group's own fields. */
-  template_id: z.uuid().optional(),
-  /**
-   * `kind: single-sub` binding — the subscription whose nodes this group
-   * lists. At resolve time, the group's `proxies` is set to the bound sub's
-   * surviving (post-injection) node names, overriding any user-typed
-   * proxies/filter (node names are no longer prefixed, so there is no
-   * `node_prefix`-derived filter). Ignored when `kind != single-sub`.
-   * See resolve.ts (single-sub branch).
-   */
-  bound_subscription_id: z.uuid().optional(),
-  /**
-   * Deprecated `collection-scope` binding — the Collection whose members
-   * this group's `proxies:` field listed. The `kind` enum no longer carries
-   * `collection-scope` (schema preprocess maps it to `manual`), but a stale
-   * pre-migration `bound_collection_id` is still tolerated: at resolve time
-   * `proxies` is rebuilt from the collection's member subs' surviving node
-   * names. Not settable via the AI tools or current UI.
-   */
-  bound_collection_id: z.uuid().optional(),
-  /** UI grouping hint, e.g. "国家/地区". Not rendered. */
-  section: z.string().optional(),
-  /** Render order within `proxy-groups:`. Lower first. */
-  rank: z.number().int().nonnegative(),
-  /** Free-form note (origin tag from migration, user remarks, etc). */
-  notes: z.string().optional(),
-  created_at: z.number().int().optional(),
-  updated_at: z.number().int(),
-  ...ProxyGroupNativeShape,
-});
+export const ProxyGroupSchema = z.preprocess(
+  quarantineStoredRelay,
+  z.object({
+    id: z.uuid(),
+    kind: ProxyGroupKindSchema.default('raw'),
+    /** Optional shared-defaults template id. Template fields merge underneath the group's own fields. */
+    template_id: z.uuid().optional(),
+    /**
+     * `kind: single-sub` binding — the subscription whose nodes this group
+     * lists. At resolve time, the group's `proxies` is set to the bound sub's
+     * surviving (post-injection) node names, overriding any user-typed
+     * proxies/filter (node names are no longer prefixed, so there is no
+     * `node_prefix`-derived filter). Ignored when `kind != single-sub`.
+     * See resolve.ts (single-sub branch).
+     */
+    bound_subscription_id: z.uuid().optional(),
+    /**
+     * Deprecated `collection-scope` binding — the Collection whose members
+     * this group's `proxies:` field listed. The `kind` enum no longer carries
+     * `collection-scope` (schema preprocess maps it to `manual`), but a stale
+     * pre-migration `bound_collection_id` is still tolerated: at resolve time
+     * `proxies` is rebuilt from the collection's member subs' surviving node
+     * names. Not settable via the AI tools or current UI.
+     */
+    bound_collection_id: z.uuid().optional(),
+    /** UI grouping hint, e.g. "国家/地区". Not rendered. */
+    section: z.string().optional(),
+    /** Render order within `proxy-groups:`. Lower first. */
+    rank: z.number().int().nonnegative(),
+    /** Free-form note (origin tag from migration, user remarks, etc). */
+    notes: z.string().optional(),
+    created_at: z.number().int().optional(),
+    updated_at: z.number().int(),
+    /** Read-only quarantine marker for fixed-Mihomo-incompatible stored rows. */
+    legacy_type: z.literal('relay').optional(),
+    /** Original chain target, retained for an explicit relay migration only. */
+    legacy_dialer_proxy: z.string().optional(),
+    ...ProxyGroupNativeShape,
+    'exclude-type': StoredProxyGroupExcludeTypeSchema.optional(),
+  }),
+);
 
 export type ProxyGroup = z.infer<typeof ProxyGroupSchema>;
 
-export const ProxyGroupCreateSchema = z
-  .object({
-    kind: ProxyGroupKindSchema.default('raw'),
-    template_id: z.uuid().optional(),
-    bound_subscription_id: z.uuid().optional(),
-    bound_collection_id: z.uuid().optional(),
-    section: z.string().optional(),
-    rank: z.number().int().nonnegative().optional(),
-    notes: z.string().optional(),
-    ...ProxyGroupNativeShape,
-  });
+export const ProxyGroupCreateSchema = z.object({
+  kind: ProxyGroupKindSchema.default('raw'),
+  template_id: z.uuid().optional(),
+  bound_subscription_id: z.uuid().optional(),
+  bound_collection_id: z.uuid().optional(),
+  section: z.string().optional(),
+  rank: z.number().int().nonnegative().optional(),
+  notes: z.string().optional(),
+  ...ProxyGroupNativeShape,
+});
 
-export const ProxyGroupUpdateSchema = z
-  .object({
-    kind: ProxyGroupKindSchema.optional(),
-    template_id: z.uuid().nullable().optional(),
-    bound_subscription_id: z.uuid().nullable().optional(),
-    bound_collection_id: z.uuid().nullable().optional(),
-    section: z.string().nullable().optional(),
-    rank: z.number().int().nonnegative().optional(),
-    notes: z.string().nullable().optional(),
-    name: z.string().min(1).optional(),
-    type: ProxyGroupTypeSchema.optional(),
-    proxies: z.array(z.string()).optional(),
-    use: z.array(z.string()).optional(),
-    'include-all-providers': z.boolean().optional(),
-    'include-all-proxies': z.boolean().optional(),
-    'include-all': z.boolean().optional(),
-    // String fields accept `null` to *clear* them — patchProxyGroup deletes the
-    // key on null. (Metadata fields below do the same.)
-    filter: z.string().nullable().optional(),
-    'exclude-filter': z.string().nullable().optional(),
-    'exclude-type': z.string().nullable().optional(),
-    url: z.string().optional(),
-    interval: z.number().int().positive().optional(),
-    tolerance: z.number().int().nonnegative().optional(),
-    lazy: z.boolean().optional(),
-    'expected-status': z.string().optional(),
-    'max-failed-times': z.number().int().positive().optional(),
-    timeout: z.number().int().positive().optional(),
-    strategy: z.string().optional(),
-    'dialer-proxy': z.string().nullable().optional(),
-    'routing-mark': z.number().int().optional(),
-    'disable-udp': z.boolean().optional(),
-    hidden: z.boolean().optional(),
-    icon: z.string().optional(),
-  });
+export const ProxyGroupUpdateSchema = z.object({
+  kind: ProxyGroupKindSchema.optional(),
+  template_id: z.uuid().nullable().optional(),
+  bound_subscription_id: z.uuid().nullable().optional(),
+  bound_collection_id: z.uuid().nullable().optional(),
+  section: z.string().nullable().optional(),
+  rank: z.number().int().nonnegative().optional(),
+  notes: z.string().nullable().optional(),
+  /** Explicit migration escape hatch; `null` removes the read-only relay quarantine marker. */
+  legacy_type: z.null().optional(),
+  /** Clear the retained legacy chain target after migrating it explicitly. */
+  legacy_dialer_proxy: z.null().optional(),
+  name: z.string().min(1).optional(),
+  type: ProxyGroupTypeSchema.optional(),
+  proxies: z.array(z.string()).optional(),
+  use: z.array(z.string()).optional(),
+  'include-all-providers': z.boolean().optional(),
+  'include-all-proxies': z.boolean().optional(),
+  'include-all': z.boolean().optional(),
+  // String fields accept `null` to *clear* them — patchProxyGroup deletes the
+  // key on null. (Metadata fields below do the same.)
+  filter: z.string().nullable().optional(),
+  'exclude-filter': z.string().nullable().optional(),
+  'exclude-type': ProxyGroupExcludeTypeSchema.nullable().optional(),
+  'empty-fallback': z.string().min(1).nullable().optional(),
+  url: z.string().optional(),
+  interval: z.number().int().positive().optional(),
+  tolerance: z.number().int().nonnegative().optional(),
+  lazy: z.boolean().optional(),
+  'expected-status': z.string().optional(),
+  'max-failed-times': z.number().int().positive().optional(),
+  timeout: z.number().int().positive().optional(),
+  strategy: z.string().optional(),
+  'dialer-proxy': z.string().nullable().optional(),
+  'routing-mark': z.number().int().optional(),
+  'disable-udp': z.boolean().optional(),
+  hidden: z.boolean().optional(),
+  icon: z.string().optional(),
+});
 
 /**
  * Create-input type. Uses `z.input` (not `z.infer`) so callers can omit
@@ -259,23 +367,35 @@ const ProxyGroupTemplateFieldsShape = {
   'include-all-proxies': z.boolean().optional(),
   'include-all': z.boolean().optional(),
   'exclude-filter': z.string().optional(),
-  'exclude-type': z.string().optional(),
+  'exclude-type': ProxyGroupExcludeTypeSchema.optional(),
+  'empty-fallback': z.string().min(1).optional(),
   strategy: z.string().optional(),
   'dialer-proxy': z.string().optional(),
   'routing-mark': z.number().int().optional(),
   icon: z.string().optional(),
 };
 
-export const ProxyGroupTemplateSchema = z.object({
-  id: z.uuid(),
-  name: z
-    .string()
-    .min(1)
-    .regex(/^[a-z0-9_-]+$/, 'must contain only lowercase letters, digits, underscores, or dashes'),
-  notes: z.string().optional(),
-  updated_at: z.number().int(),
-  ...ProxyGroupTemplateFieldsShape,
-});
+export const ProxyGroupTemplateSchema = z.preprocess(
+  quarantineStoredRelay,
+  z.object({
+    id: z.uuid(),
+    name: z
+      .string()
+      .min(1)
+      .regex(
+        /^[a-z0-9_-]+$/,
+        'must contain only lowercase letters, digits, underscores, or dashes',
+      ),
+    notes: z.string().optional(),
+    updated_at: z.number().int(),
+    /** Read-only quarantine marker for fixed-Mihomo-incompatible stored rows. */
+    legacy_type: z.literal('relay').optional(),
+    /** Original chain target, retained for an explicit relay migration only. */
+    legacy_dialer_proxy: z.string().optional(),
+    ...ProxyGroupTemplateFieldsShape,
+    'exclude-type': StoredProxyGroupExcludeTypeSchema.optional(),
+  }),
+);
 
 export type ProxyGroupTemplate = z.infer<typeof ProxyGroupTemplateSchema>;
 
@@ -295,6 +415,10 @@ export const ProxyGroupTemplateUpdateSchema = z.object({
     .regex(/^[a-z0-9_-]+$/, 'must contain only lowercase letters, digits, underscores, or dashes')
     .optional(),
   notes: z.string().nullable().optional(),
+  /** Explicit migration escape hatch; `null` removes the read-only relay quarantine marker. */
+  legacy_type: z.null().optional(),
+  /** Clear the retained legacy chain target after migrating it explicitly. */
+  legacy_dialer_proxy: z.null().optional(),
   type: ProxyGroupTypeSchema.optional(),
   url: z.string().optional(),
   interval: z.number().int().positive().optional(),
@@ -309,7 +433,8 @@ export const ProxyGroupTemplateUpdateSchema = z.object({
   'include-all-proxies': z.boolean().optional(),
   'include-all': z.boolean().optional(),
   'exclude-filter': z.string().optional(),
-  'exclude-type': z.string().optional(),
+  'exclude-type': ProxyGroupExcludeTypeSchema.optional(),
+  'empty-fallback': z.string().min(1).nullable().optional(),
   strategy: z.string().optional(),
   'dialer-proxy': z.string().optional(),
   'routing-mark': z.number().int().optional(),
@@ -363,6 +488,7 @@ export const TEMPLATE_MERGE_FIELDS = [
   'include-all',
   'exclude-filter',
   'exclude-type',
+  'empty-fallback',
   'strategy',
   'dialer-proxy',
   'routing-mark',
@@ -381,6 +507,11 @@ export function mergeWithTemplate(
   group: ProxyGroup,
   template: ProxyGroupTemplate | null | undefined,
 ): Record<string, unknown> {
+  if (group.legacy_type === 'relay' || template?.legacy_type === 'relay') {
+    throw new Error(
+      'Full config render rejected: a stored relay proxy-group must be migrated before use.',
+    );
+  }
   const out: Record<string, unknown> = {
     name: group.name,
     type: group.type,

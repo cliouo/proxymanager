@@ -24,6 +24,7 @@ vi.mock('@/lib/services/subscriptionFetcher', () => ({
 }));
 
 import { resolveConfig } from '@/lib/engine/resolve';
+import { MAX_PROXY_NODES } from '@/lib/proxies/mihomoProxyValidator';
 import { resolveSubscriptionProxies } from '@/lib/services/subscriptionFetcher';
 import { setResolvedSnapshot } from '@/lib/repos/resolvedRepo';
 
@@ -166,6 +167,36 @@ describe('resolveConfig — subscription injection', () => {
     expect(result.nodeNames).toEqual(['直连', 'HK-01']);
   });
 
+  it('rejects a multi-subscription union whose base-inclusive final list exceeds the limit', async () => {
+    const firstCount = Math.floor(MAX_PROXY_NODES / 2) + 1;
+    const makeMany = (prefix: string, count: number): Record<string, unknown>[] =>
+      Array.from({ length: count }, (_, index) => ({
+        name: `${prefix}-${index}`,
+        type: 'ss',
+        server: 'edge.invalid',
+        port: 8388,
+        cipher: 'aes-128-gcm',
+        password: 'FAKE_ONLY',
+      }));
+    resolveSubMock
+      .mockResolvedValueOnce({ proxies: makeMany('A', firstCount), proxyCount: firstCount })
+      .mockResolvedValueOnce({
+        proxies: makeMany('B', MAX_PROXY_NODES - firstCount),
+        proxyCount: MAX_PROXY_NODES - firstCount,
+      });
+
+    await expect(
+      resolveConfig(
+        BASE_WITH_LITERAL,
+        [],
+        [makeSub({ name: 'first' }), makeSub({ name: 'second' })],
+        [],
+        [],
+        {},
+      ),
+    ).rejects.toThrow(`Proxy node count ${MAX_PROXY_NODES + 1} exceeds limit ${MAX_PROXY_NODES}`);
+  });
+
   it('strips deprecated pm-inline-collections and emits a warning', async () => {
     const baseWithLegacy = `${BASE_WITH_LITERAL}\npm-inline-collections:\n  - old-pool\n`;
     resolveSubMock.mockResolvedValueOnce({
@@ -294,7 +325,7 @@ proxies:
 
 rules:
   # === ANCHOR: manual ===
-  - MATCH,默认
+  - MATCH,DIRECT
 `;
 
 function makeGroup(over: Partial<ProxyGroup>): ProxyGroup {
@@ -318,6 +349,21 @@ function makeTemplate(over: Partial<ProxyGroupTemplate>): ProxyGroupTemplate {
     updated_at: now,
     ...over,
   } as ProxyGroupTemplate;
+}
+
+function makeRule(over: Partial<Rule>): Rule {
+  return {
+    id: crypto.randomUUID(),
+    anchor: 'manual',
+    type: 'DOMAIN',
+    value: 'example.com',
+    policy: 'DIRECT',
+    rank: 10,
+    source: 'manual',
+    added_at: 1_700_000_000,
+    updated_at: 1_700_000_000,
+    ...over,
+  } as Rule;
 }
 
 describe('resolveConfig — managed proxy-groups', () => {
@@ -398,6 +444,85 @@ rules:
     expect(dialerIdx).toBeLessThan(rulesIdx);
   });
 
+  it('rejects an unrepresentable multi-member chained proxy instead of emitting a no-op group', async () => {
+    const wrap = makeGroup({
+      name: 'chain:ambiguous',
+      type: 'select',
+      proxies: ['直连', 'other'],
+      'dialer-proxy': 'front',
+    });
+    await expect(resolveConfig(BASE_WITH_MARKER, [], [], [wrap], [], {})).rejects.toThrow(
+      /chained proxy must have exactly one backend member/,
+    );
+  });
+
+  it('rejects a chained-proxy name collision instead of leaving a duplicate group', async () => {
+    const wrap = makeGroup({
+      name: '直连',
+      type: 'select',
+      proxies: ['直连'],
+      'dialer-proxy': 'front',
+    });
+    await expect(resolveConfig(BASE_WITH_MARKER, [], [], [wrap], [], {})).rejects.toThrow(
+      /chained proxy name collides with an existing proxy/,
+    );
+  });
+
+  it('rejects a dialer-proxy cycle split across base and subscription nodes', async () => {
+    const base = `mixed-port: 7890
+proxies:
+  - name: A
+    type: ss
+    server: a.invalid
+    port: 443
+    cipher: aes-128-gcm
+    password: FAKE_ONLY
+    dialer-proxy: B
+rules:
+  - MATCH,DIRECT
+`;
+    resolveSubMock.mockResolvedValueOnce({
+      proxies: [
+        {
+          name: 'B',
+          type: 'ss',
+          server: 'b.invalid',
+          port: 443,
+          cipher: 'aes-128-gcm',
+          password: 'FAKE_ONLY',
+          'dialer-proxy': 'A',
+        },
+      ],
+      proxyCount: 1,
+    });
+
+    await expect(
+      resolveConfig(base, [], [makeSub({ name: 'cycle-source' })], [], [], {}),
+    ).rejects.toThrow(/dependency cycle/);
+  });
+
+  it('rejects a dependency cycle split across a concrete proxy and proxy-group', async () => {
+    const base = `mixed-port: 7890
+proxies:
+  - name: A
+    type: ss
+    server: a.invalid
+    port: 443
+    cipher: aes-128-gcm
+    password: FAKE_ONLY
+    dialer-proxy: G
+
+# === PROXY-GROUPS ===
+
+rules:
+  - MATCH,DIRECT
+`;
+    const group = makeGroup({ name: 'G', proxies: ['A'] });
+    await expect(resolveConfig(base, [], [], [group], [], {})).rejects.toThrow(
+      /proxy and proxy-group dependencies contain a cycle/i,
+    );
+  });
+
   it('excludes the chain clone from a smart front pool (no include-all loop)', async () => {
     const base = `mixed-port: 7890
 proxies:
@@ -419,6 +544,7 @@ rules:
       type: 'fallback',
       'include-all-proxies': true,
       filter: 'HK',
+      'exclude-filter': 'foo`bar',
       url: 'http://www.gstatic.com/generate_204',
       interval: 300,
       rank: 10,
@@ -442,7 +568,21 @@ rules:
     expect(clone?.['dialer-proxy']).toBe('pool:B');
     // The pool's exclude-filter drops the clone so include-all can't loop it back.
     const poolGroup = doc['proxy-groups'].find((g) => g.name === 'pool:B');
-    expect(poolGroup?.['exclude-filter']).toContain('chain:pool-to-B');
+    expect(poolGroup?.['exclude-filter']).toBe('foo`bar`^chain:pool-to-B$');
+    expect(poolGroup?.['empty-fallback']).toBe('REJECT');
+  });
+
+  it('rejects overwriting a backend dialer-proxy while realizing a chain wrap', async () => {
+    const base = BASE_WITH_F.replace('password: pw', 'password: pw\n    dialer-proxy: upstream');
+    const wrap = makeGroup({
+      name: 'chain:double-hop',
+      type: 'select',
+      proxies: ['F'],
+      'dialer-proxy': 'DIRECT',
+    });
+    await expect(resolveConfig(base, [], [], [wrap], [], {})).rejects.toThrow(
+      /already has dialer-proxy; implicit multi-hop overwrite is forbidden/i,
+    );
   });
 
   const BASE_WITH_F = `mixed-port: 7890
@@ -460,22 +600,7 @@ rules:
   - MATCH,DIRECT
 `;
 
-  function makeRule(over: Partial<Rule>): Rule {
-    return {
-      id: crypto.randomUUID(),
-      anchor: 'manual',
-      type: 'DOMAIN',
-      value: 'example.com',
-      policy: 'DIRECT',
-      rank: 10,
-      source: 'manual',
-      added_at: 1_700_000_000,
-      updated_at: 1_700_000_000,
-      ...over,
-    } as Rule;
-  }
-
-  it('prunes a chain wrap whose backend node is missing (renamed/dropped) instead of emitting a group that crashes mihomo', async () => {
+  it('fails closed when a chain wrap backend node is missing', async () => {
     // Backend "B-GONE" doesn't exist in proxies (e.g. it was renamed away).
     const wrap = makeGroup({
       name: 'chain:F-to-B',
@@ -483,18 +608,12 @@ rules:
       proxies: ['B-GONE'],
       'dialer-proxy': 'F',
     });
-    const result = await resolveConfig(BASE_WITH_F, [], [], [wrap], [], {});
-
-    // The broken wrap is gone entirely — no clone, no dangling group.
-    expect(result.content).not.toContain('chain:F-to-B');
-    expect(result.content).not.toContain('B-GONE');
-    expect(result.proxyGroupCount).toBe(0);
-    // The config still parses and references only existing nodes.
-    expect(() => parse(result.content)).not.toThrow();
-    expect(result.warnings.some((w) => w.includes('chain:F-to-B') && w.includes('后端'))).toBe(true);
+    await expect(resolveConfig(BASE_WITH_F, [], [], [wrap], [], {})).rejects.toThrow(
+      /backend is missing or is not a concrete proxy/i,
+    );
   });
 
-  it('scrubs a broken chain from another group’s members (DIRECT fallback when emptied)', async () => {
+  it('does not silently scrub a broken chain from other groups', async () => {
     const wrap = makeGroup({
       name: 'chain:F-to-B',
       type: 'select',
@@ -514,21 +633,12 @@ rules:
       proxies: ['chain:F-to-B'],
       rank: 20,
     });
-    const result = await resolveConfig(BASE_WITH_F, [], [], [wrap, mixed, onlyBroken], [], {});
-
-    const doc = parse(result.content) as {
-      'proxy-groups': Array<Record<string, unknown>>;
-    };
-    const my = doc['proxy-groups'].find((g) => g.name === 'MyGroup');
-    expect(my?.proxies).toEqual(['F']); // broken chain removed, F kept
-    const only = doc['proxy-groups'].find((g) => g.name === 'OnlyBroken');
-    expect(only?.proxies).toEqual(['DIRECT']); // emptied → kept valid
-    // No group references the pruned chain anymore.
-    expect(result.content).not.toContain('chain:F-to-B');
-    expect(result.warnings.some((w) => w.includes('MyGroup'))).toBe(true);
+    await expect(
+      resolveConfig(BASE_WITH_F, [], [], [wrap, mixed, onlyBroken], [], {}),
+    ).rejects.toThrow(/backend is missing or is not a concrete proxy/i);
   });
 
-  it('drops a rule whose policy points at a broken chain', async () => {
+  it('does not silently drop a rule whose policy points at a broken chain', async () => {
     const wrap = makeGroup({
       name: 'chain:F-to-B',
       type: 'select',
@@ -536,12 +646,9 @@ rules:
       'dialer-proxy': 'F',
     });
     const rule = makeRule({ type: 'DOMAIN-SUFFIX', value: 'openai.com', policy: 'chain:F-to-B' });
-    const result = await resolveConfig(BASE_WITH_F, [rule], [], [wrap], [], {});
-
-    expect(result.content).not.toContain('chain:F-to-B');
-    expect(
-      result.warnings.some((w) => w.includes('chain:F-to-B') && w.includes('规则')),
-    ).toBe(true);
+    await expect(resolveConfig(BASE_WITH_F, [rule], [], [wrap], [], {})).rejects.toThrow(
+      /backend is missing or is not a concrete proxy/i,
+    );
   });
 
   it('clones a wrap whose backend is a subscription-injected node (plain object)', async () => {
@@ -555,11 +662,12 @@ rules:
       proxies: ['US-Frontier'], // injected node, not a base literal
       'dialer-proxy': 'pool:US',
     });
+    const front = makeGroup({ name: 'pool:US', type: 'select', proxies: ['DIRECT'] });
     const result = await resolveConfig(
       BASE_WITH_MARKER,
       [],
       [makeSub({ name: 'a' })],
-      [wrap],
+      [front, wrap],
       [],
       {},
     );
@@ -574,28 +682,27 @@ rules:
     expect(clone?.['dialer-proxy']).toBe('pool:US');
     expect(clone?.server).toBe('us.example');
     // …and is NOT left behind as a proxy-group.
-    const asGroup = (doc['proxy-groups'] ?? []).find(
-      (g) => g.name === 'chain:pool-to-US-Frontier',
-    );
+    const asGroup = (doc['proxy-groups'] ?? []).find((g) => g.name === 'chain:pool-to-US-Frontier');
     expect(asGroup).toBeFalsy();
   });
 
-  it('warns and skips a wrap whose backend is not a concrete node', async () => {
+  it('fails closed when a wrap backend is not a concrete node', async () => {
     const wrap = makeGroup({
       name: 'chain:F-to-ghost',
       type: 'select',
       proxies: ['ghost'],
       'dialer-proxy': '直连',
     });
-    const result = await resolveConfig(BASE_WITH_MARKER, [], [], [wrap], [], {});
-    expect(result.warnings.some((w) => w.includes('无法克隆'))).toBe(true);
+    await expect(resolveConfig(BASE_WITH_MARKER, [], [], [wrap], [], {})).rejects.toThrow(
+      /backend is missing or is not a concrete proxy/i,
+    );
   });
 
   it('renders groups in rank order, ties broken by name', async () => {
-    const a = makeGroup({ name: 'z-low', rank: 5 });
-    const b = makeGroup({ name: 'a-high', rank: 100 });
-    const c = makeGroup({ name: 'b-tied', rank: 50 });
-    const d = makeGroup({ name: 'a-tied', rank: 50 });
+    const a = makeGroup({ name: 'z-low', rank: 5, proxies: ['DIRECT'] });
+    const b = makeGroup({ name: 'a-high', rank: 100, proxies: ['DIRECT'] });
+    const c = makeGroup({ name: 'b-tied', rank: 50, proxies: ['DIRECT'] });
+    const d = makeGroup({ name: 'a-tied', rank: 50, proxies: ['DIRECT'] });
 
     const result = await resolveConfig(BASE_WITH_MARKER, [], [], [a, b, c, d], [], {});
     const order = ['z-low', 'a-tied', 'b-tied', 'a-high'].map((n) =>
@@ -629,33 +736,36 @@ rules:
 
   it('group field overrides template field on the same key', async () => {
     const tpl = makeTemplate({ name: 'pr', interval: 600 });
-    const g = makeGroup({ name: 'X', template_id: tpl.id, interval: 9999, type: 'url-test' });
+    const g = makeGroup({
+      name: 'X',
+      template_id: tpl.id,
+      interval: 9999,
+      type: 'url-test',
+      proxies: ['DIRECT'],
+    });
     const result = await resolveConfig(BASE_WITH_MARKER, [], [], [g], [tpl], {});
     expect(result.content).toContain('interval: 9999');
     expect(result.content).not.toContain('interval: 600');
   });
 
-  it('warns and renders without merge when template_id is dangling', async () => {
+  it('fails closed when template_id is dangling', async () => {
     const g = makeGroup({
       name: 'X',
       type: 'url-test',
       template_id: '00000000-0000-0000-0000-000000000000',
       url: 'http://probe',
+      proxies: ['DIRECT'],
     });
-    const result = await resolveConfig(BASE_WITH_MARKER, [], [], [g], [], {});
-    expect(result.warnings.some((w) => w.includes('模板'))).toBe(true);
-    expect(result.content).toContain('name: X');
-    expect(result.content).toContain('url: http://probe');
+    await expect(resolveConfig(BASE_WITH_MARKER, [], [], [g], [], {})).rejects.toThrow(
+      /template is missing/i,
+    );
   });
 
-  it('warns when hash has groups but the base lacks the marker', async () => {
-    const g = makeGroup({ name: 'orphan' });
-    const result = await resolveConfig(BASE_WITH_LITERAL, [], [], [g], [], {});
-    expect(result.warnings.some((w) => w.includes('PROXY-GROUPS'))).toBe(true);
-    // Literal proxy-group ("默认") from the base survives unchanged.
-    expect(result.content).toContain('name: 默认');
-    // The hash group did not get injected because there's no marker.
-    expect(result.content).not.toContain('name: orphan');
+  it('fails closed when hash has groups but the base lacks the marker', async () => {
+    const g = makeGroup({ name: 'orphan', proxies: ['DIRECT'] });
+    await expect(resolveConfig(BASE_WITH_LITERAL, [], [], [g], [], {})).rejects.toThrow(
+      /PROXY-GROUPS/,
+    );
   });
 
   it('empty hash leaves the marker as no-op (no proxy-groups block emitted)', async () => {
@@ -685,7 +795,7 @@ rules:
     expect(result.content).not.toMatch(/filter: \^/);
   });
 
-  it('single-sub warns when the bound sub has no surviving nodes', async () => {
+  it('single-sub fails closed when the bound sub has no surviving nodes', async () => {
     // Bound to a sub that injects nothing → group left without injected proxies.
     resolveSubMock.mockResolvedValueOnce({
       proxies: [],
@@ -698,27 +808,20 @@ rules:
       bound_subscription_id: sub.id,
       type: 'select',
     });
-    const result = await resolveConfig(BASE_WITH_MARKER, [], [sub], [g], [], {});
-    expect(result.warnings.some((w) => w.includes('air-empty') && w.includes('无可用节点'))).toBe(
-      true,
+    await expect(resolveConfig(BASE_WITH_MARKER, [], [sub], [g], [], {})).rejects.toThrow(
+      /single-sub proxy-group has no surviving nodes/i,
     );
-    // P0-2: render final defense — the group falls back to [DIRECT] so the
-    // config stays mihomo-loadable (never an empty / stale proxies list).
-    expect(result.content).toContain('name: sub-empty');
-    const parsed = parse(result.content) as {
-      'proxy-groups': Array<{ name: string; proxies: string[] }>;
-    };
-    expect(parsed['proxy-groups'].find((x) => x.name === 'sub-empty')?.proxies).toEqual(['DIRECT']);
   });
 
-  it('single-sub warns when bound subscription id is dangling', async () => {
+  it('single-sub fails closed when bound subscription id is dangling', async () => {
     const g = makeGroup({
       name: 'dangling',
       kind: 'single-sub',
       bound_subscription_id: '00000000-0000-0000-0000-000000000000',
     });
-    const result = await resolveConfig(BASE_WITH_MARKER, [], [], [g], [], {});
-    expect(result.warnings.some((w) => w.includes('订阅源') && w.includes('不存在'))).toBe(true);
+    await expect(resolveConfig(BASE_WITH_MARKER, [], [], [g], [], {})).rejects.toThrow(
+      /single-sub proxy-group binding is missing/i,
+    );
   });
 
   it("single-sub group proxies equal exactly the bound sub's injected node names, order preserved", async () => {
@@ -802,10 +905,10 @@ rules:
     const g = makeGroup({
       name: 'full',
       type: 'load-balance',
-      proxies: ['a', 'b'],
+      proxies: ['DIRECT', '直连'],
       filter: 'HK',
       'exclude-filter': 'expire',
-      'exclude-type': 'Direct,Reject',
+      'exclude-type': 'Direct|Reject',
       'include-all-proxies': true,
       'disable-udp': true,
       hidden: false,
@@ -813,7 +916,6 @@ rules:
       url: 'http://probe',
       interval: 300,
       'expected-status': '200',
-      'dialer-proxy': '前置',
       icon: 'https://example/i.png',
     });
     const result = await resolveConfig(BASE_WITH_MARKER, [], [], [g], [], {});
@@ -826,7 +928,6 @@ rules:
     expect(result.content).toContain('disable-udp: true');
     expect(result.content).toContain('strategy: round-robin');
     expect(result.content).toContain('expected-status:');
-    expect(result.content).toContain('dialer-proxy:');
   });
 });
 
@@ -913,14 +1014,114 @@ describe('resolveConfig — profile binding (boundSource)', () => {
     expect(result.content).not.toContain('US-C');
   });
 
-  it('a dangling collection source injects nothing and warns', async () => {
-    const a = makeSub({ name: 'sub-a' });
-    const result = await resolveConfig(BASE_WITH_LITERAL, [], [a], [], [], {
-      collections: [],
-      boundSource: { type: 'collection', id: crypto.randomUUID() },
+  it('fails closed when a collection operator creates an invalid node', async () => {
+    resolveSubMock.mockResolvedValueOnce({
+      proxies: providerProxies([{ name: 'HK-A' }]),
+      proxyCount: 1,
     });
-    expect(result.nodeNames).toEqual(['直连']);
-    expect(result.warnings.some((w) => w.includes('绑定的聚合订阅不存在'))).toBe(true);
+    const sub = makeSub({ name: 'sub-a' });
+    const col: Collection = {
+      id: crypto.randomUUID(),
+      name: 'pool',
+      slug: 'pool',
+      enabled: true,
+      type: 'select',
+      subscription_ids: [sub.id],
+      subscription_tags: [],
+      operators: [{ kind: 'rename-regex', id: 'empty-name', pattern: '.+', replacement: '' }],
+    };
+
+    await expect(
+      resolveConfig(BASE_WITH_LITERAL, [], [sub], [], [], {
+        collections: [col],
+        boundSource: { type: 'collection', id: col.id },
+      }),
+    ).rejects.toThrow(/field "name"/i);
+  });
+
+  it('still applies cross-source first-writer-wins after a valid collection pipeline', async () => {
+    resolveSubMock
+      .mockResolvedValueOnce({ proxies: providerProxies([{ name: 'SHARED' }]), proxyCount: 1 })
+      .mockResolvedValueOnce({ proxies: providerProxies([{ name: 'SHARED' }]), proxyCount: 1 });
+    const a = makeSub({ name: 'sub-a' });
+    const b = makeSub({ name: 'sub-b' });
+    const col: Collection = {
+      id: crypto.randomUUID(),
+      name: 'pool',
+      slug: 'pool',
+      enabled: true,
+      type: 'select',
+      subscription_ids: [a.id, b.id],
+      subscription_tags: [],
+      operators: [{ kind: 'set-prop', id: 'udp', udp: true }],
+    };
+
+    const result = await resolveConfig(BASE_WITH_LITERAL, [], [a, b], [], [], {
+      collections: [col],
+      boundSource: { type: 'collection', id: col.id },
+    });
+
+    expect(result.nodeNames.filter((name) => name === 'SHARED')).toHaveLength(1);
+    expect(result.collisions).toHaveLength(1);
+    expect(result.collisions[0]).toMatchObject({ name: 'SHARED', keptFrom: 'sub-a' });
+  });
+
+  it('preserves per-sub provenance through collection renames for two single-sub groups', async () => {
+    resolveSubMock
+      .mockResolvedValueOnce({ proxies: providerProxies([{ name: 'A-01' }]), proxyCount: 1 })
+      .mockResolvedValueOnce({ proxies: providerProxies([{ name: 'B-01' }]), proxyCount: 1 });
+    const a = makeSub({ name: 'sub-a' });
+    const b = makeSub({ name: 'sub-b' });
+    const col: Collection = {
+      id: crypto.randomUUID(),
+      name: 'renamed-pool',
+      slug: 'renamed-pool',
+      enabled: true,
+      type: 'select',
+      subscription_ids: [a.id, b.id],
+      subscription_tags: [],
+      operators: [{ kind: 'rename-regex', id: 'prefix', pattern: '^', replacement: 'renamed-' }],
+    };
+    const groupA = makeGroup({
+      name: 'only-a',
+      kind: 'single-sub',
+      bound_subscription_id: a.id,
+      rank: 1,
+    });
+    const groupB = makeGroup({
+      name: 'only-b',
+      kind: 'single-sub',
+      bound_subscription_id: b.id,
+      rank: 2,
+    });
+
+    const result = await resolveConfig(BASE_WITH_MARKER, [], [a, b], [groupA, groupB], [], {
+      collections: [col],
+      boundSource: { type: 'collection', id: col.id },
+    });
+    expect(result.nodesBySub).toEqual({
+      'sub-a': ['renamed-A-01'],
+      'sub-b': ['renamed-B-01'],
+    });
+    const parsed = parse(result.content) as {
+      'proxy-groups': Array<{ name: string; proxies: string[] }>;
+    };
+    expect(parsed['proxy-groups'].find((group) => group.name === 'only-a')?.proxies).toEqual([
+      'renamed-A-01',
+    ]);
+    expect(parsed['proxy-groups'].find((group) => group.name === 'only-b')?.proxies).toEqual([
+      'renamed-B-01',
+    ]);
+  });
+
+  it('a dangling profile-bound collection fails closed', async () => {
+    const a = makeSub({ name: 'sub-a' });
+    await expect(
+      resolveConfig(BASE_WITH_LITERAL, [], [a], [], [], {
+        collections: [],
+        boundSource: { type: 'collection', id: crypto.randomUUID() },
+      }),
+    ).rejects.toThrow(/profile-bound collection is missing/i);
   });
 
   it('injects nothing when source is { none } (unbound profile)', async () => {
@@ -947,7 +1148,192 @@ describe('resolveConfig — profile binding (boundSource)', () => {
 /* ─── P0-2 / P0-4 render final-defense (config must always load) ─────── */
 
 describe('resolveConfig — render must always be mihomo-loadable', () => {
-  it('P0-2: a single-sub group whose bound sub has no live nodes falls back to [DIRECT], not stale/empty', async () => {
+  const withLiteralRules = (lines: string[]) =>
+    BASE_WITH_LITERAL.replace(
+      '  # === ANCHOR: manual ===\n  - MATCH,默认',
+      lines.map((line) => `  - ${line}`).join('\n'),
+    );
+
+  it('accepts the portable fixed rule payload/param/logic subset', async () => {
+    const base = withLiteralRules([
+      'DOMAIN,example.com,DIRECT',
+      'IP-CIDR,10.0.0.0/8,DIRECT,no-resolve',
+      'DST-PORT,80/443/1000-2000,DIRECT',
+      'DSCP,0/63,DIRECT',
+      'NETWORK,TCP,DIRECT',
+      'DOMAIN-REGEX,foo(?=bar),DIRECT',
+      'AND,((NETWORK,TCP),(DST-PORT,443)),DIRECT',
+      'AND,((AND,(DOMAIN,baidu.com),(NETWORK,TCP)),(NETWORK,TCP),(DST-PORT,10001-65535)),DIRECT',
+      'NOT,((DOMAIN,blocked.example)),DIRECT',
+    ]);
+    await expect(resolveConfig(base, [], [], [], [], {})).resolves.toMatchObject({
+      content: expect.stringContaining('IP-CIDR,10.0.0.0/8,DIRECT,no-resolve'),
+    });
+  });
+
+  it.each([
+    'IP-CIDR,not-a-cidr,DIRECT',
+    'IP-CIDR,192.0.2.0/024,DIRECT',
+    'IP-CIDR6,1.2.3.4::/64,DIRECT',
+    'DST-PORT,65536,DIRECT',
+    'NETWORK,QUIC,DIRECT',
+    'DOMAIN,foo,DIRECT,ignored',
+    'IP-CIDR,10.0.0.0/8,DIRECT,no-resolve,no-resolve',
+    'NOT,((DOMAIN,a),(DOMAIN,b)),DIRECT',
+    'AND,(DOMAIN,a),DIRECT',
+    'DOMAIN-REGEX,[],DIRECT',
+    'DOMAIN-REGEX,(a|A)+$,DIRECT',
+    'DOMAIN-REGEX,(K|KK)+$,DIRECT',
+    'DOMAIN-REGEX,(ß|\\u1E9Eß)+$,DIRECT',
+    'DOMAIN-REGEX,(K|[℀-∀]K)+$,DIRECT',
+    'DOMAIN-REGEX,(K|[\\u2100-\\u2200]K)+$,DIRECT',
+    'DOMAIN-REGEX,^foo, bar$,DIRECT',
+    'AND,((DOMAIN-REGEX,foo, bar),(NETWORK,TCP)),DIRECT',
+    'SUB-RULE,(DOMAIN-REGEX,foo, bar),missing-sub-rule',
+    'UID,1000,DIRECT',
+  ])('rejects invalid or silently ignored final rule syntax: %s', async (line) => {
+    await expect(resolveConfig(withLiteralRules([line]), [], [], [], [], {})).rejects.toThrow();
+  });
+
+  it('does not normalize Unicode whitespace around a final rule policy', async () => {
+    await expect(
+      resolveConfig(
+        withLiteralRules(['DOMAIN,example.com,\u00a0DIRECT\u00a0']),
+        [],
+        [],
+        [],
+        [],
+        {},
+      ),
+    ).rejects.toThrow(/rule policy is missing/i);
+  });
+
+  it('detects a missing RULE-SET whose literal provider name contains parentheses', async () => {
+    await expect(
+      resolveConfig(withLiteralRules(['RULE-SET,ghost(name),DIRECT']), [], [], [], [], {}),
+    ).rejects.toThrow(/rule-set reference is (?:missing|absent)/i);
+  });
+
+  it('does not treat RULE-SET-looking text inside a regex as a provider reference', async () => {
+    const dormantUrl = 'https://example.invalid/should-stay-dormant.yaml';
+    const provider: RuleSet = {
+      id: crypto.randomUUID(),
+      name: 'ghost',
+      source: 'remote',
+      behavior: 'domain',
+      format: 'yaml',
+      url: dormantUrl,
+      interval: 86400,
+      content: '',
+      updated_at: 0,
+    } as RuleSet;
+    const base = withLiteralRules(['DOMAIN-REGEX,^(RULE-SET,ghost)$,DIRECT']).replace(
+      'rules:',
+      '# === RULE-PROVIDERS ===\nrules:',
+    );
+    const result = await resolveConfig(base, [], [], [], [], { providers: [provider] });
+    expect(result.content).toContain('RULE-SET,ghost');
+    expect(result.ruleProvidersApplied).toEqual([]);
+    expect(result.content).not.toContain(dormantUrl);
+  });
+
+  it('rejects a final concrete proxy whose dialer-proxy target is absent', async () => {
+    const base = [
+      'mixed-port: 7890',
+      'proxies:',
+      '  - name: backend',
+      '    type: socks5',
+      '    server: edge.invalid',
+      '    port: 1080',
+      '    dialer-proxy: missing-front',
+      'rules:',
+      '  - MATCH,DIRECT',
+    ].join('\n');
+
+    await expect(resolveConfig(base, [], [], [], [], {})).rejects.toThrow(/dialer-proxy target/i);
+  });
+
+  it('rejects a managed group with a dangling explicit member', async () => {
+    const group = makeGroup({ name: 'broken', proxies: ['missing-node'] });
+    await expect(resolveConfig(BASE_WITH_MARKER, [], [], [group], [], {})).rejects.toThrow(
+      /group member is missing/i,
+    );
+  });
+
+  it('rejects a base literal group with a dangling explicit member', async () => {
+    const base = [
+      'mixed-port: 7890',
+      'proxy-groups:',
+      '  - name: broken',
+      '    type: select',
+      '    proxies: [missing-node]',
+      'rules:',
+      '  - MATCH,DIRECT',
+    ].join('\n');
+
+    await expect(resolveConfig(base, [], [], [], [], {})).rejects.toThrow(
+      /group member is missing/i,
+    );
+  });
+
+  it('rejects a managed group whose use entry names no final proxy-provider', async () => {
+    const group = makeGroup({ name: 'broken-provider', use: ['missing-provider'] });
+    await expect(resolveConfig(BASE_WITH_MARKER, [], [], [group], [], {})).rejects.toThrow(
+      /group provider is missing/i,
+    );
+  });
+
+  it('rejects a final rule policy that names neither a proxy, group, nor builtin', async () => {
+    const rule: Rule = {
+      id: crypto.randomUUID(),
+      anchor: 'manual',
+      type: 'DOMAIN',
+      value: 'example.invalid',
+      policy: 'missing-policy',
+      rank: 1,
+      source: 'manual',
+      added_at: 0,
+      updated_at: 0,
+    } as Rule;
+    await expect(resolveConfig(BASE_WITH_MARKER, [rule], [], [], [], {})).rejects.toThrow(
+      /rule policy is missing/i,
+    );
+  });
+
+  it('rejects the relay proxy-group type removed by fixed Mihomo', async () => {
+    const relay = makeGroup({
+      name: 'legacy-relay',
+      type: 'relay' as never,
+      proxies: ['DIRECT'],
+    });
+    await expect(resolveConfig(BASE_WITH_MARKER, [], [], [relay], [], {})).rejects.toThrow(
+      /group type is unsupported/i,
+    );
+  });
+
+  it('rejects a legacy managed regex option before comma rendering can change its policy', async () => {
+    const rule = makeRule({
+      type: 'DOMAIN-REGEX',
+      value: 'foo',
+      policy: 'REJECT',
+      options: ['DIRECT'],
+    });
+    await expect(resolveConfig(BASE_WITH_MARKER, [rule], [], [], [], {})).rejects.toThrow();
+  });
+
+  it.each(['[]', '[^]'])('rejects regexp2-incompatible final rule regex %s', async (value) => {
+    const rule = makeRule({ type: 'DOMAIN-REGEX', value, policy: 'DIRECT' });
+    await expect(resolveConfig(BASE_WITH_MARKER, [rule], [], [], [], {})).rejects.toThrow();
+  });
+
+  it('accepts an actual GLOBAL group and builtin final policy targets', async () => {
+    const global = makeGroup({ name: 'GLOBAL', proxies: ['DIRECT'] });
+    await expect(resolveConfig(BASE_WITH_MARKER, [], [], [global], [], {})).resolves.toMatchObject({
+      content: expect.stringContaining('name: GLOBAL'),
+    });
+  });
+
+  it('a single-sub group whose bound sub has no live nodes fails closed instead of using stale/DIRECT members', async () => {
     // Sub 'air' resolves to zero nodes this render.
     resolveSubMock.mockResolvedValueOnce({ proxies: providerProxies([]), proxyCount: 0 });
     const sub = makeSub({ name: 'air' });
@@ -959,23 +1345,16 @@ describe('resolveConfig — render must always be mihomo-loadable', () => {
       proxies: ['旧节点-会消失'], // stale names that would dangle
       rank: 10,
     });
-    const result = await resolveConfig(BASE_WITH_MARKER, [], [sub], [g], [], {});
-    const parsed = parse(result.content) as { 'proxy-groups': Array<{ name: string; proxies: string[] }> };
-    const group = parsed['proxy-groups'].find((x) => x.name === '机场A');
-    expect(group?.proxies).toEqual(['DIRECT']);
-    expect(result.content).not.toContain('旧节点-会消失');
-    expect(result.warnings.some((w) => w.includes('DIRECT'))).toBe(true);
+    await expect(resolveConfig(BASE_WITH_MARKER, [], [sub], [g], [], {})).rejects.toThrow(
+      /single-sub proxy-group has no surviving nodes/i,
+    );
   });
 
-  it('P0-2: an empty manual group ([] members, no include-all) falls back to [DIRECT]', async () => {
+  it('an empty manual group fails closed instead of silently bypassing via DIRECT', async () => {
     const g = makeGroup({ name: '空组', type: 'select', kind: 'manual', proxies: [], rank: 10 });
-    const result = await resolveConfig(BASE_WITH_MARKER, [], [], [g], [], {});
-    const parsed = parse(result.content) as { 'proxy-groups': Array<{ name: string; proxies: string[] }> };
-    const group = parsed['proxy-groups'].find((x) => x.name === '空组');
-    expect(group?.proxies).toEqual(['DIRECT']);
-    // never emit an empty proxies list
-    expect(result.content).not.toMatch(/proxies:\s*\[\s*\]/);
-    expect(result.warnings.some((w) => w.includes('DIRECT'))).toBe(true);
+    await expect(resolveConfig(BASE_WITH_MARKER, [], [], [g], [], {})).rejects.toThrow(
+      /no final member source/i,
+    );
   });
 
   it('P0-2: an include-all group with no explicit proxies is left untouched (has a member source)', async () => {
@@ -989,11 +1368,67 @@ describe('resolveConfig — render must always be mihomo-loadable', () => {
       rank: 10,
     });
     const result = await resolveConfig(BASE_WITH_MARKER, [], [], [g], [], {});
-    // include-all is a valid member source → no DIRECT injection for this group
-    expect(result.warnings.some((w) => w.includes('全部') && w.includes('DIRECT'))).toBe(false);
+    const parsed = parse(result.content) as {
+      'proxy-groups': Array<{ name: string; 'empty-fallback'?: string }>;
+    };
+    expect(parsed['proxy-groups'].find((x) => x.name === '全部')?.['empty-fallback']).toBe(
+      'REJECT',
+    );
   });
 
-  it('P0-4: a RULE-SET rule with no RULE-PROVIDERS marker warns and does NOT report applied', async () => {
+  it('preserves an explicit concrete empty-fallback on a dynamic group', async () => {
+    const g = makeGroup({
+      name: '全部',
+      type: 'select',
+      kind: 'all',
+      'include-all-proxies': true,
+      'empty-fallback': 'DIRECT',
+    });
+    const result = await resolveConfig(BASE_WITH_MARKER, [], [], [g], [], {});
+    const parsed = parse(result.content) as {
+      'proxy-groups': Array<{ name: string; 'empty-fallback'?: string }>;
+    };
+    expect(parsed['proxy-groups'][0]['empty-fallback']).toBe('DIRECT');
+  });
+
+  it('rejects empty-fallback targets that resolve to a proxy-group', async () => {
+    const target = makeGroup({ name: 'other-group', proxies: ['DIRECT'], rank: 1 });
+    const dynamic = makeGroup({
+      name: 'dynamic',
+      'include-all-proxies': true,
+      'empty-fallback': 'other-group',
+      rank: 2,
+    });
+    await expect(
+      resolveConfig(BASE_WITH_MARKER, [], [], [target, dynamic], [], {}),
+    ).rejects.toThrow(/empty-fallback is invalid/i);
+  });
+
+  it('rejects invalid and unsafe final group regexes', async () => {
+    for (const filter of ['(', '^(a+)+$', '^\\w+$', '(?i)(K|KK)+$', '(?i)(ß|\\u1E9Eß)+$']) {
+      const group = makeGroup({
+        name: `bad-${filter.length}`,
+        'include-all-proxies': true,
+        filter,
+      });
+      await expect(resolveConfig(BASE_WITH_MARKER, [], [], [group], [], {})).rejects.toThrow(
+        /filter is unsafe or invalid/i,
+      );
+    }
+  });
+
+  it('rejects comma-separated exclude-type because fixed Mihomo splits only on pipe', async () => {
+    const group = makeGroup({
+      name: 'bad-exclude-type',
+      proxies: ['DIRECT'],
+      'exclude-type': 'Direct,Reject' as never,
+    });
+    await expect(resolveConfig(BASE_WITH_MARKER, [], [], [group], [], {})).rejects.toThrow(
+      /exclude-type is invalid/i,
+    );
+  });
+
+  it('P0-4: a RULE-SET rule with no RULE-PROVIDERS marker fails the render closed', async () => {
     const provider: RuleSet = {
       id: crypto.randomUUID(),
       name: 'ads',
@@ -1017,17 +1452,306 @@ describe('resolveConfig — render must always be mihomo-loadable', () => {
       updated_at: 0,
     } as Rule;
     // BASE_WITH_LITERAL has an ANCHOR:manual but NO `# === RULE-PROVIDERS ===`.
-    const result = await resolveConfig(BASE_WITH_LITERAL, [rule], [], [], [], {
-      providers: [provider],
-    });
-    expect(result.ruleProvidersApplied).toEqual([]);
-    expect(result.warnings.some((w) => w.includes('RULE-PROVIDERS'))).toBe(true);
-    // The rendered config must not carry an undeclared RULE-SET reference silently claimed as fine.
-    expect(result.content).toContain('RULE-SET,ads,REJECT');
-    expect(result.content).not.toContain('rule-providers:');
+    await expect(
+      resolveConfig(BASE_WITH_LITERAL, [rule], [], [], [], {
+        providers: [provider],
+      }),
+    ).rejects.toThrow(/RULE-PROVIDERS/);
   });
 
-  it('P0-5: a collection whose operator throws degrades to a warning instead of 500-ing the render', async () => {
+  it('fails closed when an active RULE-SET references a provider absent from the library', async () => {
+    const baseWithProviderMarker = BASE_WITH_MARKER.replace(
+      '# === PROXY-GROUPS ===',
+      '# === RULE-PROVIDERS ===\n# === PROXY-GROUPS ===',
+    );
+    const rule: Rule = {
+      id: crypto.randomUUID(),
+      anchor: 'manual',
+      type: 'RULE-SET',
+      value: 'ghost',
+      policy: 'REJECT',
+      rank: 1,
+      source: 'manual',
+      added_at: 0,
+      updated_at: 0,
+    } as Rule;
+
+    await expect(resolveConfig(baseWithProviderMarker, [rule], [], [], [], {})).rejects.toThrow(
+      /absent from the rule-set library/i,
+    );
+  });
+
+  it('fails closed when base DNS references a rule-set absent from the library', async () => {
+    const base = [
+      'mixed-port: 7890',
+      'dns:',
+      '  nameserver-policy:',
+      '    "rule-set:ghost":',
+      '      - https://dns.example/dns-query',
+      '# === RULE-PROVIDERS ===',
+      'rules:',
+      '  # === ANCHOR: manual ===',
+      '  - MATCH,DIRECT',
+    ].join('\n');
+
+    await expect(resolveConfig(base, [], [], [], [], {})).rejects.toThrow(
+      /absent from the rule-set library/i,
+    );
+  });
+
+  it('preserves a colon in a single DNS policy rule-set name and fails it closed', async () => {
+    const provider: RuleSet = {
+      id: crypto.randomUUID(),
+      name: 'ads',
+      source: 'remote',
+      behavior: 'domain',
+      format: 'yaml',
+      url: 'https://example.invalid/ads.yaml',
+      interval: 86400,
+      content: '',
+      updated_at: 0,
+    } as RuleSet;
+    const base = [
+      'mixed-port: 7890',
+      'dns:',
+      '  nameserver-policy:',
+      '    "rule-set:ads:ignored":',
+      '      - https://dns.example/dns-query',
+      '# === RULE-PROVIDERS ===',
+      'rules:',
+      '  - MATCH,DIRECT',
+    ].join('\n');
+
+    await expect(resolveConfig(base, [], [], [], [], { providers: [provider] })).rejects.toThrow(
+      /absent from the rule-set library/i,
+    );
+  });
+
+  it('does not treat a comment example as a final rule-set reference', async () => {
+    const base = `${BASE_WITH_LITERAL}\n# Example only: rule-set:ghost\n`;
+
+    await expect(resolveConfig(base, [], [], [], [], {})).resolves.toMatchObject({
+      content: expect.stringContaining('MATCH,默认'),
+    });
+  });
+
+  it('does not treat an embedded contextual rule-set substring as a provider reference', async () => {
+    const base = BASE_WITH_LITERAL.replace(
+      'rules:',
+      ['sniffer:', '  force-domain:', '    - "foo-rule-set:ghost"', 'rules:'].join('\n'),
+    );
+
+    await expect(resolveConfig(base, [], [], [], [], {})).resolves.toMatchObject({
+      ruleProvidersApplied: [],
+    });
+  });
+
+  it.each([
+    [
+      'disabled root TUN',
+      ['tun:', '  enable: false', '  auto-route: true', '  auto-redirect: true'],
+    ],
+    [
+      'disabled root auto-redirect',
+      ['tun:', '  enable: true', '  auto-route: true', '  auto-redirect: false'],
+    ],
+    [
+      'disabled listener auto-redirect',
+      ['listeners:', '  - name: dormant', '    type: tun', '    auto-redirect: false'],
+    ],
+  ])('does not require a dormant route-set provider for %s', async (_label, lines) => {
+    const base = BASE_WITH_LITERAL.replace(
+      'rules:',
+      [...lines, `${lines[0] === 'tun:' ? '  ' : '    '}route-address-set: [ghost]`, 'rules:'].join(
+        '\n',
+      ),
+    );
+
+    await expect(resolveConfig(base, [], [], [], [], {})).resolves.toMatchObject({
+      ruleProvidersApplied: [],
+    });
+  });
+
+  it.each([
+    ['root TUN', ['tun:', '  enable: true', '  auto-route: false', '  auto-redirect: true']],
+    [
+      'TUN listener',
+      [
+        'listeners:',
+        '  - name: invalid',
+        '    type: tun',
+        '    auto-route: false',
+        '    auto-redirect: true',
+      ],
+    ],
+  ])('rejects %s auto-redirect with auto-route disabled', async (_label, lines) => {
+    const base = BASE_WITH_LITERAL.replace('rules:', [...lines, 'rules:'].join('\n'));
+    await expect(resolveConfig(base, [], [], [], [], {})).rejects.toThrow(
+      /auto-redirect requires auto-route/i,
+    );
+  });
+
+  it('requires an active TUN route rule-set and enforces IP-CIDR behavior', async () => {
+    const base = BASE_WITH_LITERAL.replace(
+      'rules:',
+      [
+        'tun:',
+        '  enable: true',
+        // Root RawTun defaults auto-route to true.
+        '  auto-redirect: true',
+        '  route-address-set: [tun_routes]',
+        '# === RULE-PROVIDERS ===',
+        'rules:',
+      ].join('\n'),
+    );
+    await expect(resolveConfig(base, [], [], [], [], {})).rejects.toThrow(
+      /absent from the rule-set library/i,
+    );
+
+    const classicalProvider: RuleSet = {
+      id: crypto.randomUUID(),
+      name: 'tun_routes',
+      source: 'remote',
+      behavior: 'classical',
+      format: 'yaml',
+      url: 'https://example.invalid/tun.yaml',
+      interval: 86400,
+      content: '',
+      updated_at: 0,
+    } as RuleSet;
+    await expect(
+      resolveConfig(base, [], [], [], [], { providers: [classicalProvider] }),
+    ).rejects.toThrow(/TUN route requires an IP-CIDR rule-set/i);
+
+    const ipProvider = { ...classicalProvider, behavior: 'ipcidr' as const };
+    await expect(
+      resolveConfig(base, [], [], [], [], { providers: [ipProvider] }),
+    ).resolves.toMatchObject({ ruleProvidersApplied: ['tun_routes'] });
+  });
+
+  it.each([
+    [
+      'numeric listener booleans',
+      [
+        'listeners:',
+        '  - name: weak-bools',
+        '    type: tun',
+        '    auto-route: 1',
+        '    auto-redirect: 1',
+      ],
+      /TUN boolean field is mistyped/i,
+    ],
+    [
+      'a numeric listener route-set name',
+      [
+        'listeners:',
+        '  - name: weak-list',
+        '    type: tun',
+        '    auto-route: true',
+        '    auto-redirect: true',
+        '    route-address-set: [123]',
+      ],
+      /TUN route-set list is mistyped/i,
+    ],
+  ])('rejects fixed weak conversion for %s', async (_label, lines, error) => {
+    const base = BASE_WITH_LITERAL.replace('rules:', [...lines, 'rules:'].join('\n'));
+    await expect(resolveConfig(base, [], [], [], [], {})).rejects.toThrow(error);
+  });
+
+  it.each([
+    [
+      'auto_redirect',
+      [
+        'listeners:',
+        '  - name: alias-bool',
+        '    type: tun',
+        '    auto-route: true',
+        '    auto_redirect: true',
+        '    route-address-set: [ghost]',
+      ],
+    ],
+    [
+      'route_address_set',
+      [
+        'listeners:',
+        '  - name: alias-list',
+        '    type: tun',
+        '    auto-route: true',
+        '    auto-redirect: true',
+        '    route_address_set: [ghost]',
+      ],
+    ],
+    [
+      'AUTO-REDIRECT',
+      [
+        'listeners:',
+        '  - name: alias-case',
+        '    type: tun',
+        '    auto-route: true',
+        '    AUTO-REDIRECT: true',
+        '    route-address-set: [ghost]',
+      ],
+    ],
+  ])('rejects a fixed weak TUN field alias: %s', async (_alias, lines) => {
+    const base = BASE_WITH_LITERAL.replace('rules:', [...lines, 'rules:'].join('\n'));
+    await expect(resolveConfig(base, [], [], [], [], {})).rejects.toThrow(/noncanonical alias/i);
+  });
+
+  it.each(['', '   '])('fails closed on an active empty TUN route-set name: %j', async (name) => {
+    const base = BASE_WITH_LITERAL.replace(
+      'rules:',
+      [
+        'tun:',
+        '  enable: true',
+        '  auto-route: true',
+        '  auto-redirect: true',
+        `  route-address-set: [${JSON.stringify(name)}]`,
+        '# === RULE-PROVIDERS ===',
+        'rules:',
+      ].join('\n'),
+    );
+
+    await expect(resolveConfig(base, [], [], [], [], {})).rejects.toThrow(
+      /absent from the rule-set library/i,
+    );
+  });
+
+  it.each(['redir-host', undefined])(
+    'ignores fake-ip-filter provider text outside fake-IP mode: %s',
+    async (enhancedMode) => {
+      const dnsLines = [
+        'dns:',
+        ...(enhancedMode ? [`  enhanced-mode: ${enhancedMode}`] : []),
+        '  fake-ip-filter: ["rule-set:ghost"]',
+      ];
+      const base = BASE_WITH_LITERAL.replace('rules:', [...dnsLines, 'rules:'].join('\n'));
+
+      await expect(resolveConfig(base, [], [], [], [], {})).resolves.toMatchObject({
+        ruleProvidersApplied: [],
+      });
+    },
+  );
+
+  it('collects uppercase fake-IP rule mode exactly like fixed Mihomo', async () => {
+    const base = BASE_WITH_LITERAL.replace(
+      'rules:',
+      [
+        'dns:',
+        '  enhanced-mode: FAKE-IP',
+        '  fake-ip-filter-mode: RULE',
+        '  fake-ip-filter:',
+        '    - RULE-SET,ghost,fake-ip',
+        '# === RULE-PROVIDERS ===',
+        'rules:',
+      ].join('\n'),
+    );
+
+    await expect(resolveConfig(base, [], [], [], [], {})).rejects.toThrow(
+      /absent from the rule-set library/i,
+    );
+  });
+
+  it('P0-5: a collection whose operator throws fails the render instead of using raw nodes', async () => {
     resolveSubMock.mockResolvedValueOnce({
       proxies: providerProxies([{ name: 'HK-01' }]),
       proxyCount: 1,
@@ -1045,17 +1769,11 @@ describe('resolveConfig — render must always be mihomo-loadable', () => {
       updated_at: 0,
     } as unknown as Collection;
 
-    let result: Awaited<ReturnType<typeof resolveConfig>> | undefined;
     await expect(
-      (async () => {
-        result = await resolveConfig(BASE_WITH_MARKER, [], [sub], [], [], {
-          collections: [col],
-          boundSource: { type: 'collection', id: col.id },
-        });
-      })(),
-    ).resolves.not.toThrow();
-    expect(result!.warnings.some((w) => w.includes('流水线执行失败'))).toBe(true);
-    // The unprocessed node still made it in — degrade, don't drop everything.
-    expect(result!.nodeNames).toContain('HK-01');
+      resolveConfig(BASE_WITH_MARKER, [], [sub], [], [], {
+        collections: [col],
+        boundSource: { type: 'collection', id: col.id },
+      }),
+    ).rejects.toThrow(/operator pipeline failed/i);
   });
 });

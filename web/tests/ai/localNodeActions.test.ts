@@ -75,6 +75,7 @@ const LOCAL_CONTENT = `proxies:
     server: 5.6.7.8
     port: 443
     uuid: 11112222-3333-4444-5555-666677778888
+    cipher: auto
 `;
 
 function seedLocal(content = LOCAL_CONTENT): void {
@@ -173,7 +174,9 @@ describe('list_local_nodes', () => {
     const action = getAction('list_local_nodes');
     if (action.risk !== 'read') throw new Error('expected read');
     const env = await action.run(ctx, { id: LOCAL_ID });
-    const data = env.data as { nodes: Array<{ name: string; referencedBy: Array<{ kind: string; via: string }> }> };
+    const data = env.data as {
+      nodes: Array<{ name: string; referencedBy: Array<{ kind: string; via: string }> }>;
+    };
     const pinned = data.nodes.find((n) => n.name === 'xiagangbgp-hk-disx');
     expect(pinned?.referencedBy).toEqual([
       { kind: 'chain-backend', via: 'chain:F-to-xiagangbgp-hk-disx' },
@@ -234,8 +237,8 @@ describe('rename_local_node', () => {
     seedRemote();
     const action = getAction('rename_local_node');
     if (action.risk !== 'write') throw new Error('expected write');
-    await expect(
-      action.execute(ctx, { id: REMOTE_ID, from: 'a', to: 'b' }),
-    ).rejects.toMatchObject({ problem: { status: 422 } });
+    await expect(action.execute(ctx, { id: REMOTE_ID, from: 'a', to: 'b' })).rejects.toMatchObject({
+      problem: { status: 422 },
+    });
   });
 });

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
-import { stringify } from 'yaml';
+import { parse, stringify } from 'yaml';
 import type { Rule, RuleSet } from '@/schemas';
+import { collectRuleSetReferencesFromRuleLine } from './ruleSetReferences';
 
 export interface AnchorStats {
   anchor: string;
@@ -19,7 +20,7 @@ export interface RenderResult {
    * `rule-set:` keys) that needed a `rule-providers:` declaration, but the base
    * has no `# === RULE-PROVIDERS ===` marker to inject at — so the declarations
    * were silently dropped and mihomo would abort with `not found rule-set`.
-   * The caller must surface this as a warning (never report success). See P0-4.
+   * The caller must reject the render instead of publishing a partial config.
    */
   ruleProvidersMarkerMissing: boolean;
 }
@@ -75,19 +76,141 @@ export function referencedProviderNames(rules: Rule[]): Set<string> {
  * several comma-joined rule-sets). Such a reference needs a `rule-providers:`
  * declaration just like a RULE-SET rule does, otherwise mihomo aborts at load
  * with `not found rule-set: <name>`. The renderer is otherwise blind to the base
- * body, so these references were silently dropped. Spurious matches are harmless:
- * {@link renderRuleProviders} only emits names that exist in the library.
+ * body, so these references were silently dropped. Fixed Mihomo checks this
+ * syntax only at string index 0 (case-insensitively); an embedded substring is
+ * an ordinary domain/address value and must not activate a remote provider.
  */
-const RULE_SET_REF_PATTERN = /rule-set:([A-Za-z0-9_.!-]+(?:,[A-Za-z0-9_.!-]+)*)/g;
-
 export function referencedProviderNamesInText(text: string): Set<string> {
   const refs = new Set<string>();
-  for (const match of text.matchAll(RULE_SET_REF_PATTERN)) {
-    for (const name of match[1].split(',')) {
-      if (name) refs.add(name);
+  if (text.slice(0, 9).toLowerCase() !== 'rule-set:') return refs;
+  const remainder = text.slice(9);
+  // parseNameServerPolicy has an asymmetric fixed branch: comma-bearing keys
+  // first truncate at the next `:`, while a single name preserves the entire
+  // remainder verbatim.
+  const names = text.includes(',') ? remainder.split(':', 1)[0] : remainder;
+  addFixedRuleSetNames(refs, names);
+  return refs;
+}
+
+/** Mirror fixed parseDomain/parseIPCIDR for sniffer and fake-IP scalar lists. */
+export function referencedProviderNamesInColonList(text: string): Set<string> {
+  const refs = new Set<string>();
+  if (text.slice(0, 9).toLowerCase() !== 'rule-set:') return refs;
+  addFixedRuleSetNames(refs, text.slice(9).split(':', 1)[0]);
+  return refs;
+}
+
+function addFixedRuleSetNames(refs: Set<string>, names: string): void {
+  for (const name of names.split(',')) {
+    // Preserve an empty segment as a reference too: fixed Mihomo attempts to
+    // resolve it and fails, so the final validator must not silently ignore it.
+    refs.add(name);
+  }
+}
+
+/**
+ * Collect only rule-set references from YAML fields where fixed Mihomo
+ * v1.19.28 interprets them. Scanning the whole text can mistake a comment,
+ * password, URL, or other opaque scalar for executable `rule-set:` syntax and
+ * inject an unrelated remote provider.
+ */
+export function referencedProviderNamesInBaseYaml(text: string): Set<string> {
+  const refs = new Set<string>();
+  let root: unknown;
+  try {
+    root = parse(text);
+  } catch {
+    return refs;
+  }
+  if (!isRecord(root)) return refs;
+
+  const collectColonSequence = (value: unknown): void => {
+    if (!Array.isArray(value)) return;
+    for (const item of value) {
+      if (typeof item !== 'string') continue;
+      for (const name of referencedProviderNamesInColonList(item)) refs.add(name);
+    }
+  };
+  const collectRuleSequence = (value: unknown): void => {
+    if (!Array.isArray(value)) return;
+    for (const item of value) {
+      if (typeof item !== 'string') continue;
+      collectRuleSetReferencesFromRuleLine(item, refs);
+    }
+  };
+  const collectDirectNameSequence = (value: unknown): void => {
+    if (!Array.isArray(value)) return;
+    for (const item of value) {
+      // Fixed TUN lookup attempts even empty/whitespace names and fails. Keep
+      // them so availability validation does the same instead of ignoring.
+      if (typeof item === 'string') refs.add(item);
+    }
+  };
+
+  const dns = isRecord(root.dns) ? root.dns : undefined;
+  if (dns) {
+    for (const field of ['nameserver-policy', 'proxy-server-nameserver-policy']) {
+      const policies = isRecord(dns[field]) ? dns[field] : undefined;
+      if (policies) {
+        for (const key of Object.keys(policies)) {
+          for (const name of referencedProviderNamesInText(key)) refs.add(name);
+        }
+      }
+    }
+    // Fixed Mihomo does not parse fake-ip-filter at all outside fake-IP mode;
+    // both DNS enums are case-insensitive TextUnmarshalers.
+    if (equalsAsciiCaseInsensitive(dns['enhanced-mode'], 'fake-ip')) {
+      if (equalsAsciiCaseInsensitive(dns['fake-ip-filter-mode'], 'rule')) {
+        collectRuleSequence(dns['fake-ip-filter']);
+      } else {
+        collectColonSequence(dns['fake-ip-filter']);
+      }
     }
   }
+
+  const sniffer = isRecord(root.sniffer) ? root.sniffer : undefined;
+  if (sniffer) {
+    for (const field of ['force-domain', 'skip-domain', 'skip-src-address', 'skip-dst-address']) {
+      collectColonSequence(sniffer[field]);
+    }
+  }
+
+  const collectTunRuleSets = (tun: unknown, requireEnabled: boolean): void => {
+    const autoRouteEnabled =
+      isRecord(tun) &&
+      (tun['auto-route'] === true || (requireEnabled && tun['auto-route'] === undefined));
+    if (
+      !isRecord(tun) ||
+      tun['auto-redirect'] !== true ||
+      !autoRouteEnabled ||
+      (requireEnabled && tun.enable !== true)
+    ) {
+      return;
+    }
+    collectDirectNameSequence(tun['route-address-set']);
+    collectDirectNameSequence(tun['route-exclude-address-set']);
+  };
+  collectTunRuleSets(root.tun, true);
+  if (Array.isArray(root.listeners)) {
+    for (const listener of root.listeners) {
+      if (isRecord(listener) && listener.type === 'tun') collectTunRuleSets(listener, false);
+    }
+  }
+
+  collectRuleSequence(root.rules);
+  const subRules = isRecord(root['sub-rules']) ? root['sub-rules'] : undefined;
+  if (subRules) {
+    for (const rules of Object.values(subRules)) collectRuleSequence(rules);
+  }
   return refs;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function equalsAsciiCaseInsensitive(value: unknown, expected: string): boolean {
+  return typeof value === 'string' && value.toLowerCase() === expected;
 }
 
 /**
@@ -131,27 +254,24 @@ export function renderBase(
   const seenAnchors = new Set<string>();
   const stats: AnchorStats[] = [];
 
-  let content = baseContent.replace(
-    ANCHOR_LINE_PATTERN,
-    (line, indent: string, name: string) => {
-      seenAnchors.add(name);
-      const matched = byAnchor.get(name);
-      if (!matched || matched.length === 0) {
-        stats.push({ anchor: name, ruleCount: 0 });
-        return line;
-      }
-      stats.push({ anchor: name, ruleCount: matched.length });
-      const rendered = matched.map((r) => `${indent}- ${renderRule(r)}`).join('\n');
-      return `${line}\n${rendered}`;
-    },
-  );
+  let content = baseContent.replace(ANCHOR_LINE_PATTERN, (line, indent: string, name: string) => {
+    seenAnchors.add(name);
+    const matched = byAnchor.get(name);
+    if (!matched || matched.length === 0) {
+      stats.push({ anchor: name, ruleCount: 0 });
+      return line;
+    }
+    stats.push({ anchor: name, ruleCount: matched.length });
+    const rendered = matched.map((r) => `${indent}- ${renderRule(r)}`).join('\n');
+    return `${line}\n${rendered}`;
+  });
 
   // Inject the managed rule-providers block at its marker — every rule-set the
   // final config references must be declared here. That's both the enabled
   // RULE-SET rules and any `rule-set:` reference baked into the base body (e.g.
   // DNS nameserver-policy keys), or mihomo aborts with `not found rule-set: …`.
   const refs = referencedProviderNames(active);
-  for (const name of referencedProviderNamesInText(baseContent)) refs.add(name);
+  for (const name of referencedProviderNamesInBaseYaml(baseContent)) refs.add(name);
   const { block, applied } = renderRuleProviders(
     opts.providers ?? [],
     refs,

@@ -14,7 +14,7 @@
 import { createHash } from 'node:crypto';
 import { getRedis } from '@/lib/redis/client';
 import { REDIS_KEYS } from '@/lib/redis/keys';
-import type { SubscriptionTraffic } from '@/schemas';
+import { SubscriptionTrafficSchema, type SubscriptionTraffic } from '@/schemas';
 
 export interface FetchCacheEntry {
   /** Stored verbatim — the Clash provider YAML we normalised on the prior fetch. */
@@ -33,10 +33,23 @@ export interface CacheKeyParts {
   headers?: Record<string, string>;
 }
 
+/** Small tolerance for host skew; farther-future entries cannot be trusted as fresh. */
+const MAX_CACHE_CLOCK_SKEW_MS = 5 * 60 * 1000;
+
+/**
+ * Parsed provider YAML is the cache payload, so parser/normaliser semantics are
+ * part of the cache identity. Bump this whenever those semantics change; an
+ * unversioned key is treated as epoch 1.
+ */
+export const FETCH_CACHE_EPOCH = 2;
+
 export function buildCacheKey({ url, userAgent, headers }: CacheKeyParts): string {
   const headerStr = headers ? JSON.stringify(sortRecord(headers)) : '';
   const ua = userAgent ?? '';
-  return createHash('sha256').update(`${url}\x00${ua}\x00${headerStr}`).digest('hex').slice(0, 16);
+  return createHash('sha256')
+    .update(`proxy-parser-v${FETCH_CACHE_EPOCH}\x00${url}\x00${ua}\x00${headerStr}`)
+    .digest('hex')
+    .slice(0, 16);
 }
 
 function sortRecord(record: Record<string, string>): Record<string, string> {
@@ -46,8 +59,40 @@ function sortRecord(record: Record<string, string>): Record<string, string> {
 }
 
 export async function getFetchCache(cacheKey: string): Promise<FetchCacheEntry | null> {
-  const value = await getRedis().get<FetchCacheEntry>(REDIS_KEYS.fetchCache(cacheKey));
-  return value ?? null;
+  const value = await getRedis().get<unknown>(REDIS_KEYS.fetchCache(cacheKey));
+  return parseFetchCacheEntry(value);
+}
+
+function parseFetchCacheEntry(value: unknown): FetchCacheEntry | null {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
+  const candidate = value as Record<string, unknown>;
+  if (typeof candidate.content !== 'string') return null;
+  if (
+    typeof candidate.fetched_at !== 'number' ||
+    !Number.isSafeInteger(candidate.fetched_at) ||
+    candidate.fetched_at < 0 ||
+    candidate.fetched_at > Date.now() + MAX_CACHE_CLOCK_SKEW_MS
+  ) {
+    return null;
+  }
+  if (
+    typeof candidate.proxy_count !== 'number' ||
+    !Number.isSafeInteger(candidate.proxy_count) ||
+    candidate.proxy_count < 0
+  ) {
+    return null;
+  }
+  const traffic =
+    candidate.traffic === undefined
+      ? undefined
+      : SubscriptionTrafficSchema.safeParse(candidate.traffic);
+  if (traffic !== undefined && !traffic.success) return null;
+  return {
+    content: candidate.content,
+    fetched_at: candidate.fetched_at,
+    proxy_count: candidate.proxy_count,
+    traffic: traffic?.data,
+  };
 }
 
 export async function setFetchCache(
