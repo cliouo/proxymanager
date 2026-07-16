@@ -376,7 +376,7 @@ async function resolveConfigInternal(
       });
     }
   }
-  const doc = parseBaseDocument(baseContent);
+  const doc = parseBaseDocument(baseContent, { allowManagedRulesPlaceholder: true });
 
   const warnings: string[] = [];
   const legacyNames = readLegacyCollectionNames(doc);

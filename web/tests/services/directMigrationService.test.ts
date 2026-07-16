@@ -50,6 +50,33 @@ function rule(id: string, enabled?: boolean): Rule {
 }
 
 describe('buildDirectAliasCandidate', () => {
+  it('migrates a production-shaped marker-only rules skeleton without losing anchors', () => {
+    const candidate = buildDirectAliasCandidate({
+      base: base(`
+mode: rule
+proxies:
+  - name: ${ALIAS}
+    type: direct
+    udp: true
+rules:
+  # === ANCHOR: prelude ===
+  # === ANCHOR: manual ===
+  # === ANCHOR: late ===
+`),
+      groups: [],
+      rules: [rule(ENABLED_RULE_ID)],
+      templates: [],
+      alias: ALIAS,
+      updatedAt: 99,
+    });
+
+    expect(parse(candidate.baseContent)).toMatchObject({ proxies: [], rules: null });
+    expect(candidate.baseContent).toContain('# === ANCHOR: prelude ===');
+    expect(candidate.baseContent).toContain('# === ANCHOR: manual ===');
+    expect(candidate.baseContent).toContain('# === ANCHOR: late ===');
+    expect(candidate.rules).toEqual([expect.objectContaining({ policy: 'DIRECT' })]);
+  });
+
   it('removes only the redundant direct alias and rewrites every known reference', () => {
     const template: ProxyGroupTemplate = {
       id: TEMPLATE_ID,

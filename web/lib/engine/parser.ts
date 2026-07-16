@@ -13,6 +13,15 @@ export interface ParsedBase {
   ruleProviders: string[];
 }
 
+export interface ParseBaseDocumentOptions {
+  /**
+   * A stored base skeleton may keep managed rules as comment-only anchor
+   * markers. YAML represents that omitted value as a null scalar until the
+   * renderer injects the managed rule sequence.
+   */
+  allowManagedRulesPlaceholder?: boolean;
+}
+
 // Must match the renderer's ANCHOR_LINE_PATTERN exactly: an anchor is only
 // injectable when its `# === ANCHOR: name ===` comment occupies its own line.
 // A looser whole-text match (P3-11) would advertise anchors the renderer never
@@ -48,7 +57,10 @@ export class BaseParseError extends ConfigValidationError {
  * Every engine consumer requires a top-level mapping because it reads and
  * mutates named Mihomo sections (`proxies`, `rules`, ...).
  */
-export function parseBaseDocument(content: string): ReturnType<typeof parseDocument> {
+export function parseBaseDocument(
+  content: string,
+  options: ParseBaseDocumentOptions = {},
+): ReturnType<typeof parseDocument> {
   try {
     const doc = parseDocument(content);
     if (doc.errors.length > 0) {
@@ -58,7 +70,7 @@ export function parseBaseDocument(content: string): ReturnType<typeof parseDocum
       throw new BaseParseError(INVALID_BASE_ROOT_MESSAGE, { code: 'base_root_invalid' });
     }
     assertNoMergeKeys(doc);
-    assertKnownSectionShapes(doc);
+    assertKnownSectionShapes(doc, content, options);
     return doc;
   } catch (err) {
     if (err instanceof BaseParseError) throw err;
@@ -94,10 +106,18 @@ function assertNoMergeKeys(doc: ReturnType<typeof parseDocument>): void {
   }
 }
 
-function assertKnownSectionShapes(doc: ReturnType<typeof parseDocument>): void {
+function assertKnownSectionShapes(
+  doc: ReturnType<typeof parseDocument>,
+  content: string,
+  options: ParseBaseDocumentOptions,
+): void {
   for (const key of SEQUENCE_SECTIONS) {
     const section = doc.get(key, true);
-    if (section !== undefined && !isSeq(section)) {
+    const isManagedPlaceholder =
+      key === 'rules' &&
+      options.allowManagedRulesPlaceholder === true &&
+      isManagedRulesPlaceholder(section, content);
+    if (section !== undefined && !isSeq(section) && !isManagedPlaceholder) {
       throw new BaseParseError(`Invalid base YAML: "${key}" must be a sequence`, {
         code: 'base_section_type_invalid',
         section: key,
@@ -127,6 +147,33 @@ function assertKnownSectionShapes(doc: ReturnType<typeof parseDocument>): void {
   }
 }
 
+/**
+ * Recognise only the canonical pre-render rules placeholder: an omitted YAML
+ * value whose own source range contains an anchor line the renderer can
+ * replace. Explicit nulls/tags/anchors and comments outside `rules` stay
+ * invalid, so skeleton mode cannot become a general section-shape bypass.
+ */
+function isManagedRulesPlaceholder(section: unknown, content: string): boolean {
+  if (
+    !isScalar(section) ||
+    section.value !== null ||
+    section.source !== '' ||
+    section.tag !== undefined ||
+    section.anchor !== undefined ||
+    section.range == null
+  ) {
+    return false;
+  }
+
+  const [start, , end] = section.range;
+  for (const match of content.matchAll(ANCHOR_PATTERN)) {
+    if (match.index !== undefined && match.index >= start && match.index + match[0].length <= end) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /** Convert the proxy validator's fixed error templates without reflecting data. */
 function baseProxyValidationError(error: unknown): BaseParseError {
   if (error instanceof MihomoProxyValidationError) {
@@ -154,7 +201,7 @@ function baseProxyValidationError(error: unknown): BaseParseError {
 
 export function parseBase(content: string): ParsedBase {
   const anchors = extractAnchors(content);
-  const doc = parseBaseDocument(content);
+  const doc = parseBaseDocument(content, { allowManagedRulesPlaceholder: true });
 
   return {
     anchors,
