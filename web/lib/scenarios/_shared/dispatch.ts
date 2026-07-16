@@ -14,13 +14,10 @@
  */
 
 import { ProblemDetailsError } from '@/lib/http/problem';
+import { getConfigVersion } from '@/lib/repos/configVersionRepo';
 import { recordEvent } from '@/lib/repos/auditRepo';
-import {
-  deleteRule as deleteRuleRepo,
-  getRule as getRuleRepo,
-  listRules as listRulesRepo,
-  upsertRule as upsertRuleRepo,
-} from '@/lib/repos/rulesRepo';
+import { getRule as getRuleRepo, listRules as listRulesRepo } from '@/lib/repos/rulesRepo';
+import { preflightAndCommitProfileChanges } from '@/lib/services/profileConfigMutationService';
 import { computeNextRank } from '@/lib/services/rulesService';
 import type { AuditEvent } from '@/schemas';
 import { getScenario } from '../registry';
@@ -42,7 +39,7 @@ export interface DispatchResponse {
   events: AuditEvent[];
 }
 
-function createRulesStore(profileId: string): RulesStore {
+function createRulesStore(profileId: string, expectedConfigVersion: number): RulesStore {
   return {
     async list(filter) {
       const all = await listRulesRepo(profileId);
@@ -50,8 +47,23 @@ function createRulesStore(profileId: string): RulesStore {
       return all.filter((r) => r.anchor === filter.anchor);
     },
     get: (id) => getRuleRepo(profileId, id),
-    upsert: (rule) => upsertRuleRepo(profileId, rule),
-    delete: (id) => deleteRuleRepo(profileId, id),
+    upsert: async (rule) => {
+      await preflightAndCommitProfileChanges(
+        profileId,
+        { ruleWrites: [rule] },
+        expectedConfigVersion,
+      );
+    },
+    delete: async (id) => {
+      const current = await getRuleRepo(profileId, id);
+      if (!current) return false;
+      await preflightAndCommitProfileChanges(
+        profileId,
+        { ruleDeletes: [id] },
+        expectedConfigVersion,
+      );
+      return true;
+    },
     computeNextRank: (anchor) => computeNextRank(profileId, anchor),
   };
 }
@@ -68,11 +80,16 @@ export async function dispatch(req: DispatchRequest): Promise<DispatchResponse> 
     );
   }
 
+  // Capture before the handler's first resource read. The preflight helper
+  // compares this planning generation with its stable snapshot, closing the
+  // read→candidate TOCTOU window (not only preflight→commit).
+  const configVersion = await getConfigVersion();
   const ctx: OpContext = {
     actor: req.actor,
     profileId: req.profileId,
+    configVersion,
     base: createBaseStore(req.profileId),
-    rules: createRulesStore(req.profileId),
+    rules: createRulesStore(req.profileId, configVersion),
     taxonomy: createTaxonomyStore(req.profileId),
   };
 

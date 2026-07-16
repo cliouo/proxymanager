@@ -30,15 +30,15 @@ description: >-
 
 ## 1. 领域地图 / 路由表（先看这里）
 
-| 用户意图 / 关键词 | 去处 |
-|---|---|
-| 策略组成员 / filter / exclude-filter / 地区组 / select·url-test·fallback / 组吃错节点 | **load skill `synthesizing-proxy-groups`** |
-| 节点处理 / 算子 / 重命名 / 改名 / 去重 / 加旗 / 排序 / 类型·地区过滤 / 本地源改名 | **load skill `editing-node-operators`**（**所有改名都归它**，含本地源改名） |
-| 整体优化 / 通盘检查 / 审一遍 / 清理没用的规则和规则集 | **load skill `optimizing-whole-config`** |
-| 分流规则增删改（DOMAIN/GEOIP/IP-CIDR/RULE-SET/MATCH…） | 本 skill · `references/rules.md` |
-| 规则集 / rule-providers 库 + 两步生效 | 本 skill · `references/rule-providers.md` |
-| dns / sniffer / tun / 端口 / 顶层标量等骨架区块 | 本 skill · `references/skeleton-config.md` |
-| 节点从哪来 / proxies / 订阅源 | 本 skill · `references/node-sources.md` |
+| 用户意图 / 关键词                                                                     | 去处                                                                        |
+| ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| 策略组成员 / filter / exclude-filter / 地区组 / select·url-test·fallback / 组吃错节点 | **load skill `synthesizing-proxy-groups`**                                  |
+| 节点处理 / 算子 / 重命名 / 改名 / 去重 / 加旗 / 排序 / 类型·地区过滤 / 本地源改名     | **load skill `editing-node-operators`**（**所有改名都归它**，含本地源改名） |
+| 整体优化 / 通盘检查 / 审一遍 / 清理没用的规则和规则集                                 | **load skill `optimizing-whole-config`**                                    |
+| 分流规则增删改（DOMAIN/GEOIP/IP-CIDR/RULE-SET/MATCH…）                                | 本 skill · `references/rules.md`                                            |
+| 规则集 / rule-providers 库 + 两步生效                                                 | 本 skill · `references/rule-providers.md`                                   |
+| dns / sniffer / tun / 端口 / 顶层标量等骨架区块                                       | 本 skill · `references/skeleton-config.md`                                  |
+| 节点从哪来 / proxies / 订阅源                                                         | 本 skill · `references/node-sources.md`                                     |
 
 **复合任务**：一句话常跨域。例「把 figma.com 走香港」需两步且**有先后**：① 若没有香港组，
 先 `load synthesizing-proxy-groups` 建地区组；② 再 `add_rule` 加 `DOMAIN-SUFFIX,figma.com,香港`
@@ -66,12 +66,16 @@ description: >-
 
 ## 3. 写入确认契约
 
-写操作**不会立即生效**：系统会向用户出示一张确认卡（服务端 preview + 铸一次性 token），由用户
-亲自授权后才执行。所以：
+写操作**不会立即生效**：系统会先做服务端 preview 并铸一次性 token；浏览器显示确认卡，MCP
+bridge 则把 token 留在进程内并请求 host 显示人类确认表单。只有用户亲自授权后才执行。所以：
 
 - 发起写操作后，**不要声称已经改好**。只需简要说明这条改动会做什么，并提示用户在卡片中确认。
+- 不要索取、复述或尝试调用确认 token；MCP 客户端不支持 form elicitation 时必须停止，不能降级为模型自行确认。
 - 改 base 骨架区块前，先用 `get_config_section` 看清现状，确保新值是**完整、正确**的 YAML。
 - 此门控由服务端（`confirm.ts` 一次性令牌 + `neverList.ts` 硬黑名单）兜底，本 skill 仅描述、不是安全边界。
+
+跨配置文件操作时，先 `list_profiles`，再用 `select_profile` 切到一个**精确 profile name**。每个
+profile 都要重新读取、预检并生成自己的确认卡；不要复用另一 profile 的 preview 版本或确认状态。
 
 ---
 
@@ -81,6 +85,9 @@ description: >-
 - **禁止**用 config-section 去碰 `proxies` / `rules` / `rule-providers` / `proxy-groups`——
   这些各有专属 action（见路由表），用 config-section 改会被系统**拒绝**。
 - `proxies` 由订阅源在渲染时注入；用户的 `proxy-providers` 本项目原样透传、**AI 不碰**。
+- 唯一窄例外是专用 `preview_direct_alias_migration` → `migrate_direct_alias`：它只迁移
+  `name + type: direct + 可选 udp: true` 的冗余本地别名为 mihomo 内建 `DIRECT`，同时原子改写
+  当前 profile 的全部已知引用。它不是通用 `proxies` 编辑器；出现额外字段、共享资源引用或未知路径即拒绝。
 
 ---
 
@@ -111,11 +118,12 @@ description: >-
   （路径如 `dns`、`proxy-groups[OpenAI]`）。
 - 写前先读真实数据：`get_base_overview` / `list_rules` / `list_proxy_groups` 拿到 id 与现状，不要编造。
 
-| 写操作 | 落地前先读 |
-|---|---|
-| `add_rule` / `update_rule` | `get_base_overview`（确认 anchor 已声明、policy 目标存在） |
-| `localize_rule_provider` / `add_rule(RULE-SET)` | `list_rule_providers`（确认规则集在库） |
-| `set_config_section` 改骨架 | `get_config_section(path)`（拿到完整现状再覆盖） |
+| 写操作                                          | 落地前先读                                                                      |
+| ----------------------------------------------- | ------------------------------------------------------------------------------- |
+| `add_rule` / `update_rule`                      | `get_base_overview`（确认 anchor 已声明、policy 目标存在）                      |
+| `localize_rule_provider` / `add_rule(RULE-SET)` | `list_rule_providers`（确认规则集在库）                                         |
+| `set_config_section` 改骨架                     | `get_config_section(path)`（拿到完整现状再覆盖）                                |
+| `migrate_direct_alias`                          | `preview_direct_alias_migration`（使用同一 profile 返回的 version + base ETag） |
 
 - **`add_rule` 必须显式传 `anchor`**——它必须是 base.yaml 已声明的锚点（`prelude` / `manual` / `late`），
   否则 422；不确定就用 `manual`（主体规则锚点）。锚点注释语法见 `references/domain-model.md`，
@@ -125,11 +133,12 @@ description: >-
 
 ## 8. 拥有的工具（本 hub）
 
-读：`get_base_overview` · `list_proxy_nodes` · `list_rules` · `list_proxy_groups` ·
-`get_config_outline` · `get_config_section` · `search_mihomo_docs` · `fetch_url`
+读：`list_profiles` · `select_profile` · `get_base_overview` · `list_proxy_nodes` · `list_rules` ·
+`list_proxy_groups` · `get_config_outline` · `get_config_section` · `search_mihomo_docs` · `fetch_url`
+· `preview_direct_alias_migration`
 写：`add_rule` · `update_rule` · `delete_rule` · `list_rule_providers` · `create_rule_provider` ·
 `update_rule_provider` · `delete_rule_provider` · `localize_rule_provider` ·
-`set_config_section` · `delete_config_section`
+`set_config_section` · `delete_config_section` · `migrate_direct_alias`
 
 > 不归本 hub 的：策略组（`synthesizing-proxy-groups`）、算子与所有改名含本地源改名
 > （`editing-node-operators`）、整体优化（`optimizing-whole-config`）、节点池只读真相

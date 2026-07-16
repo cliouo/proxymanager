@@ -4,6 +4,10 @@ import { ProblemDetailsError } from '@/lib/http/problem';
 import { MAX_PROXY_NODES, validateMihomoProxyList } from '@/lib/proxies/mihomoProxyValidator';
 import { applyOperators, type ClashProxy } from '@/lib/proxies/operators';
 import { resolveSubscriptionProxies } from '@/lib/services/subscriptionFetcher';
+import {
+  SubscriptionResolutionValidationError,
+  SubscriptionUpstreamUnavailableError,
+} from '@/lib/services/subscriptionResolutionErrors';
 import type { Collection, Subscription, SubscriptionTraffic } from '@/schemas';
 
 /**
@@ -33,6 +37,19 @@ interface ExportOptions {
 
 /** 同时在途的成员订阅 fetch 上限,与渲染管线保持一致。 */
 const MEMBER_FETCH_CONCURRENCY = 8;
+
+/** Keep member diagnostics useful without reflecting provider payloads or credentials. */
+function safeMemberError(error: unknown): string {
+  if (error instanceof SubscriptionResolutionValidationError) {
+    if (error.stage === 'definition') return 'Subscription definition is invalid.';
+    if (error.stage === 'operators') return 'Subscription operator pipeline is invalid.';
+    return 'Subscription content is invalid.';
+  }
+  if (error instanceof SubscriptionUpstreamUnavailableError) {
+    return 'Subscription upstream is unavailable.';
+  }
+  return 'Subscription member resolution failed.';
+}
 
 /** 取节点名；非字符串名保留到后续 trust-boundary validator 明确拒绝。 */
 function nameOf(item: Record<string, unknown>): string | null {
@@ -114,10 +131,9 @@ export async function mergeCollectionMemberProxies(
     const member = members[i];
     i += 1;
     if (outcome.status === 'rejected') {
-      const err = outcome.reason;
       memberErrors.push({
         name: member.name,
-        error: err instanceof Error ? err.message : String(err),
+        error: safeMemberError(outcome.reason),
       });
       continue;
     }

@@ -24,12 +24,54 @@ interface ValidationResult {
   orphans: Array<{ rule_id: string; reason: string }>;
 }
 
+function validationIssues(errors: unknown): ValidationResult['orphans'] {
+  if (!Array.isArray(errors)) return [];
+  return errors.flatMap((raw, index) => {
+    if (!raw || typeof raw !== 'object') return [];
+    const issue = raw as Record<string, unknown>;
+    if (typeof issue.rule_id === 'string' && typeof issue.reason === 'string') {
+      return [{ rule_id: issue.rule_id, reason: issue.reason }];
+    }
+    if (typeof issue.message !== 'string') return [];
+    const path = Array.isArray(issue.path)
+      ? issue.path.filter((part): part is string | number =>
+          ['string', 'number'].includes(typeof part),
+        )
+      : typeof issue.path === 'string'
+        ? [issue.path]
+        : [];
+    const location = path.length > 0 ? path.join('.') : null;
+    const code = typeof issue.code === 'string' ? issue.code : null;
+    return [
+      {
+        rule_id: location ?? code ?? `config:${index + 1}`,
+        reason: issue.message,
+      },
+    ];
+  });
+}
+
+function errorDetail(err: unknown): { message: string; issues: ValidationResult['orphans'] } {
+  if (!(err instanceof ApiError)) return { message: String(err), issues: [] };
+  const issues = validationIssues(err.problem.errors);
+  return {
+    message:
+      issues.length > 0
+        ? issues.map((issue) => `${issue.rule_id}: ${issue.reason}`).join('；')
+        : (err.problem.detail ?? err.message),
+    issues,
+  };
+}
+
 export default function BasePage() {
   const [data, setData] = useState<BaseData | null>(null);
   const [content, setContent] = useState('');
   const [etag, setEtag] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [status, setStatus] = useState<{ kind: 'info' | 'success' | 'error'; message: string } | null>(null);
+  const [status, setStatus] = useState<{
+    kind: 'info' | 'success' | 'error';
+    message: string;
+  } | null>(null);
   const [validation, setValidation] = useState<ValidationResult | null>(null);
   const [busy, setBusy] = useState<'save' | 'validate' | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -90,18 +132,18 @@ export default function BasePage() {
       setValidation(res.data);
       setStatus(
         res.data.valid
-          ? { kind: 'success', message: '校验通过' }
-          : { kind: 'error', message: `校验未通过 — ${res.data.orphans.length} 条孤立规则` },
+          ? { kind: 'success', message: '结构校验通过；保存时还会校验最终配置' }
+          : { kind: 'error', message: `结构校验未通过 — ${res.data.orphans.length} 个问题` },
       );
     } catch (err) {
-      const detail = err instanceof ApiError ? err.problem.detail ?? err.message : String(err);
-      setStatus({ kind: 'error', message: detail });
-      if (err instanceof ApiError && Array.isArray(err.problem.errors)) {
+      const { message, issues } = errorDetail(err);
+      setStatus({ kind: 'error', message });
+      if (issues.length > 0) {
         setValidation({
           valid: false,
           anchors: [],
           policies: [],
-          orphans: err.problem.errors as ValidationResult['orphans'],
+          orphans: issues,
         });
       }
     } finally {
@@ -123,14 +165,14 @@ export default function BasePage() {
       setStatus({ kind: 'success', message: '已保存' });
       await load();
     } catch (err) {
-      const detail = err instanceof ApiError ? err.problem.detail ?? err.message : String(err);
-      setStatus({ kind: 'error', message: detail });
-      if (err instanceof ApiError && Array.isArray(err.problem.errors)) {
+      const { message, issues } = errorDetail(err);
+      setStatus({ kind: 'error', message });
+      if (issues.length > 0) {
         setValidation({
           valid: false,
           anchors: [],
           policies: [],
-          orphans: err.problem.errors as ValidationResult['orphans'],
+          orphans: issues,
         });
       }
     } finally {
@@ -167,10 +209,7 @@ export default function BasePage() {
         </button>
         <button className="btn primary" onClick={onSave} disabled={busy !== null || !dirty}>
           {busy === 'save' ? '保存中…' : '保存'}{' '}
-          <span
-            className="kbd"
-            style={{ background: 'rgba(0,0,0,.2)', color: 'var(--accent-on)' }}
-          >
+          <span className="kbd" style={{ background: 'rgba(0,0,0,.2)', color: 'var(--accent-on)' }}>
             ⌘S
           </span>
         </button>
@@ -184,10 +223,7 @@ export default function BasePage() {
             {lineCount} 行 · {byteLen.toLocaleString()} 字节
           </span>
           <div style={{ flex: 1 }} />
-          <button
-            className={`btn sm ${styles.inspBtn}`}
-            onClick={() => setInspOpen(true)}
-          >
+          <button className={`btn sm ${styles.inspBtn}`} onClick={() => setInspOpen(true)}>
             锚点 / 检查
           </button>
         </div>
@@ -195,7 +231,8 @@ export default function BasePage() {
         {/* role hint */}
         <div className={styles.hint}>
           这里只编辑骨架(dns / 策略组 / 嗅探 / tun / 订阅源 / 规则集声明 等)。
-          <code>rules:</code> 块只放锚点标记 —— 规则统一到「规则」页管理;保存时出现规则行会被拒绝。
+          <code>rules:</code> 块只放锚点标记 —— 规则统一到「规则」页管理。校验按钮检查骨架；
+          保存还会试算完整配置，并显示未通过的具体位置与原因。
         </div>
 
         {/* per-profile node source binding */}
@@ -251,8 +288,8 @@ function Inspector({
   open: boolean;
   onClose: () => void;
 }) {
-  const anchors = validation?.anchors.length ? validation.anchors : data?.anchors ?? [];
-  const policies = validation?.policies.length ? validation.policies : data?.policies ?? [];
+  const anchors = validation?.anchors.length ? validation.anchors : (data?.anchors ?? []);
+  const policies = validation?.policies.length ? validation.policies : (data?.policies ?? []);
   const orphans = validation?.orphans ?? [];
 
   return (
@@ -288,16 +325,14 @@ function Inspector({
               {p}
             </span>
           ))}
-          {policies.length > 30 && (
-            <span className={styles.empty}>+{policies.length - 30}</span>
-          )}
+          {policies.length > 30 && <span className={styles.empty}>+{policies.length - 30}</span>}
         </div>
       )}
 
       {orphans.length > 0 && (
         <>
           <div className={styles.inspH}>
-            <span style={{ color: 'var(--danger)' }}>孤立规则</span>
+            <span style={{ color: 'var(--danger)' }}>配置问题</span>
             <span className={styles.n} style={{ color: 'var(--danger)' }}>
               {orphans.length}
             </span>

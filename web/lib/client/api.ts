@@ -3,9 +3,18 @@ import { clearAdminKey, getAdminKey } from './auth-storage';
 export class ApiError extends Error {
   constructor(
     public readonly status: number,
-    public readonly problem: { title: string; detail?: string; errors?: unknown[] } & Record<string, unknown>,
+    public readonly problem: { title: string; detail?: string; errors?: unknown[] } & Record<
+      string,
+      unknown
+    >,
   ) {
-    super(problem.detail ?? formatProblemErrors(problem.errors) ?? problem.title ?? `HTTP ${status}`);
+    const issues = formatProblemErrors(problem.errors);
+    const detail = problem.detail;
+    super(
+      detail && issues && !detail.includes(issues)
+        ? `${detail}：${issues}`
+        : (detail ?? issues ?? problem.title ?? `HTTP ${status}`),
+    );
     this.name = 'ApiError';
   }
 }
@@ -19,9 +28,21 @@ function formatProblemErrors(errors: unknown): string | undefined {
   const parts = errors
     .map((issue) => {
       if (!issue || typeof issue !== 'object') return undefined;
-      const { path, message } = issue as { path?: unknown; message?: unknown };
+      const { path, message, section, resource, code } = issue as {
+        path?: unknown;
+        message?: unknown;
+        section?: unknown;
+        resource?: unknown;
+        code?: unknown;
+      };
       if (typeof message !== 'string') return undefined;
-      const key = Array.isArray(path) ? path.join('.') : '';
+      const key = Array.isArray(path)
+        ? path.join('.')
+        : typeof path === 'string'
+          ? path
+          : ([section, resource, code].find(
+              (value): value is string => typeof value === 'string',
+            ) ?? '');
       return key ? `${key}: ${message}` : message;
     })
     .filter((part): part is string => Boolean(part));
@@ -57,7 +78,11 @@ export async function api<T = unknown>(path: string, opts: ApiOptions = {}): Pro
     const key = getAdminKey();
     if (key) finalHeaders.Authorization = `Bearer ${key}`;
   }
-  if (body !== undefined && !(body instanceof FormData) && finalHeaders['Content-Type'] === undefined) {
+  if (
+    body !== undefined &&
+    !(body instanceof FormData) &&
+    finalHeaders['Content-Type'] === undefined
+  ) {
     finalHeaders['Content-Type'] = 'application/json';
   }
 

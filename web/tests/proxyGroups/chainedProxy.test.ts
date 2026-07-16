@@ -92,6 +92,26 @@ vi.mock('@/lib/repos/resolvedRepo', () => ({
   setResolvedSnapshot: vi.fn(async () => undefined),
 }));
 
+vi.mock('@/lib/services/profileConfigMutationService', () => ({
+  preflightAndCommitProfileChanges: vi.fn(
+    async (
+      profileId: string,
+      changes: {
+        proxyGroupWrites?: ProxyGroup[];
+        proxyGroupDeletes?: string[];
+      },
+    ) => {
+      for (const group of changes.proxyGroupWrites ?? []) {
+        bucket(`proxy-groups:${profileId}`).set(group.id, group);
+      }
+      for (const id of changes.proxyGroupDeletes ?? []) {
+        bucket(`proxy-groups:${profileId}`).delete(id);
+      }
+      counters.set('config:version', (counters.get('config:version') ?? 0) + 1);
+    },
+  ),
+}));
+
 const PID = 'prof-test';
 
 let scenarioMod: typeof import('@/lib/scenarios/chained-proxy/scenario');
@@ -143,9 +163,7 @@ describe('chained-proxy summariseChains', () => {
   it('reports a fixed chain when wrap.dialer-proxy points at a name with no pool body', async () => {
     seed({ name: 'chain:F-to-B', proxies: ['B'], 'dialer-proxy': 'F' });
     const summary = await scenarioMod.summariseChains(PID);
-    expect(summary.fixedChains).toEqual([
-      { chainName: 'chain:F-to-B', backend: 'B', front: 'F' },
-    ]);
+    expect(summary.fixedChains).toEqual([{ chainName: 'chain:F-to-B', backend: 'B', front: 'F' }]);
     expect(summary.poolChains).toEqual([]);
   });
 

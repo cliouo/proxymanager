@@ -105,6 +105,8 @@ export interface OpContext {
    * chained-proxy) must pass this to the proxy-group repo.
    */
   profileId: string;
+  /** Global config generation captured before the handler performs any read. */
+  configVersion?: number;
   base: BaseStore;
   rules: RulesStore;
   taxonomy: TaxonomyStore;

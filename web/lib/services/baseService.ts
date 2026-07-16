@@ -82,11 +82,13 @@ export async function parseAndValidate(
   let parsedBase: ParsedBase;
   try {
     parsedBase = parseBase(content);
-  } catch (err) {
-    if (err instanceof BaseParseError) {
-      throw ProblemDetailsError.unprocessable(err.message);
+  } catch (error) {
+    if (error instanceof BaseParseError) {
+      // Preserve the base save API's existing 422 problem type while adding a
+      // structured, credential-free issue for clients that can render it.
+      throw ProblemDetailsError.unprocessable(error.message, [error.issue]);
     }
-    throw err;
+    throw error;
   }
   const [rules, providerSets, proxyGroups] = await Promise.all([
     listRules(profileId),

@@ -24,6 +24,11 @@ function byRank(a: ProxyGroup, b: ProxyGroup): number {
   return a.name.localeCompare(b.name);
 }
 
+/** Apply the same deterministic order used by persisted profile reads. */
+export function sortProxyGroups(groups: readonly ProxyGroup[]): ProxyGroup[] {
+  return [...groups].sort(byRank);
+}
+
 export async function listProxyGroups(profileId: string): Promise<ProxyGroup[]> {
   const all = await getRedis().hgetall<Record<string, unknown>>(REDIS_KEYS.proxyGroups(profileId));
   if (!all) return [];
@@ -32,7 +37,7 @@ export async function listProxyGroups(profileId: string): Promise<ProxyGroup[]> 
     const g = normalise(raw);
     if (g) out.push(g);
   }
-  return out.sort(byRank);
+  return sortProxyGroups(out);
 }
 
 export async function getProxyGroup(profileId: string, id: string): Promise<ProxyGroup | null> {

@@ -103,6 +103,51 @@ export class ProblemDetailsError extends Error {
   }
 }
 
+/**
+ * Marker for fixed, credential-free problem details that may be shown through
+ * the assistant/MCP boundary. Ordinary ProblemDetailsError text is not trusted:
+ * parser diagnostics can contain raw YAML source lines and secrets.
+ */
+export class ClientSafeProblemDetailsError extends ProblemDetailsError {
+  static badRequest(detail: string, errors?: unknown[]): ClientSafeProblemDetailsError {
+    return new ClientSafeProblemDetailsError({
+      type: `${PROBLEM_BASE_URL}/bad-request`,
+      title: 'Bad Request',
+      status: 400,
+      detail,
+      errors,
+    });
+  }
+
+  static notFound(detail: string): ClientSafeProblemDetailsError {
+    return new ClientSafeProblemDetailsError({
+      type: `${PROBLEM_BASE_URL}/not-found`,
+      title: 'Not Found',
+      status: 404,
+      detail,
+    });
+  }
+
+  static conflict(detail: string): ClientSafeProblemDetailsError {
+    return new ClientSafeProblemDetailsError({
+      type: `${PROBLEM_BASE_URL}/conflict`,
+      title: 'Conflict',
+      status: 409,
+      detail,
+    });
+  }
+
+  static unprocessable(detail: string, errors?: unknown[]): ClientSafeProblemDetailsError {
+    return new ClientSafeProblemDetailsError({
+      type: `${PROBLEM_BASE_URL}/unprocessable-entity`,
+      title: 'Unprocessable Entity',
+      status: 422,
+      detail,
+      errors,
+    });
+  }
+}
+
 export function problemResponse(problem: ProblemDetails, extraHeaders?: HeadersInit): Response {
   return new Response(JSON.stringify(problem), {
     status: problem.status,

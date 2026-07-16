@@ -1,4 +1,5 @@
 import { ZodError } from 'zod';
+import { ConfigPreflightUnavailableError, ConfigValidationError } from '@/lib/config/errors';
 import {
   PROBLEM_BASE_URL,
   ProblemDetailsError,
@@ -23,6 +24,25 @@ export function withProblemDetails<TArgs extends unknown[]>(
 function toProblemResponse(err: unknown): Response {
   if (err instanceof ProblemDetailsError) {
     return problemResponse(err.problem);
+  }
+
+  if (err instanceof ConfigValidationError) {
+    return problemResponse({
+      type: `${PROBLEM_BASE_URL}/config-validation`,
+      title: 'Configuration validation failed',
+      status: 422,
+      detail: err.issue.message,
+      errors: [err.issue],
+    });
+  }
+
+  if (err instanceof ConfigPreflightUnavailableError) {
+    return problemResponse({
+      type: `${PROBLEM_BASE_URL}/config-validation-unavailable`,
+      title: 'Service Unavailable',
+      status: 503,
+      detail: err.message,
+    });
   }
 
   if (err instanceof ZodError) {

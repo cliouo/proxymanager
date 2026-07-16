@@ -22,6 +22,7 @@ function bucket(key: string): Map<string, unknown> {
 }
 
 const fakeRedis = {
+  get: async (key: string) => counters.get(key) ?? null,
   hgetall: async (key: string) => {
     const m = bucket(key);
     return m.size === 0 ? null : Object.fromEntries(m);
@@ -89,6 +90,25 @@ vi.mock('@/lib/repos/resolvedRepo', () => ({
     computedAt: 1_700_000_000,
     buildId: 'test',
   })),
+}));
+vi.mock('@/lib/services/profileConfigMutationService', () => ({
+  preflightAndCommitProfileChanges: vi.fn(
+    async (
+      profileId: string,
+      changes: {
+        proxyGroupWrites?: ProxyGroup[];
+        proxyGroupDeletes?: string[];
+      },
+    ) => {
+      for (const group of changes.proxyGroupWrites ?? []) {
+        bucket(`proxy-groups:${profileId}`).set(group.id, group);
+      }
+      for (const id of changes.proxyGroupDeletes ?? []) {
+        bucket(`proxy-groups:${profileId}`).delete(id);
+      }
+      counters.set('config:version', (counters.get('config:version') ?? 0) + 1);
+    },
+  ),
 }));
 
 let registry: typeof import('@/lib/ai/actions/registry');

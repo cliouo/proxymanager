@@ -23,7 +23,7 @@
 
 import { z } from 'zod';
 import { ProblemDetailsError } from '@/lib/http/problem';
-import { batchUpsertAndDelete } from '@/lib/repos/rulesRepo';
+import { preflightAndCommitProfileChanges } from '@/lib/services/profileConfigMutationService';
 import {
   ensureValidAnchorAndPolicy,
   ensureValidRuleSetRef,
@@ -245,7 +245,7 @@ const batchCreate: OpHandler = async (ctx, raw) => {
     events.push({ action: 'create', target: { kind: 'rule', id: rule.id }, after: rule });
   }
 
-  await batchUpsertAndDelete(ctx.profileId, writes, []);
+  await preflightAndCommitProfileChanges(ctx.profileId, { ruleWrites: writes }, ctx.configVersion);
   return { data: { outcomes, rules: writes }, events };
 };
 

@@ -9,6 +9,10 @@ vi.mock('@/lib/repos/fetchCacheRepo', () => ({
 
 import { resolveSubscriptionContent } from '@/lib/services/subscriptionFetcher';
 import { getFetchCache, setFetchCache } from '@/lib/repos/fetchCacheRepo';
+import {
+  SubscriptionResolutionValidationError,
+  SubscriptionUpstreamUnavailableError,
+} from '@/lib/services/subscriptionResolutionErrors';
 
 const getCacheMock = getFetchCache as unknown as ReturnType<typeof vi.fn>;
 const setCacheMock = setFetchCache as unknown as ReturnType<typeof vi.fn>;
@@ -92,6 +96,48 @@ describe('resolveSubscriptionContent — stale-on-error', () => {
     expect(result.staleReason).toBe('Upstream fetch failed');
     expect(result.staleReason).not.toContain(sentinel);
     expect(result.yaml).toContain('HK-01');
+  });
+
+  it('does not accept a stale entry when fresh-only preflight is requested', async () => {
+    getCacheMock.mockResolvedValueOnce({
+      content: ENTRY_YAML,
+      proxy_count: 1,
+      fetched_at: Date.now() - 60_000,
+    });
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error('connect ECONNREFUSED'),
+    );
+
+    const error = await resolveSubscriptionContent(makeSub(), {
+      allowStale: false,
+      writeCache: false,
+    }).catch((caught) => caught);
+    expect(error).toBeInstanceOf(SubscriptionUpstreamUnavailableError);
+    expect((error as Error).message).toBe('Upstream fetch failed');
+    expect(setCacheMock).not.toHaveBeenCalled();
+  });
+
+  it('classifies a post-fetch operator failure as deterministic validation', async () => {
+    getCacheMock.mockResolvedValueOnce(null);
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      new Response(ENTRY_YAML, { status: 200 }),
+    );
+    const invalidLegacyOperator = {
+      id: 'legacy-invalid',
+      kind: 'filter-useless',
+      extra: ['('],
+    } as Subscription['operators'][number];
+
+    const error = await resolveSubscriptionContent(
+      makeSub({ operators: [invalidLegacyOperator] }),
+      { allowStale: false, writeCache: false },
+    ).catch((caught) => caught);
+
+    expect(error).toBeInstanceOf(SubscriptionResolutionValidationError);
+    expect((error as SubscriptionResolutionValidationError).stage).toBe('operators');
+    expect((error as SubscriptionResolutionValidationError).code).toBe(
+      'subscription_operators_invalid',
+    );
   });
 
   it('does not use a corrupt stale payload when the refetch also fails', async () => {
@@ -192,5 +238,20 @@ describe('resolveSubscriptionContent — stale-on-error', () => {
     expect(result.stale).toBeUndefined();
     expect(result.yaml).toContain('FRESH');
     expect(setCacheMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('can validate a fresh response without persisting it', async () => {
+    getCacheMock.mockResolvedValueOnce(null);
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      new Response(ENTRY_YAML, { status: 200 }),
+    );
+
+    const result = await resolveSubscriptionContent(makeSub(), {
+      writeCache: false,
+      allowStale: false,
+    });
+
+    expect(result.yaml).toContain('HK-01');
+    expect(setCacheMock).not.toHaveBeenCalled();
   });
 });

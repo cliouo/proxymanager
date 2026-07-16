@@ -109,8 +109,35 @@ describe('base parser input boundary', () => {
 
     expect(error).toBeInstanceOf(BaseParseError);
     expect((error as Error).message).toContain('index 0: field "type"');
+    expect((error as BaseParseError).issue).toMatchObject({
+      code: 'base_proxy_invalid',
+      section: 'proxies',
+      path: 'proxies[0].type',
+      resource: 'base.yaml',
+    });
     expect((error as Error).message).not.toContain('FAKE_');
     expect((error as Error).message).not.toContain('unknown-secret-type');
+  });
+
+  it('reports a known but unsupported proxy field with a safe structured path', () => {
+    const error = captureSync(() =>
+      parseBase(`proxies:
+  - name: local-direct
+    type: direct
+    udp: true
+`),
+    );
+
+    expect(error).toBeInstanceOf(BaseParseError);
+    expect((error as Error).message).toContain('field "udp" is not supported for type "direct"');
+    expect((error as BaseParseError).issue).toEqual({
+      code: 'base_proxy_invalid',
+      message: (error as Error).message,
+      section: 'proxies',
+      path: 'proxies[0].udp',
+      resource: 'base.yaml',
+    });
+    expect((error as Error).message).not.toContain('local-direct');
   });
 
   it('rejects YAML merge keys before inherited contextual references can bypass validation', () => {
@@ -142,6 +169,15 @@ describe('base save/validate boundary', () => {
 
     expect(error).toBeInstanceOf(ProblemDetailsError);
     expect((error as ProblemDetailsError).problem.status).toBe(422);
+    expect((error as ProblemDetailsError).problem.errors).toEqual([
+      {
+        code: 'base_yaml_invalid',
+        message: INVALID_YAML_MESSAGE,
+        section: 'base',
+        path: '$',
+        resource: 'base.yaml',
+      },
+    ]);
     expect((error as Error).message).toBe(INVALID_YAML_MESSAGE);
     expect(String(error)).not.toContain(FAKE_SECRET);
   });

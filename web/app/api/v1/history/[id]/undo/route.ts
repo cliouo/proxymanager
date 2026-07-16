@@ -1,18 +1,15 @@
 import { withProblemDetails } from '@/lib/http/handler';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { getEvent, markUndone, recordEvent } from '@/lib/repos/auditRepo';
+import { getConfigVersion } from '@/lib/repos/configVersionRepo';
 import { getScenario } from '@/lib/scenarios/registry';
 import { createBaseStore } from '@/lib/scenarios/_shared/baseMutator';
 import { createTaxonomyStore } from '@/lib/scenarios/_shared/GroupTaxonomy';
 import type { InverseHandler, OpContext } from '@/lib/scenarios/_shared/types';
-import {
-  deleteRule as deleteRuleRepo,
-  getRule as getRuleRepo,
-  listRules as listRulesRepo,
-  upsertRule as upsertRuleRepo,
-} from '@/lib/repos/rulesRepo';
+import { getRule as getRuleRepo, listRules as listRulesRepo } from '@/lib/repos/rulesRepo';
 import { getProfileByName } from '@/lib/repos/profilesRepo';
 import { computeNextRank, resolveActor } from '@/lib/services/rulesService';
+import { preflightAndCommitProfileChanges } from '@/lib/services/profileConfigMutationService';
 import { DEFAULT_PROFILE_NAME, type AuditEvent } from '@/schemas';
 
 export const dynamic = 'force-dynamic';
@@ -39,22 +36,18 @@ export const POST = withProblemDetails(async (request: Request, ctx: Ctx) => {
   const event = await getEvent(id);
   if (!event) throw ProblemDetailsError.notFound(`History event ${id} not found.`);
   if (event.undone_by) {
-    throw ProblemDetailsError.conflict(
-      `Event ${id} was already undone by ${event.undone_by}.`,
-    );
+    throw ProblemDetailsError.conflict(`Event ${id} was already undone by ${event.undone_by}.`);
   }
 
   const inverse = resolveInverse(event.op);
   if (!inverse) {
-    throw ProblemDetailsError.unprocessable(
-      `No inverse registered for op "${event.op}".`,
-    );
+    throw ProblemDetailsError.unprocessable(`No inverse registered for op "${event.op}".`);
   }
 
   // Undo targets the profile the original mutation touched. Legacy events
   // (pre-Phase-2) carry no profileId → fall back to the default profile.
-  const profileId =
-    event.profileId ?? (await getProfileByName(DEFAULT_PROFILE_NAME))?.id;
+  const configVersion = await getConfigVersion();
+  const profileId = event.profileId ?? (await getProfileByName(DEFAULT_PROFILE_NAME))?.id;
   if (!profileId) {
     throw ProblemDetailsError.unprocessable(
       `Cannot undo: event has no profile and no "${DEFAULT_PROFILE_NAME}" profile exists.`,
@@ -65,6 +58,7 @@ export const POST = withProblemDetails(async (request: Request, ctx: Ctx) => {
   const opCtx: OpContext = {
     actor,
     profileId,
+    configVersion,
     base: createBaseStore(profileId),
     rules: {
       async list(filter) {
@@ -72,8 +66,15 @@ export const POST = withProblemDetails(async (request: Request, ctx: Ctx) => {
         return filter?.anchor ? all.filter((r) => r.anchor === filter.anchor) : all;
       },
       get: (id) => getRuleRepo(profileId, id),
-      upsert: (rule) => upsertRuleRepo(profileId, rule),
-      delete: (id) => deleteRuleRepo(profileId, id),
+      upsert: async (rule) => {
+        await preflightAndCommitProfileChanges(profileId, { ruleWrites: [rule] }, configVersion);
+      },
+      delete: async (id) => {
+        const current = await getRuleRepo(profileId, id);
+        if (!current) return false;
+        await preflightAndCommitProfileChanges(profileId, { ruleDeletes: [id] }, configVersion);
+        return true;
+      },
       computeNextRank: (anchor) => computeNextRank(profileId, anchor),
     },
     taxonomy: createTaxonomyStore(profileId),

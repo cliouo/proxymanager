@@ -16,6 +16,11 @@ import {
   type FetchCacheEntry,
 } from '@/lib/repos/fetchCacheRepo';
 import {
+  asSubscriptionValidationError,
+  SubscriptionResolutionValidationError,
+  SubscriptionUpstreamUnavailableError,
+} from '@/lib/services/subscriptionResolutionErrors';
+import {
   SubscriptionTrafficSchema,
   type Subscription,
   type SubscriptionTraffic,
@@ -61,6 +66,24 @@ export interface FetchSubscriptionProxiesResult {
   proxyCount: number;
   stale?: boolean;
   staleReason?: string;
+}
+
+export interface SubscriptionResolveOptions {
+  noCache?: boolean;
+  timeoutMs?: number;
+  /**
+   * Persist a successful remote response into the fetch cache. Preflight
+   * callers set this to false so validating an in-memory candidate has no
+   * storage side effects. Defaults to true for normal render/refresh paths.
+   */
+  writeCache?: boolean;
+  /**
+   * Permit a validated but expired cache entry when the upstream refresh
+   * fails. Normal renders keep the existing stale-on-error behaviour;
+   * save-time preflight sets this to false because stale nodes cannot prove a
+   * candidate is valid against the current upstream state.
+   */
+  allowStale?: boolean;
 }
 
 /**
@@ -137,6 +160,23 @@ function extractProxyObjects(yamlText: string): Record<string, unknown>[] {
   return validateProviderProxyList(proxies);
 }
 
+function applySubscriptionOperators(
+  input: Record<string, unknown>[],
+  operators: Subscription['operators'],
+): Record<string, unknown>[] {
+  try {
+    const { proxies: operated } = applyOperators(input as ClashProxy[], operators ?? []);
+    return validateProviderProxyList(operated);
+  } catch (error) {
+    throw asSubscriptionValidationError(
+      error,
+      'operators',
+      'subscription_operators_invalid',
+      'Subscription operator pipeline is invalid.',
+    );
+  }
+}
+
 /**
  * Resolve a subscription's current content — the single entry point used by
  * every other caller. Returns proxies with the sub's node-processing
@@ -148,7 +188,7 @@ function extractProxyObjects(yamlText: string): Record<string, unknown>[] {
  */
 export async function resolveSubscriptionContent(
   sub: Subscription,
-  options: { noCache?: boolean; timeoutMs?: number } = {},
+  options: SubscriptionResolveOptions = {},
 ): Promise<FetchSubscriptionResult> {
   const raw = await resolveSubscriptionRaw(sub, options);
   if (!sub.operators || sub.operators.length === 0) {
@@ -163,8 +203,7 @@ export async function resolveSubscriptionContent(
   // Object-level pipeline, then one stringify at the boundary — the old
   // applyOperatorsToProviderYaml round-trip (parse→ops→stringify) parsed a
   // string we had just produced ourselves.
-  const { proxies: operated } = applyOperators(raw.getProxies() as ClashProxy[], sub.operators);
-  const proxies = validateProviderProxyList(operated);
+  const proxies = applySubscriptionOperators(raw.getProxies(), sub.operators);
   return {
     yaml: stringify({ proxies }, { lineWidth: 0 }),
     traffic: raw.traffic,
@@ -183,7 +222,7 @@ export async function resolveSubscriptionContent(
  */
 export async function resolveSubscriptionProxies(
   sub: Subscription,
-  options: { noCache?: boolean; timeoutMs?: number } = {},
+  options: SubscriptionResolveOptions = {},
 ): Promise<FetchSubscriptionProxiesResult> {
   const raw = await resolveSubscriptionRaw(sub, options);
   const base = raw.getProxies();
@@ -196,8 +235,7 @@ export async function resolveSubscriptionProxies(
       staleReason: raw.staleReason,
     };
   }
-  const { proxies: operated } = applyOperators(base as ClashProxy[], sub.operators);
-  const proxies = validateProviderProxyList(operated);
+  const proxies = applySubscriptionOperators(base, sub.operators);
   return {
     proxies: proxies as Record<string, unknown>[],
     traffic: raw.traffic,
@@ -215,7 +253,7 @@ export async function resolveSubscriptionProxies(
  */
 export async function resolveSubscriptionContentRaw(
   sub: Subscription,
-  options: { noCache?: boolean; timeoutMs?: number } = {},
+  options: SubscriptionResolveOptions = {},
 ): Promise<FetchSubscriptionResult> {
   const raw = await resolveSubscriptionRaw(sub, options);
   return {
@@ -240,7 +278,7 @@ export async function resolveSubscriptionContentRaw(
  */
 export async function resolveSubscriptionProxiesRaw(
   sub: Subscription,
-  options: { noCache?: boolean; timeoutMs?: number } = {},
+  options: SubscriptionResolveOptions = {},
 ): Promise<FetchSubscriptionProxiesResult> {
   const raw = await resolveSubscriptionRaw(sub, options);
   return {
@@ -269,21 +307,42 @@ export async function resolveSubscriptionProxiesRaw(
  */
 async function resolveSubscriptionRaw(
   sub: Subscription,
-  options: { noCache?: boolean; timeoutMs?: number } = {},
+  options: SubscriptionResolveOptions = {},
 ): Promise<RawResolved> {
   if (sub.kind === 'local') {
     if (!sub.content) {
-      throw ProblemDetailsError.unprocessable(
-        `Subscription "${sub.name}" is kind=local but has no content.`,
+      throw asSubscriptionValidationError(
+        ProblemDetailsError.unprocessable(
+          `Subscription "${sub.name}" is kind=local but has no content.`,
+        ),
+        'definition',
+        'subscription_content_missing',
+        'A local subscription has no content.',
       );
     }
-    const { proxies, proxyCount } = normaliseToClashProxies(sub.content);
+    let proxies: Record<string, unknown>[];
+    let proxyCount: number;
+    try {
+      ({ proxies, proxyCount } = normaliseToClashProxies(sub.content));
+    } catch (error) {
+      throw asSubscriptionValidationError(
+        error,
+        'content',
+        'subscription_content_invalid',
+        'Subscription content is invalid.',
+      );
+    }
     return rawFromProxies(proxies, { proxyCount, traffic: undefined });
   }
 
   if (!sub.url) {
-    throw ProblemDetailsError.unprocessable(
-      `Subscription "${sub.name}" is kind=remote but has no url.`,
+    throw asSubscriptionValidationError(
+      ProblemDetailsError.unprocessable(
+        `Subscription "${sub.name}" is kind=remote but has no url.`,
+      ),
+      'definition',
+      'subscription_url_missing',
+      'A remote subscription has no URL.',
     );
   }
 
@@ -331,11 +390,15 @@ async function resolveSubscriptionRaw(
       fetched_at: Date.now(),
     };
     // Keep the entry around long enough to back stale-on-error reads.
-    await setFetchCache(cacheKey, entry, Math.max(sub.ttl_ms, STALE_TTL_MS)).catch(() => undefined);
+    if (options.writeCache !== false) {
+      await setFetchCache(cacheKey, entry, Math.max(sub.ttl_ms, STALE_TTL_MS)).catch(
+        () => undefined,
+      );
+    }
 
     return fresh;
   } catch (err) {
-    if (cachedRaw) {
+    if (cachedRaw && options.allowStale !== false) {
       // Stale-on-error: upstream is unreachable but we have a prior fetch.
       // Only a payload validated above qualifies as last-known-good.
       const reason = err instanceof Error ? err.message : String(err);
@@ -389,35 +452,41 @@ async function fetchSubscriptionInternal(
       const location = response.headers.get('location');
       await response.body?.cancel().catch(() => undefined);
       if (!location) {
-        throw ProblemDetailsError.badRequest('Upstream redirect is missing Location');
+        throw new SubscriptionUpstreamUnavailableError('Upstream redirect is missing Location');
       }
       if (hop === MAX_SUBSCRIPTION_REDIRECTS) {
-        throw ProblemDetailsError.badRequest('Upstream returned too many redirects');
+        throw new SubscriptionUpstreamUnavailableError('Upstream returned too many redirects');
       }
 
       let nextUrl: URL;
       try {
         nextUrl = parseSubscriptionUrl(new URL(location, currentUrl).toString());
-      } catch (error) {
-        if (error instanceof ProblemDetailsError) throw error;
-        throw ProblemDetailsError.badRequest('Upstream redirect URL is invalid');
+      } catch {
+        throw new SubscriptionUpstreamUnavailableError('Upstream redirect URL is invalid');
       }
       if (nextUrl.origin !== currentUrl.origin) {
-        throw ProblemDetailsError.badRequest('Cross-origin upstream redirect is not allowed');
+        throw new SubscriptionUpstreamUnavailableError(
+          'Cross-origin upstream redirect is not allowed',
+        );
       }
       currentUrl = nextUrl;
     }
     if (!response) {
-      throw ProblemDetailsError.badRequest('Upstream fetch failed');
+      throw new SubscriptionUpstreamUnavailableError('Upstream fetch failed');
     }
     if (!response.ok) {
-      throw ProblemDetailsError.badRequest(`Upstream returned HTTP ${response.status}`);
+      throw new SubscriptionUpstreamUnavailableError(`Upstream returned HTTP ${response.status}`);
     }
     traffic = parseTrafficHeader(response.headers.get('subscription-userinfo'));
     const declaredLength = Number(response.headers.get('content-length') ?? '');
     if (Number.isFinite(declaredLength) && declaredLength > MAX_SUBSCRIPTION_BODY_BYTES) {
-      throw ProblemDetailsError.badRequest(
-        `Upstream subscription body exceeds ${MAX_SUBSCRIPTION_BODY_BYTES} bytes`,
+      throw asSubscriptionValidationError(
+        ProblemDetailsError.badRequest(
+          `Upstream subscription body exceeds ${MAX_SUBSCRIPTION_BODY_BYTES} bytes`,
+        ),
+        'content',
+        'subscription_content_too_large',
+        'Subscription content is too large.',
       );
     }
     // P2-6: the body read must stay INSIDE the same timeout window (don't clear
@@ -426,30 +495,58 @@ async function fetchSubscriptionInternal(
     // upstream can't OOM the worker. Reuse safeFetch's capped reader.
     const { buf, truncated } = await readCapped(response, MAX_SUBSCRIPTION_BODY_BYTES);
     if (truncated) {
-      throw ProblemDetailsError.badRequest(
-        `Upstream subscription body exceeds ${MAX_SUBSCRIPTION_BODY_BYTES} bytes`,
+      throw asSubscriptionValidationError(
+        ProblemDetailsError.badRequest(
+          `Upstream subscription body exceeds ${MAX_SUBSCRIPTION_BODY_BYTES} bytes`,
+        ),
+        'content',
+        'subscription_content_too_large',
+        'Subscription content is too large.',
       );
     }
     try {
       text = new TextDecoder('utf-8', { fatal: true }).decode(buf);
     } catch {
-      throw ProblemDetailsError.badRequest('Upstream subscription body is not valid UTF-8');
+      throw asSubscriptionValidationError(
+        ProblemDetailsError.badRequest('Upstream subscription body is not valid UTF-8'),
+        'content',
+        'subscription_content_invalid_encoding',
+        'Subscription content is not valid UTF-8.',
+      );
     }
   } catch (err) {
-    if (err instanceof ProblemDetailsError) throw err;
+    if (
+      err instanceof SubscriptionResolutionValidationError ||
+      err instanceof SubscriptionUpstreamUnavailableError
+    ) {
+      throw err;
+    }
     if (err instanceof DOMException && err.name === 'AbortError') {
-      throw ProblemDetailsError.badRequest(`Upstream fetch timed out after ${timeoutMs}ms`);
+      throw new SubscriptionUpstreamUnavailableError(
+        `Upstream fetch timed out after ${timeoutMs}ms`,
+      );
     }
     // Fetch implementations routinely include the complete URL (userinfo,
     // path and query) in their error text. Subscription URLs and custom
     // headers commonly carry tokens, and this message also feeds staleReason
     // and persisted last_error, so never forward the underlying diagnostic.
-    throw ProblemDetailsError.badRequest('Upstream fetch failed');
+    throw new SubscriptionUpstreamUnavailableError('Upstream fetch failed');
   } finally {
     clearTimeout(timer);
   }
 
-  const { proxies, proxyCount } = normaliseToClashProxies(text);
+  let proxies: Record<string, unknown>[];
+  let proxyCount: number;
+  try {
+    ({ proxies, proxyCount } = normaliseToClashProxies(text));
+  } catch (error) {
+    throw asSubscriptionValidationError(
+      error,
+      'content',
+      'subscription_content_invalid',
+      'Subscription content is invalid.',
+    );
+  }
   return rawFromProxies(proxies, { traffic, proxyCount });
 }
 
@@ -458,13 +555,28 @@ function parseSubscriptionUrl(raw: string): URL {
   try {
     parsed = new URL(raw);
   } catch {
-    throw ProblemDetailsError.badRequest('Invalid upstream subscription URL');
+    throw asSubscriptionValidationError(
+      ProblemDetailsError.badRequest('Invalid upstream subscription URL'),
+      'definition',
+      'subscription_url_invalid',
+      'Subscription URL is invalid.',
+    );
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    throw ProblemDetailsError.badRequest('Upstream subscription URL must use http(s)');
+    throw asSubscriptionValidationError(
+      ProblemDetailsError.badRequest('Upstream subscription URL must use http(s)'),
+      'definition',
+      'subscription_url_protocol_invalid',
+      'Subscription URL must use HTTP or HTTPS.',
+    );
   }
   if (parsed.username !== '' || parsed.password !== '') {
-    throw ProblemDetailsError.badRequest('Upstream subscription URL must not contain userinfo');
+    throw asSubscriptionValidationError(
+      ProblemDetailsError.badRequest('Upstream subscription URL must not contain userinfo'),
+      'definition',
+      'subscription_url_credentials_forbidden',
+      'Subscription URL must not contain credentials.',
+    );
   }
   return parsed;
 }

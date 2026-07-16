@@ -11,6 +11,7 @@
 
 import { z } from 'zod';
 import { stringify } from 'yaml';
+import { REDACTED } from '@/lib/ai/configAccess';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { safeFetchText } from '@/lib/net/safeFetch';
 import { listRules } from '@/lib/repos/rulesRepo';
@@ -22,7 +23,10 @@ import { defineAction, defineWriteAction, type ActionEnvelope } from '../types';
 const SCENARIO = 'rule-provider';
 
 type LibFields = Partial<
-  Pick<RuleSet, 'name' | 'source' | 'format' | 'behavior' | 'url' | 'content' | 'interval' | 'proxy' | 'note'>
+  Pick<
+    RuleSet,
+    'name' | 'source' | 'format' | 'behavior' | 'url' | 'content' | 'interval' | 'proxy' | 'note'
+  >
 >;
 
 /** Compact YAML view of a library entry for the confirm card's line-diff. */
@@ -30,12 +34,28 @@ function libYaml(s: LibFields): string {
   const source = s.source ?? 'local';
   const obj: Record<string, unknown> = { name: s.name, source, format: s.format };
   if (s.behavior) obj.behavior = s.behavior;
-  if (source === 'remote') obj.url = s.url;
+  if (source === 'remote' && s.url) obj.url = REDACTED;
   if (s.interval) obj.interval = s.interval;
   if (s.proxy) obj.proxy = s.proxy;
-  if (s.note) obj.note = s.note;
-  if (source === 'local' && s.content) obj.content = s.content;
+  if (s.note) obj.note = `${REDACTED}（备注 ${s.note.length} 字符）`;
+  if (source === 'local' && s.content) {
+    obj.content = `${REDACTED}（本地内容 ${s.content.length} 字符）`;
+  }
   return stringify(obj).trimEnd();
+}
+
+function safeRuleSetResult(value: unknown): unknown {
+  if (!value || typeof value !== 'object') return value;
+  const set = value as Partial<RuleSet>;
+  return {
+    ...(typeof set.id === 'string' ? { id: set.id } : {}),
+    ...(typeof set.name === 'string' ? { name: set.name } : {}),
+    source: set.source ?? 'local',
+    ...(typeof set.format === 'string' ? { format: set.format } : {}),
+    ...(typeof set.behavior === 'string' ? { behavior: set.behavior } : {}),
+    ...(typeof set.interval === 'number' ? { interval: set.interval } : {}),
+    ...(typeof set.updated_at === 'number' ? { updated_at: set.updated_at } : {}),
+  };
 }
 
 function writeResult(
@@ -44,7 +64,10 @@ function writeResult(
   data: unknown,
   events: Array<{ id: string; op: string }>,
 ): ActionEnvelope {
-  return { kind: 'write-result', data: { op, summary, result: data, events } };
+  return {
+    kind: 'write-result',
+    data: { op, summary, result: safeRuleSetResult(data), events },
+  };
 }
 
 async function mustGet(id: string): Promise<RuleSet> {
@@ -58,7 +81,7 @@ async function mustGet(id: string): Promise<RuleSet> {
 const listRuleProviders = defineAction({
   name: 'list_rule_providers',
   description:
-    '列出规则集库（rule-providers）的全部条目：name(被 RULE-SET 规则引用的值)/source(local 托管 或 remote 外部URL)/format/behavior/url/interval/enabled，以及每个被多少条 RULE-SET 规则引用(referenced)。回答"有哪些规则集""某规则集被谁引用""改规则集前拿 id"时调用。',
+    '列出规则集库（rule-providers）的全部条目：name(被 RULE-SET 规则引用的值)/source(local 托管 或 remote 外部URL)/format/behavior/脱敏后的url/interval，以及每个被多少条 RULE-SET 规则引用(referenced)。回答"有哪些规则集""某规则集被谁引用""改规则集前拿 id"时调用。',
   input: z.object({}),
   risk: 'read',
   async run(ctx) {
@@ -77,10 +100,10 @@ const listRuleProviders = defineAction({
           source: s.source ?? 'local',
           format: s.format,
           behavior: s.behavior ?? null,
-          url: (s.source ?? 'local') === 'remote' ? s.url : null,
+          url: (s.source ?? 'local') === 'remote' && s.url ? REDACTED : null,
           interval: s.interval ?? null,
           referenced: refs.get(s.name) ?? 0,
-          note: s.note ?? null,
+          note: s.note ? REDACTED : null,
         })),
       },
     };
@@ -96,9 +119,15 @@ const CreateInput = z
       .regex(/^[a-z0-9_-]+$/, '只能是小写字母/数字/下划线/连字符')
       .max(64)
       .describe('规则集名(slug)；RULE-SET 规则用这个名字引用它'),
-    source: z.enum(['local', 'remote']).optional().describe('local=平台托管内容；remote=外部URL。默认 local'),
+    source: z
+      .enum(['local', 'remote'])
+      .optional()
+      .describe('local=平台托管内容；remote=外部URL。默认 local'),
     format: z.enum(['yaml', 'text', 'mrs']).describe('local 仅支持 yaml/text；remote 可用 mrs'),
-    behavior: z.enum(['classical', 'domain', 'ipcidr']).optional().describe('mihomo rule-provider behavior'),
+    behavior: z
+      .enum(['classical', 'domain', 'ipcidr'])
+      .optional()
+      .describe('mihomo rule-provider behavior'),
     content: z.string().max(200000).optional().describe('local 必填：规则集内容(如 payload: ...)'),
     url: z.string().max(2000).optional().describe('remote 必填：mihomo 直接抓取的外部 URL'),
     interval: z.number().int().positive().optional().describe('刷新间隔(秒)，默认 86400'),
@@ -124,14 +153,26 @@ const createRuleProvider = defineWriteAction({
     '在规则集库新增一个规则集（local 托管内容 或 remote 外部URL）。需用户确认。注意：新建只是入库，要让它生效还需用 add_rule 加一条 RULE-SET 规则引用它的 name。',
   input: CreateInput,
   risk: 'write',
-  summary: (i) =>
-    `新增规则集：${i.name}（${i.source ?? 'local'}${(i.source ?? 'local') === 'remote' ? ` ${i.url}` : ''}）`,
+  summary: (i) => `新增规则集：${i.name}（${i.source ?? 'local'}）`,
   async preview(_ctx, input) {
-    return { diff: { op: 'add', path: `rule-providers[${input.name}]`, afterYaml: libYaml(input) } };
+    return {
+      diff: { op: 'add', path: `rule-providers[${input.name}]`, afterYaml: libYaml(input) },
+    };
   },
   async execute(ctx, input) {
-    const res = await dispatch({ scenario: SCENARIO, op: 'create', payload: input, actor: ctx.actor, profileId: ctx.profileId });
-    return writeResult('add', `已新增规则集 ${input.name}`, res.data, res.events.map((e) => ({ id: e.id, op: e.op })));
+    const res = await dispatch({
+      scenario: SCENARIO,
+      op: 'create',
+      payload: input,
+      actor: ctx.actor,
+      profileId: ctx.profileId,
+    });
+    return writeResult(
+      'add',
+      `已新增规则集 ${input.name}`,
+      res.data,
+      res.events.map((e) => ({ id: e.id, op: e.op })),
+    );
   },
 });
 
@@ -176,14 +217,27 @@ const updateRuleProvider = defineWriteAction({
     const { id, ...rest } = input;
     const patch: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(rest)) if (v !== undefined) patch[k] = v;
-    const res = await dispatch({ scenario: SCENARIO, op: 'patch', payload: { id, patch }, actor: ctx.actor, profileId: ctx.profileId });
-    return writeResult('update', `已修改规则集 ${id.slice(0, 8)}…`, res.data, res.events.map((e) => ({ id: e.id, op: e.op })));
+    const res = await dispatch({
+      scenario: SCENARIO,
+      op: 'patch',
+      payload: { id, patch },
+      actor: ctx.actor,
+      profileId: ctx.profileId,
+    });
+    return writeResult(
+      'update',
+      `已修改规则集 ${id.slice(0, 8)}…`,
+      res.data,
+      res.events.map((e) => ({ id: e.id, op: e.op })),
+    );
   },
 });
 
 /* ─── delete_rule_provider ──────────────────────────────────────────── */
 
-const DeleteInput = z.object({ id: z.uuid().describe('规则集 id（先用 list_rule_providers 获取）') });
+const DeleteInput = z.object({
+  id: z.uuid().describe('规则集 id（先用 list_rule_providers 获取）'),
+});
 
 const deleteRuleProvider = defineWriteAction({
   name: 'delete_rule_provider',
@@ -194,12 +248,25 @@ const deleteRuleProvider = defineWriteAction({
   summary: (i) => `删除规则集 ${i.id.slice(0, 8)}…`,
   async preview(_ctx, input) {
     const before = await mustGet(input.id);
-    return { diff: { op: 'delete', path: `rule-providers[${before.name}]`, beforeYaml: libYaml(before) } };
+    return {
+      diff: { op: 'delete', path: `rule-providers[${before.name}]`, beforeYaml: libYaml(before) },
+    };
   },
   async execute(ctx, input) {
     const before = await mustGet(input.id);
-    const res = await dispatch({ scenario: SCENARIO, op: 'delete', payload: { id: input.id }, actor: ctx.actor, profileId: ctx.profileId });
-    return writeResult('delete', `已删除规则集 ${before.name}`, res.data, res.events.map((e) => ({ id: e.id, op: e.op })));
+    const res = await dispatch({
+      scenario: SCENARIO,
+      op: 'delete',
+      payload: { id: input.id },
+      actor: ctx.actor,
+      profileId: ctx.profileId,
+    });
+    return writeResult(
+      'delete',
+      `已删除规则集 ${before.name}`,
+      res.data,
+      res.events.map((e) => ({ id: e.id, op: e.op })),
+    );
   },
 });
 
@@ -230,7 +297,12 @@ const localizeRuleProvider = defineWriteAction({
         op: 'update',
         path: `rule-providers[${before.name}]`,
         beforeYaml: libYaml(before),
-        afterYaml: libYaml({ ...before, source: 'local', url: '', content: `（确认后抓取自 ${before.url}）` }),
+        afterYaml: libYaml({
+          ...before,
+          source: 'local',
+          url: '',
+          content: '（确认后抓取并保存，内容不在确认卡中展示）',
+        }),
       },
     };
   },

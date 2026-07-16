@@ -3,7 +3,8 @@ import { withProblemDetails } from '@/lib/http/handler';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { resolveScopeProfile } from '@/lib/profileScope';
 import { recordEvents } from '@/lib/repos/auditRepo';
-import { batchUpsertAndDelete, listRules } from '@/lib/repos/rulesRepo';
+import { getConfigVersion } from '@/lib/repos/configVersionRepo';
+import { listRules } from '@/lib/repos/rulesRepo';
 import {
   computeNextRank,
   ensureValidAnchorAndPolicy,
@@ -14,6 +15,7 @@ import {
   nowSeconds,
   resolveActor,
 } from '@/lib/services/rulesService';
+import { preflightAndCommitProfileChanges } from '@/lib/services/profileConfigMutationService';
 import { assertMergedRuleRenderable } from '@/schemas/rule';
 import { BatchRequestSchema, type BatchOpResult, type Rule } from '@/schemas';
 
@@ -26,6 +28,7 @@ export const POST = withProblemDetails(async (request: Request) => {
   });
   const { ops } = BatchRequestSchema.parse(raw);
 
+  const planningVersion = await getConfigVersion();
   const parsedBase = await loadParsedBase(profileId);
   const existing = await listRules(profileId);
   const existingMap = new Map(existing.map((r) => [r.id, r]));
@@ -150,7 +153,16 @@ export const POST = withProblemDetails(async (request: Request) => {
     }
   }
 
-  await batchUpsertAndDelete(profileId, writes, removes);
+  if (writes.length > 0 || removes.length > 0) {
+    await preflightAndCommitProfileChanges(
+      profileId,
+      {
+        ruleWrites: writes,
+        ruleDeletes: removes,
+      },
+      planningVersion,
+    );
+  }
 
   // P2-8: emit all audit events in one pipeline after the commit lands, instead
   // of a per-op serial loop that could take tens of seconds for a large batch.

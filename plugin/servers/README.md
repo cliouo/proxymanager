@@ -4,7 +4,8 @@
 客户端（Claude Code / Codex / …），让它们驱动**同一个后端、同一套服务端写入门控**。
 
 这是**桥接**不是重写：工具 schema 实时取自 `/api/v1/assistant/bootstrap`，调用代理到
-`/api/v1/assistant/tool`，写入第二步代理到 `/api/v1/assistant/confirm`。
+`/api/v1/assistant/tool`；写操作由 MCP host 的 form elicitation 向用户确认后，桥接内部再调用
+`/api/v1/assistant/confirm`。一次性 token 不返回模型。
 
 ## 数据流
 
@@ -15,17 +16,17 @@ skill-aware client ──stdio──► proxymanager-mcp.mjs ──HTTPS(Bearer 
      │  tools/list ◄──────────────┤
      │  tools/call(add_rule) ─────► POST /assistant/tool {name,input}
      │                            │      ← envelope{kind:'confirm-write', data:{summary,diff,confirmation_token}}
-     │  (向用户展示 summary/diff，取得授权)
-     │  tools/call(confirm_write,{token}) ─► POST /assistant/confirm {token} → 执行(审计+可撤)
+     │  ◄── MCP host form elicitation：用户明确勾选确认
+     │                            │  (token 留在桥接内) POST /assistant/confirm → 执行(审计+可撤)
 ```
 
 ## 环境变量
 
-| 变量 | 默认 | 说明 |
-|---|---|---|
-| `PROXYMANAGER_BASE_URL` | `http://localhost:3000` | ProxyManager 实例地址 |
-| `PROXYMANAGER_ADMIN_KEY` | （空） | `Authorization: Bearer <ADMIN_KEY>`，见 `web/lib/auth.ts:requireAdminBearer` |
-| `PROXYMANAGER_PROFILE` | `default` | 作为 `?profile=` 注入，见 `web/lib/profileScope.ts`（query > cookie > default） |
+| 变量                     | 默认                    | 说明                                                                            |
+| ------------------------ | ----------------------- | ------------------------------------------------------------------------------- |
+| `PROXYMANAGER_BASE_URL`  | `http://localhost:3000` | ProxyManager 实例地址                                                           |
+| `PROXYMANAGER_ADMIN_KEY` | （空）                  | `Authorization: Bearer <ADMIN_KEY>`，见 `web/lib/auth.ts:requireAdminBearer`    |
+| `PROXYMANAGER_PROFILE`   | `default`               | 作为 `?profile=` 注入，见 `web/lib/profileScope.ts`（query > cookie > default） |
 
 ## 安装 / 运行
 
@@ -61,7 +62,10 @@ node proxymanager-mcp.mjs      # 需要 ProxyManager 实例在线
 ## 写入门控为什么仍然安全（即便模型在客户端侧）
 
 - token 由**服务端**铸造（`confirm.ts`，`randomBytes` hex，Redis TTL 300s，`getdel` 一次性消费），
-  并绑定 `{actor, action, zod 校验后的 input, profileId}`——客户端模型无法夹带不同 payload 或改写目标 profile。
+  并绑定 `{actor, action, zod 校验后的 input, profileId}`。桥接不把 token 返回模型；只有 MCP host
+  的 form elicitation 收到用户明确接受且勾选确认后才消费。客户端不支持表单时写操作直接停止。
+- bridge 将 `select_profile` 与所有工具调用串行化，避免切换 profile 与写 preview 并发交错；确认表单
+  也明确显示目标 profile。
 - `neverList.ts` 是硬黑名单，在 preview 和 execute 前各查一次（目前为空占位，随工具面扩张在此单点收口）。
 - `<external_data>` 包裹与 `***` 脱敏由服务端做；这些**不在 SKILL.md 里**，模型无法绕过。
 - skill 的工具子集（owned tools）只是**组织划分不是沙箱**——孤儿引用连带修复需要跨 skill 调

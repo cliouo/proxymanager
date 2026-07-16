@@ -2,7 +2,9 @@ import { z } from 'zod';
 import { withProblemDetails } from '@/lib/http/handler';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { resolveScopeProfile } from '@/lib/profileScope';
-import { batchUpsertAndDelete, listRules } from '@/lib/repos/rulesRepo';
+import { getConfigVersion } from '@/lib/repos/configVersionRepo';
+import { listRules } from '@/lib/repos/rulesRepo';
+import { preflightAndCommitProfileChanges } from '@/lib/services/profileConfigMutationService';
 import { nowSeconds } from '@/lib/services/rulesService';
 import type { Rule } from '@/schemas';
 
@@ -21,6 +23,7 @@ export const POST = withProblemDetails(async (request: Request) => {
   const body = ReorderRequestSchema.parse(raw) ?? { step: 10 };
   const step = body.step ?? 10;
 
+  const planningVersion = await getConfigVersion();
   const all = await listRules(profileId);
   const target = body.anchor ? all.filter((r) => r.anchor === body.anchor) : all;
   if (body.anchor && target.length === 0) {
@@ -51,7 +54,9 @@ export const POST = withProblemDetails(async (request: Request) => {
     if (changes.length > 0) reassigned[anchor] = changes;
   }
 
-  await batchUpsertAndDelete(profileId, writes, []);
+  if (writes.length > 0) {
+    await preflightAndCommitProfileChanges(profileId, { ruleWrites: writes }, planningVersion);
+  }
 
   return Response.json({
     data: {

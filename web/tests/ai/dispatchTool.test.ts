@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ClientSafeProblemDetailsError, ProblemDetailsError } from '@/lib/http/problem';
 import type { ProxyGroup } from '@/schemas';
 
 /**
@@ -99,7 +100,10 @@ describe('dispatchToolCall', () => {
   it('stages a write as confirm-write WITHOUT executing it', async () => {
     const g = seedGroup({ filter: '(?i)old' });
     const fixed = '(?i)🇺🇸|美';
-    const res = await dispatch.dispatchToolCall(CTX, 'update_proxy_group', { id: g.id, filter: fixed });
+    const res = await dispatch.dispatchToolCall(CTX, 'update_proxy_group', {
+      id: g.id,
+      filter: fixed,
+    });
 
     expect(res.kind).toBe('confirm-write');
     const data = res.data as { token: string; action: string };
@@ -118,5 +122,31 @@ describe('dispatchToolCall', () => {
   it('returns an error result for invalid input', async () => {
     const res = await dispatch.dispatchToolCall(CTX, 'update_proxy_group', { id: 'not-a-uuid' });
     expect(res.kind).toBe('error');
+  });
+
+  it('does not reflect unknown exception messages into tool results', () => {
+    const secret = 'https://token.example.invalid/private';
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const result = dispatch.safeToolError(new Error(secret), 'preview_proxy_group_members');
+
+    expect(result.error).toBe('工具执行遇到内部错误，请稍后重试。');
+    expect(JSON.stringify(result)).not.toContain(secret);
+    expect(log).toHaveBeenCalled();
+  });
+
+  it('does not trust ordinary 4xx problem details, but preserves explicitly safe ones', () => {
+    const secret = 'password: TOPSECRET-CREDENTIAL';
+    const unsafe = dispatch.safeToolError(
+      ProblemDetailsError.unprocessable(secret),
+      'set_config_section',
+    );
+    const safe = dispatch.safeToolError(
+      ClientSafeProblemDetailsError.unprocessable('固定安全原因。'),
+      'migrate_direct_alias',
+    );
+
+    expect(unsafe.error).toBe('当前配置不满足该操作的执行条件。');
+    expect(JSON.stringify(unsafe)).not.toContain(secret);
+    expect(safe.error).toBe('固定安全原因。');
   });
 });

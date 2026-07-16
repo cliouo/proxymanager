@@ -18,14 +18,7 @@
  * config-section scenario.
  */
 
-import {
-  isPair,
-  isScalar,
-  parseDocument,
-  stringify,
-  visit,
-  type Document,
-} from 'yaml';
+import { isPair, isScalar, parseDocument, stringify, visit, type Document } from 'yaml';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { getBase } from '@/lib/repos/baseRepo';
 import { parsePath, SENSITIVE_KEY } from './configPath';
@@ -51,18 +44,27 @@ function inSecretUrlScope(path: readonly unknown[]): boolean {
   return false;
 }
 
-// Mask token-like segments inside a URL while keeping host + readable path
-// parts visible. A "token" is a 16+ char run of [A-Za-z0-9] containing a digit
-// (covers hex and base62 access tokens) in the path or query, not the host, so
-// a tokenised self-hosted rule URL loses its token but keeps host and filename,
-// while public github/dns URLs stay intact.
-const URL_RE = /(https?:\/\/[^\s"'\/]+)(\/[^\s"']*)?/gi;
-const TOKEN_RE = /[A-Za-z0-9]{16,}/g;
+// There is no reliable way to distinguish a public path/query value from a
+// short bearer token. Assistant-facing views therefore keep only URL origins;
+// every path/query/fragment is replaced instead of guessed from its shape.
+const URL_RE = /https?:\/\/[^\s"'<>]+/giu;
 
-function scrubUrlTokens(s: string): string {
-  return s.replace(URL_RE, (full, origin: string, rest?: string) => {
-    if (!rest) return full;
-    return origin + rest.replace(TOKEN_RE, (seg) => (/\d/.test(seg) ? REDACTED : seg));
+export function scrubUrlTokens(s: string): string {
+  return s.replace(URL_RE, (raw) => {
+    const trailing = raw.match(/[),.;\]}]+$/u)?.[0] ?? '';
+    const candidate = trailing ? raw.slice(0, -trailing.length) : raw;
+    try {
+      const parsed = new URL(candidate);
+      const hasHiddenPart =
+        parsed.username !== '' ||
+        parsed.password !== '' ||
+        (parsed.pathname !== '' && parsed.pathname !== '/') ||
+        parsed.search !== '' ||
+        parsed.hash !== '';
+      return `${parsed.protocol}//${parsed.host}${hasHiddenPart ? `/${REDACTED}` : ''}${trailing}`;
+    } catch {
+      return `${REDACTED}${trailing}`;
+    }
   });
 }
 
@@ -75,7 +77,10 @@ function scrubComment(c: string | null | undefined): string | null | undefined {
   if (!c) return c;
   return c
     .replace(/https?:\/\/\S+/gi, REDACTED)
-    .replace(/\b(token|secret|password|passwd|uuid|psk|key|credential|auth)\s*[=:]\s*\S+/gi, `$1=${REDACTED}`);
+    .replace(
+      /\b(token|secret|password|passwd|uuid|psk|key|credential|auth)\s*[=:]\s*\S+/gi,
+      `$1=${REDACTED}`,
+    );
 }
 
 interface Commentable {

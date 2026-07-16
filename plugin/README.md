@@ -27,12 +27,12 @@ plugin/
 
 ## 4 个 skill 一览
 
-| skill | 何时触发 | 拥有工具(数) |
-|---|---|---|
-| `managing-clash-config` (hub) | 任何配置请求；规则 / 规则集 / dns/sniffer/tun / 节点真相 / 复合任务路由 | 18 |
-| `synthesizing-proxy-groups` | 策略组成员 / filter / 地区组 / 组吃错节点 | 6 |
-| `editing-node-operators` | 算子管线 / 重命名 / 加旗 / 去重 / 本地源改名 | 9 |
-| `optimizing-whole-config` | 整体优化 / 通盘检查（单点小改不触发） | 7 |
+| skill                         | 何时触发                                                                | 拥有工具(数) |
+| ----------------------------- | ----------------------------------------------------------------------- | ------------ |
+| `managing-clash-config` (hub) | 任何配置请求；规则 / 规则集 / dns/sniffer/tun / 节点真相 / 复合任务路由 | 18           |
+| `synthesizing-proxy-groups`   | 策略组成员 / filter / 地区组 / 组吃错节点                               | 6            |
+| `editing-node-operators`      | 算子管线 / 重命名 / 加旗 / 去重 / 本地源改名                            | 9            |
+| `optimizing-whole-config`     | 整体优化 / 通盘检查（单点小改不触发）                                   | 7            |
 
 > 工具有意跨 skill 复用（如 `add_rule` / `update_proxy_group`）：同一 MCP server，
 > owned-tools 只是组织划分不是沙箱。
@@ -58,7 +58,7 @@ PROXYMANAGER_ADMIN_KEY=xxxx claude --plugin-dir ./plugin
 
 - ✅ 4 个 SKILL.md（完整 frontmatter + 正文，已应用压测修法：改名归并到 operators、spoke 安全地板、复合任务路由）
 - ✅ 15 个 `references/*` 全部填成正文（逐文件对照 primitives 源码核验）
-- ✅ MCP 桥接 server（可跑，代理 registry + 合成 `confirm_write`）+ plugin 清单
+- ✅ MCP 桥接 server（可跑，代理 registry；写操作由 host form elicitation 展示脱敏 diff 并要求人类确认）+ plugin 清单
 - ✅ **网页内 AI 已切到 skill 来源**：`web/lib/ai/systemPrompt.ts` 由 `scripts/build-skills.mjs`
   从本 plugin 的 SKILL.md **组装**（`skills.generated.ts`）；新增 `get_skill_reference` 工具按需读 references。
   改 SKILL.md 后跑 `cd web && npm run build:skills` 重生成。

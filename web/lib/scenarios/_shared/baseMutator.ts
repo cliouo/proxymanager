@@ -14,6 +14,7 @@ import { parseBase } from '@/lib/engine/parser';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { getBase, setBase } from '@/lib/repos/baseRepo';
 import { computeEtag } from '@/lib/services/baseService';
+import { preflightProfileConfig } from '@/lib/services/configPreflight';
 import { nowSeconds } from '@/lib/services/rulesService';
 import type { BaseReadResult, BaseStore } from './types';
 
@@ -46,6 +47,9 @@ export function createBaseStore(profileId: string): BaseStore {
       // existing parser also validates structural shape; failures here mean
       // the mutation produced corrupt YAML and should not be committed.
       const parsed = parseBase(newContent);
+      const checked = await preflightProfileConfig(profileId, () => ({
+        baseContent: newContent,
+      }));
 
       const newEtag = computeEtag(newContent);
       const writeResult = await setBase(
@@ -58,9 +62,15 @@ export function createBaseStore(profileId: string): BaseStore {
           updated_at: nowSeconds(),
         },
         expectedEtag,
+        checked.configVersion,
       );
 
       if (!writeResult.ok) {
+        if (writeResult.conflict === 'config-version') {
+          throw ProblemDetailsError.preconditionFailed(
+            '配置在保存前校验期间被其他写入修改,请刷新后重试。',
+          );
+        }
         throw ProblemDetailsError.preconditionFailed(
           `base.yaml was modified concurrently (etag mismatch — current ${writeResult.currentEtag ?? '(none)'}).`,
         );

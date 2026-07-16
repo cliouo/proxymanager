@@ -1,6 +1,6 @@
 import { createPrivateKey, createPublicKey } from 'node:crypto';
 import { isIP } from 'node:net';
-import { ProblemDetailsError } from '@/lib/http/problem';
+import { PROBLEM_BASE_URL, ProblemDetailsError } from '@/lib/http/problem';
 import { isCanonicalUuid, normalizeMihomoUserId } from '@/lib/proxies/mihomoUserId';
 
 // MetaCubeX/mihomo v1.19.28, adapter/parser.go at
@@ -994,6 +994,42 @@ export interface MihomoProxyValidationOptions {
   allowLocalFileReferences?: boolean;
 }
 
+/**
+ * Structured form of the validator's fixed, credential-free entry errors.
+ * It remains a 400 ProblemDetailsError for direct node-input APIs; the final
+ * config renderer can safely remap the same deterministic failure to 422.
+ */
+export class MihomoProxyValidationError extends ProblemDetailsError {
+  constructor(
+    public readonly index: number,
+    public readonly field: string,
+    public readonly reason: string,
+  ) {
+    super({
+      type: `${PROBLEM_BASE_URL}/bad-request`,
+      title: 'Bad Request',
+      status: 400,
+      detail: `Invalid proxy entry at index ${index}: field "${field}" ${reason}`,
+    });
+    this.name = 'MihomoProxyValidationError';
+  }
+}
+
+export class MihomoProxyLimitError extends ProblemDetailsError {
+  constructor(
+    public readonly count: number,
+    public readonly limit: number,
+  ) {
+    super({
+      type: `${PROBLEM_BASE_URL}/bad-request`,
+      title: 'Bad Request',
+      status: 400,
+      detail: `Proxy node count ${count} exceeds limit ${limit}`,
+    });
+    this.name = 'MihomoProxyLimitError';
+  }
+}
+
 export const MAX_PROXY_NODES = 50_000;
 export const MAX_PROXY_NAME_LENGTH = 512;
 export const MAX_HYSTERIA_PORT_CANDIDATES = 65_536;
@@ -1011,9 +1047,7 @@ export function validateMihomoProxyList(
   options: MihomoProxyValidationOptions = {},
 ): Record<string, unknown>[] {
   if (list.length > MAX_PROXY_NODES) {
-    throw ProblemDetailsError.badRequest(
-      `Proxy node count ${list.length} exceeds limit ${MAX_PROXY_NODES}`,
-    );
+    throw new MihomoProxyLimitError(list.length, MAX_PROXY_NODES);
   }
   const proxies = list.map((entry, index) => validateMihomoProxy(entry, index, options));
   validateHysteriaPortBudget(proxies);
@@ -1157,8 +1191,13 @@ function validateTopLevelProxySchema(
   for (const [field, value] of Object.entries(proxy)) {
     const kind = typeFields[field] ?? commonFields[field];
     if (kind === undefined) {
-      // Do not reflect an attacker-controlled unknown key, which may itself
-      // contain subscription credentials or other sensitive material.
+      // `udp` on `direct` is a common legacy alias and both identifiers are
+      // fixed schema names, so reporting this one path is safe and actionable.
+      // Every other unknown/inert key stays hidden because an attacker-controlled
+      // key may itself contain subscription credentials or other sensitive data.
+      if (type === 'direct' && field === 'udp') {
+        invalidProxyEntry(index, field, 'is not supported for type "direct"');
+      }
       invalidProxyEntry(index, 'proxy', 'contains an unsupported top-level field');
     }
     validateProxyFieldKind(value, kind, index, field);
@@ -3654,9 +3693,7 @@ function requirePort(
 }
 
 function invalidProxyEntry(index: number, field: string, reason: string): never {
-  throw ProblemDetailsError.badRequest(
-    `Invalid proxy entry at index ${index}: field "${field}" ${reason}`,
-  );
+  throw new MihomoProxyValidationError(index, field, reason);
 }
 
 function joinField(prefix: string | undefined, field: string): string {
