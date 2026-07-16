@@ -9,7 +9,7 @@
  * global config generation and the base ETag.
  */
 
-import { isMap, isScalar, isSeq, parseDocument, type YAMLMap, type YAMLSeq } from 'yaml';
+import { isAlias, isMap, isScalar, isSeq, parseDocument, type YAMLMap, type YAMLSeq } from 'yaml';
 import { parseBase } from '@/lib/engine/parser';
 import { resolveConfig } from '@/lib/engine/resolve';
 import { validateBase } from '@/lib/engine/validator';
@@ -41,6 +41,13 @@ import {
 
 export const BUILTIN_DIRECT = 'DIRECT';
 const SAFE_DIRECT_FIELDS = new Set(['name', 'type', 'udp']);
+const LEGACY_GROUP_TEMPLATE_TYPES = new Set([
+  'select',
+  'url-test',
+  'fallback',
+  'load-balance',
+  'relay',
+]);
 const COMMA_PAYLOAD_RULE_TYPES = new Set([
   'NOT',
   'OR',
@@ -170,6 +177,53 @@ function rewriteLiteralGroups(doc: ReturnType<typeof parseDocument>, alias: stri
     if (isSeq(members)) changed += rewriteStringSequence(members, alias, BUILTIN_DIRECT);
     for (const field of ['dialer-proxy', 'empty-fallback', 'default-selected']) {
       changed += replaceScalarField(item, field, alias, BUILTIN_DIRECT);
+    }
+  }
+  return changed;
+}
+
+function collectAliasSources(node: unknown, sources: Set<string>): void {
+  if (isAlias(node)) {
+    sources.add(node.source);
+    return;
+  }
+  if (isSeq(node)) {
+    for (const item of node.items) collectAliasSources(item, sources);
+    return;
+  }
+  if (isMap(node)) {
+    for (const pair of node.items) {
+      collectAliasSources(pair.key, sources);
+      collectAliasSources(pair.value, sources);
+    }
+  }
+}
+
+/**
+ * Old configs kept reusable proxy-group defaults as top-level YAML anchors
+ * (`pr: &pr ...`) even after proxy-groups moved into the managed hash. Rewrite
+ * only orphaned, unmistakably group-shaped anchors; a still-referenced anchor
+ * remains unknown and is rejected by the conservative backstop below.
+ */
+function rewriteOrphanedAnchoredGroupTemplates(
+  doc: ReturnType<typeof parseDocument>,
+  alias: string,
+): number {
+  if (!isMap(doc.contents)) return 0;
+  const aliasSources = new Set<string>();
+  collectAliasSources(doc.contents, aliasSources);
+
+  let changed = 0;
+  for (const pair of doc.contents.items) {
+    const template = pair.value;
+    if (!isMap(template) || !template.anchor || aliasSources.has(template.anchor)) continue;
+    if (!LEGACY_GROUP_TEMPLATE_TYPES.has(asString(template.get('type', true)) ?? '')) continue;
+    const members = template.get('proxies', true);
+    if (!isSeq(members)) continue;
+
+    changed += rewriteStringSequence(members, alias, BUILTIN_DIRECT);
+    for (const field of ['dialer-proxy', 'empty-fallback', 'default-selected']) {
+      changed += replaceScalarField(template, field, alias, BUILTIN_DIRECT);
     }
   }
   return changed;
@@ -382,7 +436,8 @@ export function buildDirectAliasCandidate(input: {
     }
   }
   const baseProviderReferences = rewriteProviderMaps(doc, alias);
-  const baseLiteralGroupReferences = rewriteLiteralGroups(doc, alias);
+  const baseLiteralGroupReferences =
+    rewriteLiteralGroups(doc, alias) + rewriteOrphanedAnchoredGroupTemplates(doc, alias);
   const baseLiteralRuleReferences = rewriteLiteralRules(doc, alias);
 
   const remainingPaths = findRemainingAliasPaths(doc.contents, alias);
