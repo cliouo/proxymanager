@@ -40,8 +40,13 @@ vi.mock('@/lib/repos/subscriptionsRepo', () => ({
 }));
 
 import { ConfigPreflightUnavailableError, ConfigValidationError } from '@/lib/config/errors';
+import {
+  MihomoProxyValidationError,
+  validateMihomoProxyList,
+} from '@/lib/proxies/mihomoProxyValidator';
 import { applyConfigEntityChanges, preflightProfileConfig } from '@/lib/services/configPreflight';
 import {
+  asSubscriptionValidationError,
   SubscriptionResolutionValidationError,
   SubscriptionUpstreamUnavailableError,
 } from '@/lib/services/subscriptionResolutionErrors';
@@ -74,6 +79,16 @@ const RULE = {
   added_at: 1,
   updated_at: 1,
 } as Rule;
+
+function renderThroughSubscriptionResolver(): void {
+  mocks.resolveConfig.mockImplementationOnce(async (...args: unknown[]) => {
+    const options = args[5] as {
+      subscriptionResolver: (sub: Subscription) => Promise<unknown>;
+    };
+    await options.subscriptionResolver(REMOTE_SUB);
+    return { content: 'unreachable' };
+  });
+}
 
 describe('preflightProfileConfig', () => {
   beforeEach(() => {
@@ -159,13 +174,7 @@ describe('preflightProfileConfig', () => {
         detail: secret,
       }),
     );
-    mocks.resolveConfig.mockImplementationOnce(async (...args: unknown[]) => {
-      const options = args[5] as {
-        subscriptionResolver: (sub: Subscription) => Promise<unknown>;
-      };
-      await options.subscriptionResolver(REMOTE_SUB);
-      return { content: 'unreachable' };
-    });
+    renderThroughSubscriptionResolver();
 
     const error = await preflightProfileConfig(PROFILE_ID, () => ({})).catch((caught) => caught);
     expect(error).toBeInstanceOf(ConfigValidationError);
@@ -173,7 +182,181 @@ describe('preflightProfileConfig', () => {
       code: 'subscription_operators_invalid',
       message: 'A subscription operator pipeline is invalid.',
       section: 'subscriptions',
-      path: 'subscriptions[].operators',
+      path: 'subscriptions[remote-source].operators',
+      resource: 'subscription',
+    });
+    expect((error as Error).message).not.toContain(secret);
+  });
+
+  it('reports the safe source, node index, field, and reason for invalid content', async () => {
+    const wrapped = asSubscriptionValidationError(
+      new MihomoProxyValidationError(2, 'port', 'must be an integer from 1 through 65535'),
+      'content',
+      'subscription_content_invalid',
+      'Subscription content is invalid.',
+    );
+    expect(wrapped.nodeIssue).toEqual({
+      index: 2,
+      field: 'port',
+      reason: 'must be an integer from 1 through 65535',
+    });
+    mocks.resolveSubscriptionProxies.mockRejectedValueOnce(wrapped);
+    renderThroughSubscriptionResolver();
+
+    const error = await preflightProfileConfig(PROFILE_ID, () => ({})).catch((caught) => caught);
+    expect(error).toBeInstanceOf(ConfigValidationError);
+    expect((error as ConfigValidationError).issue).toEqual({
+      code: 'subscription_content_invalid',
+      message:
+        'A subscription contains an invalid proxy node: field "port" must be an integer from 1 through 65535.',
+      section: 'subscriptions',
+      path: 'subscriptions[remote-source].content.proxies[2].port',
+      resource: 'subscription',
+    });
+  });
+
+  it('reports an invalid operator output at the safe source and node path', async () => {
+    const wrapped = asSubscriptionValidationError(
+      new MihomoProxyValidationError(1, 'udp', 'must be a boolean'),
+      'operators',
+      'subscription_operators_invalid',
+      'Subscription operator pipeline is invalid.',
+    );
+    mocks.resolveSubscriptionProxies.mockRejectedValueOnce(wrapped);
+    renderThroughSubscriptionResolver();
+
+    const error = await preflightProfileConfig(PROFILE_ID, () => ({})).catch((caught) => caught);
+    expect((error as ConfigValidationError).issue).toEqual({
+      code: 'subscription_operators_invalid',
+      message:
+        'A subscription operator pipeline produced an invalid proxy node: field "udp" must be a boolean.',
+      section: 'subscriptions',
+      path: 'subscriptions[remote-source].operators.proxies[1].udp',
+      resource: 'subscription',
+    });
+  });
+
+  it('keeps attacker-controlled proxy field names out of precise diagnostics', async () => {
+    const secretField = 'FAKE_SECRET_UNKNOWN_FIELD';
+    let validationError: unknown;
+    try {
+      validateMihomoProxyList([{ name: 'SAFE-NODE', type: 'direct', [secretField]: true }]);
+    } catch (caught) {
+      validationError = caught;
+    }
+    expect(validationError).toBeInstanceOf(MihomoProxyValidationError);
+    const wrapped = asSubscriptionValidationError(
+      validationError,
+      'content',
+      'subscription_content_invalid',
+      'Subscription content is invalid.',
+    );
+    mocks.resolveSubscriptionProxies.mockRejectedValueOnce(wrapped);
+    renderThroughSubscriptionResolver();
+
+    const error = await preflightProfileConfig(PROFILE_ID, () => ({})).catch((caught) => caught);
+    expect((error as ConfigValidationError).issue).toEqual({
+      code: 'subscription_content_invalid',
+      message:
+        'A subscription contains an invalid proxy node: field "proxy" contains an unsupported top-level field.',
+      section: 'subscriptions',
+      path: 'subscriptions[remote-source].content.proxies[0].proxy',
+      resource: 'subscription',
+    });
+    expect((error as Error).message).not.toContain(secretField);
+  });
+
+  it('removes attacker-controlled nested keys from precise diagnostics', async () => {
+    const secretField = 'FAKE_SECRET_NESTED_FIELD';
+    let validationError: unknown;
+    try {
+      validateMihomoProxyList([
+        {
+          name: 'SAFE-NODE',
+          type: 'vless',
+          uuid: '00000000-0000-4000-8000-000000000000',
+          server: 'example.invalid',
+          port: 443,
+          network: 'ws',
+          'ws-opts': {
+            [secretField]: { 'reality-opts': {} },
+          },
+        },
+      ]);
+    } catch (caught) {
+      validationError = caught;
+    }
+    expect(validationError).toBeInstanceOf(MihomoProxyValidationError);
+    expect((validationError as MihomoProxyValidationError).field).toBe(
+      'ws-opts.reality-opts.public-key',
+    );
+
+    const tlsSecretField = 'FAKE_SECRET_TLS_FIELD';
+    let tlsValidationError: unknown;
+    try {
+      validateMihomoProxyList([
+        {
+          name: 'SAFE-NODE',
+          type: 'vless',
+          uuid: '00000000-0000-4000-8000-000000000000',
+          server: 'example.invalid',
+          port: 443,
+          network: 'ws',
+          'ws-opts': {
+            [tlsSecretField]: {
+              certificate: 'NOT_INLINE_PEM',
+              'private-key': 'NOT_INLINE_PEM',
+            },
+          },
+        },
+      ]);
+    } catch (caught) {
+      tlsValidationError = caught;
+    }
+    expect(tlsValidationError).toBeInstanceOf(MihomoProxyValidationError);
+    expect((tlsValidationError as MihomoProxyValidationError).field).toBe('ws-opts.certificate');
+    expect((tlsValidationError as Error).message).not.toContain(tlsSecretField);
+
+    const wrapped = asSubscriptionValidationError(
+      validationError,
+      'content',
+      'subscription_content_invalid',
+      'Subscription content is invalid.',
+    );
+    mocks.resolveSubscriptionProxies.mockRejectedValueOnce(wrapped);
+    renderThroughSubscriptionResolver();
+
+    const error = await preflightProfileConfig(PROFILE_ID, () => ({})).catch((caught) => caught);
+    expect((error as ConfigValidationError).issue).toEqual({
+      code: 'subscription_content_invalid',
+      message:
+        'A subscription contains an invalid proxy node: field "ws-opts.reality-opts.public-key" must be a non-empty string.',
+      section: 'subscriptions',
+      path: 'subscriptions[remote-source].content.proxies[0].ws-opts.reality-opts.public-key',
+      resource: 'subscription',
+    });
+    expect((error as Error).message).not.toContain(secretField);
+    expect((error as ConfigValidationError).issue.path).not.toContain(secretField);
+  });
+
+  it('keeps arbitrary content errors generic while identifying the safe source slug', async () => {
+    const secret = 'DO_NOT_REFLECT_RAW_SUBSCRIPTION_DETAIL';
+    mocks.resolveSubscriptionProxies.mockRejectedValueOnce(
+      new SubscriptionResolutionValidationError('content', 'subscription_content_invalid', {
+        type: 'https://proxymanager.dev/errors/bad-request',
+        title: 'Bad Request',
+        status: 400,
+        detail: secret,
+      }),
+    );
+    renderThroughSubscriptionResolver();
+
+    const error = await preflightProfileConfig(PROFILE_ID, () => ({})).catch((caught) => caught);
+    expect((error as ConfigValidationError).issue).toEqual({
+      code: 'subscription_content_invalid',
+      message: 'A subscription contains invalid proxy nodes.',
+      section: 'subscriptions',
+      path: 'subscriptions[remote-source].content',
       resource: 'subscription',
     });
     expect((error as Error).message).not.toContain(secret);
