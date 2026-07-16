@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { parse } from 'yaml';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { buildDirectAliasCandidate } from '@/lib/services/directMigrationService';
 import type { BaseRecord } from '@/lib/repos/baseRepo';
@@ -108,6 +109,99 @@ rules:
       baseLiteralGroupReferences: 2,
       baseLiteralRuleReferences: 1,
     });
+  });
+
+  it.each(['select', 'url-test', 'fallback', 'load-balance', 'relay'])(
+    'rewrites an orphaned top-level %s anchor left by legacy migration',
+    (groupType) => {
+      const legacyMembers = Array.from({ length: 9 }, (_, index) => `节点 ${index}`).join(', ');
+      const candidate = buildDirectAliasCandidate({
+        base: base(`
+pr: &pr
+  type: ${groupType}
+  proxies: [${legacyMembers}, ${ALIAS}]
+  dialer-proxy: ${ALIAS}
+  empty-fallback: ${ALIAS}
+  default-selected: ${ALIAS}
+proxies:
+  - name: ${ALIAS}
+    type: direct
+    udp: true
+`),
+        groups: [],
+        rules: [],
+        templates: [],
+        alias: ALIAS,
+        updatedAt: 99,
+      });
+
+      const migrated = parse(candidate.baseContent) as {
+        pr: {
+          proxies: string[];
+          'dialer-proxy': string;
+          'empty-fallback': string;
+          'default-selected': string;
+        };
+        proxies: unknown[];
+      };
+      expect(migrated.proxies).toEqual([]);
+      expect(migrated.pr.proxies[9]).toBe('DIRECT');
+      expect(migrated.pr).toMatchObject({
+        'dialer-proxy': 'DIRECT',
+        'empty-fallback': 'DIRECT',
+        'default-selected': 'DIRECT',
+      });
+      expect(candidate.summary.baseLiteralGroupReferences).toBe(4);
+    },
+  );
+
+  it('keeps rejecting an unanchored group-shaped map at an unknown path', () => {
+    expect(() =>
+      buildDirectAliasCandidate({
+        base: base(`
+pr:
+  type: select
+  proxies: [${ALIAS}]
+proxies:
+  - name: ${ALIAS}
+    type: direct
+    udp: true
+`),
+        groups: [],
+        rules: [],
+        templates: [],
+        alias: ALIAS,
+      }),
+    ).toThrowError(
+      expect.objectContaining({
+        problem: expect.objectContaining({ errors: ['$.pr.proxies[0]'] }),
+      }),
+    );
+  });
+
+  it('keeps rejecting an anchored group template that still has an alias consumer', () => {
+    expect(() =>
+      buildDirectAliasCandidate({
+        base: base(`
+pr: &pr
+  type: select
+  proxies: [${ALIAS}]
+legacy-copy: *pr
+proxies:
+  - name: ${ALIAS}
+    type: direct
+    udp: true
+`),
+        groups: [],
+        rules: [],
+        templates: [],
+        alias: ALIAS,
+      }),
+    ).toThrowError(
+      expect.objectContaining({
+        problem: expect.objectContaining({ errors: ['$.pr.proxies[0]'] }),
+      }),
+    );
   });
 
   it('returns a fixed safe error when deleting the node would orphan a YAML alias', () => {
