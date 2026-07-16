@@ -5,6 +5,7 @@ import { getBase, setBase, type BaseMeta } from '@/lib/repos/baseRepo';
 import { listProxyGroups } from '@/lib/repos/proxyGroupsRepo';
 import { resolveScopeProfile } from '@/lib/profileScope';
 import { computeEtag, parseAndValidate } from '@/lib/services/baseService';
+import { preflightProfileConfig } from '@/lib/services/configPreflight';
 import { BaseUpdateRequestSchema } from '@/schemas';
 
 export const dynamic = 'force-dynamic';
@@ -57,6 +58,8 @@ export const PUT = withProblemDetails(async (request: Request) => {
     );
   }
 
+  const checked = await preflightProfileConfig(profileId, () => ({ baseContent: content }));
+
   const meta: BaseMeta = {
     etag: computeEtag(content),
     anchors: parsedBase.anchors,
@@ -64,8 +67,13 @@ export const PUT = withProblemDetails(async (request: Request) => {
     updated_at: Math.floor(Date.now() / 1000),
   };
 
-  const result = await setBase(profileId, content, meta, expectedEtag);
+  const result = await setBase(profileId, content, meta, expectedEtag, checked.configVersion);
   if (!result.ok) {
+    if (result.conflict === 'config-version') {
+      throw ProblemDetailsError.preconditionFailed(
+        '配置在保存前校验期间被其他写入修改,请刷新后重试。',
+      );
+    }
     throw ProblemDetailsError.preconditionFailed(
       `Base config has been modified by another writer. Current ETag is ${result.currentEtag ?? '(none)'}.`,
     );

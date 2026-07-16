@@ -15,6 +15,7 @@ vi.mock('@/lib/services/subscriptionFetcher', () => ({
 
 import { resolveSubscriptionProxies } from '@/lib/services/subscriptionFetcher';
 import { exportCollectionNodes, exportSubscriptionNodes } from '@/lib/services/nodeExportService';
+import { SubscriptionResolutionValidationError } from '@/lib/services/subscriptionResolutionErrors';
 
 const fetchMock = resolveSubscriptionProxies as unknown as ReturnType<typeof vi.fn>;
 
@@ -202,22 +203,33 @@ describe('exportCollectionNodes', () => {
     await expect(exportCollectionNodes(col, [a])).rejects.toThrow(/field "name"/i);
   });
 
-  it('个别成员失败跳过并记入 memberErrors;全员失败抛 400', async () => {
+  it('个别成员失败跳过且不在 memberErrors 中反射敏感详情;全员失败抛 400', async () => {
     const a = makeSub({ name: 'a' });
     const b = makeSub({ name: 'b' });
     const col = makeCollection({ subscription_ids: [a.id, b.id] });
+    const secret = 'ss://aes-128-gcm:TOP-SECRET@example.invalid:443';
 
     fetchMock.mockImplementation(async (sub: Subscription) => {
-      if (sub.id === a.id) throw new Error('Upstream returned HTTP 502');
+      if (sub.id === a.id) {
+        throw new SubscriptionResolutionValidationError('content', 'subscription_content_invalid', {
+          type: 'https://proxymanager.dev/errors/bad-request',
+          title: 'Bad Request',
+          status: 400,
+          detail: `Invalid provider node: ${secret}`,
+        });
+      }
       return { proxies: [proxy('OK')], proxyCount: 1 };
     });
     const partial = await exportCollectionNodes(col, [a, b]);
-    expect(partial.memberErrors).toEqual([{ name: 'a', error: 'Upstream returned HTTP 502' }]);
+    expect(partial.memberErrors).toEqual([
+      { name: 'a', error: 'Subscription content is invalid.' },
+    ]);
+    expect(JSON.stringify(partial.memberErrors)).not.toContain(secret);
     expect(partial.proxyCount).toBe(1);
 
-    fetchMock.mockRejectedValue(new Error('boom'));
+    fetchMock.mockRejectedValue(new Error(`boom: ${secret}`));
     await expect(exportCollectionNodes(col, [a, b])).rejects.toMatchObject({
-      problem: { status: 400 },
+      problem: { status: 400, detail: expect.not.stringContaining(secret) },
     });
   });
 

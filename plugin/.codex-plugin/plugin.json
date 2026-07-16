@@ -1,6 +1,6 @@
 {
   "name": "proxymanager",
-  "version": "0.1.0",
+  "version": "0.1.0+codex.20260716040755",
   "description": "Manage a ProxyManager clash/mihomo configuration through skills and the ProxyManager MCP bridge.",
   "author": {
     "name": "cliouo",
@@ -9,31 +9,20 @@
   "homepage": "https://github.com/cliouo/proxymanager",
   "repository": "https://github.com/cliouo/proxymanager",
   "license": "MIT",
-  "keywords": [
-    "clash",
-    "mihomo",
-    "proxy",
-    "subscription",
-    "mcp",
-    "config"
-  ],
+  "keywords": ["clash", "mihomo", "proxy", "subscription", "mcp", "config"],
   "skills": "./skills/",
   "interface": {
-    "displayName": "ProxyManager 配置助手",
+    "displayName": "ProxyManager \u914d\u7f6e\u52a9\u624b",
     "shortDescription": "Manage clash/mihomo config via ProxyManager",
     "longDescription": "Use ProxyManager skills to inspect and safely edit routing rules, rule sets, proxy groups, subscriptions, DNS, sniffer, TUN, and node-processing operators through the ProxyManager backend.",
     "developerName": "cliouo",
     "category": "Developer Tools",
-    "capabilities": [
-      "Interactive",
-      "Read",
-      "Write"
-    ],
+    "capabilities": ["Interactive", "Read", "Write"],
     "websiteURL": "https://github.com/cliouo/proxymanager",
     "defaultPrompt": [
-      "检查我的 ProxyManager 配置并解释当前分流",
-      "把一个域名加入 ProxyManager 分流规则",
-      "优化 clash/mihomo 规则和策略组"
+      "\u68c0\u67e5\u6211\u7684 ProxyManager \u914d\u7f6e\u5e76\u89e3\u91ca\u5f53\u524d\u5206\u6d41",
+      "\u628a\u4e00\u4e2a\u57df\u540d\u52a0\u5165 ProxyManager \u5206\u6d41\u89c4\u5219",
+      "\u4f18\u5316 clash/mihomo \u89c4\u5219\u548c\u7b56\u7565\u7ec4"
     ],
     "brandColor": "#2563EB",
     "screenshots": []

@@ -10,7 +10,9 @@ export interface BaseRecord extends BaseMeta {
 
 export interface SetBaseResult {
   ok: boolean;
+  conflict?: 'etag' | 'config-version';
   currentEtag?: string | null;
+  currentConfigVersion?: number | null;
 }
 
 export async function getBase(profileId: string): Promise<BaseRecord | null> {
@@ -38,6 +40,13 @@ export async function getBase(profileId: string): Promise<BaseRecord | null> {
  * either form back identically).
  */
 const CAS_SET_BASE = `
+if ARGV[5] == '1' then
+  local currentVersion = tonumber(redis.call('GET', KEYS[3]) or '0')
+  local expectedVersion = tonumber(ARGV[6])
+  if not currentVersion or currentVersion ~= expectedVersion then
+    return {2, tostring(currentVersion or '')}
+  end
+end
 if ARGV[1] == '1' then
   local cur = redis.call('GET', KEYS[1])
   local curEtag = ''
@@ -51,6 +60,7 @@ if ARGV[1] == '1' then
 end
 redis.call('SET', KEYS[2], ARGV[3])
 redis.call('SET', KEYS[1], ARGV[4])
+redis.call('HDEL', KEYS[4], ARGV[7])
 redis.call('INCR', KEYS[3])
 return {1, ''}
 `.trim();
@@ -65,6 +75,7 @@ export async function setBase(
   content: string,
   meta: BaseMeta,
   expectedEtag: string | null,
+  expectedConfigVersion?: number,
 ): Promise<SetBaseResult> {
   const redis = getRedis();
 
@@ -77,17 +88,33 @@ export async function setBase(
       REDIS_KEYS.base.meta(profileId),
       REDIS_KEYS.base.content(profileId),
       REDIS_KEYS.configVersion,
+      REDIS_KEYS.resolvedSnapshot,
     ],
     [
       expectedEtag !== null ? '1' : '0',
       expectedEtag ?? '',
       content,
       JSON.stringify(meta),
+      expectedConfigVersion === undefined ? '0' : '1',
+      expectedConfigVersion === undefined ? '' : String(expectedConfigVersion),
+      profileId,
     ],
   )) as [number, string];
 
   if (Array.isArray(result) && result[0] === 1) {
     return { ok: true };
   }
-  return { ok: false, currentEtag: (Array.isArray(result) ? result[1] : '') || null };
+  if (Array.isArray(result) && result[0] === 2) {
+    const parsed = Number(result[1]);
+    return {
+      ok: false,
+      conflict: 'config-version',
+      currentConfigVersion: Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null,
+    };
+  }
+  return {
+    ok: false,
+    conflict: 'etag',
+    currentEtag: (Array.isArray(result) ? result[1] : '') || null,
+  };
 }

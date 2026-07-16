@@ -1,5 +1,10 @@
 import { isMap, isScalar, isSeq, parseDocument, visit } from 'yaml';
-import { validateMihomoProxyList } from '@/lib/proxies/mihomoProxyValidator';
+import { ConfigValidationError, type ConfigValidationIssue } from '@/lib/config/errors';
+import {
+  MihomoProxyLimitError,
+  MihomoProxyValidationError,
+  validateMihomoProxyList,
+} from '@/lib/proxies/mihomoProxyValidator';
 
 export interface ParsedBase {
   anchors: string[];
@@ -25,9 +30,15 @@ const INVALID_BASE_MERGE_MESSAGE = 'Invalid base YAML: merge keys are not suppor
 const SEQUENCE_SECTIONS = ['proxies', 'proxy-groups', 'rules'] as const;
 const MAPPING_SECTIONS = ['proxy-providers', 'rule-providers'] as const;
 
-export class BaseParseError extends Error {
-  constructor(message: string) {
-    super(message);
+export class BaseParseError extends ConfigValidationError {
+  constructor(message: string, issue: Partial<Omit<ConfigValidationIssue, 'message'>> = {}) {
+    super({
+      code: issue.code ?? 'base_yaml_invalid',
+      message,
+      section: issue.section ?? 'base',
+      path: issue.path ?? '$',
+      resource: issue.resource ?? 'base.yaml',
+    });
     this.name = 'BaseParseError';
   }
 }
@@ -44,7 +55,7 @@ export function parseBaseDocument(content: string): ReturnType<typeof parseDocum
       throw new BaseParseError(INVALID_BASE_YAML_MESSAGE);
     }
     if (!isMap(doc.contents)) {
-      throw new BaseParseError(INVALID_BASE_ROOT_MESSAGE);
+      throw new BaseParseError(INVALID_BASE_ROOT_MESSAGE, { code: 'base_root_invalid' });
     }
     assertNoMergeKeys(doc);
     assertKnownSectionShapes(doc);
@@ -76,14 +87,22 @@ function assertNoMergeKeys(doc: ReturnType<typeof parseDocument>): void {
       }
     },
   });
-  if (found) throw new BaseParseError(INVALID_BASE_MERGE_MESSAGE);
+  if (found) {
+    throw new BaseParseError(INVALID_BASE_MERGE_MESSAGE, {
+      code: 'base_merge_unsupported',
+    });
+  }
 }
 
 function assertKnownSectionShapes(doc: ReturnType<typeof parseDocument>): void {
   for (const key of SEQUENCE_SECTIONS) {
     const section = doc.get(key, true);
     if (section !== undefined && !isSeq(section)) {
-      throw new BaseParseError(`Invalid base YAML: "${key}" must be a sequence`);
+      throw new BaseParseError(`Invalid base YAML: "${key}" must be a sequence`, {
+        code: 'base_section_type_invalid',
+        section: key,
+        path: key,
+      });
     }
     if (key === 'proxies' && isSeq(section)) {
       try {
@@ -92,17 +111,45 @@ function assertKnownSectionShapes(doc: ReturnType<typeof parseDocument>): void {
           allowLocalFileReferences: true,
         });
       } catch (error) {
-        const detail = error instanceof Error ? error.message : 'invalid proxy entry';
-        throw new BaseParseError(`Invalid base YAML: ${detail}`);
+        throw baseProxyValidationError(error);
       }
     }
   }
   for (const key of MAPPING_SECTIONS) {
     const section = doc.get(key, true);
     if (section !== undefined && !isMap(section)) {
-      throw new BaseParseError(`Invalid base YAML: "${key}" must be a mapping`);
+      throw new BaseParseError(`Invalid base YAML: "${key}" must be a mapping`, {
+        code: 'base_section_type_invalid',
+        section: key,
+        path: key,
+      });
     }
   }
+}
+
+/** Convert the proxy validator's fixed error templates without reflecting data. */
+function baseProxyValidationError(error: unknown): BaseParseError {
+  if (error instanceof MihomoProxyValidationError) {
+    const suffix = error.field === '<entry>' ? '' : `.${error.field}`;
+    return new BaseParseError(`Invalid base YAML: ${error.message}`, {
+      code: 'base_proxy_invalid',
+      section: 'proxies',
+      path: `proxies[${error.index}]${suffix}`,
+    });
+  }
+  if (error instanceof MihomoProxyLimitError) {
+    return new BaseParseError(`Invalid base YAML: ${error.message}`, {
+      code: 'base_proxy_limit_exceeded',
+      section: 'proxies',
+      path: 'proxies',
+    });
+  }
+
+  return new BaseParseError('Invalid base YAML: proxies contains an invalid entry', {
+    code: 'base_proxy_invalid',
+    section: 'proxies',
+    path: 'proxies',
+  });
 }
 
 export function parseBase(content: string): ParsedBase {

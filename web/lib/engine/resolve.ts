@@ -38,6 +38,8 @@ import {
   type YAMLMap,
   type YAMLSeq,
 } from 'yaml';
+import { ZodError } from 'zod';
+import { ConfigValidationError, type ConfigValidationIssue } from '@/lib/config/errors';
 import {
   assertMergedRuleRenderable,
   mergeWithTemplate,
@@ -56,11 +58,21 @@ import {
   type SnapshotCollision,
   type SnapshotSubStatus,
 } from '@/lib/repos/resolvedRepo';
-import { resolveSubscriptionProxies } from '@/lib/services/subscriptionFetcher';
+import {
+  resolveSubscriptionProxies,
+  type FetchSubscriptionProxiesResult,
+  type SubscriptionResolveOptions,
+} from '@/lib/services/subscriptionFetcher';
 import { applyOperators, type ClashProxy } from '@/lib/proxies/operators';
 import { compileGoRegex } from '@/lib/proxies/filterMatch';
 import { ipLiteralFamily } from '@/lib/net/ipLiteral';
-import { MAX_PROXY_NODES, validateMihomoProxyList } from '@/lib/proxies/mihomoProxyValidator';
+import {
+  MAX_PROXY_NODES,
+  MihomoProxyLimitError,
+  MihomoProxyValidationError,
+  validateMihomoProxyList,
+  type MihomoProxyValidationOptions,
+} from '@/lib/proxies/mihomoProxyValidator';
 import type { Operator } from '@/schemas';
 import { parseBaseDocument } from './parser';
 import {
@@ -236,6 +248,15 @@ export interface ResolveOptions extends RenderOptions {
    * members. A dangling collection id injects nothing and emits a warning.
    */
   boundSource?: ProfileSource;
+  /**
+   * Subscription boundary override used by side-effect-free candidate
+   * preflight. Normal renders use the cache-aware resolver above; tests and
+   * preflight may inject equivalent results without changing render semantics.
+   */
+  subscriptionResolver?: (
+    subscription: Subscription,
+    options?: SubscriptionResolveOptions,
+  ) => Promise<FetchSubscriptionProxiesResult>;
 }
 
 export interface ResolveResult extends RenderResult {
@@ -311,12 +332,49 @@ export async function resolveConfig(
   templates: ProxyGroupTemplate[],
   opts: ResolveOptions = {},
 ): Promise<ResolveResult> {
+  try {
+    return await resolveConfigInternal(
+      baseContent,
+      rules,
+      subscriptions,
+      proxyGroups,
+      templates,
+      opts,
+    );
+  } catch (error) {
+    if (error instanceof ConfigValidationError) throw error;
+    const mapped = resolvedConfigValidationError(error);
+    if (mapped) throw mapped;
+    throw error;
+  }
+}
+
+async function resolveConfigInternal(
+  baseContent: string,
+  rules: Rule[],
+  subscriptions: Subscription[],
+  proxyGroups: ProxyGroup[],
+  templates: ProxyGroupTemplate[],
+  opts: ResolveOptions = {},
+): Promise<ResolveResult> {
   // Stored/imported rules can predate the current write schema. Validate the
   // structured fields before rendering them into an ambiguous comma-delimited
   // line; once rendered, a regex payload and a policy/option reorder can be
   // byte-identical and no final-text parser can recover the user's intent.
-  for (const rule of rules) {
-    if (rule.enabled !== false) assertMergedRuleRenderable(rule);
+  for (const [index, rule] of rules.entries()) {
+    if (rule.enabled === false) continue;
+    try {
+      assertMergedRuleRenderable(rule);
+    } catch (error) {
+      if (!(error instanceof ZodError)) throw error;
+      throw new ConfigValidationError({
+        code: 'final_rule_invalid',
+        message: 'Full config render rejected: a managed rule is invalid.',
+        section: 'rules',
+        path: `rules[${index}]`,
+        resource: 'rendered-config',
+      });
+    }
   }
   const doc = parseBaseDocument(baseContent);
 
@@ -372,13 +430,14 @@ export async function resolveConfig(
   const eligibleSubs = subscriptions.filter(
     (sub) => sub.enabled && (!subFilter || subFilter.has(sub.id)),
   );
+  const subscriptionResolver = opts.subscriptionResolver ?? resolveSubscriptionProxies;
   // 严格按原订阅顺序处理结果:candidates 累积顺序、subStatuses 顺序、去重的
   // first-writer-wins 都依赖这份顺序契约——必须与旧串行版逐项一致(有测试盯着)。
   let i = 0;
   for await (const outcome of settleWithConcurrencyInOrder(
     eligibleSubs,
     SUB_FETCH_CONCURRENCY,
-    (sub) => resolveSubscriptionProxies(sub, { noCache: opts.noCache }),
+    (sub) => subscriptionResolver(sub, { noCache: opts.noCache }),
   )) {
     const sub = eligibleSubs[i];
     i += 1;
@@ -419,12 +478,19 @@ export async function resolveConfig(
     if (col && col.operators.length > 0 && candidates.length > 0) {
       try {
         candidates = applyOperatorsToCandidates(candidates, col.operators);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
+      } catch (error) {
+        const mapped = resolvedConfigValidationError(error);
+        if (mapped) throw mapped;
         // Never substitute the unprocessed candidates. That would turn a
         // configured filter/rename failure into a successful-looking full
         // config with a materially different node set, then cache it.
-        throw new Error(`Collection operator pipeline failed: ${msg}`);
+        throw new ConfigValidationError({
+          code: 'collection_operator_invalid',
+          message: 'Collection operator pipeline failed: invalid operator output.',
+          section: 'collections',
+          path: 'operators',
+          resource: 'rendered-config',
+        });
       }
     }
   }
@@ -468,7 +534,7 @@ export async function resolveConfig(
   // first-writer-wins contract above. Validate the actual emitted set only;
   // validating the merged pre-dedup candidates would reject legitimate
   // collisions before that deterministic policy can run.
-  validateMihomoProxyList(
+  validateResolvedProxyList(
     survivors.map((candidate) => candidate.node),
     {
       // A final node may deliberately chain to a base node. References among
@@ -476,6 +542,7 @@ export async function resolveConfig(
       // to the complete base+subscription Mihomo document.
       allowExternalDialerProxy: true,
     },
+    'subscription-proxies',
   );
 
   for (const status of subStatuses) {
@@ -503,7 +570,13 @@ export async function resolveConfig(
   // different stages. Revalidate the one list Mihomo will actually receive so
   // split inputs cannot bypass the global node/port budgets, duplicate-name
   // check, or dialer-proxy cycle detection.
-  validateFinalProxyDocument(doc);
+  try {
+    validateFinalProxyDocument(doc);
+  } catch (error) {
+    const mapped = proxyListConfigValidationError(error, 'proxies');
+    if (mapped) throw mapped;
+    throw error;
+  }
 
   let expandedContent = doc.toString();
 
@@ -585,6 +658,119 @@ export async function resolveConfig(
     inlinedProxyCount: survivors.length,
     proxyGroupCount: proxyGroupRender.count,
   };
+}
+
+/**
+ * Map only errors emitted from this module's fixed validation templates. An
+ * upstream fetch/repository error intentionally falls through unchanged so the
+ * HTTP boundary cannot mislabel infrastructure trouble as a bad config.
+ */
+function resolvedConfigValidationError(error: unknown): ConfigValidationError | undefined {
+  if (!(error instanceof Error)) return undefined;
+  if (
+    error.message === 'Invalid collection operator output: field "name" must be non-empty' ||
+    error.message === 'Invalid collection operator output: node provenance was lost'
+  ) {
+    return new ConfigValidationError({
+      code: 'collection_operator_invalid',
+      message: `Full config render rejected: ${error.message}`,
+      section: 'collections',
+      path: 'operators',
+      resource: 'rendered-config',
+    });
+  }
+  if (
+    !error.message.startsWith('Full config render rejected:') ||
+    error.message.length > 512 ||
+    /[\r\n]/u.test(error.message) ||
+    /(?:https?|ss|ssr|vmess|vless|trojan):\/\//iu.test(error.message)
+  ) {
+    return undefined;
+  }
+
+  const context = resolvedConfigIssueContext(error.message);
+  return new ConfigValidationError({
+    ...context,
+    message: error.message,
+    resource: 'rendered-config',
+  });
+}
+
+function resolvedConfigIssueContext(
+  message: string,
+): Pick<ConfigValidationIssue, 'code' | 'section' | 'path'> {
+  const lower = message.toLowerCase();
+  if (lower.includes('collection')) {
+    return { code: 'collection_invalid', section: 'collections', path: 'collections' };
+  }
+  if (lower.includes('subscription')) {
+    return { code: 'subscription_binding_invalid', section: 'subscriptions', path: 'source' };
+  }
+  if (lower.includes('rule-provider') || lower.includes('rule-set')) {
+    return {
+      code: 'final_rule_provider_invalid',
+      section: 'rule-providers',
+      path: 'rule-providers',
+    };
+  }
+  if (lower.includes('sub-rule') || lower.includes(' rule')) {
+    return { code: 'final_rule_invalid', section: 'rules', path: 'rules' };
+  }
+  if (lower.includes('proxy-group')) {
+    return {
+      code: 'final_proxy_group_invalid',
+      section: 'proxy-groups',
+      path: 'proxy-groups',
+    };
+  }
+  if (lower.includes('proxy') || lower.includes('dialer-proxy')) {
+    return { code: 'final_proxy_invalid', section: 'proxies', path: 'proxies' };
+  }
+  if (lower.includes('tun')) {
+    return { code: 'final_tun_invalid', section: 'tun', path: 'tun' };
+  }
+  return { code: 'final_config_invalid', section: 'config', path: '$' };
+}
+
+function validateResolvedProxyList(
+  list: unknown[],
+  options: MihomoProxyValidationOptions,
+  pathPrefix: string,
+): void {
+  try {
+    validateMihomoProxyList(list, options);
+  } catch (error) {
+    const mapped = proxyListConfigValidationError(error, pathPrefix);
+    if (mapped) throw mapped;
+    throw error;
+  }
+}
+
+/** Accept only the proxy validator's credential-free, fixed templates. */
+function proxyListConfigValidationError(
+  error: unknown,
+  pathPrefix: string,
+): ConfigValidationError | undefined {
+  if (error instanceof MihomoProxyValidationError) {
+    const suffix = error.field === '<entry>' ? '' : `.${error.field}`;
+    return new ConfigValidationError({
+      code: 'final_proxy_invalid',
+      message: `Full config render rejected: ${error.message}`,
+      section: 'proxies',
+      path: `${pathPrefix}[${error.index}]${suffix}`,
+      resource: 'rendered-config',
+    });
+  }
+  if (error instanceof MihomoProxyLimitError) {
+    return new ConfigValidationError({
+      code: 'final_proxy_limit_exceeded',
+      message: `Full config render rejected: ${error.message}.`,
+      section: 'proxies',
+      path: pathPrefix,
+      resource: 'rendered-config',
+    });
+  }
+  return undefined;
 }
 
 /* ─── kind-driven bindings ──────────────────────────────────────────── */

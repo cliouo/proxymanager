@@ -1,15 +1,10 @@
 import { ProblemDetailsError } from '@/lib/http/problem';
-import {
-  deleteProxyGroup as repoDelete,
-  getProxyGroup,
-  getProxyGroupByName,
-  listProxyGroups,
-  upsertProxyGroup,
-  upsertProxyGroups,
-} from '@/lib/repos/proxyGroupsRepo';
+import { getConfigVersion } from '@/lib/repos/configVersionRepo';
+import { getProxyGroup, getProxyGroupByName, listProxyGroups } from '@/lib/repos/proxyGroupsRepo';
 import { getProxyGroupTemplate } from '@/lib/repos/proxyGroupTemplatesRepo';
 import { invalidateResolvedSnapshot } from '@/lib/repos/resolvedRepo';
-import { listRules, upsertRules } from '@/lib/repos/rulesRepo';
+import { listRules } from '@/lib/repos/rulesRepo';
+import { preflightAndCommitProfileChanges } from '@/lib/services/profileConfigMutationService';
 import {
   ProxyGroupCreateSchema,
   ProxyGroupUpdateSchema,
@@ -60,10 +55,7 @@ async function nextRank(profileId: string): Promise<number> {
  *
  * `existingGroups` should already have `proposed` excluded by the caller.
  */
-function ensureNoDialerProxyCycle(
-  existingGroups: ProxyGroup[],
-  proposed: ProxyGroup,
-): void {
+function ensureNoDialerProxyCycle(existingGroups: ProxyGroup[], proposed: ProxyGroup): void {
   const edges = new Map<string, string>();
   for (const g of existingGroups) {
     if (g['dialer-proxy']) edges.set(g.name, g['dialer-proxy']);
@@ -74,9 +66,7 @@ function ensureNoDialerProxyCycle(
   let cur: string | undefined = proposed.name;
   while (cur) {
     if (visited.has(cur)) {
-      throw ProblemDetailsError.unprocessable(
-        `策略组循环引用: ${[...visited, cur].join(' → ')}`,
-      );
+      throw ProblemDetailsError.unprocessable(`策略组循环引用: ${[...visited, cur].join(' → ')}`);
     }
     visited.add(cur);
     cur = edges.get(cur);
@@ -93,35 +83,36 @@ function ensureNoDialerProxyCycle(
  * Base.yaml carries no group references after E1 (proxy-groups are in the
  * hash, rules block is markers-only), so this is the complete reach.
  */
-async function cascadeRename(
-  profileId: string,
+function planCascadeRename(
+  allGroups: readonly ProxyGroup[],
+  allRules: readonly Rule[],
   oldName: string,
   newName: string,
   excludingId: string,
-): Promise<{ groupsTouched: number; rulesTouched: number }> {
-  const [allGroups, allRules] = await Promise.all([
-    listProxyGroups(profileId),
-    listRules(profileId),
-  ]);
-
+): {
+  groupsTouched: number;
+  rulesTouched: number;
+  groupsToWrite: ProxyGroup[];
+  rulesToWrite: Rule[];
+} {
   const groupsToWrite: ProxyGroup[] = [];
   for (const g of allGroups) {
     if (g.id === excludingId) continue;
+    let next = g;
     let mutated = false;
     if (Array.isArray(g.proxies)) {
-      const next = g.proxies.map((p) => (p === oldName ? newName : p));
-      if (next.some((p, i) => p !== g.proxies![i])) {
-        g.proxies = next;
+      const proxies = g.proxies.map((p) => (p === oldName ? newName : p));
+      if (proxies.some((p, i) => p !== g.proxies![i])) {
+        next = { ...next, proxies };
         mutated = true;
       }
     }
     if (g['dialer-proxy'] === oldName) {
-      g['dialer-proxy'] = newName;
+      next = { ...next, 'dialer-proxy': newName };
       mutated = true;
     }
     if (mutated) {
-      g.updated_at = nowSeconds();
-      groupsToWrite.push(g);
+      groupsToWrite.push({ ...next, updated_at: nowSeconds() });
     }
   }
 
@@ -132,10 +123,12 @@ async function cascadeRename(
     }
   }
 
-  if (groupsToWrite.length > 0) await upsertProxyGroups(profileId, groupsToWrite);
-  if (rulesToWrite.length > 0) await upsertRules(profileId, rulesToWrite);
-
-  return { groupsTouched: groupsToWrite.length, rulesTouched: rulesToWrite.length };
+  return {
+    groupsTouched: groupsToWrite.length,
+    rulesTouched: rulesToWrite.length,
+    groupsToWrite,
+    rulesToWrite,
+  };
 }
 
 /**
@@ -169,17 +162,17 @@ async function ensureUnreferenced(
   if (refs.length > 0) {
     const head = refs.slice(0, 5).join(', ');
     const tail = refs.length > 5 ? ` 等 ${refs.length} 处` : '';
-    throw ProblemDetailsError.conflict(
-      `策略组 "${name}" 仍被引用,无法删除: ${head}${tail}`,
-    );
+    throw ProblemDetailsError.conflict(`策略组 "${name}" 仍被引用,无法删除: ${head}${tail}`);
   }
 }
 
 export async function createProxyGroup(
   profileId: string,
   input: ProxyGroupCreate,
+  expectedPlanningVersion?: number,
 ): Promise<ProxyGroup> {
   const parsed = ProxyGroupCreateSchema.parse(input);
+  const planningVersion = expectedPlanningVersion ?? (await getConfigVersion());
   const dup = await getProxyGroupByName(profileId, parsed.name);
   if (dup) {
     throw ProblemDetailsError.conflict(`proxy-group 名称 "${parsed.name}" 已存在。`);
@@ -199,7 +192,7 @@ export async function createProxyGroup(
   const allGroups = await listProxyGroups(profileId);
   ensureNoDialerProxyCycle(allGroups, group);
 
-  await upsertProxyGroup(profileId, group);
+  await preflightAndCommitProfileChanges(profileId, { proxyGroupWrites: [group] }, planningVersion);
   invalidateSnapshot();
   return group;
 }
@@ -213,8 +206,10 @@ export async function patchProxyGroup(
   profileId: string,
   id: string,
   patch: ProxyGroupUpdate,
+  expectedPlanningVersion?: number,
 ): Promise<ProxyGroup> {
   const validated = ProxyGroupUpdateSchema.parse(patch);
+  const planningVersion = expectedPlanningVersion ?? (await getConfigVersion());
   const current = await getProxyGroup(profileId, id);
   if (!current) {
     throw ProblemDetailsError.notFound(`proxy-group ${id} 不存在。`);
@@ -244,24 +239,40 @@ export async function patchProxyGroup(
   const others = allGroups.filter((g) => g.id !== id);
   ensureNoDialerProxyCycle(others, next);
 
-  // Apply rename cascade BEFORE writing the renamed group itself — otherwise
-  // a snapshot reader between the two writes sees inconsistent state. The
-  // cascadeRename excludes the renamed group's id so it doesn't double-write.
+  let groupWrites: ProxyGroup[] = [next];
+  let ruleWrites: Rule[] = [];
   if (renaming) {
-    await cascadeRename(profileId, current.name, next.name, id);
+    const allRules = await listRules(profileId);
+    const cascade = planCascadeRename(allGroups, allRules, current.name, next.name, id);
+    groupWrites = [...cascade.groupsToWrite, next];
+    ruleWrites = cascade.rulesToWrite;
   }
-  await upsertProxyGroup(profileId, next);
+  // The renamed group and every name-based reference land in one CAS commit;
+  // neither readers nor a concurrent writer can observe a half-cascade.
+  await preflightAndCommitProfileChanges(
+    profileId,
+    {
+      proxyGroupWrites: groupWrites,
+      ruleWrites,
+    },
+    planningVersion,
+  );
   invalidateSnapshot();
   return next;
 }
 
-export async function deleteProxyGroup(profileId: string, id: string): Promise<boolean> {
+export async function deleteProxyGroup(
+  profileId: string,
+  id: string,
+  expectedPlanningVersion?: number,
+): Promise<boolean> {
+  const planningVersion = expectedPlanningVersion ?? (await getConfigVersion());
   const current = await getProxyGroup(profileId, id);
   if (!current) return false;
   await ensureUnreferenced(profileId, current.name, id);
-  const removed = await repoDelete(profileId, id);
-  if (removed) invalidateSnapshot();
-  return removed;
+  await preflightAndCommitProfileChanges(profileId, { proxyGroupDeletes: [id] }, planningVersion);
+  invalidateSnapshot();
+  return true;
 }
 
 /**
@@ -274,10 +285,12 @@ export async function deleteProxyGroup(profileId: string, id: string): Promise<b
 export async function createProxyGroups(
   profileId: string,
   inputs: ProxyGroupCreate[],
+  expectedPlanningVersion?: number,
 ): Promise<ProxyGroup[]> {
   if (inputs.length === 0) return [];
 
   const parsed = inputs.map((i) => ProxyGroupCreateSchema.parse(i));
+  const planningVersion = expectedPlanningVersion ?? (await getConfigVersion());
 
   // Within-batch name uniqueness.
   const seen = new Set<string>();
@@ -323,7 +336,7 @@ export async function createProxyGroups(
     ensureNoDialerProxyCycle(others, g);
   }
 
-  await upsertProxyGroups(profileId, built);
+  await preflightAndCommitProfileChanges(profileId, { proxyGroupWrites: built }, planningVersion);
   invalidateSnapshot();
   return built;
 }
@@ -337,8 +350,10 @@ export async function createProxyGroups(
 export async function deleteProxyGroupsByName(
   profileId: string,
   names: string[],
+  expectedPlanningVersion?: number,
 ): Promise<number> {
   if (names.length === 0) return 0;
+  const planningVersion = expectedPlanningVersion ?? (await getConfigVersion());
   const nameSet = new Set(names);
   const [allGroups, allRules] = await Promise.all([
     listProxyGroups(profileId),
@@ -366,17 +381,16 @@ export async function deleteProxyGroupsByName(
   if (refs.length > 0) {
     const head = refs.slice(0, 5).join(', ');
     const tail = refs.length > 5 ? ` 等 ${refs.length} 处` : '';
-    throw ProblemDetailsError.conflict(
-      `策略组仍被批次外引用,无法删除: ${head}${tail}`,
-    );
+    throw ProblemDetailsError.conflict(`策略组仍被批次外引用,无法删除: ${head}${tail}`);
   }
 
-  let removed = 0;
-  for (const id of idsToDelete) {
-    if (await repoDelete(profileId, id)) removed++;
-  }
-  if (removed > 0) invalidateSnapshot();
-  return removed;
+  await preflightAndCommitProfileChanges(
+    profileId,
+    { proxyGroupDeletes: idsToDelete },
+    planningVersion,
+  );
+  invalidateSnapshot();
+  return idsToDelete.length;
 }
 
 export { listProxyGroups, getProxyGroup, getProxyGroupByName };

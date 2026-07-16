@@ -28,11 +28,17 @@ const fakeRedis = {
   set: async (key: string, value: unknown) => {
     kv.set(key, value);
   },
-  // Faithful simulation of baseRepo's CAS_SET_BASE Lua script (P2-1): compare
-  // the stored meta etag, and only on match write content + meta + bump version.
+  // Faithful simulation of baseRepo's CAS_SET_BASE Lua script: compare the
+  // global generation + stored meta etag, then write, invalidate this
+  // profile's resolved snapshot field, and bump the generation atomically.
   eval: async (_script: string, keys: string[], args: (string | number)[]) => {
-    const [metaKey, contentKey, versionKey] = keys;
-    const [check, expectedEtag, content, metaJson] = args.map(String);
+    const [metaKey, contentKey, versionKey, snapshotKey] = keys;
+    const [check, expectedEtag, content, metaJson, checkVersion, expectedVersion, profileId] =
+      args.map(String);
+    if (checkVersion === '1') {
+      const currentVersion = counters.get(versionKey) ?? 0;
+      if (currentVersion !== Number(expectedVersion)) return [2, String(currentVersion)];
+    }
     if (check === '1') {
       const cur = kv.get(metaKey) as { etag?: string } | undefined;
       const curEtag = cur?.etag ?? '';
@@ -40,6 +46,7 @@ const fakeRedis = {
     }
     kv.set(contentKey, content);
     kv.set(metaKey, JSON.parse(metaJson));
+    bucket(snapshotKey).delete(profileId);
     counters.set(versionKey, (counters.get(versionKey) ?? 0) + 1);
     return [1, ''];
   },
@@ -177,15 +184,49 @@ describe('rulesRepo bumps config:version', () => {
 });
 
 describe('baseRepo bumps config:version', () => {
-  it('setBase bumps on success, not on etag conflict', async () => {
+  it('setBase bumps and invalidates only this profile snapshot on success', async () => {
     const meta = { anchors: [], policies: [], etag: 'v1', updated_at: 1 };
+    bucket(REDIS_KEYS.resolvedSnapshot).set(PID, { buildId: 'old' });
+    bucket(REDIS_KEYS.resolvedSnapshot).set('other-profile', { buildId: 'keep' });
     expect((await baseRepo.setBase(PID, 'proxies: []', meta, null)).ok).toBe(true);
     expect(version()).toBe(1);
+    expect(bucket(REDIS_KEYS.resolvedSnapshot).has(PID)).toBe(false);
+    expect(bucket(REDIS_KEYS.resolvedSnapshot).has('other-profile')).toBe(true);
 
     // Optimistic-concurrency failure must not invalidate anything.
-    const conflict = await baseRepo.setBase(PID, 'proxies: []', { ...meta, etag: 'v2' }, 'wrong-etag');
+    bucket(REDIS_KEYS.resolvedSnapshot).set(PID, { buildId: 'newer' });
+    const conflict = await baseRepo.setBase(
+      PID,
+      'proxies: []',
+      { ...meta, etag: 'v2' },
+      'wrong-etag',
+    );
     expect(conflict.ok).toBe(false);
     expect(version()).toBe(1);
+    expect(bucket(REDIS_KEYS.resolvedSnapshot).has(PID)).toBe(true);
+  });
+
+  it('rejects a stale preflight generation without writing or invalidating the snapshot', async () => {
+    const meta = { anchors: [], policies: [], etag: 'v1', updated_at: 1 };
+    expect((await baseRepo.setBase(PID, 'proxies: []', meta, null)).ok).toBe(true);
+    bucket(REDIS_KEYS.resolvedSnapshot).set(PID, { buildId: 'current' });
+
+    const conflict = await baseRepo.setBase(
+      PID,
+      'proxies: [changed]',
+      { ...meta, etag: 'v2' },
+      'v1',
+      0,
+    );
+
+    expect(conflict).toEqual({
+      ok: false,
+      conflict: 'config-version',
+      currentConfigVersion: 1,
+    });
+    expect(version()).toBe(1);
+    expect(bucket(REDIS_KEYS.resolvedSnapshot).get(PID)).toEqual({ buildId: 'current' });
+    expect(kv.get(REDIS_KEYS.base.content(PID))).toBe('proxies: []');
   });
 });
 

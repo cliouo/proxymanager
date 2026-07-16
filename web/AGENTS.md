@@ -14,3 +14,11 @@ set or fields, bump both `FETCH_CACHE_EPOCH` in
 `lib/engine/renderCache.ts`. The fetch cache stores already-normalised provider
 YAML, and the render cache can otherwise return an older full config before the
 fetch layer runs.
+
+## Save-time rendered-config invariant
+
+Any profile-scoped base, rule, or proxy-group mutation must preflight the exact
+final rendered config without writing fetch/render caches or accepting stale
+upstream data, then commit against the same planning/config version. New
+mutation paths that can change rendered output must preserve this invariant and
+return structured, credential-free validation issues.

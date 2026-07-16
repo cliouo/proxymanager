@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { buildOutline, fullRedactedYaml, getConfigSection } from '@/lib/ai/configAccess';
+import {
+  buildOutline,
+  fullRedactedYaml,
+  getConfigSection,
+  scrubUrlTokens,
+} from '@/lib/ai/configAccess';
 
 // Mirrors the user's real structure: top-level anchors (&pr/&p), a group that
 // merges an anchor (<<: *pr), a provider that merges another (<<: *p), comments,
@@ -68,7 +73,7 @@ describe('getConfigSection redaction', () => {
     expect(r.yaml).toContain('HK-1');
   });
 
-  it('masks proxy-providers url (subscription token) but not rule-providers url', () => {
+  it('masks proxy-provider URLs and keeps only rule-provider URL origins', () => {
     const pp = getConfigSection(YAML, 'proxy-providers.sub-store');
     expect(pp.yaml).not.toContain('SECRETTOKEN');
     expect(pp.redacted).toBe(true);
@@ -76,8 +81,9 @@ describe('getConfigSection redaction', () => {
     expect(pp.yaml).toContain('http');
 
     const rp = getConfigSection(YAML, 'rule-providers.openai_classic');
-    expect(rp.yaml).toContain('example.com/openai.yaml');
-    expect(rp.redacted).toBe(false);
+    expect(rp.yaml).toContain('example.com');
+    expect(rp.yaml).not.toContain('openai.yaml');
+    expect(rp.redacted).toBe(true);
   });
 
   it('masks a scalar leaf when the path itself points at a credential', () => {
@@ -132,14 +138,38 @@ describe('fullRedactedYaml', () => {
     expect(yaml).toContain('# 锚点 start');
   });
 
-  it('keeps public urls and does not over-mask urls outside node/subscription scope', () => {
-    expect(yaml).toContain('example.com/openai.yaml');
+  it('keeps URL origins while hiding every path and query from assistant views', () => {
+    expect(yaml).toContain('example.com');
+    expect(yaml).not.toContain('openai.yaml');
     expect(yaml).toContain('cp.cloudflare.com');
   });
 
-  it('masks tokens inside self-hosted rule-set URLs but keeps host + filename', () => {
+  it('masks self-hosted rule-set URL paths while keeping only the host', () => {
     expect(yaml).not.toContain('AbC123def456GHI789xyz');
     expect(yaml).toContain('my.host');
-    expect(yaml).toContain('rules.yaml');
+    expect(yaml).not.toContain('rules.yaml');
+  });
+});
+
+describe('scrubUrlTokens', () => {
+  it('keeps only the origin for URLs with any path, userinfo, query or fragment', () => {
+    const raw =
+      'https://alice:password@example.com/api/AbC123def456GHI789xyz/rules.yaml?token=short&view=public';
+    const safe = scrubUrlTokens(raw);
+    expect(safe).toContain('example.com');
+    expect(safe).toContain('***');
+    expect(safe).not.toContain('rules.yaml');
+    expect(safe).not.toContain('view=public');
+    expect(safe).not.toContain('alice');
+    expect(safe).not.toContain('password');
+    expect(safe).not.toContain('AbC123def456GHI789xyz');
+    expect(safe).not.toContain('token=short');
+  });
+
+  it('also hides short secrets under unknown query keys and alphabetic path tokens', () => {
+    const safe = scrubUrlTokens('https://example.com/supersecrettokenvalue/?code=shortsecret');
+    expect(safe).toBe('https://example.com/***');
+    expect(safe).not.toContain('supersecrettokenvalue');
+    expect(safe).not.toContain('shortsecret');
   });
 });

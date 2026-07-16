@@ -89,6 +89,34 @@ vi.mock('@/lib/repos/resolvedRepo', () => ({
   setResolvedSnapshot: vi.fn(async () => undefined),
 }));
 
+// These service-unit tests focus on proxy-group planning/cascades. The
+// save-preflight + CAS boundary has its own focused suites; emulate only its
+// successful atomic commit here so the existing assertions keep observing the
+// resulting hashes.
+vi.mock('@/lib/services/profileConfigMutationService', () => ({
+  preflightAndCommitProfileChanges: vi.fn(
+    async (
+      profileId: string,
+      changes: {
+        ruleWrites?: Rule[];
+        ruleDeletes?: string[];
+        proxyGroupWrites?: ProxyGroup[];
+        proxyGroupDeletes?: string[];
+      },
+    ) => {
+      for (const rule of changes.ruleWrites ?? []) bucket(`rules:${profileId}`).set(rule.id, rule);
+      for (const id of changes.ruleDeletes ?? []) bucket(`rules:${profileId}`).delete(id);
+      for (const group of changes.proxyGroupWrites ?? []) {
+        bucket(`proxy-groups:${profileId}`).set(group.id, group);
+      }
+      for (const id of changes.proxyGroupDeletes ?? []) {
+        bucket(`proxy-groups:${profileId}`).delete(id);
+      }
+      counters.set('config:version', (counters.get('config:version') ?? 0) + 1);
+    },
+  ),
+}));
+
 // A real UUID: deleteProxyGroupTemplate's cross-profile reference scan walks
 // listProfiles() then listProxyGroups(profile.id), so the seeded profile (and
 // hence the proxy-groups partition key) must use a schema-valid profile id.
@@ -102,7 +130,12 @@ beforeEach(async () => {
   counters.clear();
   // Seed the test profile so cross-profile scans (e.g. template reference
   // checks) can discover this profile's proxy-groups partition.
-  bucket('profiles').set(PID, { id: PID, name: 'prof-test', source: { type: 'none' }, updated_at: 0 });
+  bucket('profiles').set(PID, {
+    id: PID,
+    name: 'prof-test',
+    source: { type: 'none' },
+    updated_at: 0,
+  });
   svc = await import('@/lib/services/proxyGroupService');
   tplSvc = await import('@/lib/services/proxyGroupTemplateService');
 });
@@ -156,9 +189,9 @@ describe('proxyGroupService — create', () => {
 
   it('rejects duplicate name', async () => {
     await svc.createProxyGroup(PID, { name: 'us', type: 'select' });
-    await expect(
-      svc.createProxyGroup(PID, { name: 'us', type: 'select' }),
-    ).rejects.toMatchObject({ problem: { status: 409 } });
+    await expect(svc.createProxyGroup(PID, { name: 'us', type: 'select' })).rejects.toMatchObject({
+      problem: { status: 409 },
+    });
   });
 
   it('rejects unknown template_id', async () => {
@@ -172,7 +205,11 @@ describe('proxyGroupService — create', () => {
   });
 
   it('accepts known template_id', async () => {
-    const tpl = await tplSvc.createProxyGroupTemplate({ name: 'pr', type: 'url-test', interval: 600 });
+    const tpl = await tplSvc.createProxyGroupTemplate({
+      name: 'pr',
+      type: 'url-test',
+      interval: 600,
+    });
     const g = await svc.createProxyGroup(PID, {
       name: 'x',
       type: 'url-test',
@@ -253,9 +290,9 @@ describe('proxyGroupService — patch + rename cascade', () => {
   it('refuses a patch that would introduce a dialer-proxy cycle', async () => {
     const a = seedGroup({ name: 'a' });
     seedGroup({ name: 'b', 'dialer-proxy': 'a' });
-    await expect(
-      svc.patchProxyGroup(PID, a.id, { 'dialer-proxy': 'b' }),
-    ).rejects.toMatchObject({ problem: { status: 422 } });
+    await expect(svc.patchProxyGroup(PID, a.id, { 'dialer-proxy': 'b' })).rejects.toMatchObject({
+      problem: { status: 422 },
+    });
   });
 });
 
