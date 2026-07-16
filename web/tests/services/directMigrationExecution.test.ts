@@ -15,8 +15,9 @@ proxies:
     udp: true
 # === PROXY-GROUPS ===
 rules:
+  # === ANCHOR: prelude ===
   # === ANCHOR: manual ===
-  []
+  # === ANCHOR: late ===
 `,
   etag: ETAG,
   anchors: ['manual'],

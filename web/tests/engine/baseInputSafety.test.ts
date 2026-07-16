@@ -23,6 +23,7 @@ import { resolveConfig } from '@/lib/engine/resolve';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { parseAndValidate } from '@/lib/services/baseService';
 import { resolveSubscriptionProxies } from '@/lib/services/subscriptionFetcher';
+import type { Rule } from '@/schemas';
 
 const INVALID_YAML_MESSAGE = 'Invalid base YAML';
 const INVALID_ROOT_MESSAGE = 'Invalid base YAML: root must be a mapping';
@@ -31,6 +32,23 @@ const FAKE_SECRET = 'FAKE_SECRET_DO_NOT_USE';
 const MALFORMED_WITH_FAKE_SECRET = `proxies:
   - { name: fake, type: ss, server: edge.invalid, port: 8388, cipher: aes-128-gcm, password: ${FAKE_SECRET}, broken: [ }
 `;
+const MARKER_ONLY_RULES = `mode: rule
+rules:
+  # === ANCHOR: prelude ===
+  # === ANCHOR: manual ===
+  # === ANCHOR: late ===
+`;
+const MANAGED_MATCH_RULE: Rule = {
+  id: '11111111-1111-4111-8111-111111111111',
+  anchor: 'manual',
+  type: 'MATCH',
+  value: '',
+  policy: 'DIRECT',
+  rank: 10,
+  source: 'manual',
+  added_at: 1,
+  updated_at: 1,
+};
 
 function captureSync(fn: () => unknown): unknown {
   try {
@@ -59,6 +77,27 @@ describe('base parser input boundary', () => {
     const parsed = parseBase('{}');
 
     expect(parsed.policies).toContain('DIRECT');
+  });
+
+  it('accepts the canonical marker-only managed rules placeholder', () => {
+    const parsed = parseBase(MARKER_ONLY_RULES);
+
+    expect(parsed.anchors).toEqual(['prelude', 'manual', 'late']);
+  });
+
+  it.each([
+    ['missing anchor', 'rules:\n'],
+    ['explicit null', 'rules: null\n  # === ANCHOR: manual ===\n'],
+    ['tilde null', 'rules: ~\n  # === ANCHOR: manual ===\n'],
+    ['tagged null', 'rules: !!null\n  # === ANCHOR: manual ===\n'],
+    ['anchored null', 'rules: &managed\n  # === ANCHOR: manual ===\n'],
+    ['inline marker', 'rules: # === ANCHOR: manual ===\n'],
+    ['marker outside rules', 'rules:\ndns:\n  # === ANCHOR: manual ===\n  enable: true\n'],
+  ])('rejects a %s as a managed rules placeholder', (_label, content) => {
+    const error = captureSync(() => parseBase(content));
+
+    expect(error).toBeInstanceOf(BaseParseError);
+    expect((error as Error).message).toBe('Invalid base YAML: "rules" must be a sequence');
   });
 
   it.each([
@@ -202,6 +241,24 @@ describe('resolved-config legacy defense', () => {
     const result = await resolveConfig('{}\n', [], [], [], [], { persistSnapshot: false });
 
     expect(parseYaml(result.content)).toEqual({});
+  });
+
+  it('materialises managed rules into a marker-only base before final validation', async () => {
+    const result = await resolveConfig(MARKER_ONLY_RULES, [MANAGED_MATCH_RULE], [], [], [], {
+      persistSnapshot: false,
+    });
+
+    expect(parseYaml(result.content)).toMatchObject({ rules: ['MATCH,DIRECT'] });
+  });
+
+  it('still rejects a marker-only final config when no active rule is materialised', async () => {
+    const error = await captureAsync(
+      resolveConfig(MARKER_ONLY_RULES, [], [], [], [], { persistSnapshot: false }),
+    );
+
+    expect((error as Error).message).toBe(
+      'Full config render rejected: the final YAML document is invalid.',
+    );
   });
 
   it.each([
