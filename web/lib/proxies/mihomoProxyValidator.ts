@@ -3451,6 +3451,7 @@ function validateRealityOptions(
   value: Record<string, unknown>,
   index: number,
   prefix?: string,
+  isRoot = true,
 ): void {
   if (hasOwn(value, 'reality-opts')) {
     const field = joinField(prefix, 'reality-opts');
@@ -3491,12 +3492,15 @@ function validateRealityOptions(
 
   for (const [key, child] of Object.entries(value)) {
     if (key === 'reality-opts') continue;
-    const childPrefix = joinField(prefix, key);
-    if (isRecord(child)) validateRealityOptions(child, index, childPrefix);
+    // Top-level keys already passed the fixed proxy schema. Deeper object keys
+    // can come from arbitrary maps such as headers, so never reflect them in a
+    // public validation path; retain only the trusted top-level container.
+    const childPrefix = isRoot ? key : prefix;
+    if (isRecord(child)) validateRealityOptions(child, index, childPrefix, false);
     if (Array.isArray(child)) {
-      child.forEach((item, childIndex) => {
+      child.forEach((item) => {
         if (isRecord(item)) {
-          validateRealityOptions(item, index, `${childPrefix}[${childIndex}]`);
+          validateRealityOptions(item, index, childPrefix, false);
         }
       });
     }
@@ -3532,14 +3536,17 @@ function validateInlineTlsMaterial(
 
   for (const [key, child] of Object.entries(value)) {
     if (key === 'certificate' || key === 'private-key') continue;
-    const childPrefix = joinField(prefix, key);
+    // As above, only the root proxy key is guaranteed to be a fixed schema
+    // name. Nested map keys may contain credentials and must stay out of the
+    // ProblemDetails message and every downstream ConfigValidationError path.
+    const childPrefix = isRoot ? key : prefix;
     if (isRecord(child)) {
       validateInlineTlsMaterial(child, index, type, childPrefix, false);
     }
     if (Array.isArray(child)) {
-      child.forEach((item, childIndex) => {
+      child.forEach((item) => {
         if (isRecord(item)) {
-          validateInlineTlsMaterial(item, index, type, `${childPrefix}[${childIndex}]`, false);
+          validateInlineTlsMaterial(item, index, type, childPrefix, false);
         }
       });
     }

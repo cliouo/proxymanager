@@ -63,21 +63,32 @@ export async function resolveSubscriptionForPreflight(
     });
   } catch (error) {
     if (error instanceof SubscriptionResolutionValidationError) {
+      const rootPath = `subscriptions[${subscription.name}]`;
       const issue =
         error.stage === 'operators'
           ? {
               message: 'A subscription operator pipeline is invalid.',
-              path: 'subscriptions[].operators',
+              path: `${rootPath}.operators`,
             }
           : error.stage === 'definition'
             ? {
                 message: 'A subscription definition is invalid.',
-                path: 'subscriptions[]',
+                path: rootPath,
               }
             : {
                 message: 'A subscription contains invalid proxy nodes.',
-                path: 'subscriptions[].content',
+                path: `${rootPath}.content`,
               };
+      if (error.nodeIssue && error.stage !== 'definition') {
+        const { index, field, reason } = error.nodeIssue;
+        const nodePath = `${issue.path}.proxies[${index}]`;
+        const subject =
+          error.stage === 'operators'
+            ? 'A subscription operator pipeline produced an invalid proxy node'
+            : 'A subscription contains an invalid proxy node';
+        issue.message = `${subject}: ${field === '<entry>' ? reason : `field "${field}" ${reason}`}.`;
+        issue.path = field === '<entry>' ? nodePath : `${nodePath}.${field}`;
+      }
       throw new ConfigValidationError({
         code: error.code,
         message: issue.message,
