@@ -29,7 +29,33 @@ export type ClashProxy = {
 export interface ParseProxyResult {
   proxies: ClashProxy[];
   /** Lines that matched a known scheme but failed to parse. */
-  errors: { line: string; error: string }[];
+  errors: ProxyUriParseFailure[];
+}
+
+export type ProxyUriIssueCategory =
+  | 'input_line_limit'
+  | 'unrecognised_text'
+  | 'unsupported_scheme'
+  | 'parser_rejected'
+  | 'parser_resource_limit';
+
+/**
+ * Credential-free projection of one URI-list failure. The human-readable
+ * `error` field remains an internal parser diagnostic; only this projection is
+ * allowed to cross config-preflight or MCP boundaries.
+ */
+export interface ProxyUriParseIssue {
+  /** One-based physical line number, or null for a whole-input limit. */
+  line: number | null;
+  category: ProxyUriIssueCategory;
+  /** Present only after the scheme was verified against the fixed registry. */
+  scheme?: string;
+}
+
+export interface ProxyUriParseFailure {
+  line: string;
+  error: string;
+  issue: ProxyUriParseIssue;
 }
 
 const SCHEME_REGEX = /^([a-z][a-z0-9+.-]*):\/\//i;
@@ -60,7 +86,7 @@ export function looksLikeProxyUriList(text: string): boolean {
     const line = raw.trim();
     if (!line || line.startsWith('#') || line.startsWith('//')) continue;
     const m = line.match(SCHEME_REGEX);
-    if (m && PARSERS[m[1].toLowerCase()]) return true;
+    if (m && Object.hasOwn(PARSERS, m[1].toLowerCase())) return true;
   }
   return false;
 }
@@ -109,12 +135,13 @@ export function parseProxyUriList(text: string): ParseProxyResult {
         {
           line: 'input',
           error: `proxy URI input exceeds the ${MAX_PROXY_URI_LINES} physical-line limit`,
+          issue: { line: null, category: 'input_line_limit' },
         },
       ],
     };
   }
   const proxies: ClashProxy[] = [];
-  const errors: { line: string; error: string }[] = [];
+  const errors: ProxyUriParseFailure[] = [];
   const usedNames = new Set<string>();
   const nextSuffixByBase = new Map<string, number>();
   let hysteriaPortCandidates = 0;
@@ -127,15 +154,17 @@ export function parseProxyUriList(text: string): ParseProxyResult {
       errors.push({
         line: `line ${index + 1} (unrecognised text)`,
         error: 'non-comment line is not a proxy URI',
+        issue: { line: index + 1, category: 'unrecognised_text' },
       });
       continue;
     }
     const scheme = schemeMatch[1].toLowerCase();
-    const parser = PARSERS[scheme];
+    const parser = Object.hasOwn(PARSERS, scheme) ? PARSERS[scheme] : undefined;
     if (!parser) {
       errors.push({
-        line: describeUriLine(index, scheme),
-        error: `unsupported scheme ${scheme}://`,
+        line: `line ${index + 1} (unsupported scheme)`,
+        error: 'unsupported scheme',
+        issue: { line: index + 1, category: 'unsupported_scheme' },
       });
       continue;
     }
@@ -165,10 +194,23 @@ export function parseProxyUriList(text: string): ParseProxyResult {
       errors.push({
         line: describeUriLine(index, scheme),
         error: err instanceof Error ? err.message : String(err),
+        issue: {
+          line: index + 1,
+          category: isParserResourceLimitError(err) ? 'parser_resource_limit' : 'parser_rejected',
+          scheme,
+        },
       });
     }
   }
   return { proxies, errors };
+}
+
+function isParserResourceLimitError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    error.message ===
+      `hysteria port sets exceed the ${MAX_HYSTERIA_PORT_CANDIDATES} candidate limit`
+  );
 }
 
 // ────────────────────────────────────────────────────────────────────────────

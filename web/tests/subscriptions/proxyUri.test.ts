@@ -521,6 +521,10 @@ describe('parseProxyUriList per protocol', () => {
       {
         line: 'input',
         error: `proxy URI input exceeds the ${MAX_PROXY_URI_LINES} physical-line limit`,
+        issue: {
+          category: 'input_line_limit',
+          line: null,
+        },
       },
     ]);
   });
@@ -548,9 +552,15 @@ describe('parseProxyUriList per protocol', () => {
   });
 
   it('reports unsupported schemes as errors', () => {
-    const { errors } = parseProxyUriList('juicity://x@y:1#z');
+    const marker = 'juicity-fakesecretmarker';
+    const { errors } = parseProxyUriList(`${marker}://x@y:1#z`);
     expect(errors).toHaveLength(1);
     expect(errors[0].error).toMatch(/unsupported/i);
+    expect(errors[0].issue).toEqual({
+      category: 'unsupported_scheme',
+      line: 1,
+    });
+    expect(JSON.stringify(errors[0].issue)).not.toContain(marker);
   });
 
   it('does not retain credentials from a failed URI in diagnostics', () => {

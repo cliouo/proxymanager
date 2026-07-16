@@ -4,7 +4,7 @@ import { readCapped } from '@/lib/net/safeFetch';
 import { applyOperators, type ClashProxy } from '@/lib/proxies/operators';
 import { validateMihomoProxyList } from '@/lib/proxies/mihomoProxyValidator';
 import {
-  listSupportedProxyUriSchemes,
+  MAX_PROXY_URI_LINES,
   looksLikeProxyUriList,
   parseProxyUriList,
   tryBase64Decode,
@@ -17,6 +17,7 @@ import {
 } from '@/lib/repos/fetchCacheRepo';
 import {
   asSubscriptionValidationError,
+  SubscriptionContentValidationError,
   SubscriptionResolutionValidationError,
   SubscriptionUpstreamUnavailableError,
 } from '@/lib/services/subscriptionResolutionErrors';
@@ -655,7 +656,7 @@ function normaliseToClashProxies(text: string): {
 } {
   const cleaned = stripBom(text).trim();
   if (!cleaned) {
-    throw ProblemDetailsError.badRequest('Empty subscription content');
+    throw new SubscriptionContentValidationError({ kind: 'content_empty' });
   }
 
   // 1) Clash YAML with a `proxies:` array
@@ -686,13 +687,18 @@ function normaliseToClashProxies(text: string): {
   if (looksLikeProxyUriList(uriText)) {
     const { proxies, errors } = parseProxyUriList(uriText);
     if (errors.length > 0) {
-      const sample = errors
-        .slice(0, 3)
-        .map((e) => `"${e.line}" → ${e.error}`)
-        .join('; ');
-      throw ProblemDetailsError.badRequest(
-        `Proxy URI list rejected: ${errors.length} of ${proxies.length + errors.length} recognised URI lines failed; no partial provider was produced. ${sample}`,
-      );
+      if (errors.length === 1 && errors[0].issue.category === 'input_line_limit') {
+        throw new SubscriptionContentValidationError({
+          kind: 'uri_input_line_limit_exceeded',
+          limit: MAX_PROXY_URI_LINES,
+        });
+      }
+      throw new SubscriptionContentValidationError({
+        kind: 'uri_list_invalid',
+        failed: errors.length,
+        total: proxies.length + errors.length,
+        samples: errors.slice(0, 3).map(({ issue }) => issue),
+      });
     }
     if (proxies.length > 0) {
       const validated = validateProviderProxyList(proxies);
@@ -700,11 +706,7 @@ function normaliseToClashProxies(text: string): {
     }
   }
 
-  throw ProblemDetailsError.badRequest(
-    `No recognisable proxies found. Supported: Clash YAML \`proxies:\` block, line-delimited proxy URIs (${listSupportedProxyUriSchemes()
-      .map((scheme) => `${scheme}://`)
-      .join(' ')}), or base64-encoded variants.`,
-  );
+  throw new SubscriptionContentValidationError({ kind: 'content_format_unrecognised' });
 }
 
 /**

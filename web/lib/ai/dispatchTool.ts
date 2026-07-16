@@ -12,6 +12,10 @@ import { mintConfirmation } from './confirm';
 import { ZodError } from 'zod';
 import { ConfigPreflightUnavailableError, ConfigValidationError } from '@/lib/config/errors';
 import { ClientSafeProblemDetailsError, ProblemDetailsError } from '@/lib/http/problem';
+import {
+  describeSubscriptionContentIssue,
+  SubscriptionResolutionValidationError,
+} from '@/lib/services/subscriptionResolutionErrors';
 import type { ActionContext } from './actions/types';
 import {
   WRITE_PENDING_MODEL_CONTENT,
@@ -77,6 +81,9 @@ export function safeToolError(
   }
   if (error instanceof ConfigPreflightUnavailableError) {
     return { error: error.message };
+  }
+  if (error instanceof SubscriptionResolutionValidationError && error.contentIssue) {
+    return { error: describeSubscriptionContentIssue(error.contentIssue) };
   }
   if (error instanceof ZodError) {
     return { error: '工具参数校验失败，请检查字段格式。' };

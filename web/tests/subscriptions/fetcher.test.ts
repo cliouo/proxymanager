@@ -5,6 +5,7 @@ import {
   parseTrafficHeader,
 } from '@/lib/services/subscriptionFetcher';
 import { ProblemDetailsError } from '@/lib/http/problem';
+import { SubscriptionContentValidationError } from '@/lib/services/subscriptionResolutionErrors';
 
 const SAMPLE_CLASH_YAML = `# A bare-bones airport response
 mixed-port: 7890
@@ -94,6 +95,35 @@ describe('normaliseToClashProviderYaml', () => {
 
   it('throws on empty input', () => {
     expect(() => normaliseToClashProviderYaml('')).toThrow(ProblemDetailsError);
+  });
+
+  it('exposes only structured, credential-free URI-list diagnostics', () => {
+    const marker = 'juicity-fakesecretmarker';
+    let error: unknown;
+    try {
+      normaliseToClashProviderYaml(
+        `trojan://safe@example.invalid:443#valid\n${marker}://credential@example.invalid:443#bad`,
+      );
+    } catch (caught) {
+      error = caught;
+    }
+
+    expect(error).toBeInstanceOf(SubscriptionContentValidationError);
+    expect((error as SubscriptionContentValidationError).contentIssue).toEqual({
+      kind: 'uri_list_invalid',
+      failed: 1,
+      total: 2,
+      samples: [
+        {
+          category: 'unsupported_scheme',
+          line: 2,
+        },
+      ],
+    });
+    expect((error as Error).message).not.toContain(marker);
+    expect(
+      JSON.stringify((error as SubscriptionContentValidationError).contentIssue),
+    ).not.toContain(marker);
   });
 });
 

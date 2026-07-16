@@ -10,6 +10,7 @@ import { listRules } from '@/lib/repos/rulesRepo';
 import { listRuleSets } from '@/lib/repos/ruleSetsRepo';
 import { listSubscriptions } from '@/lib/repos/subscriptionsRepo';
 import {
+  describeSubscriptionContentIssue,
   SubscriptionResolutionValidationError,
   SubscriptionUpstreamUnavailableError,
 } from '@/lib/services/subscriptionResolutionErrors';
@@ -88,6 +89,16 @@ export async function resolveSubscriptionForPreflight(
             : 'A subscription contains an invalid proxy node';
         issue.message = `${subject}: ${field === '<entry>' ? reason : `field "${field}" ${reason}`}.`;
         issue.path = field === '<entry>' ? nodePath : `${nodePath}.${field}`;
+      } else if (error.contentIssue && error.stage === 'content') {
+        issue.message = describeSubscriptionContentIssue(error.contentIssue);
+        if (error.contentIssue.kind === 'proxy_node_limit_exceeded') {
+          issue.path = `${rootPath}.content.proxies`;
+        } else if (error.contentIssue.kind === 'uri_list_invalid') {
+          const firstLine = error.contentIssue.samples[0]?.line;
+          if (firstLine !== null && firstLine !== undefined) {
+            issue.path = `${rootPath}.content.lines[${firstLine}]`;
+          }
+        }
       }
       throw new ConfigValidationError({
         code: error.code,
