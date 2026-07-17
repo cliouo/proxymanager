@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ClientSafeProblemDetailsError, ProblemDetailsError } from '@/lib/http/problem';
+import { SubscriptionResolutionValidationError } from '@/lib/services/subscriptionResolutionErrors';
 import type { ProxyGroup } from '@/schemas';
 
 /**
@@ -148,5 +149,34 @@ describe('dispatchToolCall', () => {
     expect(unsafe.error).toBe('当前配置不满足该操作的执行条件。');
     expect(JSON.stringify(unsafe)).not.toContain(secret);
     expect(safe.error).toBe('固定安全原因。');
+  });
+
+  it('surfaces only the structured part of subscription content failures', () => {
+    const secret = 'FAKE_SECRET_UNKNOWN_SCHEME';
+    const result = dispatch.safeToolError(
+      new SubscriptionResolutionValidationError(
+        'content',
+        'subscription_content_invalid',
+        {
+          type: 'https://proxymanager.dev/errors/bad-request',
+          title: 'Bad Request',
+          status: 400,
+          detail: secret,
+        },
+        undefined,
+        {
+          kind: 'uri_list_invalid',
+          failed: 1,
+          total: 3,
+          samples: [{ line: 7, category: 'parser_rejected', scheme: secret }],
+        },
+      ),
+      'preview_node_operators',
+    );
+
+    expect(result.error).toBe(
+      'A subscription URI list has 1 invalid entry out of 3; line 7 was rejected by the parser.',
+    );
+    expect(JSON.stringify(result)).not.toContain(secret);
   });
 });

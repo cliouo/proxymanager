@@ -47,6 +47,7 @@ import {
 import { applyConfigEntityChanges, preflightProfileConfig } from '@/lib/services/configPreflight';
 import {
   asSubscriptionValidationError,
+  SubscriptionContentValidationError,
   SubscriptionResolutionValidationError,
   SubscriptionUpstreamUnavailableError,
 } from '@/lib/services/subscriptionResolutionErrors';
@@ -357,6 +358,37 @@ describe('preflightProfileConfig', () => {
       message: 'A subscription contains invalid proxy nodes.',
       section: 'subscriptions',
       path: 'subscriptions[remote-source].content',
+      resource: 'subscription',
+    });
+    expect((error as Error).message).not.toContain(secret);
+  });
+
+  it('reports a structured URI-list issue without reflecting an unknown scheme', async () => {
+    const secret = 'FAKE_SECRET_UNKNOWN_SCHEME';
+    const wrapped = asSubscriptionValidationError(
+      new SubscriptionContentValidationError({
+        kind: 'uri_list_invalid',
+        failed: 2,
+        total: 5,
+        samples: [
+          { line: 4, category: 'unsupported_scheme' },
+          { line: 9, category: 'parser_rejected', scheme: 'vless' },
+        ],
+      }),
+      'content',
+      'subscription_content_invalid',
+      secret,
+    );
+    mocks.resolveSubscriptionProxies.mockRejectedValueOnce(wrapped);
+    renderThroughSubscriptionResolver();
+
+    const error = await preflightProfileConfig(PROFILE_ID, () => ({})).catch((caught) => caught);
+    expect((error as ConfigValidationError).issue).toEqual({
+      code: 'subscription_content_invalid',
+      message:
+        'A subscription URI list has 2 invalid entries out of 5; line 4 uses an unsupported proxy URI scheme.',
+      section: 'subscriptions',
+      path: 'subscriptions[remote-source].content.lines[4]',
       resource: 'subscription',
     });
     expect((error as Error).message).not.toContain(secret);

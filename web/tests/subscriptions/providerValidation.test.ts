@@ -51,6 +51,8 @@ describe('Clash provider structural validation', () => {
       'proxies: *c',
     ].join('\n');
 
-    expect(() => normaliseToClashProviderYaml(aliasBomb)).toThrow(/No recognisable proxies/);
+    expect(() => normaliseToClashProviderYaml(aliasBomb)).toThrow(
+      /subscription content format is not recognised/i,
+    );
   });
 });
