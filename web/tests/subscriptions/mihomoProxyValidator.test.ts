@@ -222,6 +222,14 @@ describe('fixed Mihomo v1.19.28 proxy node validation', () => {
     expect(result[0]).toBe(proxy);
   });
 
+  it('accepts udp on a direct proxy as inert noise (mihomo decoder has no ErrorUnused)', () => {
+    const proxy = { name: '直连', type: 'direct', udp: true };
+    expect(validateMihomoProxyList([proxy])[0]).toBe(proxy);
+    expect(() => validateMihomoProxyList([{ name: '直连', type: 'direct', udp: 'yes' }])).toThrow(
+      /field "udp" must be a boolean/,
+    );
+  });
+
   it('accepts exactly the inclusive proxy node limit', () => {
     const proxies = Array.from({ length: MAX_PROXY_NODES }, (_, index) => ({
       name: `SAFE-NODE-${index}`,

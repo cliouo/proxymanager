@@ -2710,4 +2710,22 @@ describe('per-parameter relaxations for real-world share links (2026-07-18)', ()
     expect(unknown.proxies).toHaveLength(0);
     expect(unknown.errors).toHaveLength(1);
   });
+
+  it('Hysteria2: maps the v2rayN allowInsecure alias to skip-cert-verify (hy2-allowinsecure-alias)', () => {
+    const { proxies, errors } = parseProxyUriList(
+      'hysteria2://pass@node.example:2328?sni=node.example&allowInsecure=1#H2',
+    );
+    expect(errors).toHaveLength(0);
+    expect(proxies[0]).toMatchObject({
+      type: 'hysteria2',
+      sni: 'node.example',
+      'skip-cert-verify': true,
+    });
+
+    const conflict = parseProxyUriList(
+      'hysteria2://pass@node.example:2328?insecure=0&allowInsecure=1#H2',
+    );
+    expect(conflict.proxies).toHaveLength(0);
+    expect(conflict.errors[0].error).toMatch(/conflicting hysteria2 query aliases/);
+  });
 });

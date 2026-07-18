@@ -519,7 +519,9 @@ const PROXY_FIELDS_BY_TYPE: Readonly<Record<string, Readonly<Record<string, Prox
     integers: ['port'],
     booleans: ['forward', 'udp', 'tls', 'mux', 'skip-cert-verify'],
   }),
-  direct: defineProxyFields({ strings: ['name'] }),
+  // `udp` is not a DirectOption member; mihomo's proxy decoder has no
+  // ErrorUnused so the key is silently ignored, and direct passes UDP anyway.
+  direct: defineProxyFields({ strings: ['name'], booleans: ['udp'] }),
   dns: defineProxyFields({ strings: ['name'] }),
   reject: defineProxyFields({ strings: ['name'] }),
   rematch: defineProxyFields({ strings: ['name', 'target-rematch-name', 'target-sub-rule'] }),
@@ -1220,13 +1222,8 @@ function validateTopLevelProxySchema(
   for (const [field, value] of Object.entries(proxy)) {
     const kind = typeFields[field] ?? commonFields[field];
     if (kind === undefined) {
-      // `udp` on `direct` is a common legacy alias and both identifiers are
-      // fixed schema names, so reporting this one path is safe and actionable.
-      // Every other unknown/inert key stays hidden because an attacker-controlled
-      // key may itself contain subscription credentials or other sensitive data.
-      if (type === 'direct' && field === 'udp') {
-        invalidProxyEntry(index, field, 'is not supported for type "direct"');
-      }
+      // The unknown key stays hidden because an attacker-controlled key may
+      // itself contain subscription credentials or other sensitive data.
       invalidProxyEntry(index, 'proxy', 'contains an unsupported top-level field');
     }
     validateProxyFieldKind(value, kind, index, field);
