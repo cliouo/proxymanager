@@ -170,6 +170,22 @@ describe('parseProxyUriList per protocol', () => {
     });
   });
 
+  it('parses vless:// reality with spx by dropping spiderX (vless-reality-spx-dropped)', () => {
+    const uri =
+      `vless://00000000-0000-0000-0000-000000000000@example.com:443?flow=xtls-rprx-vision&fp=chrome` +
+      `&pbk=${FAKE_REALITY_PUBLIC_KEY}&security=reality&sid=ab12&sni=sni.example&spx=%2FXZX2VdBg5GK9G5I&type=tcp#VL-Reality-SPX`;
+    const { proxies, errors } = parseProxyUriList(uri);
+    expect(errors).toHaveLength(0);
+    expect(proxies[0]).toMatchObject({
+      name: 'VL-Reality-SPX',
+      type: 'vless',
+      tls: true,
+      'reality-opts': { 'public-key': FAKE_REALITY_PUBLIC_KEY, 'short-id': 'ab12' },
+    });
+    expect(proxies[0]).not.toHaveProperty('spx');
+    expect(proxies[0]).not.toHaveProperty('spider-x');
+  });
+
   it('parses trojan:// with ws', () => {
     const uri =
       'trojan://pa%23ss@trojan.example:443?sni=cdn.example&type=ws&path=%2Ftj&host=cdn.example#TJ-WS';
