@@ -342,7 +342,7 @@ function applySsQueryParams(proxy: ClashProxy, p: Record<string, string>): void 
   // fields. Emitting those keys looks secured but the target decoder ignores
   // them, so active wrappers must not degrade into direct Shadowsocks.
   if (
-    Object.hasOwn(p, 'type') ||
+    (Object.hasOwn(p, 'type') && p.type !== 'tcp') ||
     [
       'sni',
       'peer',
@@ -2547,7 +2547,7 @@ function assertVlessQueryIntegrity(params: URLSearchParams): void {
     ['packetEncoding', 'packet-encoding'],
     ['packet-encoding', 'packet-encoding'],
   ]);
-  for (const [key] of params) {
+  for (const [key, value] of params) {
     if (seen.has(key)) throw new Error('duplicate vless query parameter');
     seen.add(key);
     const canonical = canonicalByLower.get(key.toLowerCase());
@@ -2560,7 +2560,11 @@ function assertVlessQueryIntegrity(params: URLSearchParams): void {
       if (semantic === 'packet-encoding') {
         throw new Error('conflicting vless packet encoding aliases');
       }
-      if (semantic === 'insecure') throw new Error('conflicting vless insecure aliases');
+      if (semantic === 'insecure') {
+        const otherKey = key === 'insecure' ? 'allowInsecure' : 'insecure';
+        if (params.get(otherKey) === value) continue;
+        throw new Error('conflicting vless insecure aliases');
+      }
       throw new Error('conflicting vless query aliases');
     }
     semanticSeen.add(semantic);

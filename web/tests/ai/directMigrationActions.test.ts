@@ -82,3 +82,51 @@ describe('legacy profile repair actions', () => {
     ).toBe(false);
   });
 });
+
+describe('legacy chain profile repair actions', () => {
+  const repairs = [
+    {
+      id: '11111111-1111-4111-8111-111111111111',
+      filter: '(?i)(?<![A-Za-z])USA?(?![A-Za-z])',
+    },
+    {
+      id: '22222222-2222-4222-8222-222222222222',
+      filter: '(?i)(?<![A-Za-z])DEU?(?![A-Za-z])',
+    },
+  ];
+
+  it('registers the narrow read preflight and confirmation-gated write', () => {
+    expect(getAction('preview_legacy_chain_profile_repair')?.risk).toBe('read');
+    expect(getAction('repair_legacy_chain_profile')?.risk).toBe('write');
+  });
+
+  it('requires a special chain/source repair and both write guards', () => {
+    const preview = getAction('preview_legacy_chain_profile_repair');
+    const write = getAction('repair_legacy_chain_profile');
+    expect(preview?.input.safeParse({ alias: '直连', repairs }).success).toBe(false);
+    expect(
+      preview?.input.safeParse({
+        alias: '直连',
+        repairs,
+        quarantine_spx_subscription_id: '33333333-3333-4333-8333-333333333333',
+      }).success,
+    ).toBe(true);
+    expect(
+      write?.input.safeParse({
+        alias: '直连',
+        repairs,
+        quarantine_spx_subscription_id: '33333333-3333-4333-8333-333333333333',
+        expected_version: 7,
+      }).success,
+    ).toBe(false);
+    expect(
+      write?.input.safeParse({
+        alias: '直连',
+        repairs,
+        quarantine_spx_subscription_id: '33333333-3333-4333-8333-333333333333',
+        expected_version: 7,
+        expected_base_etag: 'feedfacefeedface',
+      }).success,
+    ).toBe(true);
+  });
+});

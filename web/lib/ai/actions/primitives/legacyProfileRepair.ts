@@ -84,11 +84,15 @@ function directSummary(
 function filterSnapshot(
   groups: Array<{ name: string; filter?: string; 'exclude-filter'?: string }>,
 ) {
-  return groups.map((group) => ({
-    name: group.name,
-    filter: group.filter ?? null,
-    excludeFilter: group['exclude-filter'] ?? null,
-  }));
+  return Object.fromEntries(
+    groups.map((group) => [
+      group.name,
+      {
+        filter: group.filter ?? null,
+        ...(group['exclude-filter'] != null ? { excludeFilter: group['exclude-filter'] } : {}),
+      },
+    ]),
+  );
 }
 
 const previewLegacyProfileRepair = defineAction({
@@ -160,7 +164,6 @@ const repairLegacyProfile = defineWriteAction({
         groupNames: plan.summary.groupNames,
       },
       filters: filterSnapshot(plan.filterRepairAfter),
-      allGroupsTouched: plan.groups.map((group) => group.name),
       subscriptionValidation: {
         isolatedExistingFailures: plan.summary.isolatedSubscriptionFailures,
         migrationDoesNotRepairSubscriptions: plan.summary.isolatedSubscriptionFailures > 0,
