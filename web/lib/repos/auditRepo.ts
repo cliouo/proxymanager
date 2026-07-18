@@ -17,6 +17,8 @@ interface RecordInput {
   before?: unknown;
   after?: unknown;
   undoes?: string;
+  /** Explicit capability marker for operations without a safe inverse. */
+  undoable?: boolean;
   /** Profile the mutation targeted (Phase 2 per-profile config). */
   profileId?: string;
 }
@@ -46,6 +48,7 @@ export async function recordEvent(input: RecordInput): Promise<AuditEvent> {
     before: input.before,
     after: input.after,
     undoes: input.undoes,
+    undoable: input.undoable,
     profileId: input.profileId,
   };
 
@@ -60,11 +63,7 @@ export async function recordEvent(input: RecordInput): Promise<AuditEvent> {
   const card = await redis.zcard(REDIS_KEYS.audit.events);
   if (card > MAX_EVENTS) {
     const overflow = card - MAX_EVENTS;
-    const evictIds = (await redis.zrange<string[]>(
-      REDIS_KEYS.audit.events,
-      0,
-      overflow - 1,
-    )) ?? [];
+    const evictIds = (await redis.zrange<string[]>(REDIS_KEYS.audit.events, 0, overflow - 1)) ?? [];
     if (evictIds.length > 0) {
       const trim = redis.multi();
       trim.zremrangebyrank(REDIS_KEYS.audit.events, 0, overflow - 1);
@@ -100,6 +99,7 @@ export async function recordEvents(inputs: RecordInput[]): Promise<AuditEvent[]>
     before: input.before,
     after: input.after,
     undoes: input.undoes,
+    undoable: input.undoable,
     profileId: input.profileId,
   }));
 
@@ -108,18 +108,14 @@ export async function recordEvents(inputs: RecordInput[]): Promise<AuditEvent[]>
   for (const event of events) {
     tx.zadd(REDIS_KEYS.audit.events, { score: event.ts, member: event.id });
   }
-  tx.hset(
-    REDIS_KEYS.audit.byId,
-    Object.fromEntries(events.map((e) => [e.id, e])),
-  );
+  tx.hset(REDIS_KEYS.audit.byId, Object.fromEntries(events.map((e) => [e.id, e])));
   await tx.exec();
 
   // One trim for the whole batch (not per event).
   const card = await redis.zcard(REDIS_KEYS.audit.events);
   if (card > MAX_EVENTS) {
     const overflow = card - MAX_EVENTS;
-    const evictIds =
-      (await redis.zrange<string[]>(REDIS_KEYS.audit.events, 0, overflow - 1)) ?? [];
+    const evictIds = (await redis.zrange<string[]>(REDIS_KEYS.audit.events, 0, overflow - 1)) ?? [];
     if (evictIds.length > 0) {
       const trim = redis.multi();
       trim.zremrangebyrank(REDIS_KEYS.audit.events, 0, overflow - 1);
@@ -157,22 +153,20 @@ export async function listEvents(opts: ListEventsOptions = {}): Promise<AuditEve
   // Upstash's zrange types accept `+inf` / `-inf` / `(N` template-literal
   // strings — cast to satisfy the union without losing exclusive-bound
   // semantics for pagination.
-  const max = (
-    opts.beforeTs !== undefined ? (`(${opts.beforeTs}` as const) : '+inf'
-  ) as `(${number}` | '+inf';
+  const max = (opts.beforeTs !== undefined ? (`(${opts.beforeTs}` as const) : '+inf') as
+    | `(${number}`
+    | '+inf';
   // Newest first.
-  const ids = (await redis.zrange<string[]>(REDIS_KEYS.audit.events, max, '-inf', {
-    byScore: true,
-    rev: true,
-    count: limit,
-    offset: 0,
-  })) ?? [];
+  const ids =
+    (await redis.zrange<string[]>(REDIS_KEYS.audit.events, max, '-inf', {
+      byScore: true,
+      rev: true,
+      count: limit,
+      offset: 0,
+    })) ?? [];
   if (ids.length === 0) return [];
 
-  const payloads = await redis.hmget<Record<string, AuditEvent>>(
-    REDIS_KEYS.audit.byId,
-    ...ids,
-  );
+  const payloads = await redis.hmget<Record<string, AuditEvent>>(REDIS_KEYS.audit.byId, ...ids);
   if (!payloads) return [];
 
   const out: AuditEvent[] = [];

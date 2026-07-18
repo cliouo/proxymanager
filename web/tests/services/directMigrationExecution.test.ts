@@ -6,6 +6,8 @@ const PROFILE_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const GROUP_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const RULE_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 const ETAG = 'feedfacefeedface';
+const US_GROUP_ID = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+const DE_GROUP_ID = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
 
 const base: BaseRecord = {
   content: `
@@ -35,6 +37,28 @@ const group: ProxyGroup = {
   updated_at: 1,
 };
 
+const usGroup: ProxyGroup = {
+  id: US_GROUP_ID,
+  kind: 'filter',
+  name: '美国',
+  type: 'select',
+  rank: 20,
+  filter: String.raw`(?i)(🇺🇸|\bUS\b|美)`,
+  'include-all-proxies': true,
+  updated_at: 1,
+};
+
+const deGroup: ProxyGroup = {
+  id: DE_GROUP_ID,
+  kind: 'filter',
+  name: '德国',
+  type: 'select',
+  rank: 30,
+  filter: String.raw`(?i)(🇩🇪|\bDE\b|德)`,
+  'include-all-proxies': true,
+  updated_at: 1,
+};
+
 const disabledRule: Rule = {
   id: RULE_ID,
   anchor: 'manual',
@@ -56,13 +80,23 @@ const profile: Profile = {
 };
 
 let versions: number[] = [7, 7, 7];
+let groups: ProxyGroup[] = [group];
+let requireCombinedRepair = false;
 const evalMock = vi.fn(async (_script: string, _keys: string[], args: string[]) => [
   1,
   8,
   args.at(-3),
 ]);
-const resolveMock = vi.fn(async (...args: unknown[]) => {
-  void args;
+const resolveMock = vi.fn(async (baseContent: string, ...args: unknown[]) => {
+  if (requireCombinedRepair) {
+    const candidateGroups = args[2] as ProxyGroup[];
+    const filters = new Map(candidateGroups.map((item) => [item.name, item.filter]));
+    const aliasRemoved = !baseContent.includes('name: 直连');
+    const filtersRepaired =
+      filters.get('美国') === '(?i)(🇺🇸|(?<![A-Za-z])USA?(?![A-Za-z])|美)' &&
+      filters.get('德国') === '(?i)(🇩🇪|(?<![A-Za-z])DEU?(?![A-Za-z])|德)';
+    if (!aliasRemoved || !filtersRepaired) throw new Error('candidate is only partially repaired');
+  }
   return { content: 'ok' };
 });
 let providers: RuleSet[] = [];
@@ -72,7 +106,7 @@ vi.mock('@/lib/repos/configVersionRepo', () => ({
 }));
 vi.mock('@/lib/repos/baseRepo', () => ({ getBase: vi.fn(async () => base) }));
 vi.mock('@/lib/repos/proxyGroupsRepo', () => ({
-  listProxyGroups: vi.fn(async () => [group]),
+  listProxyGroups: vi.fn(async () => groups),
 }));
 vi.mock('@/lib/repos/rulesRepo', () => ({ listRules: vi.fn(async () => [disabledRule]) }));
 vi.mock('@/lib/repos/proxyGroupTemplatesRepo', () => ({
@@ -88,13 +122,17 @@ vi.mock('@/lib/engine/resolve', () => ({ resolveConfig: resolveMock }));
 vi.mock('@/lib/redis/client', () => ({ getRedis: () => ({ eval: evalMock }) }));
 
 let service: typeof import('@/lib/services/directMigrationService');
+let repairService: typeof import('@/lib/services/legacyProfileRepairService');
 
 beforeEach(async () => {
   versions = [7, 7, 7];
+  groups = [group];
+  requireCombinedRepair = false;
   providers = [];
   evalMock.mockClear();
   resolveMock.mockClear();
   service = await import('@/lib/services/directMigrationService');
+  repairService = await import('@/lib/services/legacyProfileRepairService');
 });
 
 describe('executeDirectAliasMigration', () => {
@@ -134,6 +172,11 @@ describe('executeDirectAliasMigration', () => {
       args.some((arg) => arg.includes('"policy":"DIRECT"') && arg.includes('"enabled":false')),
     ).toBe(true);
     expect(args.some((arg) => arg.includes('"proxies":["DIRECT"]'))).toBe(true);
+    expect(JSON.parse(args.at(-1) ?? '{}')).toMatchObject({
+      op: 'direct-migration.replace-alias',
+      target: { kind: 'base', field: 'proxies' },
+      undoable: false,
+    });
     expect(result).toMatchObject({ newVersion: 8, summary: { disabledRulesTouched: 1 } });
     expect(result.auditEventId).toMatch(/^[0-9a-f-]{36}$/u);
   });
@@ -173,5 +216,48 @@ describe('executeDirectAliasMigration', () => {
     ).rejects.toMatchObject({ problem: { status: 422 } });
     expect(resolveMock).not.toHaveBeenCalled();
     expect(evalMock).not.toHaveBeenCalled();
+  });
+
+  it('repairs a direct alias and multiple invalid filters in one validated commit', async () => {
+    groups = [group, usGroup, deGroup];
+    requireCombinedRepair = true;
+    const repairs = [
+      {
+        id: US_GROUP_ID,
+        filter: '(?i)(🇺🇸|(?<![A-Za-z])USA?(?![A-Za-z])|美)',
+      },
+      {
+        id: DE_GROUP_ID,
+        filter: '(?i)(🇩🇪|(?<![A-Za-z])DEU?(?![A-Za-z])|德)',
+      },
+    ];
+
+    await expect(service.planDirectAliasMigration(PROFILE_ID, '直连')).rejects.toThrow(
+      'candidate is only partially repaired',
+    );
+    versions = [7, 7, 7];
+
+    const result = await repairService.executeLegacyProfileRepair(
+      PROFILE_ID,
+      '直连',
+      repairs,
+      7,
+      ETAG,
+      'test-actor',
+    );
+
+    expect(resolveMock).toHaveBeenCalledTimes(2);
+    expect(evalMock).toHaveBeenCalledOnce();
+    const [, , args] = evalMock.mock.calls[0] as [string, string[], string[]];
+    expect(args.some((arg) => arg.includes('"proxies":["DIRECT"]'))).toBe(true);
+    expect(args.some((arg) => arg.includes('(?<![A-Za-z])USA?'))).toBe(true);
+    expect(args.some((arg) => arg.includes('(?<![A-Za-z])DEU?'))).toBe(true);
+    expect(JSON.parse(args.at(-1) ?? '{}')).toMatchObject({
+      op: 'legacy-profile-repair.apply',
+      target: { kind: 'profile' },
+      undoable: false,
+    });
+    expect(result.summary.repairedFilterGroups).toEqual(['美国', '德国']);
+    expect(result).toMatchObject({ newVersion: 8 });
   });
 });

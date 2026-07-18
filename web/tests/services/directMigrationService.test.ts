@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { buildDirectAliasCandidate } from '@/lib/services/directMigrationService';
+import { buildLegacyProfileRepairCandidate } from '@/lib/services/legacyProfileRepairService';
 import type { BaseRecord } from '@/lib/repos/baseRepo';
 import type { ProxyGroup, ProxyGroupTemplate, Rule } from '@/schemas';
 
@@ -317,5 +318,80 @@ custom:
         alias: 'bad\nname',
       }),
     ).toThrow(/控制字符/u);
+  });
+});
+
+describe('buildLegacyProfileRepairCandidate', () => {
+  it('merges alias rewrites and filter repairs when they touch the same group', () => {
+    const us = group({
+      name: '美国',
+      filter: String.raw`(?i)(🇺🇸|\bUS\b|美)`,
+    });
+    const de = group({
+      id: '55555555-5555-4555-8555-555555555555',
+      name: '德国',
+      proxies: [],
+      filter: String.raw`(?i)(🇩🇪|\bDE\b|德)`,
+    });
+    const candidate = buildLegacyProfileRepairCandidate({
+      base: base(`
+proxies:
+  - name: ${ALIAS}
+    type: direct
+    udp: true
+`),
+      groups: [us, de],
+      rules: [],
+      templates: [],
+      alias: ALIAS,
+      repairs: [
+        {
+          id: us.id,
+          filter: '(?i)(🇺🇸|(?<![A-Za-z])USA?(?![A-Za-z])|美)',
+        },
+        {
+          id: de.id,
+          filter: '(?i)(🇩🇪|(?<![A-Za-z])DEU?(?![A-Za-z])|德)',
+        },
+      ],
+      updatedAt: 99,
+    });
+
+    expect(candidate.groups).toHaveLength(2);
+    expect(candidate.groups.find((item) => item.id === us.id)).toMatchObject({
+      proxies: ['DIRECT', '节点 A'],
+      filter: '(?i)(🇺🇸|(?<![A-Za-z])USA?(?![A-Za-z])|美)',
+      updated_at: 99,
+    });
+    expect(candidate.groups.find((item) => item.id === de.id)?.filter).toContain('DEU?');
+    expect(candidate.filterRepairBefore.map((item) => item.name)).toEqual(['美国', '德国']);
+  });
+
+  it('rejects using the recovery path for groups whose edited fields are already valid', () => {
+    expect(() =>
+      buildLegacyProfileRepairCandidate({
+        base: base(`
+proxies:
+  - name: ${ALIAS}
+    type: direct
+    udp: true
+`),
+        groups: [
+          group({ filter: '(?i)美国' }),
+          group({
+            id: '55555555-5555-4555-8555-555555555555',
+            name: '德国',
+            filter: '(?i)德国',
+          }),
+        ],
+        rules: [],
+        templates: [],
+        alias: ALIAS,
+        repairs: [
+          { id: GROUP_ID, filter: '(?i)美国|USA' },
+          { id: '55555555-5555-4555-8555-555555555555', filter: '(?i)德国|DEU' },
+        ],
+      }),
+    ).toThrow(/当前没有被修复字段中的非法正则/u);
   });
 });

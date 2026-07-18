@@ -35,6 +35,13 @@ export const POST = withProblemDetails(async (request: Request, ctx: Ctx) => {
   const { id } = await ctx.params;
   const event = await getEvent(id);
   if (!event) throw ProblemDetailsError.notFound(`History event ${id} not found.`);
+  if (event.undoable === false) {
+    throw ProblemDetailsError.unprocessable('该操作没有安全的原子撤销路径。');
+  }
+  const target = event.target;
+  if (target?.kind === 'profile') {
+    throw ProblemDetailsError.unprocessable('组合 profile 操作没有安全的原子撤销路径。');
+  }
   if (event.undone_by) {
     throw ProblemDetailsError.conflict(`Event ${id} was already undone by ${event.undone_by}.`);
   }
@@ -84,7 +91,7 @@ export const POST = withProblemDetails(async (request: Request, ctx: Ctx) => {
     id: event.id,
     before: event.before,
     after: event.after,
-    target: event.target,
+    target,
     ruleId: event.ruleId,
   });
 

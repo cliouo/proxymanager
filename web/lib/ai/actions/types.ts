@@ -9,7 +9,8 @@
  *   - read  : `run` executes immediately, no side effects.
  *   - write : never executes inline. `preview` builds a diff for the
  *             confirmation card; `execute` performs the mutation (via the
- *             existing scenario dispatcher, so audit + undo come for free)
+ *             the audited mutation path; actions expose undo only when a safe
+ *             inverse is registered)
  *             and only runs after the user authorises it through
  *             /api/v1/assistant/confirm.
  *

@@ -299,8 +299,16 @@ function collapseContext(rows: DiffRow[]): Array<DiffRow | { t: 'gap'; n: number
 
 const ROW_STYLE: Record<DiffRow['t'], { bg?: string; sign: string; color: string }> = {
   ctx: { sign: ' ', color: 'var(--color-muted)' },
-  del: { bg: 'color-mix(in srgb, var(--color-danger) 9%, transparent)', sign: '-', color: 'var(--color-danger)' },
-  add: { bg: 'color-mix(in srgb, var(--color-success) 14%, transparent)', sign: '+', color: 'var(--color-fg)' },
+  del: {
+    bg: 'color-mix(in srgb, var(--color-danger) 9%, transparent)',
+    sign: '-',
+    color: 'var(--color-danger)',
+  },
+  add: {
+    bg: 'color-mix(in srgb, var(--color-success) 14%, transparent)',
+    sign: '+',
+    color: 'var(--color-fg)',
+  },
 };
 
 function ConfigDiffView({ diff }: { diff: unknown }) {
@@ -341,10 +349,7 @@ function ConfigDiffView({ diff }: { diff: unknown }) {
               >
                 {ROW_STYLE[row.t].sign}
               </span>
-              <span
-                className="whitespace-pre pr-2"
-                style={{ color: ROW_STYLE[row.t].color }}
-              >
+              <span className="whitespace-pre pr-2" style={{ color: ROW_STYLE[row.t].color }}>
                 {row.text.length ? row.text : ' '}
               </span>
             </div>
@@ -426,10 +431,10 @@ function WriteResultCard({ data, onUndone }: CardProps) {
   const d = data as {
     op?: string;
     summary?: string;
-    events?: Array<{ id: string; op: string }>;
+    events?: Array<{ id: string; op: string; undoable?: boolean }>;
     undone?: boolean;
   };
-  const eventId = d.events?.[0]?.id;
+  const eventId = d.events?.find((event) => event.undoable !== false)?.id;
   const toast = useToast();
   // Seed from persisted data so a restored, already-undone write shows 已撤销
   // instead of offering the (idempotency-guarded, but misleading) undo again.
@@ -655,9 +660,7 @@ export function CollapsibleResult({
       >
         <span className="text-[var(--color-success)]">✓</span>
         {label}
-        <span className="text-[10px] text-[var(--color-muted)]">
-          {open ? '收起 ▾' : '展开 ▸'}
-        </span>
+        <span className="text-[10px] text-[var(--color-muted)]">{open ? '收起 ▾' : '展开 ▸'}</span>
       </button>
       {open && (
         <div className="mt-1.5">

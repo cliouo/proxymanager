@@ -85,9 +85,13 @@ profile 都要重新读取、预检并生成自己的确认卡；不要复用另
 - **禁止**用 config-section 去碰 `proxies` / `rules` / `rule-providers` / `proxy-groups`——
   这些各有专属 action（见路由表），用 config-section 改会被系统**拒绝**。
 - `proxies` 由订阅源在渲染时注入；用户的 `proxy-providers` 本项目原样透传、**AI 不碰**。
-- 唯一窄例外是专用 `preview_direct_alias_migration` → `migrate_direct_alias`：它只迁移
+- 专用窄例外 `preview_direct_alias_migration` → `migrate_direct_alias` 只迁移
   `name + type: direct + 可选 udp: true` 的冗余本地别名为 mihomo 内建 `DIRECT`，同时原子改写
   当前 profile 的全部已知引用。它不是通用 `proxies` 编辑器；出现额外字段、共享资源引用或未知路径即拒绝。
+- 若同一 profile 还同时存在 2–16 个非法策略组筛选，导致直连迁移与
+  `repair_proxy_group_filters` 彼此被完整预检阻塞，只能先逐组 `preview_proxy_group_members`，再走
+  `preview_legacy_profile_repair` → `repair_legacy_profile`。它把安全直连别名迁移与这些当前确属非法的
+  筛选修复放进同一候选、一次完整渲染和一张确认卡后原子提交；不得用于普通批量改组或任意节点编辑。
 
 ---
 
@@ -124,6 +128,7 @@ profile 都要重新读取、预检并生成自己的确认卡；不要复用另
 | `localize_rule_provider` / `add_rule(RULE-SET)` | `list_rule_providers`（确认规则集在库）                                         |
 | `set_config_section` 改骨架                     | `get_config_section(path)`（拿到完整现状再覆盖）                                |
 | `migrate_direct_alias`                          | `preview_direct_alias_migration`（使用同一 profile 返回的 version + base ETag） |
+| `repair_legacy_profile`                         | `preview_legacy_profile_repair`（候选须含逐组预览过的非法筛选修复）             |
 
 - **`add_rule` 必须显式传 `anchor`**——它必须是 base.yaml 已声明的锚点（`prelude` / `manual` / `late`），
   否则 422；不确定就用 `manual`（主体规则锚点）。锚点注释语法见 `references/domain-model.md`，
@@ -135,10 +140,10 @@ profile 都要重新读取、预检并生成自己的确认卡；不要复用另
 
 读：`list_profiles` · `select_profile` · `get_base_overview` · `list_proxy_nodes` · `list_rules` ·
 `list_proxy_groups` · `get_config_outline` · `get_config_section` · `search_mihomo_docs` · `fetch_url`
-· `preview_direct_alias_migration`
+· `preview_direct_alias_migration` · `preview_legacy_profile_repair`
 写：`add_rule` · `update_rule` · `delete_rule` · `list_rule_providers` · `create_rule_provider` ·
 `update_rule_provider` · `delete_rule_provider` · `localize_rule_provider` ·
-`set_config_section` · `delete_config_section` · `migrate_direct_alias`
+`set_config_section` · `delete_config_section` · `migrate_direct_alias` · `repair_legacy_profile`
 
 > 不归本 hub 的：策略组（`synthesizing-proxy-groups`）、算子与所有改名含本地源改名
 > （`editing-node-operators`）、整体优化（`optimizing-whole-config`）、节点池只读真相
@@ -154,4 +159,4 @@ profile 都要重新读取、预检并生成自己的确认卡；不要复用另
 - `references/skeleton-config.md` — config-section 路径语法 + value YAML + 禁改清单所有权表
 - `references/node-sources.md` — 节点真相（订阅注入 / 透传 proxy-providers）；本地源改名详见 `editing-node-operators`
 - `references/orphan-references.md` — 改名 / 过滤断引用的横切安全 playbook（两个 spoke 共同引用）
-- `references/tool-map.md` — 30 工具 → 意图所有权速查 + 单 MCP server 契约
+- `references/tool-map.md` — 全部工具 → 意图所有权速查 + 单 MCP server 契约

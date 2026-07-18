@@ -14,8 +14,6 @@ import { parseBase } from '@/lib/engine/parser';
 import { resolveConfig } from '@/lib/engine/resolve';
 import { validateBase } from '@/lib/engine/validator';
 import { ClientSafeProblemDetailsError } from '@/lib/http/problem';
-import { getRedis } from '@/lib/redis/client';
-import { REDIS_KEYS } from '@/lib/redis/keys';
 import { getBase, type BaseMeta, type BaseRecord } from '@/lib/repos/baseRepo';
 import { listCollections } from '@/lib/repos/collectionsRepo';
 import { getConfigVersion } from '@/lib/repos/configVersionRepo';
@@ -31,13 +29,8 @@ import {
   rulesBlockViolations,
 } from '@/lib/services/baseService';
 import { resolveSubscriptionForPreflight } from '@/lib/services/configPreflight';
-import {
-  mergeWithTemplate,
-  type AuditEvent,
-  type ProxyGroup,
-  type ProxyGroupTemplate,
-  type Rule,
-} from '@/schemas';
+import { commitAtomicProfileConfig } from '@/lib/services/profileAtomicCommitService';
+import { mergeWithTemplate, type ProxyGroup, type ProxyGroupTemplate, type Rule } from '@/schemas';
 
 export const BUILTIN_DIRECT = 'DIRECT';
 const SAFE_DIRECT_FIELDS = new Set(['name', 'type', 'udp']);
@@ -76,7 +69,7 @@ export interface DirectMigrationSummary {
   groupNames: string[];
 }
 
-interface DirectMigrationCandidate {
+export interface DirectMigrationCandidate {
   baseContent: string;
   baseMeta: BaseMeta;
   groups: ProxyGroup[];
@@ -89,7 +82,7 @@ export interface DirectMigrationPlan extends DirectMigrationCandidate {
   expectedBaseEtag: string;
 }
 
-interface StableState {
+export interface DirectMigrationState {
   version: number;
   base: BaseRecord;
   groups: ProxyGroup[];
@@ -496,7 +489,11 @@ export function buildDirectAliasCandidate(input: {
   };
 }
 
-async function loadStableState(profileId: string, expectedVersion?: number): Promise<StableState> {
+/** Load one version-stable profile snapshot for direct-migration planning. */
+export async function loadDirectMigrationState(
+  profileId: string,
+  expectedVersion?: number,
+): Promise<DirectMigrationState> {
   const version = await getConfigVersion();
   if (expectedVersion !== undefined && version !== expectedVersion) {
     throw conflictForVersion(expectedVersion, version);
@@ -529,8 +526,8 @@ async function loadStableState(profileId: string, expectedVersion?: number): Pro
   };
 }
 
-async function validateCandidate(
-  state: StableState,
+export async function validateDirectMigrationCandidate(
+  state: DirectMigrationState,
   candidate: DirectMigrationCandidate,
 ): Promise<void> {
   const allGroups = state.groups.map(
@@ -577,18 +574,7 @@ async function validateCandidate(
   );
 }
 
-export async function planDirectAliasMigration(
-  profileId: string,
-  alias = '直连',
-  expectedVersion?: number,
-  expectedBaseEtag?: string,
-): Promise<DirectMigrationPlan> {
-  const state = await loadStableState(profileId, expectedVersion);
-  if (expectedBaseEtag !== undefined && state.base.etag !== expectedBaseEtag) {
-    throw ClientSafeProblemDetailsError.conflict(
-      'base.yaml 与迁移预览时的 ETag 不一致，请重新预览。',
-    );
-  }
+export function assertNoSharedProviderAlias(state: DirectMigrationState, alias: string): void {
   const sharedProviderRefs = state.providers
     .filter((provider) => provider.proxy === alias)
     .map((provider) => provider.name);
@@ -598,6 +584,21 @@ export async function planDirectAliasMigration(
       sharedProviderRefs,
     );
   }
+}
+
+export async function planDirectAliasMigration(
+  profileId: string,
+  alias = '直连',
+  expectedVersion?: number,
+  expectedBaseEtag?: string,
+): Promise<DirectMigrationPlan> {
+  const state = await loadDirectMigrationState(profileId, expectedVersion);
+  if (expectedBaseEtag !== undefined && state.base.etag !== expectedBaseEtag) {
+    throw ClientSafeProblemDetailsError.conflict(
+      'base.yaml 与迁移预览时的 ETag 不一致，请重新预览。',
+    );
+  }
+  assertNoSharedProviderAlias(state, alias);
   const candidate = buildDirectAliasCandidate({
     base: state.base,
     groups: state.groups,
@@ -605,7 +606,7 @@ export async function planDirectAliasMigration(
     templates: state.templates,
     alias,
   });
-  await validateCandidate(state, candidate);
+  await validateDirectMigrationCandidate(state, candidate);
   const afterValidation = await getConfigVersion();
   if (afterValidation !== state.version) throw conflictForVersion(state.version, afterValidation);
   return {
@@ -613,114 +614,6 @@ export async function planDirectAliasMigration(
     expectedVersion: state.version,
     expectedBaseEtag: state.base.etag,
   };
-}
-
-const COMMIT_DIRECT_MIGRATION = `
-local currentVersion = redis.call('GET', KEYS[1]) or '0'
-if currentVersion ~= ARGV[1] then return {0, currentVersion} end
-
-local currentMetaRaw = redis.call('GET', KEYS[3])
-local currentEtag = ''
-if currentMetaRaw then
-  local ok, currentMeta = pcall(cjson.decode, currentMetaRaw)
-  if ok and type(currentMeta) == 'table' and currentMeta.etag ~= nil then
-    currentEtag = tostring(currentMeta.etag)
-  end
-end
-if currentEtag ~= ARGV[2] then return {-1, currentVersion} end
-
-redis.call('SET', KEYS[2], ARGV[3])
-redis.call('SET', KEYS[3], ARGV[4])
-
-local index = 6
-local groupCount = tonumber(ARGV[index])
-index = index + 1
-for _ = 1, groupCount do
-  redis.call('HSET', KEYS[4], ARGV[index], ARGV[index + 1])
-  index = index + 2
-end
-
-local ruleCount = tonumber(ARGV[index])
-index = index + 1
-for _ = 1, ruleCount do
-  redis.call('HSET', KEYS[5], ARGV[index], ARGV[index + 1])
-  index = index + 2
-end
-
-redis.call('HDEL', KEYS[6], ARGV[5])
-local eventId = ARGV[index]
-local eventTs = tonumber(ARGV[index + 1])
-local eventJson = ARGV[index + 2]
-redis.call('ZADD', KEYS[7], eventTs, eventId)
-redis.call('HSET', KEYS[8], eventId, eventJson)
-local auditCount = redis.call('ZCARD', KEYS[7])
-if auditCount > 1000 then
-  local overflow = auditCount - 1000
-  local evicted = redis.call('ZRANGE', KEYS[7], 0, overflow - 1)
-  redis.call('ZREMRANGEBYRANK', KEYS[7], 0, overflow - 1)
-  for _, oldId in ipairs(evicted) do redis.call('HDEL', KEYS[8], oldId) end
-end
-local nextVersion = redis.call('INCR', KEYS[1])
-return {1, nextVersion, eventId}
-`.trim();
-
-async function commitPlan(
-  profileId: string,
-  actor: string,
-  plan: DirectMigrationPlan,
-): Promise<{ newVersion: number; auditEventId: string }> {
-  const event: AuditEvent = {
-    id: crypto.randomUUID(),
-    ts: Date.now(),
-    op: 'direct-migration.replace-alias',
-    actor,
-    target: { kind: 'base', field: 'proxies' },
-    before: {
-      alias: plan.summary.alias,
-      fields: plan.summary.removedProxyFields,
-      groupsTouched: plan.summary.groupsTouched,
-      rulesTouched: plan.summary.rulesTouched,
-    },
-    after: { replacement: BUILTIN_DIRECT },
-    profileId,
-  };
-  const args: string[] = [
-    String(plan.expectedVersion),
-    plan.expectedBaseEtag,
-    plan.baseContent,
-    JSON.stringify(plan.baseMeta),
-    profileId,
-    String(plan.groups.length),
-  ];
-  for (const group of plan.groups) args.push(group.id, JSON.stringify(group));
-  args.push(String(plan.rules.length));
-  for (const rule of plan.rules) args.push(rule.id, JSON.stringify(rule));
-  args.push(event.id, String(event.ts), JSON.stringify(event));
-
-  const result = (await getRedis().eval(
-    COMMIT_DIRECT_MIGRATION,
-    [
-      REDIS_KEYS.configVersion,
-      REDIS_KEYS.base.content(profileId),
-      REDIS_KEYS.base.meta(profileId),
-      REDIS_KEYS.proxyGroups(profileId),
-      REDIS_KEYS.rules(profileId),
-      REDIS_KEYS.resolvedSnapshot,
-      REDIS_KEYS.audit.events,
-      REDIS_KEYS.audit.byId,
-    ],
-    args,
-  )) as [number, number | string, string?];
-  if (!Array.isArray(result) || result[0] !== 1) {
-    if (Array.isArray(result) && result[0] === -1) {
-      throw ClientSafeProblemDetailsError.conflict(
-        'base.yaml 在迁移期间被其他写入修改，请重新预览。',
-      );
-    }
-    const current = Number(Array.isArray(result) ? result[1] : NaN);
-    throw conflictForVersion(plan.expectedVersion, Number.isSafeInteger(current) ? current : -1);
-  }
-  return { newVersion: Number(result[1]), auditEventId: result[2] ?? event.id };
 }
 
 export async function executeDirectAliasMigration(
@@ -733,7 +626,18 @@ export async function executeDirectAliasMigration(
   // Rebuild and fully validate the exact current candidate. The version is
   // the snapshot the confirmation card showed; any intervening write aborts.
   const plan = await planDirectAliasMigration(profileId, alias, expectedVersion, expectedBaseEtag);
-  const { newVersion, auditEventId } = await commitPlan(profileId, actor, plan);
+  const { newVersion, auditEventId } = await commitAtomicProfileConfig(profileId, actor, plan, {
+    op: 'direct-migration.replace-alias',
+    target: { kind: 'base', field: 'proxies' },
+    before: {
+      alias: plan.summary.alias,
+      fields: plan.summary.removedProxyFields,
+      groupsTouched: plan.summary.groupsTouched,
+      rulesTouched: plan.summary.rulesTouched,
+    },
+    after: { replacement: BUILTIN_DIRECT },
+    undoable: false,
+  });
   return {
     summary: { ...plan.summary, expectedVersion: plan.expectedVersion },
     newVersion,
