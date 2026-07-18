@@ -379,6 +379,11 @@ export async function planLegacyChainProfileRepair(
         '目标订阅源不属于当前 profile，拒绝跨 profile 修改。',
       );
     }
+    if (consumers.length !== 1) {
+      throw ClientSafeProblemDetailsError.unprocessable(
+        '目标订阅源被多个 profile 共用；当前恢复工具只预检一个 profile，拒绝全局改写共享源。',
+      );
+    }
     const quarantine = buildSpxQuarantine({
       source,
       allSubscriptions: state.subscriptions,
