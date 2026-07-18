@@ -4,7 +4,8 @@
  * Second step of the confirmation handshake. Body: { token }. The token is
  * consumed atomically (one-time); its stored {actor, action, input} is run
  * through the write action's `execute`, which dispatches the scenario op so
- * the change is audited and undoable. Auth is enforced by proxy.ts.
+ * the change is audited. Undo is offered only for operations with a safe
+ * registered inverse. Auth is enforced by proxy.ts.
  */
 
 import { z } from 'zod';

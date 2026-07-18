@@ -1,6 +1,6 @@
 {
   "name": "proxymanager",
-  "version": "0.1.0+codex.20260717153454",
+  "version": "0.1.0+codex.20260718081205",
   "description": "Manage a ProxyManager clash/mihomo configuration through skills and the ProxyManager MCP bridge.",
   "author": {
     "name": "cliouo",

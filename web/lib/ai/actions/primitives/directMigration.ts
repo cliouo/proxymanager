@@ -1,5 +1,6 @@
 /** Confirmation-gated, profile-scoped migration of a redundant direct alias. */
 
+import { stringify } from 'yaml';
 import { z } from 'zod';
 import {
   BUILTIN_DIRECT,
@@ -41,33 +42,36 @@ function publicSummary(
 }
 
 function confirmationDiff(summary: DirectMigrationSummary, expectedBaseEtag: string) {
+  const before = {
+    customProxy: {
+      name: summary.alias,
+      type: 'direct',
+      fields: summary.removedProxyFields,
+    },
+    references: {
+      baseProxyDialer: summary.baseProxyDialerReferences,
+      baseProviders: summary.baseProviderReferences,
+      baseLiteralGroups: summary.baseLiteralGroupReferences,
+      baseLiteralRules: summary.baseLiteralRuleReferences,
+      groupMembers: summary.groupMemberReferences,
+      groupOther: summary.groupOtherReferences,
+      rulesEnabled: summary.enabledRulesTouched,
+      rulesDisabled: summary.disabledRulesTouched,
+    },
+  };
+  const after = {
+    customProxy: 'removed',
+    allKnownReferences: BUILTIN_DIRECT,
+    groupsTouched: summary.groupsTouched,
+    rulesTouched: summary.rulesTouched,
+    inheritedTemplateOverrides: summary.inheritedTemplateOverrides,
+    groupNames: summary.groupNames,
+  };
   return {
     op: 'migrate-direct-alias',
-    before: {
-      customProxy: {
-        name: summary.alias,
-        type: 'direct',
-        fields: summary.removedProxyFields,
-      },
-      references: {
-        baseProxyDialer: summary.baseProxyDialerReferences,
-        baseProviders: summary.baseProviderReferences,
-        baseLiteralGroups: summary.baseLiteralGroupReferences,
-        baseLiteralRules: summary.baseLiteralRuleReferences,
-        groupMembers: summary.groupMemberReferences,
-        groupOther: summary.groupOtherReferences,
-        rulesEnabled: summary.enabledRulesTouched,
-        rulesDisabled: summary.disabledRulesTouched,
-      },
-    },
-    after: {
-      customProxy: 'removed',
-      allKnownReferences: BUILTIN_DIRECT,
-      groupsTouched: summary.groupsTouched,
-      rulesTouched: summary.rulesTouched,
-      inheritedTemplateOverrides: summary.inheritedTemplateOverrides,
-      groupNames: summary.groupNames,
-    },
+    path: `direct-alias[${summary.alias}]`,
+    beforeYaml: stringify(before, { lineWidth: 0 }).trimEnd(),
+    afterYaml: stringify(after, { lineWidth: 0 }).trimEnd(),
     concurrency: { expectedVersion: summary.expectedVersion, expectedBaseEtag },
   };
 }

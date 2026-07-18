@@ -19,7 +19,8 @@ type AuditTarget =
   | { kind: 'rule'; id: string }
   | { kind: 'proxy'; name: string }
   | { kind: 'proxy-group'; name: string }
-  | { kind: 'base'; field?: string };
+  | { kind: 'base'; field?: string }
+  | { kind: 'profile' };
 
 interface AuditEvent {
   id: string;
@@ -32,6 +33,7 @@ interface AuditEvent {
   after?: unknown;
   undone_by?: string;
   undoes?: string;
+  undoable?: boolean;
 }
 
 const PAGE_SIZE = 100;
@@ -146,6 +148,11 @@ function EventBody({ e, undone }: { e: AuditEvent; undone: boolean }) {
         {hint && <span style={{ fontSize: 12, color: 'var(--muted)' }}>{hint}</span>}
       </>
     );
+  }
+
+  if (kind === 'profile') {
+    const hint = valueHint(e.after ?? e.before);
+    return hint ? <span style={{ fontSize: 12, color: 'var(--muted)' }}>{hint}</span> : null;
   }
 
   if ((kind === 'proxy' || kind === 'proxy-group') && e.target && 'name' in e.target) {
@@ -373,7 +380,7 @@ export default function HistoryPage() {
                       )}
                     </div>
                   </div>
-                  {!undone && !isUndo && (
+                  {!undone && !isUndo && e.undoable !== false && (
                     <button
                       className="btn sm undo-btn"
                       onClick={() => onUndo(e)}

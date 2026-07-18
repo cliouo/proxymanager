@@ -21,6 +21,7 @@ export const AuditTargetSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('proxy-group'), name: z.string().min(1) }),
   z.object({ kind: z.literal('rule-set'), name: z.string().min(1) }),
   z.object({ kind: z.literal('base'), field: z.string().optional() }),
+  z.object({ kind: z.literal('profile') }),
 ]);
 
 export const AuditOpSchema = z
@@ -47,6 +48,8 @@ export const AuditEventSchema = z.object({
   undone_by: z.uuid().optional(),
   /** When this event itself is an undo, points at the original event. */
   undoes: z.uuid().optional(),
+  /** False when the operation deliberately has no safe registered inverse. */
+  undoable: z.boolean().optional(),
   /**
    * The profile this mutation targeted (Phase 2: base/rules/proxy-groups are
    * per-profile). Optional for back-compat with pre-Phase-2 events; undo falls
