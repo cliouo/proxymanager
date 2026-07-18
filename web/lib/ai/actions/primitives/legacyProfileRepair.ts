@@ -161,6 +161,10 @@ const repairLegacyProfile = defineWriteAction({
       },
       filters: filterSnapshot(plan.filterRepairAfter),
       allGroupsTouched: plan.groups.map((group) => group.name),
+      subscriptionValidation: {
+        isolatedExistingFailures: plan.summary.isolatedSubscriptionFailures,
+        migrationDoesNotRepairSubscriptions: plan.summary.isolatedSubscriptionFailures > 0,
+      },
     };
     return {
       diff: {
@@ -175,6 +179,9 @@ const repairLegacyProfile = defineWriteAction({
           expectedBaseEtag: plan.expectedBaseEtag,
         },
       },
+      confirmation: {
+        subscriptionFailureSignature: plan.subscriptionFailureSignature,
+      },
     };
   },
   async execute(ctx, input): Promise<ActionEnvelope> {
@@ -185,6 +192,7 @@ const repairLegacyProfile = defineWriteAction({
       input.expected_version,
       input.expected_base_etag,
       ctx.actor,
+      ctx.confirmation?.subscriptionFailureSignature,
     );
     return {
       kind: 'write-result',

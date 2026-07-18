@@ -1,6 +1,8 @@
+import { createHash } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { ConfigPreflightUnavailableError, ConfigValidationError } from '@/lib/config/errors';
 import type { BaseRecord } from '@/lib/repos/baseRepo';
-import type { Profile, ProxyGroup, Rule, RuleSet } from '@/schemas';
+import type { Profile, ProxyGroup, Rule, RuleSet, Subscription } from '@/schemas';
 
 const PROFILE_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const GROUP_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
@@ -8,6 +10,10 @@ const RULE_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 const ETAG = 'feedfacefeedface';
 const US_GROUP_ID = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
 const DE_GROUP_ID = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+const SUBSCRIPTION_ID = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
+const EMPTY_SUBSCRIPTION_FAILURE_SIGNATURE = createHash('sha256').update('[]').digest('hex');
+
+const preflightResolverMock = vi.hoisted(() => vi.fn());
 
 const base: BaseRecord = {
   content: `
@@ -79,15 +85,38 @@ const profile: Profile = {
   updated_at: 1,
 };
 
+const invalidSubscription = {
+  id: SUBSCRIPTION_ID,
+  name: 'invalid-source',
+  enabled: true,
+  kind: 'local',
+  content: '',
+  ttl_ms: 3_600_000,
+  tags: [],
+  operators: [],
+} as Subscription;
+
 let versions: number[] = [7, 7, 7];
 let groups: ProxyGroup[] = [group];
 let requireCombinedRepair = false;
+let sourceFailure: Error | null = null;
 const evalMock = vi.fn(async (_script: string, _keys: string[], args: string[]) => [
   1,
   8,
   args.at(-3),
 ]);
 const resolveMock = vi.fn(async (baseContent: string, ...args: unknown[]) => {
+  const options = args[4] as {
+    ignoreFailedSubs?: boolean;
+    subscriptionResolver?: (subscription: Subscription) => Promise<unknown>;
+  };
+  if (sourceFailure && options.subscriptionResolver) {
+    try {
+      await options.subscriptionResolver(invalidSubscription);
+    } catch (error) {
+      if (options.ignoreFailedSubs === false) throw error;
+    }
+  }
   if (requireCombinedRepair) {
     const candidateGroups = args[2] as ProxyGroup[];
     const filters = new Map(candidateGroups.map((item) => [item.name, item.filter]));
@@ -119,6 +148,9 @@ vi.mock('@/lib/repos/ruleSetsRepo', () => ({
 vi.mock('@/lib/repos/subscriptionsRepo', () => ({ listSubscriptions: vi.fn(async () => []) }));
 vi.mock('@/lib/repos/collectionsRepo', () => ({ listCollections: vi.fn(async () => []) }));
 vi.mock('@/lib/engine/resolve', () => ({ resolveConfig: resolveMock }));
+vi.mock('@/lib/services/configPreflight', () => ({
+  resolveSubscriptionForPreflight: preflightResolverMock,
+}));
 vi.mock('@/lib/redis/client', () => ({ getRedis: () => ({ eval: evalMock }) }));
 
 let service: typeof import('@/lib/services/directMigrationService');
@@ -128,14 +160,64 @@ beforeEach(async () => {
   versions = [7, 7, 7];
   groups = [group];
   requireCombinedRepair = false;
+  sourceFailure = null;
   providers = [];
   evalMock.mockClear();
   resolveMock.mockClear();
+  preflightResolverMock.mockReset();
+  preflightResolverMock.mockImplementation(async () => {
+    if (sourceFailure) throw sourceFailure;
+    return { proxies: [], stale: false };
+  });
   service = await import('@/lib/services/directMigrationService');
   repairService = await import('@/lib/services/legacyProfileRepairService');
 });
 
 describe('executeDirectAliasMigration', () => {
+  it('isolates a deterministic pre-existing subscription error during structural migration', async () => {
+    sourceFailure = new ConfigValidationError({
+      code: 'subscription_content_invalid',
+      message: 'A subscription contains invalid proxy nodes.',
+      section: 'subscriptions',
+      path: 'subscriptions[invalid-source].content',
+      resource: 'subscription',
+    });
+
+    const plan = await service.planDirectAliasMigration(PROFILE_ID, '直连');
+
+    expect(plan.summary.isolatedSubscriptionFailures).toBe(1);
+    expect(plan.subscriptionFailureSignature).toMatch(/^[a-f0-9]{64}$/u);
+    expect(resolveMock.mock.calls[0]?.[5]).toMatchObject({ ignoreFailedSubs: true });
+  });
+
+  it('keeps temporary subscription preflight failures blocking the migration', async () => {
+    sourceFailure = new ConfigPreflightUnavailableError();
+
+    await expect(service.planDirectAliasMigration(PROFILE_ID, '直连')).rejects.toBe(sourceFailure);
+  });
+
+  it('rejects execution when the subscription failure set changed after confirmation', async () => {
+    sourceFailure = new ConfigValidationError({
+      code: 'subscription_content_invalid',
+      message: 'A subscription contains invalid proxy nodes.',
+      section: 'subscriptions',
+      path: 'subscriptions[invalid-source].content',
+      resource: 'subscription',
+    });
+
+    await expect(
+      service.executeDirectAliasMigration(
+        PROFILE_ID,
+        '直连',
+        7,
+        ETAG,
+        'test-actor',
+        EMPTY_SUBSCRIPTION_FAILURE_SIGNATURE,
+      ),
+    ).rejects.toMatchObject({ problem: { status: 409 } });
+    expect(evalMock).not.toHaveBeenCalled();
+  });
+
   it('commits base, groups, rules and audit in one guarded Redis script', async () => {
     const result = await service.executeDirectAliasMigration(
       PROFILE_ID,
@@ -143,6 +225,7 @@ describe('executeDirectAliasMigration', () => {
       7,
       ETAG,
       'test-actor',
+      EMPTY_SUBSCRIPTION_FAILURE_SIGNATURE,
     );
 
     expect(resolveMock).toHaveBeenCalledOnce();
@@ -175,6 +258,8 @@ describe('executeDirectAliasMigration', () => {
     expect(JSON.parse(args.at(-1) ?? '{}')).toMatchObject({
       op: 'direct-migration.replace-alias',
       target: { kind: 'base', field: 'proxies' },
+      before: { isolatedSubscriptionFailures: 0 },
+      after: { subscriptionFailuresChanged: false },
       undoable: false,
     });
     expect(result).toMatchObject({ newVersion: 8, summary: { disabledRulesTouched: 1 } });
@@ -184,14 +269,28 @@ describe('executeDirectAliasMigration', () => {
   it('aborts before commit when configVersion changes after validation', async () => {
     versions = [7, 7, 8];
     await expect(
-      service.executeDirectAliasMigration(PROFILE_ID, '直连', 7, ETAG, 'test-actor'),
+      service.executeDirectAliasMigration(
+        PROFILE_ID,
+        '直连',
+        7,
+        ETAG,
+        'test-actor',
+        EMPTY_SUBSCRIPTION_FAILURE_SIGNATURE,
+      ),
     ).rejects.toMatchObject({ problem: { status: 409 } });
     expect(evalMock).not.toHaveBeenCalled();
   });
 
   it('binds execution to the base ETag shown by the confirmation preview', async () => {
     await expect(
-      service.executeDirectAliasMigration(PROFILE_ID, '直连', 7, 'deadbeefdeadbeef', 'test-actor'),
+      service.executeDirectAliasMigration(
+        PROFILE_ID,
+        '直连',
+        7,
+        'deadbeefdeadbeef',
+        'test-actor',
+        EMPTY_SUBSCRIPTION_FAILURE_SIGNATURE,
+      ),
     ).rejects.toMatchObject({ problem: { status: 409 } });
     expect(resolveMock).not.toHaveBeenCalled();
     expect(evalMock).not.toHaveBeenCalled();
@@ -212,7 +311,14 @@ describe('executeDirectAliasMigration', () => {
       } as RuleSet,
     ];
     await expect(
-      service.executeDirectAliasMigration(PROFILE_ID, '直连', 7, ETAG, 'test-actor'),
+      service.executeDirectAliasMigration(
+        PROFILE_ID,
+        '直连',
+        7,
+        ETAG,
+        'test-actor',
+        EMPTY_SUBSCRIPTION_FAILURE_SIGNATURE,
+      ),
     ).rejects.toMatchObject({ problem: { status: 422 } });
     expect(resolveMock).not.toHaveBeenCalled();
     expect(evalMock).not.toHaveBeenCalled();
@@ -244,6 +350,7 @@ describe('executeDirectAliasMigration', () => {
       7,
       ETAG,
       'test-actor',
+      EMPTY_SUBSCRIPTION_FAILURE_SIGNATURE,
     );
 
     expect(resolveMock).toHaveBeenCalledTimes(2);

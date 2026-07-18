@@ -66,6 +66,10 @@ function confirmationDiff(summary: DirectMigrationSummary, expectedBaseEtag: str
     rulesTouched: summary.rulesTouched,
     inheritedTemplateOverrides: summary.inheritedTemplateOverrides,
     groupNames: summary.groupNames,
+    subscriptionValidation: {
+      isolatedExistingFailures: summary.isolatedSubscriptionFailures,
+      migrationDoesNotRepairSubscriptions: summary.isolatedSubscriptionFailures > 0,
+    },
   };
   return {
     op: 'migrate-direct-alias',
@@ -79,7 +83,7 @@ function confirmationDiff(summary: DirectMigrationSummary, expectedBaseEtag: str
 const previewDirectAliasMigration = defineAction({
   name: 'preview_direct_alias_migration',
   description:
-    '只读预检：验证当前 profile 的自定义 type: direct 别名能否无损替换为内建 DIRECT，返回完整引用计数和 expectedVersion；迁移前必须先调用。',
+    '只读预检：验证当前 profile 的自定义 type: direct 别名能否无损替换为内建 DIRECT，返回完整引用计数、隔离的既有订阅校验失败数和 expectedVersion；迁移前必须先调用。确定性订阅错误不会被本工具修复，上游不可用仍会阻塞。',
   input: PreviewInput,
   risk: 'read',
   async run(ctx, input) {
@@ -95,7 +99,7 @@ const previewDirectAliasMigration = defineAction({
 const migrateDirectAlias = defineWriteAction({
   name: 'migrate_direct_alias',
   description:
-    '将当前 profile 中完全冗余的自定义 type: direct 别名删除，并把 base 已知引用、所有策略组成员及全部规则（含停用规则）原子改为内建 DIRECT。必须先预检并传 expected_version 与 expected_base_etag，需用户确认。',
+    '将当前 profile 中完全冗余的自定义 type: direct 别名删除，并把 base 已知引用、所有策略组成员及全部规则（含停用规则）原子改为内建 DIRECT。只隔离与候选无关的确定性既有订阅校验错误且会在确认卡标明；不会修复订阅。必须先预检并传 expected_version 与 expected_base_etag，需用户确认。',
   input: MigrateInput,
   risk: 'write',
   summary: (input) => `把直连别名「${input.alias}」无损迁移为内建 ${BUILTIN_DIRECT}`,
@@ -111,6 +115,9 @@ const migrateDirectAlias = defineWriteAction({
         publicSummary(plan.summary, plan.expectedVersion),
         plan.expectedBaseEtag,
       ),
+      confirmation: {
+        subscriptionFailureSignature: plan.subscriptionFailureSignature,
+      },
     };
   },
   async execute(ctx, input): Promise<ActionEnvelope> {
@@ -120,6 +127,7 @@ const migrateDirectAlias = defineWriteAction({
       input.expected_version,
       input.expected_base_etag,
       ctx.actor,
+      ctx.confirmation?.subscriptionFailureSignature,
     );
     return {
       kind: 'write-result',

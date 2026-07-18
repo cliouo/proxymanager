@@ -24,6 +24,7 @@ const PROFILE_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const US_GROUP_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const DE_GROUP_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 const ETAG = 'feedfacefeedface';
+const FAILURE_SIGNATURE = 'a'.repeat(64);
 const OLD_US = String.raw`(?i)(🇺🇸|\bUS\b|美)`;
 const OLD_DE = String.raw`(?i)(🇩🇪|\bDE\b|德)`;
 const NEW_US = String.raw`(?i)(🇺🇸|(?<![A-Za-z])USA?(?![A-Za-z])|美)`;
@@ -45,6 +46,7 @@ const summary = {
   enabledRulesTouched: 0,
   disabledRulesTouched: 0,
   groupNames: ['出口'],
+  isolatedSubscriptionFailures: 1,
 };
 
 const ctx = { profileId: PROFILE_ID, actor: 'test-actor' };
@@ -55,11 +57,13 @@ beforeEach(() => {
     summary,
     expectedVersion: 7,
     expectedBaseEtag: ETAG,
+    subscriptionFailureSignature: FAILURE_SIGNATURE,
   });
   mocks.planLegacy.mockResolvedValue({
     summary,
     expectedVersion: 7,
     expectedBaseEtag: ETAG,
+    subscriptionFailureSignature: FAILURE_SIGNATURE,
     groups: [{ name: '出口' }, { name: '美国' }, { name: '德国' }],
     filterRepairBefore: [
       { name: '美国', filter: OLD_US },
@@ -90,6 +94,11 @@ describe('migration confirmation diffs', () => {
     expect(diff).not.toHaveProperty('after');
     expect(diff.beforeYaml).toContain('name: 直连');
     expect(diff.afterYaml).toContain('allKnownReferences: DIRECT');
+    expect(diff.afterYaml).toContain('isolatedExistingFailures: 1');
+    expect(diff.afterYaml).toContain('migrationDoesNotRepairSubscriptions: true');
+    expect(preview.confirmation).toEqual({
+      subscriptionFailureSignature: FAILURE_SIGNATURE,
+    });
   });
 
   it('shows every target group and exact before/after regex in the confirmation card', async () => {
@@ -115,5 +124,10 @@ describe('migration confirmation diffs', () => {
     expect(diff).not.toHaveProperty('after');
     for (const value of ['美国', '德国', OLD_US, OLD_DE]) expect(beforeYaml).toContain(value);
     for (const value of ['美国', '德国', NEW_US, NEW_DE]) expect(afterYaml).toContain(value);
+    expect(afterYaml).toContain('isolatedExistingFailures: 1');
+    expect(afterYaml).toContain('migrationDoesNotRepairSubscriptions: true');
+    expect(preview.confirmation).toEqual({
+      subscriptionFailureSignature: FAILURE_SIGNATURE,
+    });
   });
 });
