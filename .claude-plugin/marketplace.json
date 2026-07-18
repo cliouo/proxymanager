@@ -1,0 +1,12 @@
+{
+  "name": "proxymanager",
+  "owner": { "name": "cliouo" },
+  "description": "ProxyManager 官方插件源:在 Claude Code / Codex 等 skill-aware 客户端里管理你的 ProxyManager 实例。",
+  "plugins": [
+    {
+      "name": "proxymanager",
+      "source": "./plugin",
+      "description": "ProxyManager 配置助手:4 个 skill + MCP 桥接,驱动你的 ProxyManager 实例(clash/mihomo 配置、规则、策略组、节点算子),所有写入过服务端确认门控。"
+    }
+  ]
+}

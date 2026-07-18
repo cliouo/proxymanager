@@ -1,22 +1,74 @@
 {
   "name": "proxymanager",
   "displayName": "ProxyManager 配置助手",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "description": "Drive a ProxyManager clash/mihomo proxy-config instance from any skill-aware agent: edit routing rules, the rule-set library, proxy-groups, the base.yaml skeleton, and subscription node-processing operators — every write gated behind ProxyManager's server-side confirmation handshake. 4 skills (1 hub + 3 deep-dive spokes) on one `proxymanager` MCP server.",
   "author": { "name": "cliouo" },
   "homepage": "https://github.com/cliouo/proxymanager",
   "repository": "https://github.com/cliouo/proxymanager",
   "license": "MIT",
   "keywords": ["clash", "mihomo", "proxy", "subscription", "mcp", "config", "skill"],
+  "userConfig": {
+    "base_url": {
+      "type": "string",
+      "title": "ProxyManager 地址",
+      "description": "ProxyManager 实例的 URL,例如 http://localhost:3000 或 https://pm.example.com",
+      "required": true,
+      "default": "http://localhost:3000"
+    },
+    "admin_key": {
+      "type": "string",
+      "title": "Admin Key",
+      "description": "ProxyManager 部署时设置的 ADMIN_KEY 环境变量(Bearer 鉴权)",
+      "sensitive": true,
+      "required": true
+    },
+    "profile": {
+      "type": "string",
+      "title": "默认 Profile",
+      "description": "初始操作的配置文件名;会话内可用 select_profile 切换",
+      "default": "default"
+    },
+    "trust_full_access": {
+      "type": "boolean",
+      "title": "完全访问模式免确认写入",
+      "description": "开启后:Claude Code 的 bypassPermissions 模式下自动接受写入确认卡;Codex 等客户端的完全访问模式(不提供确认表单)下直接写入而不是拒绝。请求批准类模式仍会弹确认卡。服务端审计与硬黑名单不受影响。",
+      "default": false
+    },
+    "request_timeout": {
+      "type": "number",
+      "title": "请求超时(秒)",
+      "description": "桥接访问 ProxyManager API 的单请求超时,5-300",
+      "default": 30,
+      "min": 5,
+      "max": 300
+    }
+  },
   "mcpServers": {
     "proxymanager": {
       "command": "node",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/servers/proxymanager-mcp.mjs"],
+      "args": ["${CLAUDE_PLUGIN_ROOT}/servers/dist/proxymanager-mcp.bundle.mjs"],
       "env": {
-        "PROXYMANAGER_BASE_URL": "${PROXYMANAGER_BASE_URL:-http://localhost:3000}",
-        "PROXYMANAGER_ADMIN_KEY": "${PROXYMANAGER_ADMIN_KEY:-}",
-        "PROXYMANAGER_PROFILE": "${PROXYMANAGER_PROFILE:-default}"
+        "PROXYMANAGER_BASE_URL": "${user_config.base_url}",
+        "PROXYMANAGER_ADMIN_KEY": "${user_config.admin_key}",
+        "PROXYMANAGER_PROFILE": "${user_config.profile}",
+        "PROXYMANAGER_TRUST_FULL_ACCESS": "${user_config.trust_full_access}",
+        "PROXYMANAGER_TIMEOUT": "${user_config.request_timeout}"
       }
     }
+  },
+  "hooks": {
+    "Elicitation": [
+      {
+        "matcher": "proxymanager",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/elicitation-autoconfirm.mjs"]
+          }
+        ]
+      }
+    ]
   }
 }
