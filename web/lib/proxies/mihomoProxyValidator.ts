@@ -1095,6 +1095,12 @@ function validateMihomoProxy(
   if (typeof entry.port === 'string' && /^\d{1,5}$/.test(entry.port)) {
     entry.port = Number(entry.port);
   }
+  // A key with an empty YAML value (`flow:`) parses as null; exporters mean
+  // "not set", and Mihomo's decoder leaves the field at its zero value.
+  // Required fields still fail as missing below.
+  for (const key of Object.keys(entry)) {
+    if (entry[key] === null) delete entry[key];
+  }
   if (
     (type === 'hysteria' || type === 'hysteria2' || type === 'tuic') &&
     typeof entry.udp === 'boolean'

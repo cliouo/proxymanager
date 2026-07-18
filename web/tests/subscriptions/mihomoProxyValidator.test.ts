@@ -987,6 +987,13 @@ describe('fixed Mihomo v1.19.28 proxy node validation', () => {
     expect(() => validateMihomoProxyList([{ ...tuic, version: 'latest' }])).toThrow(
       /unsupported top-level field/,
     );
+    // A key with an empty YAML value (`flow:`) parses as null and means "not
+    // set"; Mihomo's decoder leaves the field at its zero value.
+    const vless = portableStructuralMinimums.find((candidate) => candidate.type === 'vless')!;
+    const nullFlow = validateMihomoProxyList([{ ...vless, flow: null }]);
+    expect(nullFlow[0]).not.toHaveProperty('flow');
+    // Required fields stay required: a null server is still missing.
+    expect(() => validateMihomoProxyList([{ ...vless, server: null }])).toThrow(/field "server"/);
   });
 
   it('budgets hysteria2 port-hopping candidates per node, not across the list', () => {
@@ -1016,7 +1023,7 @@ describe('fixed Mihomo v1.19.28 proxy node validation', () => {
       ['tls', []],
       ['skip-cert-verify', 'false'],
       ['servername', ''],
-      ['client-fingerprint', null],
+      ['client-fingerprint', 42],
       ['fingerprint', ''],
       ['alpn', []],
       ['alpn', ['h2', '']],

@@ -690,7 +690,9 @@ function parseVMess(uri: string): ClashProxy {
     if (insecure) proxy['skip-cert-verify'] = true;
   }
 
-  const net = (get('net') || 'tcp').toLowerCase();
+  let net = (get('net') || 'tcp').toLowerCase();
+  // Xray ≥ 24.9 renamed the plain TCP transport to "raw".
+  if (net === 'raw') net = 'tcp';
   const headerType = get('type').toLowerCase();
   if (!['tcp', 'ws', 'httpupgrade', 'http', 'h2', 'grpc', 'kcp', 'mkcp'].includes(net)) {
     throw new Error('unsupported vmess transport');
@@ -838,18 +840,18 @@ function parseVLESS(uri: string): ClashProxy {
   }
 
   const hasSecurity = u.searchParams.has('security');
-  const security = hasSecurity ? params.security : 'none';
+  let security = hasSecurity ? params.security : 'none';
   if (hasSecurity && security === '') throw new Error('vless security must not be empty');
+  // Free-share exporters emit `security=false`/`security=0` for "no TLS";
+  // mihomo's converter falls through to the no-TLS default for them.
+  if (security === 'false' || security === '0') security = 'none';
   if (security !== 'none' && security !== 'tls' && security !== 'reality') {
     throw new Error('unsupported vless security');
   }
-  const tlsOnlyKeys = ['sni', 'fp', 'pcs', 'alpn', 'allowInsecure', 'insecure', 'pbk', 'sid'];
-  if (security === 'none' && tlsOnlyKeys.some((key) => Object.hasOwn(params, key))) {
-    throw new Error('vless TLS options require TLS or Reality');
-  }
-  if (security !== 'reality' && ['pbk', 'sid'].some((key) => Object.hasOwn(params, key))) {
-    throw new Error('vless Reality options require Reality');
-  }
+  // TLS-layer options (sni/fp/alpn/insecure) with security=none and Reality
+  // options (pbk/sid) without security=reality are ignored, not rejected:
+  // mihomo's converter only reads each group inside the matching security
+  // branch, so on the original client they configure nothing either.
   if (security === 'tls' || security === 'reality') {
     proxy.tls = true;
     if (params.sni) proxy.servername = params.sni;
@@ -885,6 +887,11 @@ function parseVLESS(uri: string): ClashProxy {
       opts['public-key'] = params.pbk;
       if (params.sid) opts['short-id'] = params.sid;
       proxy['reality-opts'] = opts;
+    } else if (Object.hasOwn(params, 'ech') && params.ech !== '') {
+      // Reality carries its own hello camouflage, so `ech` only maps under
+      // plain TLS (Sub-Store maps it unconditionally, but mihomo would layer
+      // ECH over the Reality hello it fully controls).
+      proxy['ech-opts'] = echQueryToOpts(params.ech, 'vless');
     }
   }
 
@@ -916,6 +923,8 @@ function parseVLESS(uri: string): ClashProxy {
   const hasTransport = u.searchParams.has('type');
   let network = hasTransport ? params.type : 'tcp';
   if (network === '') throw new Error('vless transport type must not be empty');
+  // Xray ≥ 24.9 renamed the plain TCP transport to "raw".
+  if (network === 'raw') network = 'tcp';
   const headerType = params.headerType || '';
   if (headerType !== '' && headerType !== 'none' && headerType !== 'http') {
     throw new Error('unsupported vless transport header type');
@@ -925,45 +934,11 @@ function parseVLESS(uri: string): ClashProxy {
   if (!['tcp', 'http', 'h2', 'ws', 'httpupgrade', 'grpc', 'xhttp'].includes(network)) {
     throw new Error('unsupported vless transport type');
   }
-  const keysByTransport: Record<string, readonly string[]> = {
-    tcp: [],
-    ws: ['path', 'host', 'ed', 'eh'],
-    httpupgrade: ['path', 'host', 'ed', 'eh'],
-    grpc: ['serviceName', 'path'],
-    h2: ['path', 'host'],
-    http: ['path', 'host', 'method'],
-    xhttp: ['path', 'host', 'mode', 'extra'],
-  };
-  const transportKeys = [
-    'headerType',
-    'path',
-    'host',
-    'method',
-    'serviceName',
-    'mode',
-    'extra',
-    'ed',
-    'eh',
-  ];
-  const allowedTransportKeys = new Set([
-    ...keysByTransport[network],
-    ...(network === 'tcp' || network === 'http' ? ['headerType'] : []),
-  ]);
-  // NekoBox-style exporters dump every transport option on every link with
-  // empty values (`host=&path=&serviceName=`) plus `headerType=none`. An empty
-  // value configures nothing and `headerType=none` states the default plain
-  // header, so neither can conflict with the selected transport; only a
-  // non-empty option on a mismatched transport is a real contradiction.
-  const isInertTransportValue = (key: string): boolean =>
-    params[key] === '' || (key === 'headerType' && params[key] === 'none');
-  if (
-    transportKeys.some(
-      (key) =>
-        Object.hasOwn(params, key) && !isInertTransportValue(key) && !allowedTransportKeys.has(key),
-    )
-  ) {
-    throw new Error('vless transport option does not match the selected transport');
-  }
+  // Transport options that don't belong to the selected transport (a host on
+  // tcp, mode/authority on grpc, a full NekoBox-style option dump…) are
+  // ignored, not rejected: mihomo's converter reads each option only inside
+  // the matching network case, so they configure nothing on the original
+  // client either.
   // Fixed Mihomo implements HTTPUpgrade inside its WebSocket transport. Its
   // share-link converter leaves `network=httpupgrade`, but the outbound
   // constructor has no such switch case and would silently use raw TCP.
@@ -1508,6 +1483,8 @@ function parseTrojan(uri: string): ClashProxy {
       'allowInsecure',
       'insecure',
       'fp',
+      'ech',
+      'security',
       'type',
       'path',
       'host',
@@ -1515,6 +1492,11 @@ function parseTrojan(uri: string): ClashProxy {
     ]),
     'trojan query',
   );
+  // Trojan is TLS by definition; exporters restating `security=tls` add no
+  // information. Any other value contradicts the protocol.
+  if (Object.hasOwn(params, 'security') && params.security !== 'tls') {
+    throw new Error('unsupported trojan security');
+  }
   assertNoAliasCollision(
     params,
     [
@@ -1551,6 +1533,9 @@ function parseTrojan(uri: string): ClashProxy {
   if (Object.hasOwn(params, 'fp')) {
     if (!params.fp) throw new Error('invalid trojan client fingerprint');
     proxy['client-fingerprint'] = params.fp;
+  }
+  if (Object.hasOwn(params, 'ech') && params.ech !== '') {
+    proxy['ech-opts'] = echQueryToOpts(params.ech, 'trojan');
   }
 
   const type = params.type ?? 'tcp';
@@ -1606,6 +1591,17 @@ function isValidHysteriaSpeed(raw: string): boolean {
   let bytesPerSecond = magnitude * (unit === undefined ? factors.M : factors[prefix]);
   if (unit === 'b') bytesPerSecond = Math.floor(bytesPerSecond / 8);
   return Number.isSafeInteger(bytesPerSecond) && bytesPerSecond > 0;
+}
+
+// Xray's `ech` query value is either a Base64 ECHConfigList or a
+// `[queryServerName+]DoH-URL` fetch instruction. Mihomo's ech-opts can only
+// carry the literal config; for the DoH form emit enable-only — the core then
+// resolves the config over DNS itself, its documented behaviour when `config`
+// is absent.
+function echQueryToOpts(raw: string, label: string): Record<string, unknown> {
+  if (raw.includes('://')) return { enable: true };
+  if (!isCanonicalStandardBase64(raw)) throw new Error(`invalid ${label} ech base64`);
+  return { enable: true, config: raw };
 }
 
 function normalizeSha256Fingerprint(raw: string): string | null {
@@ -1961,10 +1957,22 @@ function parseTUIC(uri: string): ClashProxy {
       'allow_insecure',
       'insecure',
       'disable_sni',
+      'security',
+      'version',
     ]),
     'tuic query',
   );
   assertNoAliasCollision(params, [['allow_insecure', 'insecure']], 'tuic query');
+  // Some exporters restate protocol invariants as query noise: TUIC is always
+  // TLS-over-QUIC, and the uuid:password authority form already pins v5.
+  // Accept-ignore the exact invariant values; anything else is a real
+  // contradiction.
+  if (Object.hasOwn(params, 'security') && params.security !== 'tls') {
+    throw new Error('unsupported tuic security');
+  }
+  if (Object.hasOwn(params, 'version') && params.version !== '5') {
+    throw new Error('unsupported tuic version');
+  }
   const proxy: ClashProxy = {
     name: safeDecode(u.hash.slice(1)) || `${host}:${port}`,
     type: 'tuic',
@@ -2364,7 +2372,6 @@ function parseHttp(uri: string): ClashProxy {
   const authority = delimiter === -1 ? rest : rest.slice(0, delimiter);
   const suffix = delimiter === -1 ? '' : rest.slice(delimiter);
   if (suffix.startsWith('/')) throw new Error('http proxy URI must not include a path');
-  if (suffix.startsWith('?')) throw new Error('http proxy URI must not include a query');
 
   const at = authority.lastIndexOf('@');
   const rawHostPort = at === -1 ? authority : authority.slice(at + 1);
@@ -2390,7 +2397,21 @@ function parseHttp(uri: string): ClashProxy {
   };
   if (u.username) proxy.username = safeDecode(u.username);
   if (u.password) proxy.password = safeDecode(u.password);
-  if (u.protocol === 'https:') proxy.tls = true;
+  const params = paramsToRecord(u.searchParams);
+  assertOnlyKeys(params, new Set(['sni', 'allowInsecure', 'insecure']), 'http proxy query');
+  assertNoAliasCollision(params, [['allowInsecure', 'insecure']], 'http proxy query');
+  if (u.protocol === 'https:') {
+    proxy.tls = true;
+    if (params.sni) proxy.sni = params.sni;
+    const insecureKey = Object.hasOwn(params, 'allowInsecure') ? 'allowInsecure' : 'insecure';
+    if (
+      Object.hasOwn(params, insecureKey) &&
+      parseZeroOneBoolean(params[insecureKey], 'http proxy insecure')
+    ) {
+      proxy['skip-cert-verify'] = true;
+    }
+  }
+  // On plain http the TLS query options configure nothing; ignore them.
   return proxy;
 }
 
@@ -2522,8 +2543,13 @@ function assertNoAliasCollision(
   groups: readonly (readonly string[])[],
   label: string,
 ): void {
-  if (groups.some((group) => group.filter((key) => Object.hasOwn(value, key)).length > 1)) {
-    throw new Error(`conflicting ${label} aliases`);
+  // Exporters often dump both spellings of an alias pair with the same value
+  // (`allowInsecure=0&insecure=0`); only differing values are a real conflict.
+  for (const group of groups) {
+    const present = group.filter((key) => Object.hasOwn(value, key));
+    if (present.length > 1 && new Set(present.map((key) => value[key])).size > 1) {
+      throw new Error(`conflicting ${label} aliases`);
+    }
   }
 }
 
@@ -2560,6 +2586,12 @@ const VLESS_QUERY_PARAMETERS = [
   // regardless of the selected transport — so it is accepted and ignored, the
   // same treatment as Reality `spx`.
   'quicSecurity',
+  // Xray ECH config (Base64 ECHConfigList or DoH fetch instruction); mapped
+  // to Mihomo ech-opts under plain TLS, ignored otherwise.
+  'ech',
+  // Xray gRPC authority. Mihomo's grpc-opts cannot express it (the target
+  // authority falls back to the Host/SNI), so it is accepted and ignored.
+  'authority',
   'type',
   'headerType',
   'path',
