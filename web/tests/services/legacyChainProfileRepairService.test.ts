@@ -48,7 +48,10 @@ const staleGroups: ProxyGroup[] = [
 ];
 
 describe('buildSpxQuarantine', () => {
-  it('moves complete spx URI lines to a disabled source without exposing their content', () => {
+  // The parser now drops Reality spiderX instead of rejecting it, so spx lines
+  // never fail to parse and there is nothing left for this tool to isolate. It
+  // must refuse instead of deleting or guessing.
+  it('refuses to quarantine a source whose spx lines already parse cleanly', () => {
     const marker = 'secret-spider-path';
     const source: Subscription = {
       id: SOURCE_ID,
@@ -65,29 +68,14 @@ describe('buildSpxQuarantine', () => {
       updated_at: 1,
     };
 
-    const result = buildSpxQuarantine({
-      source,
-      allSubscriptions: [source],
-      quarantineId: QUARANTINE_ID,
-      updatedAt: 99,
-    });
-
-    expect(result.source.content).toContain('#good');
-    expect(result.source.content).not.toContain(marker);
-    expect(result.quarantine).toMatchObject({
-      id: QUARANTINE_ID,
-      name: 'mynode-spx-quarantine',
-      enabled: false,
-      kind: 'local',
-      updated_at: 99,
-    });
-    expect(result.quarantine.content).toContain(marker);
-    expect(result.summary).toEqual({
-      sourceName: 'mynode',
-      quarantineName: 'mynode-spx-quarantine',
-      quarantinedNodes: 1,
-    });
-    expect(JSON.stringify(result.summary)).not.toContain(marker);
+    expect(() =>
+      buildSpxQuarantine({
+        source,
+        allSubscriptions: [source],
+        quarantineId: QUARANTINE_ID,
+        updatedAt: 99,
+      }),
+    ).toThrow(/spx/u);
   });
 
   it('refuses mixed parser failures instead of dropping unrelated invalid lines', () => {
@@ -115,32 +103,6 @@ describe('buildSpxQuarantine', () => {
     ).toThrow(/spx/u);
   });
 
-  it('turns an all-spx source into an explicit empty provider and preserves every URI', () => {
-    const source: Subscription = {
-      id: SOURCE_ID,
-      name: 'chain-aishare',
-      enabled: true,
-      kind: 'local',
-      content:
-        'vless://00000000-0000-0000-0000-000000000000@one.example:443?type=tcp&spx=one#one\n' +
-        'vless://00000000-0000-0000-0000-000000000000@two.example:443?type=tcp&spx=two#two\n',
-      ttl_ms: 600_000,
-      tags: [],
-      operators: [],
-    };
-
-    const result = buildSpxQuarantine({
-      source,
-      allSubscriptions: [source],
-      quarantineId: QUARANTINE_ID,
-      updatedAt: 99,
-    });
-
-    expect(result.source.content).toBe('proxies: []\n');
-    expect(result.quarantine.content).toContain('#one');
-    expect(result.quarantine.content).toContain('#two');
-    expect(result.summary.quarantinedNodes).toBe(2);
-  });
 });
 
 describe('buildStaleChainGroupRepair', () => {

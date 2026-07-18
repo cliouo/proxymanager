@@ -820,9 +820,10 @@ function parseVLESS(uri: string): ClashProxy {
     }
     proxy.flow = 'xtls-rprx-vision';
   }
-  if (Object.hasOwn(params, 'spx')) {
-    throw new Error('unsupported vless Reality spiderX');
-  }
+  // Reality spiderX (`spx`) is dropped, not rejected: Mihomo's Reality options
+  // cannot express it, and it only steers the client's camouflage crawl when a
+  // probe is detected — never the handshake. 3x-ui emits a random spiderX on
+  // every Reality share link, so rejecting would fail most 3x-ui sources.
   // VLESS share links use `encryption=none` as the legacy no-encryption
   // sentinel, while current Meta-Docs represents the same state as an empty
   // YAML value. Preserve real ML-KEM/x25519 encryption strings byte-for-byte.

@@ -117,16 +117,20 @@ const repairs = [
   { id: US_ID, filter: '(?i)(🇺🇸|(?<![A-Za-z])USA?(?![A-Za-z])|美)' },
   { id: DE_ID, filter: '(?i)(🇩🇪|(?<![A-Za-z])DEU?(?![A-Za-z])|德)' },
 ];
+// The parser now drops Reality spiderX, so spx sources parse cleanly and the
+// quarantine path can never build a plan; the commit-path tests exercise the
+// stale-chain removal alone. `inputWithQuarantine` remains only to prove the
+// shared-source guard still fires before any quarantine is attempted.
 const input = {
   alias: '直连',
   repairs,
-  quarantineSpxSubscriptionId: SOURCE_ID,
   staleChain: {
     chainGroupId: CHAIN_ID,
     frontPoolGroupId: POOL_ID,
     consumerGroupId: CONSUMER_ID,
   },
 };
+const inputWithQuarantine = { ...input, quarantineSpxSubscriptionId: SOURCE_ID };
 
 let versions: number[] = [7, 7, 7];
 let profiles: Profile[] = [profile];
@@ -183,7 +187,7 @@ beforeEach(async () => {
 });
 
 describe('legacy chain profile recovery execution', () => {
-  it('preflights and commits source quarantine plus profile repair in one Redis script', async () => {
+  it('preflights and commits stale-chain removal plus profile repair in one Redis script', async () => {
     const result = await service.executeLegacyChainProfileRepair(
       PROFILE_ID,
       input,
@@ -195,14 +199,8 @@ describe('legacy chain profile recovery execution', () => {
     expect(resolveMock).toHaveBeenCalledOnce();
     const [, , candidateSubscriptions, candidateGroups, , options] = resolveMock.mock.calls[0];
     expect(options).toMatchObject({ ignoreFailedSubs: false, persistSnapshot: false });
-    expect(candidateSubscriptions).toEqual([
-      expect.objectContaining({ id: SOURCE_ID, content: expect.not.stringContaining(SECRET_SPX) }),
-      expect.objectContaining({
-        name: 'mynode-spx-quarantine',
-        enabled: false,
-        content: expect.stringContaining(SECRET_SPX),
-      }),
-    ]);
+    // No quarantine: the source (spx line included) is passed through untouched.
+    expect(candidateSubscriptions).toEqual([expect.objectContaining({ id: SOURCE_ID })]);
     expect(candidateGroups).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ id: EXIT_ID, proxies: ['DIRECT'] }),
@@ -238,7 +236,8 @@ describe('legacy chain profile recovery execution', () => {
     ]);
     expect(args).toContain(CHAIN_ID);
     expect(args).toContain(POOL_ID);
-    expect(args.some((arg) => arg.includes(SECRET_SPX))).toBe(true);
+    // No subscription rewrite means no raw URI content in the script args.
+    expect(args.some((arg) => arg.includes(SECRET_SPX))).toBe(false);
     const audit = JSON.parse(args.at(-1) ?? '{}') as Record<string, unknown>;
     expect(audit).toMatchObject({
       op: 'legacy-chain-profile-repair.apply',
@@ -252,10 +251,10 @@ describe('legacy chain profile recovery execution', () => {
       auditEventId: 'audit-id',
       summary: {
         repairedFilterGroups: ['美国', '德国'],
-        spxQuarantine: { quarantinedNodes: 1 },
         staleChain: { backendName: 'missing-backend' },
       },
     });
+    expect(result.summary.spxQuarantine).toBeUndefined();
   });
 
   it('refuses to delete a chain whose concrete backend exists after source repair', async () => {
@@ -279,7 +278,7 @@ describe('legacy chain profile recovery execution', () => {
     ];
 
     await expect(
-      service.executeLegacyChainProfileRepair(PROFILE_ID, input, 7, ETAG, 'test-actor'),
+      service.executeLegacyChainProfileRepair(PROFILE_ID, inputWithQuarantine, 7, ETAG, 'test-actor'),
     ).rejects.toMatchObject({ problem: { status: 422 } });
     expect(resolveMock).not.toHaveBeenCalled();
     expect(evalMock).not.toHaveBeenCalled();
