@@ -226,13 +226,16 @@ describe('parseProxyUriList per protocol', () => {
     });
   });
 
-  it('vless://: still rejects a non-empty transport option on a mismatched transport', () => {
+  it('vless://: ignores a non-empty transport option on a mismatched transport', () => {
+    // Relaxed 2026-07-18: mihomo's converter reads each transport option only
+    // inside the matching network case, so a host on tcp configures nothing on
+    // the original client either.
     const uri =
-      'vless://00000000-0000-0000-0000-000000000000@example.com:443?encryption=none&type=tcp&host=cdn.example#VL-Conflict';
+      'vless://00000000-0000-0000-0000-000000000000@example.com:443?encryption=none&type=tcp&host=cdn.example#VL-Mismatch';
     const { proxies, errors } = parseProxyUriList(uri);
-    expect(proxies).toHaveLength(0);
-    expect(errors).toHaveLength(1);
-    expect(errors[0].error).toMatch(/transport option does not match/);
+    expect(errors).toHaveLength(0);
+    expect(proxies[0]).toMatchObject({ network: 'tcp' });
+    expect(proxies[0]).not.toHaveProperty('ws-opts');
   });
 
   it('parses vless:// with a dashless hashlike uuid (uuid-hashlike-accepted)', () => {
@@ -1926,7 +1929,7 @@ describe('QUIC URI hardening — Hysteria 1 and Hysteria 2', () => {
     expect(valid.errors).toHaveLength(0);
     expect(valid.proxies[0]).toMatchObject({ up: '10', down: '20' });
 
-    const collision = parseProxyUriList('hy2://auth@hy2.example:443?up=10&upmbps=10&down=20');
+    const collision = parseProxyUriList('hy2://auth@hy2.example:443?up=10&upmbps=30&down=20');
     expect(collision.proxies).toHaveLength(0);
     expect(collision.errors).toHaveLength(1);
   });
@@ -2342,7 +2345,7 @@ describe('closed URI grammars reject ambiguous or silently dropped input', () =>
     ['Hysteria 1 unknown query', 'hysteria://h.example:443?up=10&down=20&label=x'],
     ['Hysteria 1 userinfo', 'hysteria://pw@h.example:443?up=10&down=20'],
     ['Hysteria 1 explicit path', 'hysteria://h.example:443/?up=10&down=20'],
-    ['Hysteria 1 speed alias collision', 'hysteria://h.example:443?up=10&upmbps=10&down=20'],
+    ['Hysteria 1 speed alias collision', 'hysteria://h.example:443?up=10&upmbps=30&down=20'],
     ['Hysteria 1 invalid boolean', 'hysteria://h.example:443?up=10&down=20&insecure=true'],
     ['Hysteria 2 unknown query', 'hy2://pw@h.example?label=x'],
     ['Hysteria 2 SNI alias collision', 'hy2://pw@h.example?sni=a.example&peer=b.example'],
@@ -2359,7 +2362,7 @@ describe('closed URI grammars reject ambiguous or silently dropped input', () =>
     ['TUIC explicit path', `tuic://${uuid}:pw@tuic.example:443/`],
     [
       'TUIC insecure alias collision',
-      `tuic://${uuid}:pw@tuic.example:443?allow_insecure=0&insecure=0`,
+      `tuic://${uuid}:pw@tuic.example:443?allow_insecure=0&insecure=1`,
     ],
     ['TUIC empty ALPN', `tuic://${uuid}:pw@tuic.example:443?alpn=`],
     ['Snell unknown query', 'snell://pw@snell.example:443?label=x'],
@@ -2390,7 +2393,7 @@ describe('closed URI grammars reject ambiguous or silently dropped input', () =>
     ['empty object', {}],
     ['fractional top-level integer', { uplinkChunkSize: 1.5 }],
     ['invalid root range', { xPaddingBytes: '100-' }],
-    ['duplicate session aliases', { sessionIDPlacement: 'path', sessionPlacement: 'path' }],
+    ['duplicate session aliases', { sessionIDPlacement: 'path', sessionPlacement: 'header' }],
     ['wrong noGRPCHeader type', { noGRPCHeader: 'true' }],
     ['orphan session length', { sessionIDLength: 16 }],
     ['session length above policy budget', { sessionIDTable: 'abc', sessionIDLength: 257 }],
@@ -2398,7 +2401,7 @@ describe('closed URI grammars reject ambiguous or silently dropped input', () =>
     ['positive xmux modes conflict', { xmux: { maxConnections: 1, maxConcurrency: 1 } }],
     [
       'official and compatibility method aliases collide',
-      { uplinkHTTPMethod: 'POST', uplinkHttpMethod: 'POST' },
+      { uplinkHTTPMethod: 'POST', uplinkHttpMethod: 'GET' },
     ],
     ['GET requires packet-up', { uplinkHTTPMethod: 'GET' }],
     ['root Host header is forbidden', { headers: { host: 'edge.example' } }],
@@ -2436,7 +2439,7 @@ describe('closed URI grammars reject ambiguous or silently dropped input', () =>
           tlsSettings: { fingerprint: 'chrome' },
           realitySettings: {
             pbk: FAKE_REALITY_PUBLIC_KEY,
-            publicKey: FAKE_REALITY_PUBLIC_KEY,
+            publicKey: Buffer.alloc(32, 2).toString('base64url'),
           },
         },
       },
@@ -2552,5 +2555,159 @@ describe('P3-6 matchFilter fixed-regexp2 compatibility', () => {
   it('uses Unicode code points for dot and supports backtick-separated OR filters', () => {
     expect(matchFilter(['😀'], '^.$')).toEqual({ matched: ['😀'], error: null });
     expect(matchFilter(nodes, 'HK`US-01').matched).toEqual(['🇺🇸 US-01', '🇭🇰 HK-01']);
+  });
+});
+
+describe('per-parameter relaxations for real-world share links (2026-07-18)', () => {
+  const UUID = '00000000-0000-0000-0000-000000000000';
+  const ECH_CONFIG = 'ZmFrZS1lY2g=';
+
+  it('vless://: maps junk security=false to none (vless-security-false)', () => {
+    const { proxies, errors } = parseProxyUriList(
+      `vless://${UUID}@h.example:443?encryption=none&security=false&fp=chrome&type=ws&host=cdn.example&path=%2Fws#SecFalse`,
+    );
+    expect(errors).toHaveLength(0);
+    expect(proxies[0]).toMatchObject({ network: 'ws' });
+    expect(proxies[0].tls).toBeUndefined();
+    expect(proxies[0]['client-fingerprint']).toBeUndefined();
+  });
+
+  it('vless://: ignores TLS-layer options without TLS (vless-tls-options-ignored)', () => {
+    const { proxies, errors } = parseProxyUriList(
+      `vless://${UUID}@h.example:443?encryption=none&fp=randomized&sni=cdn.example&type=ws&host=cdn.example&path=%2F#NoTls`,
+    );
+    expect(errors).toHaveLength(0);
+    expect(proxies[0].tls).toBeUndefined();
+    expect(proxies[0]['client-fingerprint']).toBeUndefined();
+    expect(proxies[0].servername).toBeUndefined();
+  });
+
+  it('vless://: ignores Reality options under plain TLS (vless-reality-opts-ignored)', () => {
+    const { proxies, errors } = parseProxyUriList(
+      `vless://${UUID}@h.example:443?encryption=none&security=tls&pbk=${FAKE_REALITY_PUBLIC_KEY}&sid=ab12&fp=chrome&sni=cdn.example&alpn=h3&type=ws&path=%2Fws#PbkTls`,
+    );
+    expect(errors).toHaveLength(0);
+    expect(proxies[0]).toMatchObject({
+      tls: true,
+      'client-fingerprint': 'chrome',
+      servername: 'cdn.example',
+    });
+    expect(proxies[0]['reality-opts']).toBeUndefined();
+  });
+
+  it('vless://: maps Xray ech to ech-opts under TLS only (vless-ech-mapped)', () => {
+    const tls = parseProxyUriList(
+      `vless://${UUID}@h.example:443?encryption=none&security=tls&ech=${encodeURIComponent(ECH_CONFIG)}&type=tcp#Ech`,
+    );
+    expect(tls.errors).toHaveLength(0);
+    expect(tls.proxies[0]['ech-opts']).toEqual({ enable: true, config: ECH_CONFIG });
+
+    // DoH fetch instruction: mihomo cannot carry it literally; enable-only
+    // makes the core resolve the config over DNS itself.
+    const doh = parseProxyUriList(
+      `vless://${UUID}@h.example:443?encryption=none&security=tls&ech=${encodeURIComponent('cdn.example+https://dns.example/dns-query')}&type=tcp#EchDoh`,
+    );
+    expect(doh.errors).toHaveLength(0);
+    expect(doh.proxies[0]['ech-opts']).toEqual({ enable: true });
+
+    // Reality carries its own hello camouflage; ech is ignored there.
+    const reality = parseProxyUriList(
+      `vless://${UUID}@h.example:443?encryption=none&security=reality&pbk=${FAKE_REALITY_PUBLIC_KEY}&fp=chrome&ech=${encodeURIComponent(ECH_CONFIG)}&type=tcp#EchReality`,
+    );
+    expect(reality.errors).toHaveLength(0);
+    expect(reality.proxies[0]['ech-opts']).toBeUndefined();
+  });
+
+  it('vless://: ignores gRPC authority/mode exporter noise (vless-grpc-authority-ignored)', () => {
+    const { proxies, errors } = parseProxyUriList(
+      `vless://${UUID}@h.example:443?encryption=none&security=reality&pbk=${FAKE_REALITY_PUBLIC_KEY}&fp=firefox&sni=s.example&type=grpc&serviceName=gs&mode=multi&authority=#GrpcNoise`,
+    );
+    expect(errors).toHaveLength(0);
+    expect(proxies[0]).toMatchObject({
+      network: 'grpc',
+      'grpc-opts': { 'grpc-service-name': 'gs' },
+    });
+  });
+
+  it('vless://: treats Xray type=raw as tcp (vless-type-raw)', () => {
+    const { proxies, errors } = parseProxyUriList(
+      `vless://${UUID}@h.example:443?encryption=none&security=reality&pbk=${FAKE_REALITY_PUBLIC_KEY}&fp=chrome&sid=ab12&sni=s.example&type=raw#Raw`,
+    );
+    expect(errors).toHaveLength(0);
+    expect(proxies[0]).toMatchObject({ network: 'tcp' });
+  });
+
+  it('vmess://: treats Xray net=raw as tcp (vmess-net-raw)', () => {
+    const payload = Buffer.from(
+      JSON.stringify({
+        v: '2',
+        ps: 'Raw',
+        add: 'h.example',
+        port: '443',
+        id: UUID,
+        aid: 0,
+        scy: 'auto',
+        net: 'raw',
+        type: 'none',
+        tls: '',
+      }),
+    ).toString('base64');
+    const { proxies, errors } = parseProxyUriList(`vmess://${payload}`);
+    expect(errors).toHaveLength(0);
+    expect(proxies[0]).toMatchObject({ type: 'vmess', network: 'tcp' });
+  });
+
+  it('trojan://: maps ech and tolerates equal insecure alias duplicates (trojan-ech-alias-noise)', () => {
+    const { proxies, errors } = parseProxyUriList(
+      `trojan://pw@t.example:443?security=tls&allowInsecure=0&insecure=0&ech=${encodeURIComponent(ECH_CONFIG)}&sni=cdn.example&type=ws&host=cdn.example&path=%2Fws#TjEch`,
+    );
+    expect(errors).toHaveLength(0);
+    expect(proxies[0]['ech-opts']).toEqual({ enable: true, config: ECH_CONFIG });
+    expect(proxies[0]['skip-cert-verify']).toBeUndefined();
+  });
+
+  it('trojan://: rejects a non-tls security value', () => {
+    const { proxies, errors } = parseProxyUriList('trojan://pw@t.example:443?security=none#TjBad');
+    expect(proxies).toHaveLength(0);
+    expect(errors).toHaveLength(1);
+  });
+
+  it('tuic://: accepts restated protocol invariants security=tls and version=5 (tuic-restated-invariants)', () => {
+    const uuid = '019f65ab-a17d-7902-9011-7b6645fa1942';
+    const ok = parseProxyUriList(
+      `tuic://${uuid}:pw@tuic.example:443?security=tls&version=5&sni=tuic.example#T5`,
+    );
+    expect(ok.errors).toHaveLength(0);
+    expect(ok.proxies[0]).toMatchObject({ type: 'tuic', sni: 'tuic.example' });
+
+    for (const query of ['security=none', 'version=4']) {
+      const bad = parseProxyUriList(`tuic://${uuid}:pw@tuic.example:443?${query}#TBad`);
+      expect(bad.proxies, query).toHaveLength(0);
+      expect(bad.errors, query).toHaveLength(1);
+    }
+  });
+
+  it('HTTP(S): maps https query sni/allowInsecure to TLS options (https-query-tls-options)', () => {
+    const { proxies, errors } = parseProxyUriList(
+      'https://user:pw@proxy.example:443?sni=front.example&allowInsecure=1#H',
+    );
+    expect(errors).toHaveLength(0);
+    expect(proxies[0]).toMatchObject({
+      type: 'http',
+      tls: true,
+      sni: 'front.example',
+      'skip-cert-verify': true,
+    });
+  });
+
+  it('HTTP(S): ignores TLS query options on plain http and still rejects unknown keys', () => {
+    const plain = parseProxyUriList('http://user:pw@proxy.example:8080?sni=front.example#P');
+    expect(plain.errors).toHaveLength(0);
+    expect(plain.proxies[0].sni).toBeUndefined();
+    expect(plain.proxies[0].tls).toBeUndefined();
+
+    const unknown = parseProxyUriList('https://user:pw@proxy.example:443?token=value#U');
+    expect(unknown.proxies).toHaveLength(0);
+    expect(unknown.errors).toHaveLength(1);
   });
 });
