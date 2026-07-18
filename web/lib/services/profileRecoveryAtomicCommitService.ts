@@ -24,7 +24,28 @@ export interface AtomicProfileRecoveryAudit {
 }
 
 const COMMIT_ATOMIC_PROFILE_RECOVERY = `
+local function hasExpectedType(key, expected)
+  local actual = redis.call('TYPE', key)
+  if type(actual) == 'table' then actual = actual.ok end
+  return actual == 'none' or actual == expected
+end
+
+if not hasExpectedType(KEYS[1], 'string')
+  or not hasExpectedType(KEYS[2], 'string')
+  or not hasExpectedType(KEYS[3], 'string')
+  or not hasExpectedType(KEYS[4], 'hash')
+  or not hasExpectedType(KEYS[5], 'hash')
+  or not hasExpectedType(KEYS[6], 'hash')
+  or not hasExpectedType(KEYS[8], 'zset')
+  or not hasExpectedType(KEYS[9], 'hash') then
+  return {-2, 'storage-type'}
+end
+
 local currentVersion = redis.call('GET', KEYS[1]) or '0'
+local currentVersionNumber = tonumber(currentVersion)
+if not currentVersionNumber or currentVersionNumber % 1 ~= 0 then
+  return {-2, 'config-version'}
+end
 if currentVersion ~= ARGV[1] then return {0, currentVersion} end
 
 local currentMetaRaw = redis.call('GET', KEYS[3])
@@ -81,7 +102,8 @@ if auditCount > 1000 then
   redis.call('ZREMRANGEBYRANK', KEYS[8], 0, overflow - 1)
   for _, oldId in ipairs(evicted) do redis.call('HDEL', KEYS[9], oldId) end
 end
-local nextVersion = redis.call('INCR', KEYS[1])
+local nextVersion = currentVersionNumber + 1
+redis.call('SET', KEYS[1], tostring(nextVersion))
 return {1, nextVersion, eventId}
 `.trim();
 
@@ -148,6 +170,11 @@ export async function commitAtomicProfileRecovery(
     if (Array.isArray(result) && result[0] === -1) {
       throw ClientSafeProblemDetailsError.conflict(
         'base.yaml 在恢复期间被其他写入修改，请重新预览。',
+      );
+    }
+    if (Array.isArray(result) && result[0] === -2) {
+      throw ClientSafeProblemDetailsError.conflict(
+        '恢复所需的存储结构状态异常，未执行任何写入。',
       );
     }
     const current = Number(Array.isArray(result) ? result[1] : NaN);

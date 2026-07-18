@@ -218,6 +218,10 @@ describe('legacy chain profile recovery execution', () => {
 
     expect(evalMock).toHaveBeenCalledOnce();
     const [script, keys, args] = evalMock.mock.calls[0] as [string, string[], string[]];
+    expect(script).toContain("actual = actual.ok");
+    expect(script.indexOf("redis.call('TYPE', key)")).toBeLessThan(
+      script.indexOf("redis.call('SET', KEYS[2]"),
+    );
     expect(script).toContain("redis.call('HDEL', KEYS[4]");
     expect(script).toContain("redis.call('HSET', KEYS[6]");
     expect(script).toContain("redis.call('DEL', KEYS[7])");
@@ -263,7 +267,7 @@ describe('legacy chain profile recovery execution', () => {
     expect(evalMock).not.toHaveBeenCalled();
   });
 
-  it('allows a shared rejected-only source and reports every affected profile', async () => {
+  it('refuses to rewrite a shared source without preflighting every affected profile', async () => {
     profiles = [
       profile,
       {
@@ -274,16 +278,19 @@ describe('legacy chain profile recovery execution', () => {
       },
     ];
 
-    const result = await service.executeLegacyChainProfileRepair(
-      PROFILE_ID,
-      input,
-      7,
-      ETAG,
-      'test-actor',
-    );
+    await expect(
+      service.executeLegacyChainProfileRepair(PROFILE_ID, input, 7, ETAG, 'test-actor'),
+    ).rejects.toMatchObject({ problem: { status: 422 } });
+    expect(resolveMock).not.toHaveBeenCalled();
+    expect(evalMock).not.toHaveBeenCalled();
+  });
 
-    expect(result.summary.spxQuarantine?.affectedProfiles).toEqual(['default', 'other']);
-    expect(resolveMock).toHaveBeenCalledOnce();
+  it('reports an invalid Redis storage shape without retrying', async () => {
+    evalResult = [-2, 'storage-type'];
+
+    await expect(
+      service.executeLegacyChainProfileRepair(PROFILE_ID, input, 7, ETAG, 'test-actor'),
+    ).rejects.toMatchObject({ problem: { status: 409 } });
     expect(evalMock).toHaveBeenCalledOnce();
   });
 

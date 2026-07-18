@@ -22,3 +22,10 @@ final rendered config without writing fetch/render caches or accepting stale
 upstream data, then commit against the same planning/config version. New
 mutation paths that can change rendered output must preserve this invariant and
 return structured, credential-free validation issues.
+
+## Shared subscription mutation invariant
+
+A profile-scoped action must not rewrite a subscription used by another profile
+unless it preflights every consuming profile against the same candidate and
+configuration version. Narrow recovery actions that only plan one profile must
+reject shared sources before writing.
