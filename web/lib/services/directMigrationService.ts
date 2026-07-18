@@ -9,7 +9,9 @@
  * global config generation and the base ETag.
  */
 
+import { createHash } from 'node:crypto';
 import { isAlias, isMap, isScalar, isSeq, parseDocument, type YAMLMap, type YAMLSeq } from 'yaml';
+import { ConfigValidationError } from '@/lib/config/errors';
 import { parseBase } from '@/lib/engine/parser';
 import { resolveConfig } from '@/lib/engine/resolve';
 import { validateBase } from '@/lib/engine/validator';
@@ -67,6 +69,7 @@ export interface DirectMigrationSummary {
   enabledRulesTouched: number;
   disabledRulesTouched: number;
   groupNames: string[];
+  isolatedSubscriptionFailures: number;
 }
 
 export interface DirectMigrationCandidate {
@@ -80,6 +83,7 @@ export interface DirectMigrationCandidate {
 export interface DirectMigrationPlan extends DirectMigrationCandidate {
   expectedVersion: number;
   expectedBaseEtag: string;
+  subscriptionFailureSignature: string;
 }
 
 export interface DirectMigrationState {
@@ -485,6 +489,7 @@ export function buildDirectAliasCandidate(input: {
       enabledRulesTouched,
       disabledRulesTouched,
       groupNames: groupMigration.touched.map((group) => group.name),
+      isolatedSubscriptionFailures: 0,
     },
   };
 }
@@ -529,7 +534,7 @@ export async function loadDirectMigrationState(
 export async function validateDirectMigrationCandidate(
   state: DirectMigrationState,
   candidate: DirectMigrationCandidate,
-): Promise<void> {
+): Promise<{ count: number; signature: string }> {
   const allGroups = state.groups.map(
     (group) => candidate.groups.find((next) => next.id === group.id) ?? group,
   );
@@ -555,8 +560,12 @@ export async function validateDirectMigrationCandidate(
     );
   }
 
-  // Authoritative end-to-end validation: materialise subscription nodes,
-  // templates, groups, providers and enabled rules exactly as production does.
+  // Authoritative end-to-end structural validation. A direct-alias migration
+  // cannot alter subscriptions or their binding, so deterministic validation
+  // failures from those existing sources may be isolated while the complete
+  // candidate still renders around them. Infrastructure/upstream failures and
+  // every non-subscription validation error remain blocking.
+  const subscriptionFailures = new Map<string, unknown>();
   await resolveConfig(
     candidate.baseContent,
     allRules,
@@ -565,13 +574,40 @@ export async function validateDirectMigrationCandidate(
     state.templates,
     {
       providers: state.providers,
-      ignoreFailedSubs: false,
+      ignoreFailedSubs: true,
       persistSnapshot: false,
-      subscriptionResolver: resolveSubscriptionForPreflight,
+      subscriptionResolver: async (subscription) => {
+        try {
+          return await resolveSubscriptionForPreflight(subscription);
+        } catch (error) {
+          subscriptionFailures.set(subscription.id, error);
+          throw error;
+        }
+      },
       collections: state.collections,
       boundSource: state.profile.source,
     },
   );
+
+  const blockingFailure = [...subscriptionFailures.values()].find((error) => {
+    return !(
+      error instanceof ConfigValidationError &&
+      error.issue.section === 'subscriptions' &&
+      error.issue.resource === 'subscription' &&
+      error.issue.code.startsWith('subscription_')
+    );
+  });
+  if (blockingFailure) throw blockingFailure;
+  const signatureInput = [...subscriptionFailures.entries()]
+    .map(([subscriptionId, error]) => {
+      const issue = (error as ConfigValidationError).issue;
+      return [subscriptionId, issue.code, issue.path] as const;
+    })
+    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
+  return {
+    count: subscriptionFailures.size,
+    signature: createHash('sha256').update(JSON.stringify(signatureInput)).digest('hex'),
+  };
 }
 
 export function assertNoSharedProviderAlias(state: DirectMigrationState, alias: string): void {
@@ -606,13 +642,18 @@ export async function planDirectAliasMigration(
     templates: state.templates,
     alias,
   });
-  await validateDirectMigrationCandidate(state, candidate);
+  const subscriptionValidation = await validateDirectMigrationCandidate(state, candidate);
   const afterValidation = await getConfigVersion();
   if (afterValidation !== state.version) throw conflictForVersion(state.version, afterValidation);
   return {
     ...candidate,
+    summary: {
+      ...candidate.summary,
+      isolatedSubscriptionFailures: subscriptionValidation.count,
+    },
     expectedVersion: state.version,
     expectedBaseEtag: state.base.etag,
+    subscriptionFailureSignature: subscriptionValidation.signature,
   };
 }
 
@@ -622,10 +663,17 @@ export async function executeDirectAliasMigration(
   expectedVersion: number,
   expectedBaseEtag: string,
   actor: string,
+  expectedSubscriptionFailureSignature?: string,
 ): Promise<{ summary: DirectMigrationSummary; newVersion: number; auditEventId: string }> {
   // Rebuild and fully validate the exact current candidate. The version is
   // the snapshot the confirmation card showed; any intervening write aborts.
   const plan = await planDirectAliasMigration(profileId, alias, expectedVersion, expectedBaseEtag);
+  if (
+    expectedSubscriptionFailureSignature === undefined ||
+    plan.subscriptionFailureSignature !== expectedSubscriptionFailureSignature
+  ) {
+    throw ClientSafeProblemDetailsError.conflict('订阅校验状态与确认卡不一致，请重新预览后确认。');
+  }
   const { newVersion, auditEventId } = await commitAtomicProfileConfig(profileId, actor, plan, {
     op: 'direct-migration.replace-alias',
     target: { kind: 'base', field: 'proxies' },
@@ -634,8 +682,12 @@ export async function executeDirectAliasMigration(
       fields: plan.summary.removedProxyFields,
       groupsTouched: plan.summary.groupsTouched,
       rulesTouched: plan.summary.rulesTouched,
+      isolatedSubscriptionFailures: plan.summary.isolatedSubscriptionFailures,
     },
-    after: { replacement: BUILTIN_DIRECT },
+    after: {
+      replacement: BUILTIN_DIRECT,
+      subscriptionFailuresChanged: false,
+    },
     undoable: false,
   });
   return {

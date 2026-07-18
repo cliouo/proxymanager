@@ -31,6 +31,7 @@ interface LegacyProfileRepairCandidate extends DirectMigrationCandidate {
 export interface LegacyProfileRepairPlan extends LegacyProfileRepairCandidate {
   expectedVersion: number;
   expectedBaseEtag: string;
+  subscriptionFailureSignature: string;
 }
 
 export interface LegacyProfileRepairSummary extends DirectMigrationSummary {
@@ -97,13 +98,18 @@ export async function planLegacyProfileRepair(
     alias,
     repairs,
   });
-  await validateDirectMigrationCandidate(state, candidate);
+  const subscriptionValidation = await validateDirectMigrationCandidate(state, candidate);
   const afterValidation = await getConfigVersion();
   if (afterValidation !== state.version) throw conflictForVersion(state.version, afterValidation);
   return {
     ...candidate,
+    summary: {
+      ...candidate.summary,
+      isolatedSubscriptionFailures: subscriptionValidation.count,
+    },
     expectedVersion: state.version,
     expectedBaseEtag: state.base.etag,
+    subscriptionFailureSignature: subscriptionValidation.signature,
   };
 }
 
@@ -122,6 +128,7 @@ export async function executeLegacyProfileRepair(
   expectedVersion: number,
   expectedBaseEtag: string,
   actor: string,
+  expectedSubscriptionFailureSignature?: string,
 ): Promise<{ summary: LegacyProfileRepairSummary; newVersion: number; auditEventId: string }> {
   const plan = await planLegacyProfileRepair(
     profileId,
@@ -130,6 +137,12 @@ export async function executeLegacyProfileRepair(
     expectedVersion,
     expectedBaseEtag,
   );
+  if (
+    expectedSubscriptionFailureSignature === undefined ||
+    plan.subscriptionFailureSignature !== expectedSubscriptionFailureSignature
+  ) {
+    throw ClientSafeProblemDetailsError.conflict('订阅校验状态与确认卡不一致，请重新预览后确认。');
+  }
   const repairedFilterGroups = plan.filterRepairAfter.map((group) => group.name);
   const { newVersion, auditEventId } = await commitAtomicProfileConfig(profileId, actor, plan, {
     op: 'legacy-profile-repair.apply',
@@ -140,10 +153,12 @@ export async function executeLegacyProfileRepair(
         fields: plan.summary.removedProxyFields,
       },
       filters: filterAuditSnapshot(plan.filterRepairBefore),
+      isolatedSubscriptionFailures: plan.summary.isolatedSubscriptionFailures,
     },
     after: {
       directReplacement: BUILTIN_DIRECT,
       filters: filterAuditSnapshot(plan.filterRepairAfter),
+      subscriptionFailuresChanged: false,
     },
     undoable: false,
   });

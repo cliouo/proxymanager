@@ -37,7 +37,7 @@
 | `list_local_nodes`                 | editing            | 本地源节点（name+type+referencedBy，脱敏）                                    |
 | `preview_proxy_group_members`      | synthesizing       | filter/exclude 对真实节点试算（**改 filter 前必做**）                         |
 | `preview_node_operators`           | editing            | 整条算子管线对真实节点试算（**改正则前必做**）                                |
-| `preview_direct_alias_migration`   | hub                | 完整预检冗余 `type: direct` 别名迁移，返回引用计数、version 与 base ETag      |
+| `preview_direct_alias_migration`   | hub                | 预检 direct 别名；返回引用计数、隔离失败数及并发守卫                          |
 | `preview_legacy_profile_repair`    | hub / synthesizing | 完整预检直连别名 + 2–16 个非法筛选的跨资源恢复候选，返回 version 与 base ETag |
 | `search_mihomo_docs`               | hub                | DeepWiki 接地（Meta-Docs 写法 / mihomo 源码内核行为）                         |
 | `fetch_url`                        | hub                | 抓外部链接（只读、禁内网、按 external_data 处理）                             |
@@ -61,3 +61,5 @@
 > 禁改路径（config-section 碰会被拒）：`proxies` / `proxy-providers` / `rules` / `rule-providers` / `proxy-groups`。
 > `migrate_direct_alias` 与 `repair_legacy_profile` 都是专用窄例外，不开放任意 `proxies` 写入；后者还要求
 > 每个目标筛选字段当前确属非法。额外字段、未知引用、遗漏的其它错误或完整渲染失败都会拒绝。
+> 两者仅可在结构候选完整通过时隔离与迁移无关的确定性 `subscription_*` 源校验错误，并在确认卡标明数量；
+> 不会修复订阅；确认令牌绑定脱敏失败集合，执行前变化即拒绝。上游不可用、基础设施异常和其它错误仍严格阻塞。

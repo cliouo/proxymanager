@@ -29,6 +29,7 @@ export interface ConfirmationRecord {
   /** Stable preview facts that execution must re-check before committing. */
   confirmation?: {
     configVersion?: number;
+    subscriptionFailureSignature?: string;
   };
 }
 

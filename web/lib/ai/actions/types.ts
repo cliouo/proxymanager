@@ -38,6 +38,7 @@ export interface ActionContext {
    */
   confirmation?: {
     configVersion?: number;
+    subscriptionFailureSignature?: string;
   };
 }
 
@@ -66,6 +67,7 @@ export interface WritePreview {
   /** Optional concurrency guard stored beside the one-time confirmation. */
   confirmation?: {
     configVersion?: number;
+    subscriptionFailureSignature?: string;
   };
 }
 

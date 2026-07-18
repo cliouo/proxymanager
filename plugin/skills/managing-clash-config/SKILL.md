@@ -88,6 +88,10 @@ profile 都要重新读取、预检并生成自己的确认卡；不要复用另
 - 专用窄例外 `preview_direct_alias_migration` → `migrate_direct_alias` 只迁移
   `name + type: direct + 可选 udp: true` 的冗余本地别名为 mihomo 内建 `DIRECT`，同时原子改写
   当前 profile 的全部已知引用。它不是通用 `proxies` 编辑器；出现额外字段、共享资源引用或未知路径即拒绝。
+  若绑定订阅已有确定性的 `subscription_*` 定义 / 内容 / 算子校验错误，预检只在候选渲染中隔离这些
+  **迁移前已存在且本操作无法改变**的源错误，并把数量写进确认卡；迁移不会修复订阅，完整配置仍可能
+  无法下发。确认令牌会绑定脱敏失败集合，确认后集合变化即要求重新预览。上游不可用、基础设施异常、
+  非订阅错误及候选结构错误继续严格阻塞。
 - 若同一 profile 还同时存在 2–16 个非法策略组筛选，导致直连迁移与
   `repair_proxy_group_filters` 彼此被完整预检阻塞，只能先逐组 `preview_proxy_group_members`，再走
   `preview_legacy_profile_repair` → `repair_legacy_profile`。它把安全直连别名迁移与这些当前确属非法的
