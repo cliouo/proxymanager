@@ -100,6 +100,69 @@ test("clients without form elicitation cannot execute writes", async () => {
   assert.match(result.content[0].text, /no change was applied/u);
 });
 
+test("trust_full_access lets form-less clients consume the token directly", async () => {
+  process.env.PROXYMANAGER_TRUST_FULL_ACCESS = "true";
+  try {
+    const seen = [];
+    const result = await gatePendingWrite(
+      fakeServer(null, false),
+      ENVELOPE,
+      "default",
+      async (token) => {
+        seen.push(token);
+        return { content: [{ type: "text", text: '{"applied":true}' }] };
+      },
+    );
+
+    assert.deepEqual(seen, ["a".repeat(36)]);
+    assert.equal(result.content[0].text, '{"applied":true}');
+  } finally {
+    delete process.env.PROXYMANAGER_TRUST_FULL_ACCESS;
+  }
+});
+
+test("trust_full_access still shows the form when the client supports it", async () => {
+  process.env.PROXYMANAGER_TRUST_FULL_ACCESS = "true";
+  try {
+    let elicited = 0;
+    let confirms = 0;
+    const server = fakeServer(null, true);
+    server.elicitInput = async () => {
+      elicited += 1;
+      return { action: "decline" };
+    };
+    const result = await gatePendingWrite(server, ENVELOPE, "default", async () => {
+      confirms += 1;
+    });
+
+    assert.equal(elicited, 1);
+    assert.equal(confirms, 0);
+    assert.match(result.content[0].text, /"applied":false/u);
+  } finally {
+    delete process.env.PROXYMANAGER_TRUST_FULL_ACCESS;
+  }
+});
+
+test("trust_full_access never bypasses an invalid confirmation token", async () => {
+  process.env.PROXYMANAGER_TRUST_FULL_ACCESS = "true";
+  try {
+    let confirms = 0;
+    const result = await gatePendingWrite(
+      fakeServer(null, false),
+      { ...ENVELOPE, data: { ...ENVELOPE.data, token: "nope" } },
+      "default",
+      async () => {
+        confirms += 1;
+      },
+    );
+
+    assert.equal(confirms, 0);
+    assert.equal(result.isError, true);
+  } finally {
+    delete process.env.PROXYMANAGER_TRUST_FULL_ACCESS;
+  }
+});
+
 test("oversized confirmation diffs fail closed before elicitation", async () => {
   let elicited = 0;
   let confirms = 0;

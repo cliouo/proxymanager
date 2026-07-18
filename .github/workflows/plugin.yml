@@ -1,0 +1,33 @@
+name: plugin
+
+on:
+  push:
+    branches: [main]
+    paths: ['plugin/**', '.claude-plugin/**', '.github/workflows/plugin.yml']
+  pull_request:
+    paths: ['plugin/**', '.claude-plugin/**', '.github/workflows/plugin.yml']
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install bridge deps
+        run: npm ci
+        working-directory: plugin/servers
+      - name: Bridge tests
+        run: npm test
+        working-directory: plugin/servers
+      - name: Bundle is up to date
+        run: |
+          npm run build
+          git diff --exit-code -- dist/ \
+            || { echo '::error::plugin/servers/dist is stale — run `npm run build` in plugin/servers and commit'; exit 1; }
+        working-directory: plugin/servers
+      - name: Validate plugin + marketplace manifests
+        run: |
+          npx -y @anthropic-ai/claude-code plugin validate ./plugin
+          npx -y @anthropic-ai/claude-code plugin validate .

@@ -54,6 +54,23 @@ const BASE = (
 const ADMIN_KEY = process.env.PROXYMANAGER_ADMIN_KEY || "";
 let activeProfile = process.env.PROXYMANAGER_PROFILE || "default";
 
+/** Per-request timeout (seconds in env, 5–300, default 30). */
+const REQUEST_TIMEOUT_MS = (() => {
+  const raw = Number(process.env.PROXYMANAGER_TIMEOUT ?? "");
+  return Number.isFinite(raw) && raw >= 5 && raw <= 300 ? raw * 1000 : 30_000;
+})();
+
+/**
+ * Opt-in trust for sessions whose client offers no human-confirm UI at all
+ * (e.g. Codex full-access mode advertises no form elicitation). When enabled,
+ * such sessions consume the confirm token directly instead of failing closed;
+ * clients that DO offer forms still show the confirmation card. Read per call
+ * so tests can toggle it.
+ */
+function trustFullAccess() {
+  return /^(1|true)$/iu.test(process.env.PROXYMANAGER_TRUST_FULL_ACCESS ?? "");
+}
+
 function headers() {
   return {
     "Content-Type": "application/json",
@@ -96,7 +113,10 @@ const SELECT_PROFILE_TOOL = {
 };
 
 async function loadProfiles() {
-  const res = await fetch(BASE + "/api/v1/profiles", { headers: headers() });
+  const res = await fetch(BASE + "/api/v1/profiles", {
+    headers: headers(),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
   const json = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error("Unable to list ProxyManager profiles.");
   const profiles = Array.isArray(json?.data) ? json.data : [];
@@ -114,6 +134,7 @@ async function loadProfiles() {
 async function fetchTools() {
   const res = await fetch(url("/api/v1/assistant/bootstrap"), {
     headers: headers(),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   if (!res.ok) {
     throw new Error(`Unable to load ProxyManager tools (${res.status}).`);
@@ -261,6 +282,9 @@ export async function confirmHiddenWrite(token, fetchImpl = fetch) {
         method: "POST",
         headers: headers(),
         body: JSON.stringify({ token }),
+        // Timeout lands in the catch below → CONFIRM_RESULT_UNKNOWN, never a
+        // false "no change was applied".
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       },
     );
     if (!confirmResponse.ok) return errResult(CONFIRM_RESULT_UNKNOWN);
@@ -301,6 +325,12 @@ export async function gatePendingWrite(
     });
   }
   if (!server.getClientCapabilities()?.elicitation?.form) {
+    if (trustFullAccess()) {
+      // No human-confirm UI exists in this session and the user opted into
+      // trusting it (完全访问/full-access). The server-side audit trail and
+      // neverList still apply; the display-only diff budget does not.
+      return confirmPending(token);
+    }
     return errResult({
       error:
         "MCP client does not support confirmation forms; no change was applied",
@@ -368,6 +398,7 @@ async function callTool(name, args, server) {
     method: "POST",
     headers: headers(),
     body: JSON.stringify({ name, input: args ?? {} }),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   const json = await res.json().catch(() => ({}));
   if (!res.ok) return errResult(json);
@@ -388,14 +419,42 @@ function enqueueToolCall(name, args, server) {
   return run;
 }
 
+/**
+ * Lazy tool loading: the stdio connection must come up even when the
+ * ProxyManager backend is offline (e.g. plugin installed, app not started).
+ * A successful fetch is cached for the lifetime of the process; failures are
+ * retried on the next tools/list instead of killing the server.
+ */
+let toolsCache = null;
+async function getTools() {
+  if (!toolsCache) {
+    toolsCache = await fetchTools();
+    console.error(
+      `[proxymanager-mcp] loaded ${toolsCache.length} tools · ${BASE} · profile=${activeProfile}`,
+    );
+  }
+  return toolsCache;
+}
+
 async function main() {
-  const tools = await fetchTools();
   const server = new Server(
     { name: "proxymanager", version: "0.1.0" },
     { capabilities: { tools: {} } },
   );
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
+  server.setRequestHandler(ListToolsRequestSchema, async () => {
+    try {
+      return { tools: await getTools() };
+    } catch (e) {
+      const errorType = e instanceof Error ? e.name : typeof e;
+      console.error("[proxymanager-mcp] bootstrap failed", { errorType });
+      throw new Error(
+        `Unable to reach ProxyManager at ${BASE}. ` +
+          "Check that the instance is running and PROXYMANAGER_BASE_URL / " +
+          "PROXYMANAGER_ADMIN_KEY are configured, then retry.",
+      );
+    }
+  });
   server.setRequestHandler(CallToolRequestSchema, async (req) => {
     const { name, arguments: args } = req.params;
     try {
@@ -412,7 +471,7 @@ async function main() {
   await server.connect(new StdioServerTransport());
   // eslint-disable-next-line no-console
   console.error(
-    `[proxymanager-mcp] ready · ${tools.length} tools · ${BASE} · profile=${activeProfile}`,
+    `[proxymanager-mcp] ready · ${BASE} · profile=${activeProfile} (tools load on first tools/list)`,
   );
 }
 
