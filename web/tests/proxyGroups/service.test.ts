@@ -76,8 +76,11 @@ const fakeRedis = {
     };
     return tx;
   },
-  get: async () => null,
-  set: async (_key: string, _value: unknown) => undefined,
+  get: async (key: string) => counters.get(key) ?? null,
+  set: async (key: string, value: unknown) => {
+    void key;
+    void value;
+  },
 };
 
 vi.mock('@/lib/redis/client', () => ({
@@ -94,6 +97,7 @@ vi.mock('@/lib/repos/resolvedRepo', () => ({
 // successful atomic commit here so the existing assertions keep observing the
 // resulting hashes.
 vi.mock('@/lib/services/profileConfigMutationService', () => ({
+  preflightProfileConfigChanges: vi.fn(async () => ({ configVersion: 0, candidate: {} })),
   preflightAndCommitProfileChanges: vi.fn(
     async (
       profileId: string,
@@ -293,6 +297,120 @@ describe('proxyGroupService — patch + rename cascade', () => {
     await expect(svc.patchProxyGroup(PID, a.id, { 'dialer-proxy': 'b' })).rejects.toMatchObject({
       problem: { status: 422 },
     });
+  });
+});
+
+describe('proxyGroupService — atomic filter repair', () => {
+  it('submits every repair through one preflight and one version bump', async () => {
+    const us = seedGroup({ name: '美国', filter: String.raw`(?i)\bUS\b` });
+    const de = seedGroup({ name: '德国', filter: String.raw`(?i)\bDE\b` });
+    const mutation = await import('@/lib/services/profileConfigMutationService');
+    const commit = vi.mocked(mutation.preflightAndCommitProfileChanges);
+    commit.mockClear();
+
+    const repaired = await svc.repairProxyGroupFilters(PID, [
+      { id: us.id, filter: '(?i)(?<![A-Za-z])USA?(?![A-Za-z])' },
+      { id: de.id, filter: '(?i)(?<![A-Za-z])DEU?(?![A-Za-z])' },
+    ]);
+
+    expect(repaired.map((group) => group.name)).toEqual(['美国', '德国']);
+    expect(commit).toHaveBeenCalledTimes(1);
+    const changes = commit.mock.calls[0][1];
+    expect(changes.proxyGroupWrites).toHaveLength(2);
+    expect(counters.get('config:version')).toBe(1);
+  });
+
+  it('rejects duplicate ids without entering preflight', async () => {
+    const group = seedGroup({ name: '美国' });
+    const mutation = await import('@/lib/services/profileConfigMutationService');
+    const commit = vi.mocked(mutation.preflightAndCommitProfileChanges);
+    commit.mockClear();
+
+    await expect(
+      svc.repairProxyGroupFilters(PID, [
+        { id: group.id, filter: 'a' },
+        { id: group.id, 'exclude-filter': 'b' },
+      ]),
+    ).rejects.toMatchObject({ problem: { status: 409 } });
+    expect(commit).not.toHaveBeenCalled();
+  });
+
+  it('rejects batches larger than the confirmation-card limit', async () => {
+    const groups = Array.from({ length: 17 }, (_, index) => seedGroup({ name: `group-${index}` }));
+    const mutation = await import('@/lib/services/profileConfigMutationService');
+    const commit = vi.mocked(mutation.preflightAndCommitProfileChanges);
+    commit.mockClear();
+
+    await expect(
+      svc.repairProxyGroupFilters(
+        PID,
+        groups.map((group) => ({ id: group.id, filter: '.*' })),
+      ),
+    ).rejects.toMatchObject({ problem: { status: 422 } });
+    expect(commit).not.toHaveBeenCalled();
+  });
+
+  it('keeps every group unchanged when the combined preflight fails', async () => {
+    const us = seedGroup({ name: '美国', filter: String.raw`(?i)\bUS\b` });
+    const de = seedGroup({ name: '德国', filter: String.raw`(?i)\bDE\b` });
+    const mutation = await import('@/lib/services/profileConfigMutationService');
+    const commit = vi.mocked(mutation.preflightAndCommitProfileChanges);
+    commit.mockRejectedValueOnce(new Error('combined preflight rejected'));
+
+    await expect(
+      svc.repairProxyGroupFilters(PID, [
+        { id: us.id, filter: 'new-us' },
+        { id: de.id, filter: 'new-de' },
+      ]),
+    ).rejects.toThrow('combined preflight rejected');
+
+    expect((bucket(`proxy-groups:${PID}`).get(us.id) as ProxyGroup).filter).toBe(
+      String.raw`(?i)\bUS\b`,
+    );
+    expect((bucket(`proxy-groups:${PID}`).get(de.id) as ProxyGroup).filter).toBe(
+      String.raw`(?i)\bDE\b`,
+    );
+  });
+
+  it('rejects no-op entries and ordinary valid groups', async () => {
+    const invalid = seedGroup({ name: '美国', filter: String.raw`(?i)\bUS\b` });
+    const safe = seedGroup({ name: '安全组', filter: 'safe' });
+    const mutation = await import('@/lib/services/profileConfigMutationService');
+    const commit = vi.mocked(mutation.preflightAndCommitProfileChanges);
+    commit.mockClear();
+
+    await expect(
+      svc.repairProxyGroupFilters(PID, [
+        { id: invalid.id, filter: invalid.filter },
+        { id: safe.id, filter: 'safer' },
+      ]),
+    ).rejects.toMatchObject({ problem: { status: 422 } });
+    expect(commit).not.toHaveBeenCalled();
+
+    await expect(
+      svc.repairProxyGroupFilters(PID, [
+        { id: invalid.id, filter: '(?i)(?<![A-Za-z])USA?(?![A-Za-z])' },
+        { id: safe.id, filter: 'safer' },
+      ]),
+    ).rejects.toMatchObject({ problem: { status: 422 } });
+    expect(commit).not.toHaveBeenCalled();
+  });
+
+  it('rejects a confirmation version that no longer matches storage', async () => {
+    const us = seedGroup({ name: '美国', filter: String.raw`(?i)\bUS\b` });
+    const de = seedGroup({ name: '德国', filter: String.raw`(?i)\bDE\b` });
+    counters.set('config:version', 4);
+
+    await expect(
+      svc.repairProxyGroupFilters(
+        PID,
+        [
+          { id: us.id, filter: '(?i)(?<![A-Za-z])USA?(?![A-Za-z])' },
+          { id: de.id, filter: '(?i)(?<![A-Za-z])DEU?(?![A-Za-z])' },
+        ],
+        3,
+      ),
+    ).rejects.toMatchObject({ problem: { status: 412 } });
   });
 });
 

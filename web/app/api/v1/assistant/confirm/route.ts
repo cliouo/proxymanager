@@ -41,7 +41,11 @@ export const POST = withProblemDetails(async (request: Request) => {
   // Use the profile captured at preview time so the confirmation executes
   // against the same profile the user reviewed.
   const envelope = await action.execute(
-    { actor: resolveActor(request), profileId: record.profileId },
+    {
+      actor: resolveActor(request),
+      profileId: record.profileId,
+      ...(record.confirmation ? { confirmation: record.confirmation } : {}),
+    },
     input,
   );
 

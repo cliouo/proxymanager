@@ -30,6 +30,14 @@ export interface ActionContext {
    * per-profile). Read/write actions pass this to the scoped repos/dispatch.
    */
   profileId: string;
+  /**
+   * Immutable facts captured while the human confirmation card was built.
+   * Write actions that depend on a stable preview must fail closed when their
+   * required guard is absent or no longer matches current storage.
+   */
+  confirmation?: {
+    configVersion?: number;
+  };
 }
 
 /**
@@ -54,6 +62,10 @@ export interface ActionEnvelope {
 export interface WritePreview {
   /** Tagged diff: { op: 'add' | 'update' | 'delete', before?, after? }. */
   diff: unknown;
+  /** Optional concurrency guard stored beside the one-time confirmation. */
+  confirmation?: {
+    configVersion?: number;
+  };
 }
 
 interface BaseAction<I extends z.ZodType> {

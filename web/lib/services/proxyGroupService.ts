@@ -1,10 +1,14 @@
 import { ProblemDetailsError } from '@/lib/http/problem';
+import { compileGoRegex } from '@/lib/proxies/filterMatch';
 import { getConfigVersion } from '@/lib/repos/configVersionRepo';
 import { getProxyGroup, getProxyGroupByName, listProxyGroups } from '@/lib/repos/proxyGroupsRepo';
 import { getProxyGroupTemplate } from '@/lib/repos/proxyGroupTemplatesRepo';
 import { invalidateResolvedSnapshot } from '@/lib/repos/resolvedRepo';
 import { listRules } from '@/lib/repos/rulesRepo';
-import { preflightAndCommitProfileChanges } from '@/lib/services/profileConfigMutationService';
+import {
+  preflightAndCommitProfileChanges,
+  preflightProfileConfigChanges,
+} from '@/lib/services/profileConfigMutationService';
 import {
   ProxyGroupCreateSchema,
   ProxyGroupUpdateSchema,
@@ -259,6 +263,134 @@ export async function patchProxyGroup(
   );
   invalidateSnapshot();
   return next;
+}
+
+export interface ProxyGroupFilterRepair {
+  id: string;
+  filter?: string | null;
+  'exclude-filter'?: string | null;
+}
+
+export interface ProxyGroupFilterRepairPlan {
+  before: ProxyGroup[];
+  after: ProxyGroup[];
+  expectedVersion: number;
+}
+
+type FilterKey = 'filter' | 'exclude-filter';
+
+function isInvalidStoredGroupRegex(value: string | undefined): boolean {
+  if (value === undefined || value === '') return false;
+  if (value.length > 4_096) return true;
+  const patterns = value.split('`');
+  if (patterns.length > 32 || patterns.some((pattern) => pattern.length === 0)) return true;
+  try {
+    for (const pattern of patterns) compileGoRegex(pattern);
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+function buildFilterRepairWrites(
+  allGroups: ProxyGroup[],
+  repairs: ProxyGroupFilterRepair[],
+): { before: ProxyGroup[]; after: ProxyGroup[] } {
+  if (repairs.length < 2 || repairs.length > 16) {
+    throw ProblemDetailsError.unprocessable('批量筛选修复需要 2 到 16 个策略组。');
+  }
+
+  const byId = new Map(allGroups.map((group) => [group.id, group]));
+  const seen = new Set<string>();
+  for (const repair of repairs) {
+    if (seen.has(repair.id)) {
+      throw ProblemDetailsError.conflict(`批次内 proxy-group id 重复: ${repair.id}`);
+    }
+    seen.add(repair.id);
+  }
+  const before: ProxyGroup[] = [];
+  const now = nowSeconds();
+
+  const after = repairs.map((repair) => {
+    const current = byId.get(repair.id);
+    if (!current) {
+      throw ProblemDetailsError.notFound(`proxy-group ${repair.id} 不存在。`);
+    }
+    if (repair.filter === undefined && repair['exclude-filter'] === undefined) {
+      throw ProblemDetailsError.unprocessable(`proxy-group ${repair.id} 没有筛选字段需要修复。`);
+    }
+
+    const validated = ProxyGroupUpdateSchema.parse({
+      filter: repair.filter,
+      'exclude-filter': repair['exclude-filter'],
+    });
+    const changedKeys: FilterKey[] = [];
+    for (const key of ['filter', 'exclude-filter'] as const) {
+      const value = validated[key];
+      if (value === undefined) continue;
+      const normalized = value === null ? undefined : value;
+      if (current[key] !== normalized) changedKeys.push(key);
+    }
+    if (changedKeys.length === 0) {
+      throw ProblemDetailsError.unprocessable(`proxy-group ${repair.id} 的筛选字段没有变化。`);
+    }
+    if (!changedKeys.some((key) => isInvalidStoredGroupRegex(current[key]))) {
+      throw ProblemDetailsError.unprocessable(
+        `proxy-group ${repair.id} 当前没有被修复字段中的非法正则;请使用普通单组更新。`,
+      );
+    }
+
+    const next: ProxyGroup = { ...current, updated_at: now };
+    for (const [key, value] of Object.entries(validated)) {
+      if (value === null) delete (next as Record<string, unknown>)[key];
+      else if (value !== undefined) (next as Record<string, unknown>)[key] = value;
+    }
+    before.push(current);
+    return next;
+  });
+
+  return { before, after };
+}
+
+async function checkedRepairPlanningVersion(expectedPlanningVersion?: number): Promise<number> {
+  const currentVersion = await getConfigVersion();
+  if (expectedPlanningVersion !== undefined && currentVersion !== expectedPlanningVersion) {
+    throw ProblemDetailsError.preconditionFailed('配置在确认修复前已发生变化,请刷新后重试。');
+  }
+  return expectedPlanningVersion ?? currentVersion;
+}
+
+/** Build and fully preflight a repair candidate for the confirmation card. */
+export async function planProxyGroupFilterRepairs(
+  profileId: string,
+  repairs: ProxyGroupFilterRepair[],
+  expectedPlanningVersion?: number,
+): Promise<ProxyGroupFilterRepairPlan> {
+  const planningVersion = await checkedRepairPlanningVersion(expectedPlanningVersion);
+  const allGroups = await listProxyGroups(profileId);
+  const plan = buildFilterRepairWrites(allGroups, repairs);
+  await preflightProfileConfigChanges(profileId, { proxyGroupWrites: plan.after }, planningVersion);
+  return { ...plan, expectedVersion: planningVersion };
+}
+
+/**
+ * Atomically repair filters on multiple existing groups.
+ *
+ * Save-time preflight validates the complete rendered config, so two
+ * independently-invalid stored filters cannot be repaired by separate
+ * single-group writes. Building every filter-only patch into one candidate
+ * keeps that full-config invariant intact while avoiding the repair deadlock.
+ */
+export async function repairProxyGroupFilters(
+  profileId: string,
+  repairs: ProxyGroupFilterRepair[],
+  expectedPlanningVersion?: number,
+): Promise<ProxyGroup[]> {
+  const planningVersion = await checkedRepairPlanningVersion(expectedPlanningVersion);
+  const allGroups = await listProxyGroups(profileId);
+  const { after } = buildFilterRepairWrites(allGroups, repairs);
+  await preflightAndCommitProfileChanges(profileId, { proxyGroupWrites: after }, planningVersion);
+  return after;
 }
 
 export async function deleteProxyGroup(

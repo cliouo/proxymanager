@@ -26,6 +26,8 @@ import {
   deleteProxyGroup as svcDelete,
   getProxyGroup,
   patchProxyGroup,
+  planProxyGroupFilterRepairs,
+  repairProxyGroupFilters,
 } from '@/lib/services/proxyGroupService';
 import {
   ProxyGroupExcludeTypeSchema,
@@ -60,6 +62,20 @@ function groupYaml(g: Partial<ProxyGroup>): string {
   if (g['dialer-proxy']) obj['dialer-proxy'] = g['dialer-proxy'];
   if (g.notes) obj.notes = g.notes;
   return stringify(obj).trimEnd();
+}
+
+function filterRepairYaml(groups: readonly Partial<ProxyGroup>[]): string {
+  return stringify(
+    Object.fromEntries(
+      groups.map((group) => [
+        group.name,
+        {
+          filter: group.filter ?? null,
+          'exclude-filter': group['exclude-filter'] ?? null,
+        },
+      ]),
+    ),
+  ).trimEnd();
 }
 
 function writeResult(op: string, summary: string, data: unknown): ActionEnvelope {
@@ -318,6 +334,87 @@ const updateGroup = defineWriteAction({
   },
 });
 
+/* ─── repair_proxy_group_filters ───────────────────────────────────── */
+
+const FilterRepairInput = z
+  .object({
+    id: z.uuid().describe('要修复的策略组 id（先用 list_proxy_groups 获取）'),
+    filter: EDITABLE.filter.nullable().optional(),
+    exclude_filter: EDITABLE.exclude_filter.nullable().optional(),
+  })
+  .refine((value) => value.filter !== undefined || value.exclude_filter !== undefined, {
+    message: '每个策略组至少要修复 filter 或 exclude_filter 之一',
+  });
+
+const RepairFiltersInput = z
+  .object({
+    repairs: z
+      .array(FilterRepairInput)
+      .min(2)
+      .max(16)
+      .describe('需要在同一次完整配置预检中原子修复的 2 到 16 个策略组筛选字段'),
+  })
+  .superRefine((value, ctx) => {
+    const seen = new Set<string>();
+    value.repairs.forEach((repair, index) => {
+      if (seen.has(repair.id)) {
+        ctx.addIssue({
+          code: 'custom',
+          message: '同一策略组不能在一个修复批次中重复出现',
+          path: ['repairs', index, 'id'],
+        });
+      }
+      seen.add(repair.id);
+    });
+  });
+
+const repairFilters = defineWriteAction({
+  name: 'repair_proxy_group_filters',
+  description:
+    '原子修复多个已有策略组的 filter/exclude-filter。仅用于多个旧非法正则互相阻止单组保存的恢复场景；2-16 个组共用一次完整配置预检和一张确认卡，全部有效才一起生效。每条候选仍须先用 preview_proxy_group_members 验证。',
+  input: RepairFiltersInput,
+  risk: 'write',
+  summary: (input) => `原子修复 ${input.repairs.length} 个策略组筛选正则`,
+  async preview(ctx, input) {
+    const plan = await planProxyGroupFilterRepairs(
+      ctx.profileId,
+      input.repairs.map(({ id, filter, exclude_filter }) => ({
+        id,
+        ...(filter !== undefined ? { filter } : {}),
+        ...(exclude_filter !== undefined ? { 'exclude-filter': exclude_filter } : {}),
+      })),
+    );
+    return {
+      diff: {
+        op: 'batch-update',
+        path: `proxy-groups[${plan.before.map((group) => group.name).join(', ')}]`,
+        beforeYaml: filterRepairYaml(plan.before),
+        afterYaml: filterRepairYaml(plan.after),
+        concurrency: { expectedVersion: plan.expectedVersion },
+      },
+      confirmation: { configVersion: plan.expectedVersion },
+    };
+  },
+  async execute(ctx, input) {
+    const expectedVersion = ctx.confirmation?.configVersion;
+    if (expectedVersion === undefined) {
+      throw ProblemDetailsError.preconditionFailed('修复确认缺少配置版本,请重新发起。');
+    }
+    const repaired = await repairProxyGroupFilters(
+      ctx.profileId,
+      input.repairs.map(({ id, filter, exclude_filter }) => ({
+        id,
+        ...(filter !== undefined ? { filter } : {}),
+        ...(exclude_filter !== undefined ? { 'exclude-filter': exclude_filter } : {}),
+      })),
+      expectedVersion,
+    );
+    return writeResult('batch-update', `已原子修复 ${repaired.length} 个策略组筛选正则`, {
+      names: repaired.map((group) => group.name),
+    });
+  },
+});
+
 /* ─── delete_proxy_group ────────────────────────────────────────────── */
 
 const DeleteInput = z.object({ id: z.uuid().describe('策略组 id（先用 list_proxy_groups 拿）') });
@@ -344,4 +441,4 @@ const deleteGroup = defineWriteAction({
 });
 
 export const PROXY_GROUP_READ_ACTIONS = [previewMembers];
-export const PROXY_GROUP_WRITE_ACTIONS = [createGroup, updateGroup, deleteGroup];
+export const PROXY_GROUP_WRITE_ACTIONS = [createGroup, updateGroup, repairFilters, deleteGroup];

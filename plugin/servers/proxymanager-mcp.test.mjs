@@ -100,6 +100,72 @@ test("clients without form elicitation cannot execute writes", async () => {
   assert.match(result.content[0].text, /no change was applied/u);
 });
 
+test("oversized confirmation diffs fail closed before elicitation", async () => {
+  let elicited = 0;
+  let confirms = 0;
+  const server = fakeServer({ action: "accept", content: { confirm: true } });
+  server.elicitInput = async () => {
+    elicited += 1;
+    return { action: "accept", content: { confirm: true } };
+  };
+  const result = await gatePendingWrite(
+    server,
+    {
+      ...ENVELOPE,
+      data: { ...ENVELOPE.data, diff: { afterYaml: "- ".repeat(1300) } },
+    },
+    "default",
+    async () => {
+      confirms += 1;
+    },
+  );
+
+  assert.equal(elicited, 0);
+  assert.equal(confirms, 0);
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /too large to display completely/u);
+  assert.match(result.content[0].text, /no change was applied/u);
+});
+
+test("structurally omitted confirmation diffs fail closed before elicitation", async () => {
+  const deep = {};
+  let cursor = deep;
+  for (let depth = 0; depth < 14; depth += 1) {
+    cursor.next = {};
+    cursor = cursor.next;
+  }
+  const cases = [
+    Array.from({ length: 201 }, (_, index) => index),
+    Object.fromEntries(
+      Array.from({ length: 201 }, (_, index) => [`key-${index}`, index]),
+    ),
+    deep,
+  ];
+
+  for (const diff of cases) {
+    let elicited = 0;
+    let confirms = 0;
+    const server = fakeServer({ action: "accept", content: { confirm: true } });
+    server.elicitInput = async () => {
+      elicited += 1;
+      return { action: "accept", content: { confirm: true } };
+    };
+    const result = await gatePendingWrite(
+      server,
+      { ...ENVELOPE, data: { ...ENVELOPE.data, diff } },
+      "default",
+      async () => {
+        confirms += 1;
+      },
+    );
+
+    assert.equal(elicited, 0);
+    assert.equal(confirms, 0);
+    assert.equal(result.isError, true);
+    assert.match(result.content[0].text, /too large to display completely/u);
+  }
+});
+
 test("unknown confirmation outcomes never claim no change or reflect server secrets", async () => {
   const network = await confirmHiddenWrite("a".repeat(36), async () => {
     throw new Error("socket closed after commit");

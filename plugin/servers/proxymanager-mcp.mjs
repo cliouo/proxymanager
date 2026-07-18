@@ -152,6 +152,8 @@ function errResult(payload) {
 
 const CONFIRM_RESULT_UNKNOWN =
   "ProxyManager confirmation result is unknown. Do not retry automatically; re-read the target profile to verify the current state.";
+const MAX_CONFIRMATION_DIFF_LENGTH = 2400;
+const CONFIRMATION_DIFF_OMITTED = Symbol("confirmation-diff-omitted");
 
 const SENSITIVE_CONFIRMATION_KEY =
   /^(?:.*(?:password|passwd|secret|token|credential|authorization|private[-_]?key|api[-_]?key|cookie).*|uuid|psk|auth|code|signature|sig)$/iu;
@@ -206,22 +208,29 @@ function scrubConfirmationText(value, maxLength) {
 
 function scrubConfirmationValue(value, key = "", depth = 0) {
   if (SENSITIVE_CONFIRMATION_KEY.test(key)) return "***";
-  if (depth > 12) return "[nested diff omitted]";
+  if (depth > 12) return CONFIRMATION_DIFF_OMITTED;
   if (typeof value === "string") return scrubMultilineConfirmationText(value);
   if (Array.isArray(value)) {
-    return value
-      .slice(0, 200)
-      .map((item) => scrubConfirmationValue(item, "", depth + 1));
+    if (value.length > 200) return CONFIRMATION_DIFF_OMITTED;
+    const scrubbed = value.map((item) =>
+      scrubConfirmationValue(item, "", depth + 1),
+    );
+    return scrubbed.includes(CONFIRMATION_DIFF_OMITTED)
+      ? CONFIRMATION_DIFF_OMITTED
+      : scrubbed;
   }
   if (value && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value)
-        .slice(0, 200)
-        .map(([childKey, childValue]) => [
-          childKey,
-          scrubConfirmationValue(childValue, childKey, depth + 1),
-        ]),
-    );
+    const entries = Object.entries(value);
+    if (entries.length > 200) return CONFIRMATION_DIFF_OMITTED;
+    const scrubbed = entries.map(([childKey, childValue]) => [
+      childKey,
+      scrubConfirmationValue(childValue, childKey, depth + 1),
+    ]);
+    return scrubbed.some(
+      ([, childValue]) => childValue === CONFIRMATION_DIFF_OMITTED,
+    )
+      ? CONFIRMATION_DIFF_OMITTED
+      : Object.fromEntries(scrubbed);
   }
   return value;
 }
@@ -233,11 +242,14 @@ function confirmationDetail(pending) {
   );
   let rawDiff = "";
   try {
-    rawDiff = JSON.stringify(scrubConfirmationValue(pending?.diff ?? {}));
+    const scrubbed = scrubConfirmationValue(pending?.diff ?? {});
+    if (scrubbed === CONFIRMATION_DIFF_OMITTED) return null;
+    rawDiff = JSON.stringify(scrubbed);
   } catch {
-    rawDiff = "[diff unavailable]";
+    return null;
   }
-  return `操作：${action}\n变更：${scrubConfirmationText(rawDiff, 2400)}`;
+  if (rawDiff.length > MAX_CONFIRMATION_DIFF_LENGTH) return null;
+  return `操作：${action}\n变更：${rawDiff}`;
 }
 
 /** Confirm a hidden token without reflecting execution errors or claiming rollback. */
@@ -296,9 +308,18 @@ export async function gatePendingWrite(
     });
   }
 
+  const detail = confirmationDetail(pending);
+  if (detail === null) {
+    return errResult({
+      error:
+        "confirmation diff is too large to display completely; no change was applied",
+      profile,
+    });
+  }
+
   const approval = await server.elicitInput({
     mode: "form",
-    message: `确认修改 ProxyManager 配置「${scrubConfirmationText(profile, 128)}」：${summary}\n${confirmationDetail(pending)}`,
+    message: `确认修改 ProxyManager 配置「${scrubConfirmationText(profile, 128)}」：${summary}\n${detail}`,
     requestedSchema: {
       type: "object",
       properties: {
