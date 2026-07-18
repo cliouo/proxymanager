@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { consumeConfirmation } from '@/lib/ai/confirm';
+import { dispatchToolCall } from '@/lib/ai/dispatchTool';
+import { ProblemDetailsError } from '@/lib/http/problem';
 import type { ProxyGroup } from '@/schemas';
 
 /**
@@ -10,6 +13,7 @@ import type { ProxyGroup } from '@/schemas';
  */
 
 const stores = new Map<string, Map<string, unknown>>();
+const kv = new Map<string, unknown>();
 /** Plain-key counters (config:version INCRs land here). */
 const counters = new Map<string, number>();
 function bucket(key: string): Map<string, unknown> {
@@ -22,7 +26,15 @@ function bucket(key: string): Map<string, unknown> {
 }
 
 const fakeRedis = {
-  get: async (key: string) => counters.get(key) ?? null,
+  get: async (key: string) => kv.get(key) ?? counters.get(key) ?? null,
+  set: async (key: string, value: unknown) => {
+    kv.set(key, value);
+  },
+  getdel: async (key: string) => {
+    const value = kv.get(key) ?? null;
+    kv.delete(key);
+    return value;
+  },
   hgetall: async (key: string) => {
     const m = bucket(key);
     return m.size === 0 ? null : Object.fromEntries(m);
@@ -92,6 +104,15 @@ vi.mock('@/lib/repos/resolvedRepo', () => ({
   })),
 }));
 vi.mock('@/lib/services/profileConfigMutationService', () => ({
+  preflightProfileConfigChanges: vi.fn(
+    async (_profileId: string, _changes: unknown, expectedPlanningVersion?: number) => {
+      const current = counters.get('config:version') ?? 0;
+      if (expectedPlanningVersion !== undefined && expectedPlanningVersion !== current) {
+        throw ProblemDetailsError.preconditionFailed();
+      }
+      return { configVersion: current, candidate: {} };
+    },
+  ),
   preflightAndCommitProfileChanges: vi.fn(
     async (
       profileId: string,
@@ -99,7 +120,12 @@ vi.mock('@/lib/services/profileConfigMutationService', () => ({
         proxyGroupWrites?: ProxyGroup[];
         proxyGroupDeletes?: string[];
       },
+      expectedPlanningVersion?: number,
     ) => {
+      const current = counters.get('config:version') ?? 0;
+      if (expectedPlanningVersion !== undefined && expectedPlanningVersion !== current) {
+        throw ProblemDetailsError.preconditionFailed();
+      }
       for (const group of changes.proxyGroupWrites ?? []) {
         bucket(`proxy-groups:${profileId}`).set(group.id, group);
       }
@@ -115,6 +141,8 @@ let registry: typeof import('@/lib/ai/actions/registry');
 
 beforeEach(async () => {
   stores.clear();
+  kv.clear();
+  counters.clear();
   registry = await import('@/lib/ai/actions/registry');
 });
 
@@ -145,6 +173,7 @@ describe('proxy-group actions registered', () => {
     expect(registry.getAction('preview_proxy_group_members')?.risk).toBe('read');
     expect(registry.getAction('create_proxy_group')?.risk).toBe('write');
     expect(registry.getAction('update_proxy_group')?.risk).toBe('write');
+    expect(registry.getAction('repair_proxy_group_filters')?.risk).toBe('write');
     expect(registry.getAction('delete_proxy_group')?.risk).toBe('write');
   });
 });
@@ -230,5 +259,96 @@ describe('update_proxy_group', () => {
     expect(
       (bucket(`proxy-groups:${PID}`).get(g.id) as ProxyGroup)['empty-fallback'],
     ).toBeUndefined();
+  });
+});
+
+describe('repair_proxy_group_filters', () => {
+  it('previews and persists multiple filter repairs in one atomic write', async () => {
+    const us = seedGroup({
+      name: '美国',
+      filter: String.raw`(?i)(🇺🇸|\bUS\b|美)`,
+    });
+    const other = seedGroup({
+      name: '其它地区',
+      filter: String.raw`(?i)^(?!.*(?:🇺🇸|\bUS\b|美)).*`,
+    });
+    const action = registry.getAction('repair_proxy_group_filters')!;
+    if (action.risk !== 'write') throw new Error('expected write');
+
+    const input = {
+      repairs: [
+        {
+          id: us.id,
+          filter: '(?i)(🇺🇸|(?<![A-Za-z])USA?(?![A-Za-z])|美)',
+        },
+        {
+          id: other.id,
+          filter: '.*',
+          exclude_filter: '(?i)🇺🇸|(?<![A-Za-z])USA?(?![A-Za-z])|美',
+        },
+      ],
+    };
+    const preview = await action.preview(CTX, input);
+    const diff = preview.diff as { beforeYaml: string; afterYaml: string };
+    expect(diff.beforeYaml).toContain(String.raw`\bUS\b`);
+    expect(diff.afterYaml).toContain('(?<![A-Za-z])');
+    expect(diff.afterYaml).toContain('其它地区');
+
+    await action.execute({ ...CTX, confirmation: { configVersion: 0 } }, input);
+
+    expect((bucket(`proxy-groups:${PID}`).get(us.id) as ProxyGroup).filter).toBe(
+      input.repairs[0].filter,
+    );
+    const storedOther = bucket(`proxy-groups:${PID}`).get(other.id) as ProxyGroup;
+    expect(storedOther.filter).toBe('.*');
+    expect(storedOther['exclude-filter']).toBe(input.repairs[1].exclude_filter);
+    expect(counters.get('config:version')).toBe(1);
+  });
+
+  it('requires at least two distinct group ids', () => {
+    const action = registry.getAction('repair_proxy_group_filters')!;
+    const id = crypto.randomUUID();
+    expect(action.input.safeParse({ repairs: [{ id, filter: '.*' }] }).success).toBe(false);
+    expect(
+      action.input.safeParse({
+        repairs: [
+          { id, filter: '.*' },
+          { id, exclude_filter: 'test' },
+        ],
+      }).success,
+    ).toBe(false);
+  });
+
+  it('binds the confirmation to the previewed config version', async () => {
+    const us = seedGroup({ name: '美国', filter: String.raw`(?i)\bUS\b` });
+    const de = seedGroup({ name: '德国', filter: String.raw`(?i)\bDE\b` });
+    const input = {
+      repairs: [
+        { id: us.id, filter: '(?i)(?<![A-Za-z])USA?(?![A-Za-z])' },
+        { id: de.id, filter: '(?i)(?<![A-Za-z])DEU?(?![A-Za-z])' },
+      ],
+    };
+
+    const dispatched = await dispatchToolCall(CTX, 'repair_proxy_group_filters', input);
+    expect(dispatched.kind).toBe('confirm-write');
+    const token = (dispatched.data as { token: string }).token;
+    const record = await consumeConfirmation(token);
+    expect(record?.confirmation?.configVersion).toBe(0);
+
+    bucket(`proxy-groups:${PID}`).set(us.id, { ...us, filter: 'concurrent-us' });
+    counters.set('config:version', 1);
+    const action = registry.getAction('repair_proxy_group_filters')!;
+    if (action.risk !== 'write' || !record) throw new Error('expected confirmed write');
+
+    await expect(
+      action.execute(
+        { ...CTX, confirmation: record.confirmation },
+        action.input.parse(record.input),
+      ),
+    ).rejects.toMatchObject({ problem: { status: 412 } });
+    expect((bucket(`proxy-groups:${PID}`).get(us.id) as ProxyGroup).filter).toBe('concurrent-us');
+    expect((bucket(`proxy-groups:${PID}`).get(de.id) as ProxyGroup).filter).toBe(
+      String.raw`(?i)\bDE\b`,
+    );
   });
 });

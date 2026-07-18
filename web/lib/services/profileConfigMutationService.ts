@@ -21,6 +21,27 @@ export async function preflightAndCommitProfileChanges(
   changes: ProfileConfigChanges,
   expectedPlanningVersion?: number,
 ): Promise<ProfileConfigState> {
+  const checked = await preflightProfileConfigChanges(profileId, changes, expectedPlanningVersion);
+
+  const committed = await commitProfileConfigChanges(profileId, changes, checked.configVersion);
+  if (!committed.ok) {
+    throw ProblemDetailsError.preconditionFailed(
+      '配置在保存前校验期间被其他写入修改,请刷新后重试。',
+    );
+  }
+  return checked.candidate;
+}
+
+/**
+ * Build and fully validate a profile-scoped candidate without committing it.
+ * Write previews use this to avoid minting a confirmation for a doomed edit;
+ * the returned generation can then be bound to the confirmation token.
+ */
+export async function preflightProfileConfigChanges(
+  profileId: string,
+  changes: ProfileConfigChanges,
+  expectedPlanningVersion?: number,
+) {
   const checked = await preflightProfileConfig(profileId, (current) => ({
     rules: applyConfigEntityChanges(
       current.rules,
@@ -41,12 +62,5 @@ export async function preflightAndCommitProfileChanges(
       '配置在生成保存候选期间被其他写入修改,请刷新后重试。',
     );
   }
-
-  const committed = await commitProfileConfigChanges(profileId, changes, checked.configVersion);
-  if (!committed.ok) {
-    throw ProblemDetailsError.preconditionFailed(
-      '配置在保存前校验期间被其他写入修改,请刷新后重试。',
-    );
-  }
-  return checked.candidate;
+  return checked;
 }

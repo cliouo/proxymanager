@@ -41,12 +41,13 @@ export async function dispatchToolCall(
       // Writes never execute inline: validate + preview, mint a one-time token,
       // hand the user a confirm card. The mutation runs later via /confirm.
       assertWriteAllowed(action);
-      const { diff } = await action.preview(ctx, parsed);
+      const { diff, confirmation } = await action.preview(ctx, parsed);
       const { token, expiresAt } = await mintConfirmation({
         actor: ctx.actor,
         action: action.name,
         input: parsed,
         profileId: ctx.profileId,
+        ...(confirmation ? { confirmation } : {}),
       });
       const data = { action: action.name, summary: action.summary(parsed), diff, token, expiresAt };
       return { kind: 'confirm-write', data, modelContent: WRITE_PENDING_MODEL_CONTENT };

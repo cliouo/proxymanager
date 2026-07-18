@@ -26,6 +26,10 @@ export interface ConfirmationRecord {
    * confirmation later hits the same profile regardless of the current cookie.
    */
   profileId: string;
+  /** Stable preview facts that execution must re-check before committing. */
+  confirmation?: {
+    configVersion?: number;
+  };
 }
 
 export interface MintedConfirmation {

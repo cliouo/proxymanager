@@ -51,6 +51,7 @@
 | `localize_rule_provider`                                                     | hub              | remote 规则集转本地托管                                                                      |
 | `set_config_section` / `delete_config_section`                               | hub / optimizing | dns/sniffer/tun/顶层标量骨架                                                                 |
 | `create_proxy_group` / `update_proxy_group` / `delete_proxy_group`           | synthesizing     | 策略组增删改                                                                                 |
+| `repair_proxy_group_filters`                                                 | synthesizing     | 原子修复 2–16 个当前非法筛选组；拒绝 no-op/普通批量，确认绑定预览版本                        |
 | `add_operator` / `update_operator` / `delete_operator` / `reorder_operators` | editing          | 节点处理算子管线                                                                             |
 | `rename_local_node`                                                          | editing          | 本地源节点直接改名                                                                           |
 | `migrate_direct_alias`                                                       | hub              | 当前 profile 内原子删除纯 direct 别名并把已知引用改为内建 `DIRECT`；必须使用刚预检的并发守卫 |
