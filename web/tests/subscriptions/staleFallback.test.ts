@@ -254,4 +254,30 @@ describe('resolveSubscriptionContent — stale-on-error', () => {
     expect(result.yaml).toContain('HK-01');
     expect(setCacheMock).not.toHaveBeenCalled();
   });
+
+  it('treats a blank ua_override as unset and sends the default UA', async () => {
+    // The UI stores an emptied field as ''. A literally blank User-Agent makes
+    // UA-sniffing upstreams serve the degraded share-list variant instead of
+    // provider YAML, so blank must fall back to the default UA.
+    getCacheMock.mockResolvedValueOnce(null);
+    const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValueOnce(new Response(ENTRY_YAML, { status: 200 }));
+
+    await resolveSubscriptionContent(makeSub({ ua_override: '' }));
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect((init.headers as Record<string, string>)['User-Agent']).toBe('clash.meta/1.18.0');
+  });
+
+  it('still honours a non-blank ua_override', async () => {
+    getCacheMock.mockResolvedValueOnce(null);
+    const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValueOnce(new Response(ENTRY_YAML, { status: 200 }));
+
+    await resolveSubscriptionContent(makeSub({ ua_override: 'custom-ua/9.9' }));
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect((init.headers as Record<string, string>)['User-Agent']).toBe('custom-ua/9.9');
+  });
 });

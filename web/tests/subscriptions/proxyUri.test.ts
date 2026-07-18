@@ -186,6 +186,63 @@ describe('parseProxyUriList per protocol', () => {
     expect(proxies[0]).not.toHaveProperty('spider-x');
   });
 
+  it('parses vless:// by ignoring legacy quicSecurity exporter noise (vless-quicsecurity-ignored)', () => {
+    // NekoBox-style exporters emit quicSecurity on every link regardless of
+    // the selected transport; Mihomo has no VLESS QUIC stream transport.
+    const uri =
+      `vless://00000000-0000-0000-0000-000000000000@example.com:443?encryption=none&flow=xtls-rprx-vision&fp=chrome` +
+      `&pbk=${FAKE_REALITY_PUBLIC_KEY}&security=reality&sid=ab12&sni=sni.example&quicSecurity=none&type=tcp#VL-QuicSec`;
+    const { proxies, errors } = parseProxyUriList(uri);
+    expect(errors).toHaveLength(0);
+    expect(proxies[0]).toMatchObject({
+      name: 'VL-QuicSec',
+      type: 'vless',
+      network: 'tcp',
+      'reality-opts': { 'public-key': FAKE_REALITY_PUBLIC_KEY, 'short-id': 'ab12' },
+    });
+    expect(proxies[0]).not.toHaveProperty('quicSecurity');
+  });
+
+  it('parses vless:// tcp ignoring an empty transport-option dump (vless-inert-transport-noise)', () => {
+    // NekoBox-style exporters emit every transport option on every link:
+    // empty host/path/serviceName plus headerType=none on a plain tcp link.
+    const uri =
+      `vless://00000000-0000-0000-0000-000000000000@example.com:443?encryption=none&flow=xtls-rprx-vision&fp=chrome` +
+      `&pbk=${FAKE_REALITY_PUBLIC_KEY}&security=reality&sid=ab12&sni=sni.example&headerType=none&host=&path=&serviceName=&type=tcp#VL-Dump`;
+    const { proxies, errors } = parseProxyUriList(uri);
+    expect(errors).toHaveLength(0);
+    expect(proxies[0]).toMatchObject({ name: 'VL-Dump', type: 'vless', network: 'tcp' });
+    expect(proxies[0]).not.toHaveProperty('ws-opts');
+  });
+
+  it('parses vless:// ws with a redundant headerType=none', () => {
+    const uri =
+      'vless://00000000-0000-0000-0000-000000000000@example.com:443?encryption=none&security=tls&sni=cdn.example&type=ws&headerType=none&path=%2Fws&host=cdn.example#VL-WS-HT';
+    const { proxies, errors } = parseProxyUriList(uri);
+    expect(errors).toHaveLength(0);
+    expect(proxies[0]).toMatchObject({
+      network: 'ws',
+      'ws-opts': { path: '/ws', headers: { Host: 'cdn.example' } },
+    });
+  });
+
+  it('vless://: still rejects a non-empty transport option on a mismatched transport', () => {
+    const uri =
+      'vless://00000000-0000-0000-0000-000000000000@example.com:443?encryption=none&type=tcp&host=cdn.example#VL-Conflict';
+    const { proxies, errors } = parseProxyUriList(uri);
+    expect(proxies).toHaveLength(0);
+    expect(errors).toHaveLength(1);
+    expect(errors[0].error).toMatch(/transport option does not match/);
+  });
+
+  it('parses vless:// with a dashless hashlike uuid (uuid-hashlike-accepted)', () => {
+    const uri =
+      'vless://AAAAAAAABBBBCCCCDDDDEEEEEEEEEEEE@example.com:443?encryption=none&type=tcp#VL-Hashlike';
+    const { proxies, errors } = parseProxyUriList(uri);
+    expect(errors).toHaveLength(0);
+    expect(proxies[0].uuid).toBe('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee');
+  });
+
   it('parses trojan:// with ws', () => {
     const uri =
       'trojan://pa%23ss@trojan.example:443?sni=cdn.example&type=ws&path=%2Ftj&host=cdn.example#TJ-WS';
@@ -915,6 +972,22 @@ describe('IPv6 hosts and port-hopping regressions', () => {
     expect(proxies).toHaveLength(0);
     expect(errors).toHaveLength(1);
     expect(errors[0].error).toMatch(/conflicting.*ports.*mport/i);
+  });
+
+  it('hysteria2://: single authority port plus ?mport maps to port + ports (hysteria2-port-plus-mport)', () => {
+    // Common share form: initial connection port in the authority, hopping
+    // range in mport. Sub-Store maps this identically. Only two competing
+    // port SETS remain ambiguous (previous test).
+    const uri = 'hy2://pwd@h.com:29900?insecure=1&mport=20000-30000&sni=cdn.example#PM';
+    const { proxies, errors } = parseProxyUriList(uri);
+    expect(errors).toHaveLength(0);
+    expect(proxies[0]).toMatchObject({
+      type: 'hysteria2',
+      port: 29900,
+      ports: '20000-30000',
+      sni: 'cdn.example',
+      'skip-cert-verify': true,
+    });
   });
 
   it('tuic://: bracketed IPv6 host is emitted bare', () => {
@@ -1865,13 +1938,14 @@ describe('QUIC URI hardening — Hysteria 1 and Hysteria 2', () => {
     expect(result.proxies[0]).toMatchObject({ port: 1, ports: '1-65535' });
   });
 
-  it('hysteria2://: caps aggregate expanded port candidates across URI lines', () => {
+  it('hysteria2://: budgets expanded port candidates per line, not across the list', () => {
+    // Shared-across-the-list budgeting was dropped 2026-07-18: providers
+    // legitimately repeat a large hop range on every node.
     const result = parseProxyUriList(
       ['hy2://auth@one.example:1-65535#one', 'hy2://auth@two.example:1-65535#two'].join('\n'),
     );
-    expect(result.proxies).toHaveLength(1);
-    expect(result.errors).toHaveLength(1);
-    expect(result.errors[0].error).toMatch(/candidate limit/i);
+    expect(result.errors).toHaveLength(0);
+    expect(result.proxies).toHaveLength(2);
   });
 
   it.each([
@@ -2193,8 +2267,29 @@ describe('QUIC URI hardening — Snell, SOCKS, HTTP(S), and AnyTLS', () => {
     });
   });
 
+  it('anytls://: tolerates a bare "/" and ignores group/type=tcp exporter noise (anytls-bare-slash-metadata)', () => {
+    // Real-world 3x-ui/NekoBox shape: `host:port/?addons` plus provider
+    // metadata `group` (base64) and a redundant `type=tcp`.
+    const uri =
+      'anytls://secret@any.example:22001/?peer=cdn.example&insecure=1&udp=1&group=SW1tVGVsZWNvbQ&type=tcp#HKG%2001';
+    const { proxies, errors } = parseProxyUriList(uri);
+    expect(errors).toHaveLength(0);
+    expect(proxies[0]).toMatchObject({
+      name: 'HKG 01',
+      type: 'anytls',
+      server: 'any.example',
+      port: 22001,
+      sni: 'cdn.example',
+      'skip-cert-verify': true,
+      udp: true,
+    });
+    expect(proxies[0]).not.toHaveProperty('group');
+  });
+
   it.each([
     ['unknown addon', 'anytls://secret@any.example?unknown_key=value'],
+    ['a real path', 'anytls://secret@any.example/ws?sni=any.example'],
+    ['a non-tcp transport type', 'anytls://secret@any.example?type=ws'],
     ['non-binary insecure', 'anytls://secret@any.example?insecure=true'],
     ['non-binary udp', 'anytls://secret@any.example?udp=false'],
     ['non-binary tfo', 'anytls://secret@any.example?tfo=true'],
@@ -2259,7 +2354,7 @@ describe('closed URI grammars reject ambiguous or silently dropped input', () =>
     ],
     ['Hysteria 2 unsupported keepalive', 'hy2://pw@h.example?keepalive=15'],
     ['Hysteria 2 invalid speed', 'hy2://pw@h.example?upmbps=0'],
-    ['Hysteria 2 authority/mport conflict', 'hy2://pw@h.example:443?mport=8443-8500'],
+    ['Hysteria 2 authority/mport conflict', 'hy2://pw@h.example:443,8443-8500?mport=8443-8500'],
     ['TUIC unknown query', `tuic://${uuid}:pw@tuic.example:443?label=x`],
     ['TUIC explicit path', `tuic://${uuid}:pw@tuic.example:443/`],
     [
@@ -2272,7 +2367,7 @@ describe('closed URI grammars reject ambiguous or silently dropped input', () =>
     ['Snell ambiguous userinfo', 'snell://user:pw@snell.example:443'],
     ['SOCKS explicit root path', 'socks5://user:pw@socks.example:1080/'],
     ['SOCKS query', 'socks5://user:pw@socks.example:1080?udp=1'],
-    ['AnyTLS explicit path', 'anytls://pw@any.example:443/'],
+    ['AnyTLS explicit path', 'anytls://pw@any.example:443/ws'],
     ['AnyTLS SNI alias collision', 'anytls://pw@any.example:443?sni=a.example&peer=b.example'],
     ['WireGuard explicit path', `${wgBase}/?${wgRequired}`],
     ['WireGuard address alias collision', `${wgBase}?${wgRequired}&ip=fd00%3A%3A2%2F128`],

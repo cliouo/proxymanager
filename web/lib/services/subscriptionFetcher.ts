@@ -28,6 +28,16 @@ import {
 } from '@/schemas/subscription';
 
 const DEFAULT_UA = 'clash.meta/1.18.0';
+
+/**
+ * A blank `ua_override` means "not set" (the UI stores the empty field as ''),
+ * never "send a blank User-Agent": upstreams vary the payload format by UA,
+ * and a blank one gets the degraded share-list variant instead of provider
+ * YAML. Used for both the cache key and the actual fetch so they stay aligned.
+ */
+function subscriptionUserAgent(sub: Pick<Subscription, 'ua_override'>): string {
+  return sub.ua_override?.trim() ? sub.ua_override : DEFAULT_UA;
+}
 const FETCH_TIMEOUT_MS = 15_000;
 const MAX_SUBSCRIPTION_REDIRECTS = 5;
 /** P2-6: hard cap on an upstream subscription body (a slow/huge source can't OOM or hang the render). */
@@ -349,7 +359,7 @@ async function resolveSubscriptionRaw(
 
   const cacheKey = buildCacheKey({
     url: sub.url,
-    userAgent: sub.ua_override ?? DEFAULT_UA,
+    userAgent: subscriptionUserAgent(sub),
     headers: sub.custom_headers,
   });
 
@@ -377,7 +387,7 @@ async function resolveSubscriptionRaw(
 
   try {
     const fresh = await fetchSubscriptionInternal(sub.url, {
-      userAgent: sub.ua_override ?? DEFAULT_UA,
+      userAgent: subscriptionUserAgent(sub),
       timeoutMs: options.timeoutMs ?? FETCH_TIMEOUT_MS,
       customHeaders: sub.custom_headers,
     });

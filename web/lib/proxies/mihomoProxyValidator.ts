@@ -1086,6 +1086,29 @@ function validateMihomoProxy(
       'requires a build-dependent runtime capability and is not portable',
     );
   }
+  // Fixed Mihomo decodes proxy options weakly typed and ignores unknown keys.
+  // Mirror the two ecosystem-wide provider emissions that would otherwise
+  // reject whole lists: a canonical digit-string `port` coerces to its integer
+  // (WeaklyTypedInput semantics), and the inert `udp` flag on QUIC-native
+  // types (always UDP-capable; their option structs have no such field) is
+  // dropped. Any other shape still fails the fixed portable schema below.
+  if (typeof entry.port === 'string' && /^\d{1,5}$/.test(entry.port)) {
+    entry.port = Number(entry.port);
+  }
+  if (
+    (type === 'hysteria' || type === 'hysteria2' || type === 'tuic') &&
+    typeof entry.udp === 'boolean'
+  ) {
+    delete entry.udp;
+  }
+  // TUIC's protocol version is decided by the credential shape (token = v4,
+  // uuid+password = v5); Mihomo has no `version` field and ignores the key.
+  if (
+    type === 'tuic' &&
+    (entry.version === 4 || entry.version === 5 || entry.version === '4' || entry.version === '5')
+  ) {
+    delete entry.version;
+  }
   for (const field of REQUIRED_STRING_FIELDS[type] ?? []) {
     requireNonEmptyString(entry, field, index);
   }
@@ -2357,13 +2380,16 @@ function parseHysteriaPortSet(
 }
 
 function validateHysteriaPortBudget(proxies: Record<string, unknown>[]): void {
-  let total = 0;
+  // The candidate budget is per NODE, not shared across the list: providers
+  // legitimately emit the same hop range on every node (8 × "20000-30000" is
+  // an ordinary airport, not a resource attack), nothing here materialises
+  // the expanded candidate list, and ascending-unique segments already bound
+  // one node's arithmetic.
   proxies.forEach((proxy, index) => {
     if ((proxy.type !== 'hysteria' && proxy.type !== 'hysteria2') || !hasOwn(proxy, 'ports')) {
       return;
     }
-    total += parseHysteriaPortSet(proxy, index, proxy.type);
-    if (total > MAX_HYSTERIA_PORT_CANDIDATES) {
+    if (parseHysteriaPortSet(proxy, index, proxy.type) > MAX_HYSTERIA_PORT_CANDIDATES) {
       invalidProxyEntry(
         index,
         'ports',

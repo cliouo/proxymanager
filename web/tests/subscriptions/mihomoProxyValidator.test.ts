@@ -432,7 +432,9 @@ describe('fixed Mihomo v1.19.28 proxy node validation', () => {
     ['numeric server', { ...endpoint('http'), server: 203000113001 }],
     ['empty server', { ...endpoint('http'), server: ' ' }],
     ['missing port', { ...endpoint('http'), port: undefined }],
-    ['numeric-string port', { ...endpoint('http'), port: '443' }],
+    // A canonical digit-string port now coerces (WeaklyTypedInput mirror);
+    // only non-canonical strings stay rejected.
+    ['non-canonical string port', { ...endpoint('http'), port: '4,43' }],
     ['fractional port', { ...endpoint('http'), port: 443.5 }],
     ['zero port', { ...endpoint('http'), port: 0 }],
     ['overflowing port', { ...endpoint('http'), port: 65536 }],
@@ -958,6 +960,45 @@ describe('fixed Mihomo v1.19.28 proxy node validation', () => {
     expect(() => validateMihomoProxyList([{ ...base, uuid: 'x'.repeat(31) }])).toThrow(
       /field "uuid" must be a bounded Mihomo user ID/,
     );
+    // Dashless "hashlike" spelling: gofrs/uuid FromString (fixed Mihomo's user
+    // ID parser) accepts it as the same identity, so it must canonicalise
+    // rather than reject on the 30-byte custom bound (uuid-hashlike-accepted).
+    expect(
+      validateMihomoProxyList([{ ...base, uuid: 'AAAAAAAABBBBCCCCDDDDEEEEEEEEEEEE' }])[0].uuid,
+    ).toBe('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee');
+  });
+
+  it('mirrors weakly-typed Mihomo decoding for ecosystem provider emissions', () => {
+    const hy2 = portableStructuralMinimums.find((candidate) => candidate.type === 'hysteria2')!;
+    // Inert `udp` on QUIC-native types is dropped, not rejected.
+    const withUdp = validateMihomoProxyList([{ ...hy2, udp: true }]);
+    expect(withUdp[0]).not.toHaveProperty('udp');
+    // Canonical digit-string port coerces to its integer.
+    const coerced = validateMihomoProxyList([{ ...hy2, port: '27001' }]);
+    expect(coerced[0].port).toBe(27001);
+    // Non-canonical string ports still reject.
+    expect(() => validateMihomoProxyList([{ ...hy2, port: '27,001' }])).toThrow(
+      /field "port" must be a safe integer/,
+    );
+    // TUIC `version` metadata (v4/v5 is decided by the credential shape) drops.
+    const tuic = portableStructuralMinimums.find((candidate) => candidate.type === 'tuic')!;
+    const noVersion = validateMihomoProxyList([{ ...tuic, version: 5 }]);
+    expect(noVersion[0]).not.toHaveProperty('version');
+    expect(() => validateMihomoProxyList([{ ...tuic, version: 'latest' }])).toThrow(
+      /unsupported top-level field/,
+    );
+  });
+
+  it('budgets hysteria2 port-hopping candidates per node, not across the list', () => {
+    const hy2 = portableStructuralMinimums.find((candidate) => candidate.type === 'hysteria2')!;
+    // 8 × 10001 candidates exceeds 65536 in aggregate but is an ordinary
+    // airport emission; every node must validate independently.
+    const fleet = Array.from({ length: 8 }, (_, i) => ({
+      ...hy2,
+      name: `hop-${i}`,
+      ports: '20000-30000',
+    }));
+    expect(validateMihomoProxyList(fleet)).toHaveLength(8);
   });
 
   it('accepts canonically typed common TLS fields and rejects weak scalar types', () => {
@@ -1407,7 +1448,10 @@ describe('fixed Mihomo v1.19.28 proxy node validation', () => {
     expect(() => validateMihomoProxyList([proxy])).toThrow(new RegExp(`field "${field}"`));
   });
 
-  it('bounds aggregate Hysteria port expansion before fixed Mihomo expands ranges', () => {
+  it('budgets Hysteria port expansion per node — big ranges on several nodes all pass', () => {
+    // The candidate budget stopped being shared across the list on 2026-07-18:
+    // providers legitimately repeat a large hop range on every node and
+    // nothing materialises the expanded list.
     const first = {
       name: 'H2-RANGE-1',
       type: 'hysteria2',
@@ -1415,9 +1459,7 @@ describe('fixed Mihomo v1.19.28 proxy node validation', () => {
       ports: '1-40000',
     };
     const second = { ...first, name: 'H2-RANGE-2', server: 'two.invalid' };
-    expect(() => validateMihomoProxyList([first, second])).toThrow(
-      new RegExp(`beyond ${MAX_HYSTERIA_PORT_CANDIDATES} port candidates`),
-    );
+    expect(validateMihomoProxyList([first, second])).toHaveLength(2);
   });
 
   it('accepts both TUIC v4 token and v5 UUID/password credential shapes', () => {
