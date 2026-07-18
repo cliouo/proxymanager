@@ -96,8 +96,10 @@ return 1
  *       profile load on the fast path).
  *  10 → proxy URI failures are fail-closed and diagnostics are credential-safe;
  *       invalidate full configs rendered from pre-hardening fetch-cache data.
+ *  11 → provider normalisation canonicalises a narrow set of no-loss legacy
+ *       fields and URI aliases before strict fixed-Mihomo validation.
  */
-const RENDER_CACHE_EPOCH = 10;
+const RENDER_CACHE_EPOCH = 11;
 
 export type RenderCacheStatus = 'hit' | 'miss' | 'bypass';
 

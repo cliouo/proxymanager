@@ -715,7 +715,35 @@ function normaliseToClashProxies(text: string): {
  * in-provider cycles here, then resolve the external name at final render.
  */
 function validateProviderProxyList(list: unknown[]): Record<string, unknown>[] {
-  return validateMihomoProxyList(list, { allowExternalDialerProxy: true });
+  return validateMihomoProxyList(list.map(canonicalizeLegacyProviderProxy), {
+    allowExternalDialerProxy: true,
+  });
+}
+
+/**
+ * Canonicalise a deliberately tiny set of historical provider encodings that
+ * are provably no-ops for the fixed Mihomo target. Unknown values and fields
+ * remain untouched so the strict validator still rejects semantic ambiguity.
+ */
+function canonicalizeLegacyProviderProxy(entry: unknown): unknown {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return entry;
+  const proxy = { ...(entry as Record<string, unknown>) };
+  if (proxy.type === 'ss' && proxy.network === 'tcp') delete proxy.network;
+  if (proxy.type === 'hysteria2') {
+    for (const field of ['up', 'down'] as const) {
+      const value = proxy[field];
+      if (typeof value === 'number' && Number.isSafeInteger(value) && value > 0) {
+        proxy[field] = String(value);
+      }
+    }
+  }
+  if (proxy.type === 'vless') {
+    if (typeof proxy.alterId === 'number' && Number.isSafeInteger(proxy.alterId)) {
+      delete proxy.alterId;
+    }
+    if (typeof proxy.cipher === 'string') delete proxy.cipher;
+  }
+  return proxy;
 }
 
 function tryExtractProxiesFromYaml(text: string): unknown[] | null {

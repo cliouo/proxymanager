@@ -22,26 +22,27 @@
 
 ## 二、读工具
 
-| 工具                               | 主属 skill         | 用途                                                                          |
-| ---------------------------------- | ------------------ | ----------------------------------------------------------------------------- |
-| `list_profiles` / `select_profile` | hub                | 列出并切换当前 MCP profile；跨配置文件操作先调用                              |
-| `get_base_overview`                | hub                | base 结构摘要：anchors / policies / proxyProviders / 规则集名                 |
-| `get_config_outline`               | hub                | 配置目录（顶层区块 + 各容器子项名，脱敏）                                     |
-| `get_config_section`               | hub                | 取某路径区块内容（脱敏）                                                      |
-| `get_config_full`                  | optimizing         | 完整下发结果（含注入规则，脱敏）——整体优化用                                  |
-| `list_rules`                       | hub / optimizing   | 全部规则（含 id / enabled / anchor）                                          |
-| `list_proxy_nodes`                 | hub（共享）        | 渲染后真实可用节点名（无凭证）                                                |
-| `list_proxy_groups`                | hub / synthesizing | 全部策略组 + 模板（含 id / kind / 绑定源）                                    |
-| `list_rule_providers`              | hub                | 规则集库列表                                                                  |
-| `list_node_sources`                | editing            | 各订阅/聚合源及其算子（含 source id / 算子 id）                               |
-| `list_local_nodes`                 | editing            | 本地源节点（name+type+referencedBy，脱敏）                                    |
-| `preview_proxy_group_members`      | synthesizing       | filter/exclude 对真实节点试算（**改 filter 前必做**）                         |
-| `preview_node_operators`           | editing            | 整条算子管线对真实节点试算（**改正则前必做**）                                |
-| `preview_direct_alias_migration`   | hub                | 预检 direct 别名；返回引用计数、隔离失败数及并发守卫                          |
-| `preview_legacy_profile_repair`    | hub / synthesizing | 完整预检直连别名 + 2–16 个非法筛选的跨资源恢复候选，返回 version 与 base ETag |
-| `search_mihomo_docs`               | hub                | DeepWiki 接地（Meta-Docs 写法 / mihomo 源码内核行为）                         |
-| `fetch_url`                        | hub                | 抓外部链接（只读、禁内网、按 external_data 处理）                             |
-| `get_skill_reference`              | hub                | 按需读 references/（仅网页面需要；CC/Codex 直接读文件）                       |
+| 工具                                  | 主属 skill         | 用途                                                                          |
+| ------------------------------------- | ------------------ | ----------------------------------------------------------------------------- |
+| `list_profiles` / `select_profile`    | hub                | 列出并切换当前 MCP profile；跨配置文件操作先调用                              |
+| `get_base_overview`                   | hub                | base 结构摘要：anchors / policies / proxyProviders / 规则集名                 |
+| `get_config_outline`                  | hub                | 配置目录（顶层区块 + 各容器子项名，脱敏）                                     |
+| `get_config_section`                  | hub                | 取某路径区块内容（脱敏）                                                      |
+| `get_config_full`                     | optimizing         | 完整下发结果（含注入规则，脱敏）——整体优化用                                  |
+| `list_rules`                          | hub / optimizing   | 全部规则（含 id / enabled / anchor）                                          |
+| `list_proxy_nodes`                    | hub（共享）        | 渲染后真实可用节点名（无凭证）                                                |
+| `list_proxy_groups`                   | hub / synthesizing | 全部策略组 + 模板（含 id / kind / 绑定源）                                    |
+| `list_rule_providers`                 | hub                | 规则集库列表                                                                  |
+| `list_node_sources`                   | editing            | 各订阅/聚合源及其算子（含 source id / 算子 id）                               |
+| `list_local_nodes`                    | editing            | 本地源节点（name+type+referencedBy，脱敏）                                    |
+| `preview_proxy_group_members`         | synthesizing       | filter/exclude 对真实节点试算（**改 filter 前必做**）                         |
+| `preview_node_operators`              | editing            | 整条算子管线对真实节点试算（**改正则前必做**）                                |
+| `preview_direct_alias_migration`      | hub                | 预检 direct 别名；返回引用计数、隔离失败数及并发守卫                          |
+| `preview_legacy_profile_repair`       | hub / synthesizing | 完整预检直连别名 + 2–16 个非法筛选的跨资源恢复候选，返回 version 与 base ETag |
+| `preview_legacy_chain_profile_repair` | hub / synthesizing | 严格预检 spx 隔离或陈旧链删除 + DIRECT + 非法筛选的完整原子恢复候选           |
+| `search_mihomo_docs`                  | hub                | DeepWiki 接地（Meta-Docs 写法 / mihomo 源码内核行为）                         |
+| `fetch_url`                           | hub                | 抓外部链接（只读、禁内网、按 external_data 处理）                             |
+| `get_skill_reference`                 | hub                | 按需读 references/（仅网页面需要；CC/Codex 直接读文件）                       |
 
 ## 三、写工具（均过确认卡）
 
@@ -57,9 +58,12 @@
 | `rename_local_node`                                                          | editing            | 本地源节点直接改名                                                                           |
 | `migrate_direct_alias`                                                       | hub                | 当前 profile 内原子删除纯 direct 别名并把已知引用改为内建 `DIRECT`；必须使用刚预检的并发守卫 |
 | `repair_legacy_profile`                                                      | hub / synthesizing | 原子迁移安全 direct 别名并修复 2–16 个当前非法筛选；一次完整渲染和一张确认卡                 |
+| `repair_legacy_chain_profile`                                                | hub / synthesizing | 原子隔离有语义的 spx 行或删除已证实陈旧的链，并同步完成 DIRECT 与筛选恢复                    |
 
 > 禁改路径（config-section 碰会被拒）：`proxies` / `proxy-providers` / `rules` / `rule-providers` / `proxy-groups`。
-> `migrate_direct_alias` 与 `repair_legacy_profile` 都是专用窄例外，不开放任意 `proxies` 写入；后者还要求
+> 三个 migration / repair 工具都是专用窄例外，不开放任意 `proxies` 写入；筛选恢复还要求
 > 每个目标筛选字段当前确属非法。额外字段、未知引用、遗漏的其它错误或完整渲染失败都会拒绝。
 > 两者仅可在结构候选完整通过时隔离与迁移无关的确定性 `subscription_*` 源校验错误，并在确认卡标明数量；
 > 不会修复订阅；确认令牌绑定脱敏失败集合，执行前变化即拒绝。上游不可用、基础设施异常和其它错误仍严格阻塞。
+> `repair_legacy_chain_profile` 不隔离任何失败：它只把完整 `spx` URI 行保存进禁用隔离源，或删除结构与引用
+> 均精确匹配且后端确实不存在的陈旧链；随后所有订阅与最终配置必须严格渲染成功，才会一次提交。

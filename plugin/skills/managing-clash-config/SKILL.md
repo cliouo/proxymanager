@@ -96,6 +96,12 @@ profile 都要重新读取、预检并生成自己的确认卡；不要复用另
   `repair_proxy_group_filters` 彼此被完整预检阻塞，只能先逐组 `preview_proxy_group_members`，再走
   `preview_legacy_profile_repair` → `repair_legacy_profile`。它把安全直连别名迁移与这些当前确属非法的
   筛选修复放进同一候选、一次完整渲染和一张确认卡后原子提交；不得用于普通批量改组或任意节点编辑。
+- 若剩余阻塞来自旧订阅字段与链后端互相依赖，使用
+  `preview_legacy_chain_profile_repair` → `repair_legacy_chain_profile`。该窄工具只做两类额外恢复：
+  ① 把含有实际语义、不能静默丢弃的 VLESS `spx` 完整原始行移入新建的禁用隔离源（原源须属于当前
+  profile；若被多个 profile 共享，确认卡会逐一列出）；② 删除“单后端 + 单前置池 + 单一消费引用”且最终预检已证明后端不存在的陈旧链。它同时完成
+  DIRECT 迁移和 2–16 个非法筛选修复，所有订阅必须在同一候选中严格解析，最后由一个 CAS Redis 脚本提交；
+  发现源不属于当前 profile、隐藏引用、仍有效后端或任何其它校验错误都会全量拒绝。
 
 ---
 
@@ -133,6 +139,7 @@ profile 都要重新读取、预检并生成自己的确认卡；不要复用另
 | `set_config_section` 改骨架                     | `get_config_section(path)`（拿到完整现状再覆盖）                                |
 | `migrate_direct_alias`                          | `preview_direct_alias_migration`（使用同一 profile 返回的 version + base ETag） |
 | `repair_legacy_profile`                         | `preview_legacy_profile_repair`（候选须含逐组预览过的非法筛选修复）             |
+| `repair_legacy_chain_profile`                   | `preview_legacy_chain_profile_repair`（严格预检隔离源 / 陈旧链和全部筛选）      |
 
 - **`add_rule` 必须显式传 `anchor`**——它必须是 base.yaml 已声明的锚点（`prelude` / `manual` / `late`），
   否则 422；不确定就用 `manual`（主体规则锚点）。锚点注释语法见 `references/domain-model.md`，
@@ -145,9 +152,11 @@ profile 都要重新读取、预检并生成自己的确认卡；不要复用另
 读：`list_profiles` · `select_profile` · `get_base_overview` · `list_proxy_nodes` · `list_rules` ·
 `list_proxy_groups` · `get_config_outline` · `get_config_section` · `search_mihomo_docs` · `fetch_url`
 · `preview_direct_alias_migration` · `preview_legacy_profile_repair`
+· `preview_legacy_chain_profile_repair`
 写：`add_rule` · `update_rule` · `delete_rule` · `list_rule_providers` · `create_rule_provider` ·
 `update_rule_provider` · `delete_rule_provider` · `localize_rule_provider` ·
 `set_config_section` · `delete_config_section` · `migrate_direct_alias` · `repair_legacy_profile`
+· `repair_legacy_chain_profile`
 
 > 不归本 hub 的：策略组（`synthesizing-proxy-groups`）、算子与所有改名含本地源改名
 > （`editing-node-operators`）、整体优化（`optimizing-whole-config`）、节点池只读真相

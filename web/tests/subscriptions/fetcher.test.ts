@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { parse } from 'yaml';
 import {
   fetchSubscription,
   normaliseToClashProviderYaml,
@@ -66,6 +67,89 @@ describe('normaliseToClashProviderYaml', () => {
     const result = normaliseToClashProviderYaml(SAMPLE_PROXIES_ONLY);
     expect(result.proxyCount).toBe(1);
     expect(result.yaml).toContain('US-01');
+  });
+
+  it('canonicalizes only known no-loss legacy provider fields', () => {
+    const legacy = `proxies:
+  - name: ss-tcp
+    type: ss
+    server: ss.example.com
+    port: 8388
+    cipher: chacha20-ietf-poly1305
+    password: secret
+    network: tcp
+  - name: hy2-speed
+    type: hysteria2
+    server: hy2.example.com
+    port: 443
+    password: secret
+    up: 100
+    down: 200
+  - name: vless-vmess-leftovers
+    type: vless
+    server: vless.example.com
+    port: 443
+    uuid: 00000000-0000-0000-0000-000000000000
+    network: tcp
+    alterId: 0
+    cipher: auto
+`;
+
+    const result = normaliseToClashProviderYaml(legacy);
+    const normalized = (parse(result.yaml) as { proxies: Record<string, unknown>[] }).proxies;
+
+    expect(result.proxyCount).toBe(3);
+    expect(normalized[0]).not.toHaveProperty('network');
+    expect(normalized[1]).toMatchObject({ up: '100', down: '200' });
+    expect(normalized[2]).not.toHaveProperty('alterId');
+    expect(normalized[2]).not.toHaveProperty('cipher');
+  });
+
+  it('keeps rejecting semantic or ambiguous legacy provider fields', () => {
+    const ssWrapped = `proxies:
+  - name: ss-wrapped
+    type: ss
+    server: ss.example.com
+    port: 8388
+    cipher: chacha20-ietf-poly1305
+    password: secret
+    network: ws
+`;
+    const invalidSpeed = `proxies:
+  - name: hy2-speed
+    type: hysteria2
+    server: hy2.example.com
+    port: 443
+    password: secret
+    up: -1
+`;
+
+    expect(() => normaliseToClashProviderYaml(ssWrapped)).toThrow(ProblemDetailsError);
+    expect(() => normaliseToClashProviderYaml(invalidSpeed)).toThrow(ProblemDetailsError);
+  });
+
+  it('accepts only the no-op SS URI transport and equal VLESS insecure aliases', () => {
+    const ss = 'ss://YWVzLTEyOC1nY206c2VjcmV0@ss.example.com:8388?type=tcp#ss-tcp';
+    const vless =
+      'vless://00000000-0000-0000-0000-000000000000@vless.example.com:443' +
+      '?security=tls&type=tcp&allowInsecure=1&insecure=1#vless-equal';
+
+    const result = normaliseToClashProviderYaml(`${ss}\n${vless}`);
+
+    expect(result.proxyCount).toBe(2);
+    expect(result.yaml).toContain('name: ss-tcp');
+    expect(result.yaml).toContain('name: vless-equal');
+    expect(result.yaml).toContain('skip-cert-verify: true');
+  });
+
+  it('rejects non-TCP SS wrappers and conflicting VLESS insecure aliases', () => {
+    const ss = 'ss://YWVzLTEyOC1nY206c2VjcmV0@ss.example.com:8388?type=ws#ss-wrapped';
+    const vless =
+      'vless://00000000-0000-0000-0000-000000000000@vless.example.com:443' +
+      '?security=tls&type=tcp&allowInsecure=1&insecure=0#vless-conflict';
+
+    expect(() => normaliseToClashProviderYaml(ss)).toThrow(ProblemDetailsError);
+    expect(() => normaliseToClashProviderYaml(vless)).toThrow(ProblemDetailsError);
   });
 
   // P3-12: some airports base64-wrap a FULL Clash YAML config (not a URI list).

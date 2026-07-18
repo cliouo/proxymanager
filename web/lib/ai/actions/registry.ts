@@ -20,6 +20,10 @@ import {
   LEGACY_PROFILE_REPAIR_READ_ACTIONS,
   LEGACY_PROFILE_REPAIR_WRITE_ACTIONS,
 } from './primitives/legacyProfileRepair';
+import {
+  LEGACY_CHAIN_PROFILE_REPAIR_READ_ACTIONS,
+  LEGACY_CHAIN_PROFILE_REPAIR_WRITE_ACTIONS,
+} from './primitives/legacyChainProfileRepair';
 import { OPERATOR_READ_ACTIONS, OPERATOR_WRITE_ACTIONS } from './primitives/operatorWrites';
 import { PROXY_GROUP_READ_ACTIONS, PROXY_GROUP_WRITE_ACTIONS } from './primitives/proxyGroupWrites';
 import { READ_ACTIONS } from './primitives/reads';
@@ -40,6 +44,7 @@ const ALL_ACTIONS: ActionDef[] = [
   ...LOCAL_NODE_READ_ACTIONS,
   ...DIRECT_MIGRATION_READ_ACTIONS,
   ...LEGACY_PROFILE_REPAIR_READ_ACTIONS,
+  ...LEGACY_CHAIN_PROFILE_REPAIR_READ_ACTIONS,
   ...FETCH_ACTIONS,
   ...SKILL_REF_ACTIONS,
   searchMihomoDocs,
@@ -51,6 +56,7 @@ const ALL_ACTIONS: ActionDef[] = [
   ...CONFIG_WRITE_ACTIONS,
   ...DIRECT_MIGRATION_WRITE_ACTIONS,
   ...LEGACY_PROFILE_REPAIR_WRITE_ACTIONS,
+  ...LEGACY_CHAIN_PROFILE_REPAIR_WRITE_ACTIONS,
 ];
 
 const byName = new Map(ALL_ACTIONS.map((a) => [a.name, a]));
