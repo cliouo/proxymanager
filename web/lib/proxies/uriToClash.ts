@@ -144,7 +144,6 @@ export function parseProxyUriList(text: string): ParseProxyResult {
   const errors: ProxyUriParseFailure[] = [];
   const usedNames = new Set<string>();
   const nextSuffixByBase = new Map<string, number>();
-  let hysteriaPortCandidates = 0;
 
   for (const [index, raw] of iteratePhysicalLines(text)) {
     const line = raw.trim();
@@ -170,16 +169,17 @@ export function parseProxyUriList(text: string): ParseProxyResult {
     }
     try {
       const proxy = parser(line);
+      // Per-NODE candidate budget (not shared across the list): providers
+      // legitimately repeat the same hop range on every node, and nothing
+      // materialises the expanded candidate list.
       if (
         (proxy.type === 'hysteria' || proxy.type === 'hysteria2') &&
-        typeof proxy.ports === 'string'
+        typeof proxy.ports === 'string' &&
+        countCanonicalPortCandidates(proxy.ports) > MAX_HYSTERIA_PORT_CANDIDATES
       ) {
-        hysteriaPortCandidates += countCanonicalPortCandidates(proxy.ports);
-        if (hysteriaPortCandidates > MAX_HYSTERIA_PORT_CANDIDATES) {
-          throw new Error(
-            `hysteria port sets exceed the ${MAX_HYSTERIA_PORT_CANDIDATES} candidate limit`,
-          );
-        }
+        throw new Error(
+          `hysteria port sets exceed the ${MAX_HYSTERIA_PORT_CANDIDATES} candidate limit`,
+        );
       }
       if (/[\x00-\x1f\x7f-\x9f]/u.test(proxy.name)) {
         throw new Error('proxy name contains control characters');
@@ -949,7 +949,19 @@ function parseVLESS(uri: string): ClashProxy {
     ...keysByTransport[network],
     ...(network === 'tcp' || network === 'http' ? ['headerType'] : []),
   ]);
-  if (transportKeys.some((key) => Object.hasOwn(params, key) && !allowedTransportKeys.has(key))) {
+  // NekoBox-style exporters dump every transport option on every link with
+  // empty values (`host=&path=&serviceName=`) plus `headerType=none`. An empty
+  // value configures nothing and `headerType=none` states the default plain
+  // header, so neither can conflict with the selected transport; only a
+  // non-empty option on a mismatched transport is a real contradiction.
+  const isInertTransportValue = (key: string): boolean =>
+    params[key] === '' || (key === 'headerType' && params[key] === 'none');
+  if (
+    transportKeys.some(
+      (key) =>
+        Object.hasOwn(params, key) && !isInertTransportValue(key) && !allowedTransportKeys.has(key),
+    )
+  ) {
     throw new Error('vless transport option does not match the selected transport');
   }
   // Fixed Mihomo implements HTTPUpgrade inside its WebSocket transport. Its
@@ -1889,7 +1901,10 @@ function parseHysteria2(uri: string): ClashProxy {
     proxy.tfo = true;
   }
   if (Object.hasOwn(params, 'mport')) {
-    if (portSpec !== undefined) {
+    // A single authority port plus `mport` is the common share form (initial
+    // connection port + hopping range; Sub-Store maps it to port + ports the
+    // same way). Only two competing port SETS are genuinely ambiguous.
+    if (portSpec !== undefined && (portSpec.includes(',') || portSpec.includes('-'))) {
       throw new Error('conflicting hysteria2 authority ports and mport');
     }
     proxy.ports = normalizeHysteria2PortSet(params.mport, 'mport').ports;
@@ -2082,7 +2097,8 @@ function assertSingleComponentUserinfo(uri: string, label: string): void {
   }
 }
 
-function assertNoUriPath(uri: URL, label: string): void {
+function assertNoUriPath(uri: URL, label: string, allowBareSlash = false): void {
+  if (allowBareSlash && uri.pathname === '/') return;
   if (uri.pathname !== '') throw new Error(`${label} URI path is unsupported`);
 }
 
@@ -2093,9 +2109,12 @@ function hasExplicitQueryDelimiter(uri: string): boolean {
 }
 
 function parseAnyTLS(uri: string): ClashProxy {
-  // anytls://password@server[:port]?addons#name  — port defaults to 443
+  // anytls://password@server[:port]?addons#name  — port defaults to 443.
+  // A bare "/" before the query is URL-serialisation noise (3x-ui-style
+  // generators emit `host:port/?addons` on every link); it carries no routing
+  // information, so tolerate exactly that and keep rejecting any longer path.
   const u = safeUrl(uri);
-  assertNoUriPath(u, 'anytls');
+  assertNoUriPath(u, 'anytls', true);
   assertSingleComponentUserinfo(uri, 'anytls');
   const password = safeDecode(u.username);
   if (!password) throw new Error('anytls missing password');
@@ -2114,6 +2133,9 @@ function parseAnyTLS(uri: string): ClashProxy {
     'idle-session-check-interval',
     'idle-session-timeout',
     'min-idle-session',
+    // Accepted-and-ignored exporter noise; see the checks below the loop.
+    'group',
+    'type',
   ]);
   const params: Record<string, string> = {};
   for (const [rawKey, value] of u.searchParams.entries()) {
@@ -2123,6 +2145,13 @@ function parseAnyTLS(uri: string): ClashProxy {
     params[key] = value;
   }
   assertNoAliasCollision(params, [['sni', 'peer']], 'anytls query');
+  // `group` is provider metadata with no Mihomo field (same class as SSR's
+  // group, an intentional metadata omission), and `type=tcp` merely restates
+  // AnyTLS's fixed TCP session layer. NekoBox-style exporters emit both on
+  // every link, so ignore them; any other `type` value is a real conflict.
+  if (Object.hasOwn(params, 'type') && params.type !== 'tcp') {
+    throw new Error('unsupported anytls transport type');
+  }
   const proxy: ClashProxy = {
     name: safeDecode(u.hash.slice(1)) || `${host}:${port}`,
     type: 'anytls',
@@ -2525,6 +2554,12 @@ const VLESS_QUERY_PARAMETERS = [
   'spx',
   'packetEncoding',
   'packet-encoding',
+  // Legacy xray QUIC-transport option. Fixed Mihomo has no QUIC stream
+  // transport for VLESS (`type=quic` already rejects as an unsupported
+  // transport), and NekoBox-style exporters emit `quicSecurity` on every link
+  // regardless of the selected transport — so it is accepted and ignored, the
+  // same treatment as Reality `spx`.
+  'quicSecurity',
   'type',
   'headerType',
   'path',

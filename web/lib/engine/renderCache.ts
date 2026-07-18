@@ -99,7 +99,7 @@ return 1
  *  11 → provider normalisation canonicalises a narrow set of no-loss legacy
  *       fields and URI aliases before strict fixed-Mihomo validation.
  */
-const RENDER_CACHE_EPOCH = 12;
+const RENDER_CACHE_EPOCH = 13;
 
 export type RenderCacheStatus = 'hit' | 'miss' | 'bypass';
 
