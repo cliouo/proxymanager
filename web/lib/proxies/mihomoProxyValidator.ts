@@ -1068,7 +1068,9 @@ function validateMihomoProxy(
   }
 
   const name = requireNonEmptyString(entry, 'name', index);
-  if (/[\x00-\x1f\x7f-\x9f]/u.test(name)) {
+  // Free-tier exporters pad names with tabs; Mihomo accepts them and the YAML
+  // emitter escapes them. Other control characters stay rejected.
+  if (/[\x00-\x08\x0a-\x1f\x7f-\x9f]/u.test(name)) {
     return invalidProxyEntry(index, 'name', 'must not contain control characters');
   }
   if (name.length > MAX_PROXY_NAME_LENGTH) {
@@ -1116,6 +1118,19 @@ function validateMihomoProxy(
     (entry.version === 4 || entry.version === 5 || entry.version === '4' || entry.version === '5')
   ) {
     delete entry.version;
+  }
+  // Hysteria bandwidth/hop knobs are declared-string fields that providers
+  // routinely emit as integers (`up: 300`, `hop-interval: 20`); Mihomo's
+  // weakly typed decoder renders integers into them via strconv.FormatInt.
+  // Integers only — Mihomo formats floats in exponent notation, which its own
+  // bandwidth parser then rejects.
+  if (type === 'hysteria' || type === 'hysteria2') {
+    const weakStringFields = type === 'hysteria2' ? ['up', 'down', 'hop-interval'] : ['up', 'down'];
+    for (const field of weakStringFields) {
+      if (typeof entry[field] === 'number' && Number.isSafeInteger(entry[field])) {
+        entry[field] = String(entry[field]);
+      }
+    }
   }
   for (const field of REQUIRED_STRING_FIELDS[type] ?? []) {
     requireNonEmptyString(entry, field, index);

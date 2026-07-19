@@ -462,13 +462,15 @@ describe('fixed Mihomo v1.19.28 proxy node validation', () => {
     ['vless', 'uuid'],
     ['trojan', 'password'],
     ['snell', 'psk'],
-    ['hysteria', 'up'],
-    ['hysteria', 'down'],
+    // hysteria up/down accept integers now (weakly typed FormatInt mirror);
+    // their required-string shape is covered by the float rejection below.
+    ['hysteria', 'up', 4.2],
+    ['hysteria', 'down', 4.2],
     ['anytls', 'password'],
-  ])('requires %s.%s as a non-empty string', (type, field) => {
+  ])('requires %s.%s as a non-empty string', (type, field, value: unknown = 42) => {
     const proxy = {
       ...portableStructuralMinimums.find((candidate) => candidate.type === type),
-      [field]: 42,
+      [field]: value,
     };
     expect(() => validateMihomoProxyList([proxy])).toThrow(
       new RegExp(`index 0: field "${field}" must be a non-empty string`),
@@ -1002,6 +1004,29 @@ describe('fixed Mihomo v1.19.28 proxy node validation', () => {
     expect(nullFlow[0]).not.toHaveProperty('flow');
     // Required fields stay required: a null server is still missing.
     expect(() => validateMihomoProxyList([{ ...vless, server: null }])).toThrow(/field "server"/);
+    // Hysteria declared-string knobs emitted as integers coerce via the same
+    // FormatInt semantics (`up: 300` ≡ `up: "300"`).
+    const hy2Int = validateMihomoProxyList([
+      { ...hy2, ports: '8443-20000', up: 300, down: 300, 'hop-interval': 20 },
+    ]);
+    expect(hy2Int[0]).toMatchObject({ up: '300', down: '300', 'hop-interval': '20' });
+    const hy1 = portableStructuralMinimums.find((candidate) => candidate.type === 'hysteria')!;
+    const hy1Int = validateMihomoProxyList([{ ...hy1, up: 10, down: 20 }]);
+    expect(hy1Int[0]).toMatchObject({ up: '10', down: '20' });
+    // Floats do not coerce: Mihomo formats them in exponent notation and its
+    // own bandwidth parser rejects that.
+    expect(() => validateMihomoProxyList([{ ...hy2, up: 3.5 }])).toThrow(/field "up"/);
+  });
+
+  it('accepts tab-padded proxy names but keeps other control characters rejected', () => {
+    const base = portableStructuralMinimums.find((candidate) => candidate.type === 'vmess')!;
+    const tabbed = { ...base, name: 'Netflix AC:user@mail.invalid\t\t\t \t PW:0000' };
+    expect(validateMihomoProxyList([tabbed])[0].name).toBe(tabbed.name);
+    for (const bad of ['SAFE\nUNSAFE', 'SAFE\rUNSAFE', 'SAFE\x00UNSAFE', 'SAFE\x7fUNSAFE']) {
+      expect(() => validateMihomoProxyList([{ ...base, name: bad }])).toThrow(
+        /field "name" must not contain control characters/,
+      );
+    }
   });
 
   it('budgets hysteria2 port-hopping candidates per node, not across the list', () => {

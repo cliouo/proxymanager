@@ -98,8 +98,10 @@ return 1
  *       invalidate full configs rendered from pre-hardening fetch-cache data.
  *  11 → provider normalisation canonicalises a narrow set of no-loss legacy
  *       fields and URI aliases before strict fixed-Mihomo validation.
+ *  16 → weakly typed hysteria bandwidth/hop integers coerce to strings and
+ *       tab-padded node names are accepted; previously-skipped nodes appear.
  */
-const RENDER_CACHE_EPOCH = 15;
+const RENDER_CACHE_EPOCH = 16;
 
 export type RenderCacheStatus = 'hit' | 'miss' | 'bypass';
 
