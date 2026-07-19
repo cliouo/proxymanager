@@ -627,6 +627,16 @@ describe('parseProxyUriList per protocol', () => {
     expect(errors[0].error).toMatch(/control characters/i);
   });
 
+  it('accepts tab-padded node names (the one control character exporters emit)', () => {
+    const { proxies, errors } = parseProxyUriList(
+      'anytls://secret@any.example:443#Netflix%20AC%09%09%20PW%3A0000',
+    );
+
+    expect(errors).toHaveLength(0);
+    expect(proxies).toHaveLength(1);
+    expect(proxies[0].name).toBe('Netflix AC\t\t PW:0000');
+  });
+
   it('reports unsupported schemes as errors', () => {
     const marker = 'juicity-fakesecretmarker';
     const { errors } = parseProxyUriList(`${marker}://x@y:1#z`);

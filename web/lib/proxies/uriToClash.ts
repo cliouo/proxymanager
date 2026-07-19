@@ -181,7 +181,9 @@ export function parseProxyUriList(text: string): ParseProxyResult {
           `hysteria port sets exceed the ${MAX_HYSTERIA_PORT_CANDIDATES} candidate limit`,
         );
       }
-      if (/[\x00-\x1f\x7f-\x9f]/u.test(proxy.name)) {
+      // Tab is the one control character free-tier exporters actually pad
+      // names with; Mihomo accepts it and YAML emission escapes it.
+      if (/[\x00-\x08\x0a-\x1f\x7f-\x9f]/u.test(proxy.name)) {
         throw new Error('proxy name contains control characters');
       }
       proxy.name = uniqueName(
