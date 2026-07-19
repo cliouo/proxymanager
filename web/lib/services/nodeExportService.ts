@@ -21,6 +21,8 @@ import type { Collection, Subscription, SubscriptionTraffic } from '@/schemas';
 export interface NodeExportResult {
   /** Provider YAML(仅 `proxies:` 块),去重后。 */
   yaml: string;
+  /** 去重 + 校验后的节点对象(与 yaml 同一份数据)—— base64 分享链接格式用。 */
+  proxies: Record<string, unknown>[];
   /** 去重后的节点数。 */
   proxyCount: number;
   /** 任一来源命中 stale-on-error 缓存回退时为 true。 */
@@ -84,6 +86,7 @@ export async function exportSubscriptionNodes(
   });
   return {
     yaml: stringify({ proxies }, { lineWidth: 0 }),
+    proxies,
     proxyCount: proxies.length,
     stale: result.stale === true,
     traffic: result.traffic,
@@ -181,6 +184,7 @@ export async function exportCollectionNodes(
   });
   return {
     yaml: stringify({ proxies }, { lineWidth: 0 }),
+    proxies,
     proxyCount: proxies.length,
     stale,
     memberErrors,

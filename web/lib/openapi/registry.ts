@@ -293,12 +293,15 @@ registry.registerPath({
   path: '/api/sub/{token}/source/{name}',
   summary: 'Public node-only link for a single subscription',
   description:
-    "Distribution endpoint: serves the subscription's processed nodes (operators 节点处理 + dedup) as a Clash provider YAML (`proxies:` block only). Usable directly as a mihomo proxy-provider `url:` or imported as a plain subscription — the upstream source URL is never exposed. Validates SUB_TOKEN; disabled subscriptions return 404. Sends `Subscription-Userinfo` when upstream traffic info is known, a content-addressed ETag (If-None-Match → 304), and `X-Stale: 1` when serving the stale-on-error cache. `?noCache=1` bypasses the fetch cache.",
+    "Distribution endpoint: serves the subscription's processed nodes (operators 节点处理 + dedup). Default format is a Clash provider YAML (`proxies:` block only), usable directly as a mihomo proxy-provider `url:` or imported as a plain subscription; `?format=base64` serves a universal share-link subscription (one `ss://`/`vmess://`/… URI per line, base64-encoded — importable by Shadowrocket / v2rayN-class clients; nodes that cannot be expressed as a share link are skipped and counted in `X-Skipped-Nodes`). The upstream source URL is never exposed. Validates SUB_TOKEN; disabled subscriptions return 404. Sends `Subscription-Userinfo` when upstream traffic info is known, a content-addressed ETag (If-None-Match → 304), and `X-Stale: 1` when serving the stale-on-error cache. `?noCache=1` bypasses the fetch cache.",
   tags: ['subscriptions'],
   security: [],
-  request: { params: z.object({ token: z.string(), name: z.string() }) },
+  request: {
+    params: z.object({ token: z.string(), name: z.string() }),
+    query: z.object({ format: z.enum(['clash', 'base64']).optional() }),
+  },
   responses: {
-    200: { description: 'Provider YAML (`proxies:` only)' },
+    200: { description: 'Provider YAML (`proxies:` only), or base64 share-link list' },
     304: { description: 'ETag matched If-None-Match' },
     401: { description: 'Bad token' },
     404: { description: 'Unknown or disabled subscription' },
@@ -310,12 +313,15 @@ registry.registerPath({
   path: '/api/sub/{token}/collection/{name}',
   summary: 'Public node-only link for a collection (聚合订阅)',
   description:
-    "Distribution endpoint: merges the collection's enabled member subscriptions (explicit ids + tag matches, member order), runs the collection's own operators 节点处理 over the merged union, dedups first-writer-wins, and serves the result as a Clash provider YAML. `{name}` matches the collection slug first, then the collection id when it looks like a UUID, then the display name as a legacy fallback (URL-encoded CJK ok). Failed members are skipped (`X-Skipped-Members`); the request only fails when every member fails. Disabled collections return 404.",
+    "Distribution endpoint: merges the collection's enabled member subscriptions (explicit ids + tag matches, member order), runs the collection's own operators 节点处理 over the merged union, dedups first-writer-wins, and serves the result. Default format is a Clash provider YAML; `?format=base64` serves a universal share-link subscription (one URI per line, base64-encoded — importable by Shadowrocket / v2rayN-class clients; unrepresentable nodes are skipped and counted in `X-Skipped-Nodes`). `{name}` matches the collection slug first, then the collection id when it looks like a UUID, then the display name as a legacy fallback (URL-encoded CJK ok). Failed members are skipped (`X-Skipped-Members`); the request only fails when every member fails. Disabled collections return 404.",
   tags: ['subscriptions'],
   security: [],
-  request: { params: z.object({ token: z.string(), name: z.string() }) },
+  request: {
+    params: z.object({ token: z.string(), name: z.string() }),
+    query: z.object({ format: z.enum(['clash', 'base64']).optional() }),
+  },
   responses: {
-    200: { description: 'Merged provider YAML (`proxies:` only)' },
+    200: { description: 'Merged provider YAML (`proxies:` only), or base64 share-link list' },
     304: { description: 'ETag matched If-None-Match' },
     400: { description: 'Every member fetch failed' },
     401: { description: 'Bad token' },

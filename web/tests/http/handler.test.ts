@@ -50,12 +50,12 @@ describe('withProblemDetails configuration errors', () => {
     expect(JSON.stringify(body)).not.toContain('password');
   });
 
-  it('points at the safe direct.udp field without reflecting the node', async () => {
+  it('reports an unknown proxy field via the hidden generic path without reflecting the node', async () => {
     const { response, body } = await problemFrom(() =>
       parseBaseDocument(`proxies:
   - name: ${SECRET}
     type: direct
-    udp: true
+    bogus-field: true
 `),
     );
 
@@ -64,13 +64,14 @@ describe('withProblemDetails configuration errors', () => {
       {
         code: 'base_proxy_invalid',
         message:
-          'Invalid base YAML: Invalid proxy entry at index 0: field "udp" is not supported for type "direct"',
+          'Invalid base YAML: Invalid proxy entry at index 0: field "proxy" contains an unsupported top-level field',
         section: 'proxies',
-        path: 'proxies[0].udp',
+        path: 'proxies[0].proxy',
         resource: 'base.yaml',
       },
     ]);
     expect(JSON.stringify(body)).not.toContain(SECRET);
+    expect(JSON.stringify(body)).not.toContain('bogus-field');
   });
 
   it('returns a fixed structured 422 without reflecting a bad final rule policy', async () => {

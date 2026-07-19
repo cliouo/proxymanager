@@ -12,8 +12,9 @@ import { useToast } from '@/components/ui/Toast';
  * 与原型的差异(现实约束,如实呈现而非假装):
  *   - 令牌是平台级 SUB_TOKEN(与配置文件订阅链接共用),没有按资源重置 ——
  *     抽屉底部的警示句说清楚轮换方式,不放一个做不到的「重置令牌」按钮。
- *   - 格式目前只有 Clash provider YAML(mihomo proxy-provider / 普通订阅
- *     都能直接用),格式 chips 只渲染真实可用的那一个。
+ *   - 格式两种:Clash provider YAML(mihomo proxy-provider / 普通订阅都能
+ *     直接用,默认)与 Base64 通用订阅(`?format=base64`,每行一条分享链接
+ *     整体 base64,Shadowrocket / v2rayN 等纯节点客户端可导入)。
  *   - 访问开关即资源本身的「启用」开关:停用 = 链接对外 404(未分发)。
  */
 
@@ -53,6 +54,7 @@ export function DistributeDrawer({
 }) {
   const toast = useToast();
   const [reveal, setReveal] = useState(false);
+  const [fmt, setFmt] = useState<'clash' | 'base64'>('clash');
   // 原型同款入场:先以关闭态挂载,下一帧加 .open 触发滑入过渡。
   const [shown, setShown] = useState(false);
   useEffect(() => {
@@ -64,9 +66,10 @@ export function DistributeDrawer({
     };
   }, [target]);
 
-  // 每次换目标都回到掩码态 —— 上一个资源点过「显示」不应外溢到下一个。
+  // 每次换目标都回到掩码态 + 默认格式 —— 上一个资源的状态不应外溢到下一个。
   useEffect(() => {
     setReveal(false);
+    setFmt('clash');
   }, [target?.kind, target?.pathSeg]);
 
   useEffect(() => {
@@ -80,14 +83,15 @@ export function DistributeDrawer({
 
   const { realUrl, shownUrl } = useMemo(() => {
     if (!target) return { realUrl: '', shownUrl: '' };
-    const path = `/${target.kind}/${encodeURIComponent(target.pathSeg)}`;
+    const suffix = fmt === 'base64' ? '?format=base64' : '';
+    const path = `/${target.kind}/${encodeURIComponent(target.pathSeg)}${suffix}`;
     if (!subBase) return { realUrl: '', shownUrl: `…/api/sub/${MASK}${path}` };
     const real = `${subBase}${path}`;
     if (reveal) return { realUrl: real, shownUrl: real };
     // subBase 形如 {origin}/api/sub/{token} —— 掩掉最后一段令牌。
     const cut = subBase.lastIndexOf('/');
     return { realUrl: real, shownUrl: `${subBase.slice(0, cut)}/${MASK}${path}` };
-  }, [target, subBase, reveal]);
+  }, [target, subBase, reveal, fmt]);
 
   async function copy() {
     if (!realUrl) return;
@@ -147,11 +151,25 @@ export function DistributeDrawer({
           {/* P3-41: 去孤儿类 dist-fld(无 CSS 定义,纯 no-op 包裹) */}
           <div>
             <div className="df-cap">
-              输出格式<span className="df-h">provider YAML · 只含节点</span>
+              输出格式
+              <span className="df-h">
+                {fmt === 'clash' ? 'provider YAML · 只含节点' : '分享链接列表 · 整体 base64'}
+              </span>
             </div>
             <div className="dist-fmts">
-              <button type="button" className="on">
+              <button
+                type="button"
+                className={fmt === 'clash' ? 'on' : undefined}
+                onClick={() => setFmt('clash')}
+              >
                 Clash / mihomo
+              </button>
+              <button
+                type="button"
+                className={fmt === 'base64' ? 'on' : undefined}
+                onClick={() => setFmt('base64')}
+              >
+                Base64 通用
               </button>
             </div>
           </div>
@@ -191,8 +209,18 @@ export function DistributeDrawer({
               </button>
             </div>
             <p className="df-h" style={{ marginTop: 10 }}>
-              可直接作 mihomo <code>proxy-providers</code> 的 <code>url:</code>,或当普通订阅导入 ——
-              节点已过本源的节点处理。
+              {fmt === 'clash' ? (
+                <>
+                  可直接作 mihomo <code>proxy-providers</code> 的 <code>url:</code>
+                  ,或当普通订阅导入 —— 节点已过本源的节点处理。
+                </>
+              ) : (
+                <>
+                  Shadowrocket / v2rayN 等客户端直接当订阅导入 ——
+                  仅含基础节点参数;个别无法表达为分享链接的节点会被跳过(响应头{' '}
+                  <code>X-Skipped-Nodes</code> 如实标注)。
+                </>
+              )}
             </p>
           </div>
 

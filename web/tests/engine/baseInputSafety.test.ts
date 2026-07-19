@@ -158,25 +158,37 @@ describe('base parser input boundary', () => {
     expect((error as Error).message).not.toContain('unknown-secret-type');
   });
 
-  it('reports a known but unsupported proxy field with a safe structured path', () => {
-    const error = captureSync(() =>
+  it('accepts inert udp on direct but reports unknown proxy fields with a hidden path', () => {
+    // 2026-07-18 leniency: mihomo's decoder silently drops `udp` on direct.
+    expect(() =>
       parseBase(`proxies:
   - name: local-direct
     type: direct
     udp: true
 `),
+    ).not.toThrow();
+
+    const error = captureSync(() =>
+      parseBase(`proxies:
+  - name: local-direct
+    type: direct
+    FAKE_unknown-field: true
+`),
     );
 
     expect(error).toBeInstanceOf(BaseParseError);
-    expect((error as Error).message).toContain('field "udp" is not supported for type "direct"');
+    expect((error as Error).message).toContain(
+      'field "proxy" contains an unsupported top-level field',
+    );
     expect((error as BaseParseError).issue).toEqual({
       code: 'base_proxy_invalid',
       message: (error as Error).message,
       section: 'proxies',
-      path: 'proxies[0].udp',
+      path: 'proxies[0].proxy',
       resource: 'base.yaml',
     });
     expect((error as Error).message).not.toContain('local-direct');
+    expect((error as Error).message).not.toContain('FAKE_');
   });
 
   it('rejects YAML merge keys before inherited contextual references can bypass validation', () => {

@@ -1819,6 +1819,9 @@ function parseHysteria2(uri: string): ClashProxy {
       'sni',
       'peer',
       'insecure',
+      // v2rayN-style exporters reuse their trojan/vless `allowInsecure` key on
+      // hysteria2 links; the semantic is identical to the official `insecure`.
+      'allowInsecure',
       'obfs',
       'obfs-password',
       'alpn',
@@ -1840,6 +1843,7 @@ function parseHysteria2(uri: string): ClashProxy {
     params,
     [
       ['sni', 'peer'],
+      ['insecure', 'allowInsecure'],
       ['hop-interval', 'hop_interval'],
       ['up', 'upmbps'],
       ['down', 'downmbps'],
@@ -1860,9 +1864,10 @@ function parseHysteria2(uri: string): ClashProxy {
     if (!sni) throw new Error('invalid hysteria2 server name');
     proxy.sni = sni;
   }
+  const insecureKey = Object.hasOwn(params, 'insecure') ? 'insecure' : 'allowInsecure';
   if (
-    Object.hasOwn(params, 'insecure') &&
-    parseBooleanString(params.insecure, 'hysteria2 insecure')
+    Object.hasOwn(params, insecureKey) &&
+    parseBooleanString(params[insecureKey], 'hysteria2 insecure')
   ) {
     proxy['skip-cert-verify'] = true;
   }
