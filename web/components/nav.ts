@@ -21,6 +21,7 @@ export const PROFILE_NAV: NavItem[] = [
   { href: '/proxy-groups', label: '策略组', icon: '⌥' },
   { href: '/scenarios/rule-anchor-append', label: '规则', icon: '#' },
   { href: '/scenarios/chained-proxy', label: '链式代理', icon: '⛓' },
+  { href: '/scenarios/tailscale', label: 'Tailscale', icon: '⊡' },
   { href: '/config', label: '最终配置', icon: '▣' },
 ];
 
