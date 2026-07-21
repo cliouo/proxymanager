@@ -101,7 +101,7 @@ return 1
  *  16 → weakly typed hysteria bandwidth/hop integers coerce to strings and
  *       tab-padded node names are accepted; previously-skipped nodes appear.
  */
-const RENDER_CACHE_EPOCH = 16;
+const RENDER_CACHE_EPOCH = 17;
 
 export type RenderCacheStatus = 'hit' | 'miss' | 'bypass';
 
