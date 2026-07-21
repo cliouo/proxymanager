@@ -33,7 +33,7 @@ const FIXED_MIHOMO_PROXY_TYPES = new Set([
   'tailscale',
 ]);
 
-const ENDPOINT_FREE_PROXY_TYPES = new Set(['direct', 'dns', 'reject', 'rematch']);
+const ENDPOINT_FREE_PROXY_TYPES = new Set(['direct', 'dns', 'reject', 'rematch', 'tailscale']);
 
 const MIHOMO_DNS_NETWORK_SCHEMES = new Set(['udp', 'tcp', 'tls', 'http', 'https', 'quic']);
 const MIHOMO_DNS_RCODE_TYPES = new Set([
@@ -637,6 +637,13 @@ const PROXY_FIELDS_BY_TYPE: Readonly<Record<string, Readonly<Record<string, Prox
     stringArrays: ['dns'],
     stringMaps: ['peer-info'],
   }),
+  // Mirrors TailscaleOption in fixed Mihomo v1.19.28 (BasicOption fields come
+  // from COMMON_PROXY_FIELDS). Every field is optional: the embedded tsnet
+  // node can register interactively when auth-key is absent.
+  tailscale: defineProxyFields({
+    strings: ['name', 'hostname', 'auth-key', 'control-url', 'state-dir', 'exit-node'],
+    booleans: ['ephemeral', 'udp', 'accept-routes', 'exit-node-allow-lan-access'],
+  }),
 };
 
 // github.com/metacubex/sing-shadowsocks2 v0.2.7, as pinned by fixed
@@ -1082,13 +1089,6 @@ function validateMihomoProxy(
   }
   if (!FIXED_MIHOMO_PROXY_TYPES.has(type)) {
     return invalidProxyEntry(index, 'type', 'is not supported by fixed Mihomo v1.19.28');
-  }
-  if (type === 'tailscale') {
-    return invalidProxyEntry(
-      index,
-      'type',
-      'requires a build-dependent runtime capability and is not portable',
-    );
   }
   // Fixed Mihomo decodes proxy options weakly typed and ignores unknown keys.
   // Mirror the two ecosystem-wide provider emissions that would otherwise

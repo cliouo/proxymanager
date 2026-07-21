@@ -417,10 +417,52 @@ describe('fixed Mihomo v1.19.28 proxy node validation', () => {
     );
   });
 
-  it('rejects tailscale instead of guessing whether the runtime build includes it', () => {
-    expect(() => validateMihomoProxyList([{ name: 'SAFE-NODE', type: 'tailscale' }])).toThrow(
-      /field "type" requires a build-dependent runtime capability/,
-    );
+  it('accepts a minimal tailscale node (every option is decoder-optional)', () => {
+    expect(validateMihomoProxyList([{ name: 'SAFE-NODE', type: 'tailscale' }])).toEqual([
+      { name: 'SAFE-NODE', type: 'tailscale' },
+    ]);
+  });
+
+  it('accepts the full tailscale option surface of fixed Mihomo', () => {
+    const node = {
+      name: 'SAFE-NODE',
+      type: 'tailscale',
+      hostname: 'phone',
+      'auth-key': 'FAKE_SECRET_DO_NOT_LOG',
+      'control-url': 'https://headscale.example.com',
+      'state-dir': './ts-phone',
+      ephemeral: false,
+      udp: true,
+      'accept-routes': true,
+      'exit-node': '100.64.0.9',
+      'exit-node-allow-lan-access': false,
+      'dialer-proxy': 'SAFE-FRONT',
+      'interface-name': 'eth0',
+      'routing-mark': 6969,
+      'ip-version': 'dual',
+    };
+    expect(
+      validateMihomoProxyList([node, { name: 'SAFE-FRONT', type: 'direct' }]),
+    ).toHaveLength(2);
+  });
+
+  it.each([
+    ['auth-key', 123],
+    ['udp', 'yes'],
+    ['accept-routes', 'true'],
+    ['hostname', ['phone']],
+  ])('rejects tailscale field %s with a non-canonical type', (field, value) => {
+    expect(() =>
+      validateMihomoProxyList([{ name: 'SAFE-NODE', type: 'tailscale', [field]: value }]),
+    ).toThrow(/index 0: field/);
+  });
+
+  it('rejects unknown tailscale fields instead of silently shipping them', () => {
+    expect(() =>
+      validateMihomoProxyList([
+        { name: 'SAFE-NODE', type: 'tailscale', 'advertise-routes': ['10.0.0.0/24'] },
+      ]),
+    ).toThrow(/contains an unsupported top-level field/);
   });
 
   it.each([
