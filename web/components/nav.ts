@@ -15,14 +15,23 @@ export interface NavItem {
 /** 概览 */
 export const OVERVIEW_NAV: NavItem[] = [{ href: '/', label: '概览', icon: '◎' }];
 
-/** 当前配置文件 —— 编辑当前生效配置文件的各个切面。 */
+/** 当前配置文件 —— 编辑当前生效配置文件的各个切面，顺序即数据流。 */
 export const PROFILE_NAV: NavItem[] = [
   { href: '/base', label: '结构 base', icon: '{}' },
   { href: '/proxy-groups', label: '策略组', icon: '⌥' },
   { href: '/scenarios/rule-anchor-append', label: '规则', icon: '#' },
+  { href: '/config', label: '最终配置', icon: '▣' },
+];
+
+/**
+ * 扩展 —— 高级功能，与核心编辑流水线分开陈列。
+ * 这里是场景导航项的唯一真相源：Sidebar 静态渲染本表，不再按
+ * `/api/v1/scenarios` 动态拼「更多场景」，也不再维护一份中文名 override。
+ */
+export const EXTENSIONS_NAV: NavItem[] = [
   { href: '/scenarios/chained-proxy', label: '链式代理', icon: '⛓' },
   { href: '/scenarios/tailscale', label: 'Tailscale', icon: '⊡' },
-  { href: '/config', label: '最终配置', icon: '▣' },
+  { href: '/scenarios', label: '扩展中心', icon: '✦' },
 ];
 
 /** 资源库 · 共享 —— 跨配置文件共享的节点与规则资源。 */
@@ -41,6 +50,7 @@ export const SYSTEM_NAV: NavItem[] = [
 export const ALL_NAV: NavItem[] = [
   ...OVERVIEW_NAV,
   ...PROFILE_NAV,
+  ...EXTENSIONS_NAV,
   ...LIBRARY_NAV,
   ...SYSTEM_NAV,
 ];
