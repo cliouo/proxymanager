@@ -177,9 +177,23 @@ describe('templatesFirst — 新建流的 copy_from 候选顺序', () => {
 });
 
 describe('matchesTemplateNameConvention — migrate:profile-kind 的名单', () => {
-  it('matches the simple / general series', () => {
-    expect(TEMPLATE_NAME_PREFIXES).toEqual(['simple', 'general']);
-    for (const name of ['simple', 'simple-v2', 'general', 'general-cn']) {
+  it('matches the production template names and the early series', () => {
+    expect(TEMPLATE_NAME_PREFIXES).toEqual([
+      'template-simple',
+      'template-general',
+      'simple',
+      'general',
+    ]);
+    for (const name of [
+      'template-simple',
+      'template-simple-v2',
+      'template-general',
+      'template-general-cn',
+      'simple',
+      'simple-v2',
+      'general',
+      'general-cn',
+    ]) {
       expect(matchesTemplateNameConvention(name)).toBe(true);
     }
   });

@@ -46,11 +46,17 @@ export function partitionProfilesByKind<T extends ProfileKindLike>(
 }
 
 /**
- * 生产环境里既有的模版系列命名（simple* / general*）—— `migrate:profile-kind`
+ * 生产环境里既有的模版系列命名（template-simple* / template-general*，以及早期
+ * simple* / general*）—— `migrate:profile-kind`
  * 按它决定给谁打 `kind: 'template'`。只有那个一次性迁移脚本用得上：`kind` 一旦
  * 落库，判定就一律走 {@link isTemplateProfile}，名字再也不参与任何决策。
  */
-export const TEMPLATE_NAME_PREFIXES = ['simple', 'general'] as const;
+export const TEMPLATE_NAME_PREFIXES = [
+  'template-simple',
+  'template-general',
+  'simple',
+  'general',
+] as const;
 
 /** 名字是否属于既有模版系列。仅供迁移脚本圈定名单。 */
 export function matchesTemplateNameConvention(name: string): boolean {
