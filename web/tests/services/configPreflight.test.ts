@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   listRules: vi.fn(),
   listRuleSets: vi.fn(),
   listSubscriptions: vi.fn(),
+  listDevices: vi.fn(),
 }));
 
 vi.mock('@/lib/engine/resolve', () => ({ resolveConfig: mocks.resolveConfig }));
@@ -38,6 +39,7 @@ vi.mock('@/lib/repos/ruleSetsRepo', () => ({ listRuleSets: mocks.listRuleSets })
 vi.mock('@/lib/repos/subscriptionsRepo', () => ({
   listSubscriptions: mocks.listSubscriptions,
 }));
+vi.mock('@/lib/repos/devicesRepo', () => ({ listDevices: mocks.listDevices }));
 
 import { ConfigPreflightUnavailableError, ConfigValidationError } from '@/lib/config/errors';
 import {
@@ -109,6 +111,7 @@ describe('preflightProfileConfig', () => {
     mocks.listProxyGroupTemplates.mockResolvedValue([]);
     mocks.listRuleSets.mockResolvedValue([]);
     mocks.listCollections.mockResolvedValue([]);
+    mocks.listDevices.mockResolvedValue([]);
     mocks.resolveConfig.mockResolvedValue({ content: 'ok' });
     mocks.resolveSubscriptionProxies.mockResolvedValue({ proxies: [], proxyCount: 0 });
   });

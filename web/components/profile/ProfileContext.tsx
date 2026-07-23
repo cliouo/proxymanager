@@ -41,6 +41,8 @@ export interface Profile {
   id: string;
   name: string;
   source: ProfileSource;
+  /** 普通配置文件 / 模版。存量记录经 schema parse-forward 后总是有值。 */
+  kind?: 'normal' | 'template';
   notes?: string;
   created_at?: number;
   updated_at: number;

@@ -791,7 +791,7 @@ export const tailscaleScenario: Scenario = {
     id: 'tailscale',
     title: 'Tailscale',
     description:
-      'One-click tailnet access: a base-literal tailscale node, a select group and CGNAT rules — all ordinary artifacts owned by the normal modules afterwards.',
+      '一键接入 tailnet：写入 base 字面 tailscale 节点、一个 select 策略组与 CGNAT 规则 —— 之后都是普通模块管辖的普通产物。',
     navHref: '/scenarios/tailscale',
   },
   ops: {

@@ -10,6 +10,15 @@ export const REDIS_KEYS = {
   },
   /** Per-profile routing rules. Hash keyed by rule id. */
   rules: (profileId: string): string => `rules:${profileId}`,
+  /**
+   * Per-profile devices (设备层, P1). Hash keyed by device id — mirrors the
+   * `rules:${profileId}` shape. Each record carries the device's RFC 7386
+   * `base_patch` over the profile's final rendered config. Writes bump
+   * `config:version` in the same Lua/multi, which is what invalidates both the
+   * shared and the device render caches (no explicit invalidation anywhere).
+   * Deleting a profile drops this key in the same multi.
+   */
+  devices: (profileId: string): string => `devices:${profileId}`,
   subscriptions: 'subscriptions',
   proxies: 'proxies',
   ruleSets: 'rule-sets',
@@ -109,6 +118,16 @@ export const REDIS_KEYS = {
    * the freshness window acts as garbage collection.
    */
   renderCache: (profile: string): string => `render:${profile}`,
+  /**
+   * Cached device render — the shared render with that device's `base_patch`
+   * applied. Validated on read against the exact same quadruple as the shared
+   * entry (epoch / config:version / providerUrlBase / freshness), so a device
+   * write (which INCRs config:version) invalidates it with no explicit logic.
+   * Keyed by device **id**, not name, so renaming a device can't resurrect a
+   * previous device's entry.
+   */
+  deviceRenderCache: (profile: string, deviceId: string): string =>
+    `render:${profile}:device:${deviceId}`,
   /**
    * Rule-set content, split out of the `rule-sets` hash. The hash field keeps
    * only the meta record (content stored as ''); the potentially huge body

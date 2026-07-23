@@ -18,8 +18,8 @@ import type { Scenario } from '../_shared/types';
 export const echoScenario: Scenario = {
   descriptor: {
     id: 'dev-echo',
-    title: 'Echo (dev)',
-    description: 'No-op scenario for verifying the dispatcher pipeline.',
+    title: 'Echo（调试）',
+    description: '不动真配置，端到端验证 scenario dispatcher 流水线。',
     navHref: '/scenarios/dev-echo',
   },
   ops: {

@@ -38,6 +38,7 @@ const CANDIDATE = {
     id: PROFILE_ID,
     name: 'default',
     source: { type: 'none' },
+    kind: 'normal' as const,
     updated_at: 1,
   },
   baseContent: 'proxies: []\nrules: []\n',
@@ -47,6 +48,7 @@ const CANDIDATE = {
   templates: [],
   ruleSets: [],
   collections: [],
+  devices: [],
 } as ProfileConfigState;
 
 function statusOf(error: unknown): number | undefined {

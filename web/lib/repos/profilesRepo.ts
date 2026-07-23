@@ -46,7 +46,11 @@ export async function deleteProfile(id: string): Promise<boolean> {
   const [removed] = await getRedis()
     .multi()
     .hdel(REDIS_KEYS.profiles, id)
+    // Devices are a child entity of the profile: drop them in the SAME multi so
+    // a deleted profile can never leave orphaned device records behind (whose
+    // sub links would 404 anyway, but which preflight would still iterate).
+    .del(REDIS_KEYS.devices(id))
     .incr(REDIS_KEYS.configVersion)
-    .exec<[number, number]>();
+    .exec<[number, number, number]>();
   return removed > 0;
 }

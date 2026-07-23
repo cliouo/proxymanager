@@ -6,6 +6,14 @@ import { ApiError, api } from '@/lib/client/api';
 import { PageTopbar } from '@/components/PageChrome';
 import { useProfiles } from '@/components/profile/ProfileContext';
 import { Placeholder } from '@/components/ui/Reveal';
+import {
+  TEMPLATE_BADGE,
+  TEMPLATE_NOT_DISTRIBUTABLE,
+  TEMPLATE_TAGLINE,
+  isTemplateProfile,
+  partitionProfilesByKind,
+  templatesFirst,
+} from '@/lib/profiles/kind';
 import styles from './profiles.module.css';
 
 /** —— 真实数据形态（见 schemas/profile.ts / collection.ts / subscription.ts）—— */
@@ -18,6 +26,8 @@ interface Profile {
   id: string;
   name: string;
   source: ProfileSource;
+  /** 普通配置文件 / 模版（schemas/profile.ts）。存量记录 parse-forward 为 normal。 */
+  kind?: 'normal' | 'template';
   notes?: string;
   created_at?: number;
   updated_at: number;
@@ -93,6 +103,70 @@ export default function ProfilesPage() {
   );
 
   const defaultCount = profiles.filter((p) => p.name === DEFAULT_PROFILE_NAME).length;
+  // Phase T:模版与普通配置文件分两栏陈列。语义完全一致(可编辑、可预览、可激活),
+  // 只是不对外分发 —— 分组是为了让「拿来复制的底本」和「日常在用的配置」一眼分开。
+  const { normal, templates } = useMemo(() => partitionProfilesByKind(profiles), [profiles]);
+
+  /** 一张配置文件卡 —— 两栏共用,差别只在模版徽章与「不可分发」提示。 */
+  function profileCard(p: Profile) {
+    const isDefault = p.name === DEFAULT_PROFILE_NAME;
+    const template = isTemplateProfile(p);
+    return (
+      <article key={p.id} className={`pf-card${isDefault ? ' is-default' : ''}`}>
+        <div className="pf-top">
+          <div className="pf-mark">{markFor(p.name)}</div>
+          <div className="pf-id">
+            <b>{p.name}</b>
+            <span className="slug">{template ? TEMPLATE_NOT_DISTRIBUTABLE : slugFor(p.name)}</span>
+          </div>
+          {isDefault && <span className="pill acc plain">默认</span>}
+          {template && <span className="pill acc plain">{TEMPLATE_BADGE}</span>}
+        </div>
+
+        {p.notes && (
+          <div className="pf-meta">
+            <span>{p.notes}</span>
+          </div>
+        )}
+
+        <div className="pf-bind">
+          <span className="bl">节点来源</span>
+          <div className="row">
+            {p.source.type === 'none' && <span className="pill idle plain">未绑定</span>}
+            {p.source.type === 'subscription' && (
+              <>
+                <span
+                  className="gl"
+                  style={{ font: '10px var(--font-mono)', color: 'var(--faint)' }}
+                >
+                  订阅源
+                </span>
+                <span className="tag">{subName(p.source.id)}</span>
+              </>
+            )}
+            {p.source.type === 'collection' && (
+              <>
+                <span
+                  className="gl"
+                  style={{ font: '10px var(--font-mono)', color: 'var(--faint)' }}
+                >
+                  聚合订阅
+                </span>
+                <span className="tag">{colName(p.source.id)}</span>
+              </>
+            )}
+          </div>
+        </div>
+
+        <div className="pf-foot">
+          <Link className="btn primary sm" href={`/profiles/${p.id}`}>
+            设置
+          </Link>
+          <span className="when">编辑于 {fmtTime(p.updated_at)}</span>
+        </div>
+      </article>
+    );
+  }
 
   return (
     <>
@@ -152,8 +226,8 @@ export default function ProfilesPage() {
       </div>
 
       <div className={styles.secH}>
-        <h2>全部配置文件</h2>
-        <span className="ct">{profiles.length}</span>
+        <h2>配置文件</h2>
+        <span className="ct">{normal.length}</span>
       </div>
 
       {error && <div className={styles.errBanner}>{error}</div>}
@@ -166,63 +240,7 @@ export default function ProfilesPage() {
         </div>
       ) : (
         <div className="pf-grid">
-          {profiles.map((p) => {
-            const isDefault = p.name === DEFAULT_PROFILE_NAME;
-            return (
-              <article key={p.id} className={`pf-card${isDefault ? ' is-default' : ''}`}>
-                <div className="pf-top">
-                  <div className="pf-mark">{markFor(p.name)}</div>
-                  <div className="pf-id">
-                    <b>{p.name}</b>
-                    <span className="slug">{slugFor(p.name)}</span>
-                  </div>
-                  {isDefault && <span className="pill acc plain">默认</span>}
-                </div>
-
-                {p.notes && (
-                  <div className="pf-meta">
-                    <span>{p.notes}</span>
-                  </div>
-                )}
-
-                <div className="pf-bind">
-                  <span className="bl">节点来源</span>
-                  <div className="row">
-                    {p.source.type === 'none' && <span className="pill idle plain">未绑定</span>}
-                    {p.source.type === 'subscription' && (
-                      <>
-                        <span
-                          className="gl"
-                          style={{ font: '10px var(--font-mono)', color: 'var(--faint)' }}
-                        >
-                          订阅源
-                        </span>
-                        <span className="tag">{subName(p.source.id)}</span>
-                      </>
-                    )}
-                    {p.source.type === 'collection' && (
-                      <>
-                        <span
-                          className="gl"
-                          style={{ font: '10px var(--font-mono)', color: 'var(--faint)' }}
-                        >
-                          聚合订阅
-                        </span>
-                        <span className="tag">{colName(p.source.id)}</span>
-                      </>
-                    )}
-                  </div>
-                </div>
-
-                <div className="pf-foot">
-                  <Link className="btn primary sm" href={`/profiles/${p.id}`}>
-                    设置
-                  </Link>
-                  <span className="when">编辑于 {fmtTime(p.updated_at)}</span>
-                </div>
-              </article>
-            );
-          })}
+          {normal.map(profileCard)}
 
           {/* 新建占位卡 */}
           <button
@@ -243,6 +261,22 @@ export default function ProfilesPage() {
             <span style={{ fontSize: 13 }}>新建配置文件</span>
           </button>
         </div>
+      )}
+
+      {/* 模版栏 —— 有模版才出现，无模版时页面与改动前一致。 */}
+      {loaded && templates.length > 0 && (
+        <>
+          <div className={styles.secH} style={{ marginTop: 28 }}>
+            <h2>模版</h2>
+            <span className="ct">{templates.length}</span>
+          </div>
+          <p className={styles.pageIntro}>
+            模版是拿来<b>复制</b>的底本：新建配置文件时选它作起点，复制完两边各走各的。 模版本身
+            <b>不对外分发</b>（订阅链接一律 404），但照样可以编辑、预览、激活 ——
+            激活即编辑模版内容，这正是维护模版的方式。{TEMPLATE_TAGLINE}
+          </p>
+          <div className="pf-grid">{templates.map(profileCard)}</div>
+        </>
       )}
 
       {creating && (
@@ -288,9 +322,20 @@ function NewProfileModal({
   const [sourceKind, setSourceKind] = useState<'none' | 'subscription' | 'collection'>('none');
   const [sourceId, setSourceId] = useState('');
   // 初始内容：从某配置文件复制(默认 default) 或 空白(仅骨架)。
+  // Phase T：模版就是为「拿来复制」而存在的，所以候选列表把模版置顶，
+  // 且有模版时默认选中第一个模版（「从模版新建」是主推路径）。
+  const candidates = useMemo(() => templatesFirst(profiles), [profiles]);
+  const firstTemplateId = useMemo(
+    () => candidates.find((p) => isTemplateProfile(p))?.id ?? '',
+    [candidates],
+  );
   const defaultProfileId = useMemo(
-    () => profiles.find((p) => p.name === DEFAULT_PROFILE_NAME)?.id ?? profiles[0]?.id ?? '',
-    [profiles],
+    () =>
+      firstTemplateId ||
+      profiles.find((p) => p.name === DEFAULT_PROFILE_NAME)?.id ||
+      profiles[0]?.id ||
+      '',
+    [firstTemplateId, profiles],
   );
   const [seed, setSeed] = useState<'copy' | 'blank'>(profiles.length > 0 ? 'copy' : 'blank');
   const [copyFrom, setCopyFrom] = useState<string>(defaultProfileId);
@@ -460,7 +505,7 @@ function NewProfileModal({
                 className={`opt${seed === 'copy' ? ' on' : ''}`}
                 onClick={() => setSeed('copy')}
               >
-                从配置文件复制
+                {firstTemplateId ? '从模版新建' : '从配置文件复制'}
               </button>
               <button
                 type="button"
@@ -471,19 +516,28 @@ function NewProfileModal({
               </button>
             </div>
             {seed === 'copy' ? (
-              <select
-                className="input mono"
-                style={{ marginTop: 8 }}
-                value={copyFrom}
-                onChange={(e) => setCopyFrom(e.target.value)}
-              >
-                {profiles.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                    {p.name === DEFAULT_PROFILE_NAME ? '（默认）' : ''}
-                  </option>
-                ))}
-              </select>
+              <>
+                <select
+                  className="input mono"
+                  style={{ marginTop: 8 }}
+                  value={copyFrom}
+                  onChange={(e) => setCopyFrom(e.target.value)}
+                >
+                  {candidates.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                      {isTemplateProfile(p)
+                        ? `（${TEMPLATE_BADGE}）`
+                        : p.name === DEFAULT_PROFILE_NAME
+                          ? '（默认）'
+                          : ''}
+                    </option>
+                  ))}
+                </select>
+                {firstTemplateId && (
+                  <div className="hint">{TEMPLATE_TAGLINE}复制完即独立，改模版不影响它。</div>
+                )}
+              </>
             ) : (
               <div className="hint">从 default 复制一份骨架 base，不含策略组与规则。</div>
             )}

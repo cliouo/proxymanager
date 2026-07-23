@@ -733,9 +733,9 @@ export async function summariseChains(profileId: string): Promise<{
 export const chainedProxyScenario: Scenario = {
   descriptor: {
     id: 'chained-proxy',
-    title: 'Chained proxies',
+    title: '链式代理',
     description:
-      'Wrap backends in proxy-groups with dialer-proxy so chains work even when the backend comes from a subscription.',
+      '将后端节点包装到带 dialer-proxy 的 proxy-group，统一服务于 base 与聚合节点。',
     navHref: '/scenarios/chained-proxy',
   },
   ops: {

@@ -8,6 +8,12 @@ import { useUnsavedGuard } from '@/lib/client/useUnsavedGuard';
 import { PageTopbar } from '@/components/PageChrome';
 import { useProfiles } from '@/components/profile/ProfileContext';
 import { useToast } from '@/components/ui/Toast';
+import {
+  TEMPLATE_NOT_DISTRIBUTABLE,
+  TEMPLATE_TAGLINE,
+  isTemplateProfile,
+} from '@/lib/profiles/kind';
+import { DevicePanel, type DeviceRecord } from './_components/DevicePanel';
 import styles from '../profiles.module.css';
 
 type ProfileSource =
@@ -20,6 +26,8 @@ interface Profile {
   name: string;
   display_name?: string;
   source: ProfileSource;
+  /** 普通配置文件 / 模版（schemas/profile.ts）。模版不对外分发。 */
+  kind?: 'normal' | 'template';
   notes?: string;
   created_at?: number;
   updated_at: number;
@@ -42,6 +50,52 @@ function slugFor(name: string): string {
   return `${name || 'untitled'}.yaml`;
 }
 
+/**
+ * 一台设备的下发地址行。令牌掩码状态跟随上方共享链接的「显示」开关 ——
+ * 两处是同一把令牌，分别掩/露只会让人以为它们不一样。
+ */
+function DeviceSubLink({
+  device,
+  profileName,
+  subBase,
+  reveal,
+}: {
+  device: DeviceRecord;
+  profileName: string;
+  subBase: string | null;
+  reveal: boolean;
+}) {
+  const toast = useToast();
+  const path = `/${encodeURIComponent(profileName)}/${encodeURIComponent(device.name)}`;
+  const real = subBase ? `${subBase}${path}` : '';
+  const shown = !subBase
+    ? `…/api/sub/${TOKEN_MASK}${path}`
+    : reveal
+      ? real
+      : `${subBase.slice(0, subBase.lastIndexOf('/'))}/${TOKEN_MASK}${path}`;
+
+  return (
+    <div className="dist-url" style={{ marginTop: 8 }}>
+      <code>{shown}</code>
+      <button
+        type="button"
+        className="urlbtn"
+        disabled={!real}
+        onClick={async () => {
+          try {
+            await navigator.clipboard.writeText(real);
+            toast(`已复制设备「${device.name}」的订阅链接`);
+          } catch {
+            toast('复制失败 · 请点「显示」后手动选取');
+          }
+        }}
+      >
+        复制
+      </button>
+    </div>
+  );
+}
+
 export default function ProfileDetailPage() {
   const router = useRouter();
   const params = useParams<{ id: string }>();
@@ -57,6 +111,8 @@ export default function ProfileDetailPage() {
   const [collections, setCollections] = useState<CollectionLite[]>([]);
   const [total, setTotal] = useState(0);
   const [subBase, setSubBase] = useState<string | null>(null);
+  const [devices, setDevices] = useState<DeviceRecord[]>([]);
+  const [devicesLoading, setDevicesLoading] = useState(true);
   const [revealToken, setRevealToken] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -104,11 +160,28 @@ export default function ProfileDetailPage() {
     }
   }, [id, hydrate]);
 
+  // 设备单独拉取:它有自己的增删改节奏(面板内操作后只刷这一份),
+  // 且拉取失败不该把整个设置页拖成错误态。
+  const reloadDevices = useCallback(async () => {
+    setDevicesLoading(true);
+    try {
+      const r = await api<{ data: DeviceRecord[] }>(`/api/v1/profiles/${id}/devices`);
+      setDevices(r.data);
+    } catch {
+      setDevices([]);
+    } finally {
+      setDevicesLoading(false);
+    }
+  }, [id]);
+
   useEffect(() => {
     void reload();
-  }, [reload]);
+    void reloadDevices();
+  }, [reload, reloadDevices]);
 
   const isDefault = profile?.name === DEFAULT_PROFILE_NAME;
+  // 模版不对外分发 —— 订阅链接面板换成禁用态，别给一条注定 404 的链接（route 层同样拦）。
+  const isTemplate = isTemplateProfile(profile);
   const nameValid = /^[a-z0-9-]+$/.test(name.trim());
 
   const dirty = useMemo(() => {
@@ -454,6 +527,7 @@ export default function ProfileDetailPage() {
           <section className="panel">
             <div className="panel-head">
               <h2>订阅链接</h2>
+              {isTemplate && <span className="pill acc plain">{TEMPLATE_NOT_DISTRIBUTABLE}</span>}
               <div className={styles.grow} />
               {profile && (
                 <Link
@@ -465,61 +539,109 @@ export default function ProfileDetailPage() {
                 </Link>
               )}
             </div>
-            <div className="panel-body">
-              <div className="field" style={{ marginBottom: 0 }}>
-                <label>
-                  这份配置文件的下发地址{' '}
-                  <span style={{ color: 'var(--faint)', fontWeight: 400 }}>
-                    · 在 mihomo / Clash 客户端里当订阅导入
+            {isTemplate ? (
+              <div className="panel-body">
+                <div className={styles.srcNote}>
+                  <span className="g">⊘</span>
+                  <span>
+                    这是一份<b>模版</b>，{TEMPLATE_NOT_DISTRIBUTABLE} ——
+                    它没有对外的下发地址，直接请求也会 404。模版仍可编辑、可
+                    <b>预览</b>（右上角），要真正下发请从它<b>新建</b>一份配置文件。
+                    <br />
+                    {TEMPLATE_TAGLINE}
                   </span>
-                </label>
-                <div className="dist-url">
-                  <code>{subShownUrl}</code>
-                  <button
-                    type="button"
-                    className="urlbtn"
-                    onClick={() => setRevealToken((v) => !v)}
-                    title="显示 / 隐藏令牌"
-                  >
-                    {revealToken ? '隐藏' : '显示'}
-                  </button>
-                </div>
-                <div className="dist-acts" style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-                  <button
-                    type="button"
-                    className="btn primary sm"
-                    onClick={copySubUrl}
-                    disabled={!subRealUrl}
-                  >
-                    复制链接
-                  </button>
-                  <button
-                    type="button"
-                    className="btn sm"
-                    onClick={() => subRealUrl && window.open(subRealUrl, '_blank', 'noopener')}
-                    disabled={!subRealUrl}
-                  >
-                    打开
-                  </button>
                 </div>
               </div>
-              <div className={styles.srcNote} style={{ marginTop: 14 }}>
-                <span className="g">⇲</span>
-                <span>
-                  链接里含访问令牌(平台级 <span className="mono">SUB_TOKEN</span>
-                  ,与其它配置文件共用),属秘钥 —— 默认掩码,点「显示」再查看 / 复制。
-                  {name.trim() !== profile?.name && (
-                    <>
-                      {' '}
-                      <b style={{ color: 'var(--warn)' }}>
-                        链接用的是已保存的名称「{profile?.name}」;改名后需保存才会生效。
-                      </b>
-                    </>
-                  )}
-                </span>
+            ) : (
+              <div className="panel-body">
+                <div className="field" style={{ marginBottom: 0 }}>
+                  <label>
+                    这份配置文件的下发地址{' '}
+                    <span style={{ color: 'var(--faint)', fontWeight: 400 }}>
+                      · 在 mihomo / Clash 客户端里当订阅导入
+                    </span>
+                  </label>
+                  <div className="dist-url">
+                    <code>{subShownUrl}</code>
+                    <button
+                      type="button"
+                      className="urlbtn"
+                      onClick={() => setRevealToken((v) => !v)}
+                      title="显示 / 隐藏令牌"
+                    >
+                      {revealToken ? '隐藏' : '显示'}
+                    </button>
+                  </div>
+                  <div className="dist-acts" style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                    <button
+                      type="button"
+                      className="btn primary sm"
+                      onClick={copySubUrl}
+                      disabled={!subRealUrl}
+                    >
+                      复制链接
+                    </button>
+                    <button
+                      type="button"
+                      className="btn sm"
+                      onClick={() => subRealUrl && window.open(subRealUrl, '_blank', 'noopener')}
+                      disabled={!subRealUrl}
+                    >
+                      打开
+                    </button>
+                  </div>
+                </div>
+                {/* 按设备列出的下发地址 —— 每台设备一条,共享层那条仍在上面。 */}
+                {devices.length > 0 && (
+                  <div className="field" style={{ marginTop: 18, marginBottom: 0 }}>
+                    <label>
+                      按设备的下发地址{' '}
+                      <span style={{ color: 'var(--faint)', fontWeight: 400 }}>
+                        · 共享配置 + 该设备的差异
+                      </span>
+                    </label>
+                    {devices.map((device) => (
+                      <DeviceSubLink
+                        key={device.id}
+                        device={device}
+                        profileName={profile?.name ?? ''}
+                        subBase={subBase}
+                        reveal={revealToken}
+                      />
+                    ))}
+                  </div>
+                )}
+
+                <div className={styles.srcNote} style={{ marginTop: 14 }}>
+                  <span className="g">⇲</span>
+                  <span>
+                    链接里含访问令牌(平台级 <span className="mono">SUB_TOKEN</span>
+                    ,与其它配置文件共用),属秘钥 —— 默认掩码,点「显示」再查看 / 复制。
+                    设备链接与配置文件链接<b>共用同一把令牌</b>,轮换时一起失效。
+                    {name.trim() !== profile?.name && (
+                      <>
+                        {' '}
+                        <b style={{ color: 'var(--warn)' }}>
+                          链接用的是已保存的名称「{profile?.name}」;改名后需保存才会生效。
+                        </b>
+                      </>
+                    )}
+                  </span>
+                </div>
               </div>
-            </div>
+            )}
           </section>
+
+          {/* 设备 —— 订阅链接之后。模版同样显示:模版的设备差量会随「从模版新建」
+              一起拷贝到新配置文件,这正是模版的价值所在;只是模版自己不分发。 */}
+          <DevicePanel
+            profileId={id}
+            profileName={profile?.name ?? ''}
+            devices={devices}
+            loading={devicesLoading}
+            distributable={!isTemplate}
+            onChanged={() => void reloadDevices()}
+          />
 
           {/* 操作 */}
           <section className="panel">

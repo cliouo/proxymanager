@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { REDIS_KEYS } from '@/lib/redis/keys';
-import { RuleSchema, type Collection, type Profile, type ProxyGroup, type Rule, type Subscription } from '@/schemas';
+import { RuleSchema, type Collection, type Device, type Profile, type ProxyGroup, type Rule, type Subscription } from '@/schemas';
 
 const stores = new Map<string, Map<string, unknown>>();
 /** Plain string keys (base:content/meta, config:version, backups). */
@@ -341,6 +341,56 @@ describe('profileService — clone-on-create (Phase 2)', () => {
     bucket(REDIS_KEYS.taxonomy.groups(p.id)).set('MyGroup', { kind: 'custom' });
     return { groupId, ruleId: rule.id };
   }
+
+  /** 给 profile 挂一台设备（P1 设备层）。 */
+  function seedDevice(p: Profile, over: Partial<Device> = {}): Device {
+    const d: Device = {
+      id: crypto.randomUUID(),
+      name: 'macbook',
+      base_patch: { 'mixed-port': 7891 },
+      created_at: 5,
+      updated_at: 5,
+      ...over,
+    } as Device;
+    bucket(REDIS_KEYS.devices(p.id)).set(d.id, d);
+    return d;
+  }
+
+  it('copy_from 连设备补丁一起深拷贝(新 id,名字与补丁保留)', async () => {
+    const src = seedProfile({ name: 'default' });
+    seedOwnedConfig(src);
+    const srcDevice = seedDevice(src, { name: 'home-server', base_patch: { secret: 's' } });
+
+    const dest = await svc.createProfile({ name: 'cloned', copy_from: src.id });
+
+    const cloned = Object.values(
+      Object.fromEntries(bucket(REDIS_KEYS.devices(dest.id))),
+    ) as Device[];
+    expect(cloned).toHaveLength(1);
+    expect(cloned[0].name).toBe('home-server');
+    expect(cloned[0].base_patch).toEqual({ secret: 's' });
+    expect(cloned[0].id).not.toBe(srcDevice.id);
+  });
+
+  it('删除 profile 时级联删掉它的设备', async () => {
+    seedProfile({ name: 'default' });
+    const victim = seedProfile({ name: 'victim' });
+    seedDevice(victim);
+    expect(bucket(REDIS_KEYS.devices(victim.id)).size).toBe(1);
+
+    await svc.deleteProfile(victim.id);
+
+    expect(stores.get(REDIS_KEYS.devices(victim.id))).toBeUndefined();
+  });
+
+  it('无设备的 profile 克隆后依然无设备(零设备回归)', async () => {
+    const src = seedProfile({ name: 'default' });
+    seedOwnedConfig(src);
+
+    const dest = await svc.createProfile({ name: 'cloned', copy_from: src.id });
+
+    expect(stores.get(REDIS_KEYS.devices(dest.id))).toBeUndefined();
+  });
 
   it('copy_from deep-copies base + groups + rules + taxonomy with new ids, names preserved', async () => {
     const src = seedProfile({ name: 'default' });

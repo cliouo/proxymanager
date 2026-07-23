@@ -357,8 +357,8 @@ export async function runRuleOp(ctx: OpContext, op: string, payload: unknown): P
 export const ruleAnchorAppendScenario: Scenario = {
   descriptor: {
     id: 'rule-anchor-append',
-    title: 'Rules',
-    description: 'Append DOMAIN / DOMAIN-SUFFIX rules under named anchors in base.yaml.',
+    title: '规则编辑',
+    description: '管理 base.yaml 锚点下的规则列表，按锚点 / 策略 / 类型筛选。',
     navHref: '/scenarios/rule-anchor-append',
   },
   ops: {

@@ -18,12 +18,14 @@
  */
 
 import { createHash } from 'node:crypto';
+import { buildDeviceConfig } from '@/lib/engine/devicePatch';
 import { resolveConfig, type ResolveResult } from '@/lib/engine/resolve';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { getRedis } from '@/lib/redis/client';
 import { REDIS_KEYS } from '@/lib/redis/keys';
 import { getBase } from '@/lib/repos/baseRepo';
 import { listCollections } from '@/lib/repos/collectionsRepo';
+import { getDeviceByName } from '@/lib/repos/devicesRepo';
 import { getProfileByName } from '@/lib/repos/profilesRepo';
 import { listProxyGroups } from '@/lib/repos/proxyGroupsRepo';
 import { listProxyGroupTemplates } from '@/lib/repos/proxyGroupTemplatesRepo';
@@ -403,4 +405,141 @@ export async function renderProfileConfig(
     displayName: profileRecord.display_name ?? null,
     cache: opts.noCache ? 'bypass' : 'miss',
   };
+}
+
+/* ─── 设备渲染 ──────────────────────────────────────────────────────── */
+
+export interface RenderDeviceResult extends RenderProfileResult {
+  /** 设备记录的 display_name(null = 用 `{profile}-{device}` 兜底)。 */
+  deviceDisplayName: string | null;
+  /** 共享层缓存状态 —— 设备命中时共享层可能根本没被读(见下)。 */
+  sharedCache: RenderCacheStatus | null;
+}
+
+/**
+ * 渲染某台设备的最终配置 = 共享渲染 + 该设备的 base_patch。
+ *
+ * 缓存分两层，各自独立命中：
+ *   - 设备条目 `render:{profile}:device:{deviceId}` 命中 ⇒ **完全不碰共享层**
+ *     （连 renderProfileConfig 都不调）。合法性由与共享层**完全相同**的四元组
+ *     保证：epoch / config:version / providerUrlBase / 新鲜度窗口。设备写与共享
+ *     层写都 INCR config:version，所以这里没有、也不需要任何显式失效逻辑。
+ *   - 未命中 ⇒ 走 renderProfileConfig（它自己的缓存照常命中），再叠加补丁。
+ *
+ * 补丁与三道校验走 {@link buildDeviceConfig} —— 与 preflight 同一个函数，
+ * 所以「渲染时能过」与「保存时能过」不可能出现两套标准。
+ */
+export async function renderDeviceConfig(
+  profileName: string,
+  deviceName: string,
+  opts: RenderProfileOptions = {},
+): Promise<RenderDeviceResult> {
+  const redis = getRedis();
+  const providerUrlBase = opts.providerUrlBase ?? null;
+
+  // 防竞态,与共享层同一条纪律:版本号必须在读**任何**数据之前取到。设备记录本身
+  // 也是被这个版本号保护的数据 —— 先读设备后读版本的话,一次并发的设备改补丁会让
+  // 我们把「新版本号 + 旧补丁」缓存住,而它再也不会失效。
+  //
+  // 代价是命中路径比共享层多一次往返(共享层能把版本与条目并进一个 MGET,这里的
+  // 缓存键要先知道 device.id 才能拼出来)。正确性优先于这一次 GET。
+  const rawVersion = await redis.get<unknown>(REDIS_KEYS.configVersion);
+  const { version, cacheable: cacheableVersion } = readConfigVersion(rawVersion);
+  if (!cacheableVersion) {
+    await repairInvalidConfigVersion(redis);
+  }
+
+  const profileRecord = await getProfileByName(profileName);
+  if (!profileRecord) {
+    throw ProblemDetailsError.notFound(`Profile "${profileName}" 不存在。`);
+  }
+  const device = await getDeviceByName(profileRecord.id, deviceName);
+  if (!device) {
+    throw ProblemDetailsError.notFound(`设备 "${deviceName}" 不存在。`);
+  }
+
+  const cacheKey = REDIS_KEYS.deviceRenderCache(profileName, device.id);
+  if (!cacheableVersion) {
+    await redis.del(cacheKey);
+  }
+
+  if (!opts.noCache && cacheableVersion) {
+    const raw = await redis.get<unknown>(cacheKey);
+    const entry = isRenderCacheEntry(raw) ? raw : null;
+    if (
+      entry !== null &&
+      entry.epoch === RENDER_CACHE_EPOCH &&
+      entry.version === version &&
+      (entry.providerUrlBase ?? null) === providerUrlBase &&
+      Date.now() - entry.renderedAt < entry.freshForMs
+    ) {
+      return {
+        resolved: entry,
+        baseEtag: entry.baseEtag,
+        baseUpdatedAt: entry.baseUpdatedAt,
+        displayName: entry.displayName ?? null,
+        deviceDisplayName: device.display_name ?? null,
+        cache: 'hit',
+        sharedCache: null,
+      };
+    }
+  }
+
+  // 共享渲染:全部选项语义(noCache 强刷上游、providerUrlBase 进 URL)照单传下去。
+  const shared = await renderProfileConfig(profileName, opts);
+  const content = buildDeviceConfig(shared.resolved.content, device.base_patch, device.name);
+
+  const resolved: CachedResolveOutput = {
+    ...shared.resolved,
+    content,
+    // buildId 是内容寻址的,同时充当 ETag —— 必须按设备产物重算,否则两台设备会
+    // 共用一个 ETag,客户端拿着别的设备的 304 就永远更新不到自己的配置。
+    buildId: buildIdForContent(content),
+  };
+
+  const entry: RenderCacheEntry = {
+    epoch: RENDER_CACHE_EPOCH,
+    version,
+    providerUrlBase,
+    renderedAt: Date.now(),
+    // 新鲜度跟随共享层:设备补丁不引入新的上游依赖,过期性完全由共享渲染决定。
+    freshForMs: sharedFreshForMs(shared),
+    baseEtag: shared.baseEtag,
+    baseUpdatedAt: shared.baseUpdatedAt,
+    displayName: shared.displayName,
+    ...resolved,
+  };
+  // 落缓存前复读一次版本号:渲染期间若有并发写(设备改补丁 / 共享层保存),我们手上
+  // 这份产物已经是旧世界的了。仍按 `version` 写进去,会造出一条「标着旧版本号、内容
+  // 却是渲染中途状态」的条目 —— 它不会被命中(版本比对失配),但会一直占着键直到过期,
+  // 而且下一次写入前它就是唯一的历史。跳过写入即可:结果照常返回,只是不落缓存。
+  const versionAfter = readConfigVersion(await redis.get<unknown>(REDIS_KEYS.configVersion));
+  const stillCurrent = versionAfter.cacheable && versionAfter.version === version;
+  if (cacheableVersion && stillCurrent) {
+    await redis.set(cacheKey, entry, {
+      ex: Math.ceil(entry.freshForMs / 1000) + EX_SLACK_SECONDS,
+    });
+  }
+
+  return {
+    resolved: entry,
+    baseEtag: shared.baseEtag,
+    baseUpdatedAt: shared.baseUpdatedAt,
+    displayName: shared.displayName,
+    deviceDisplayName: device.display_name ?? null,
+    cache: opts.noCache ? 'bypass' : 'miss',
+    sharedCache: shared.cache,
+  };
+}
+
+/**
+ * 共享渲染的新鲜度窗口。共享层命中缓存时条目自带 freshForMs;miss 时
+ * renderProfileConfig 刚写过条目但没把该值回传,退到上限即可 —— 设备条目至多
+ * 比共享条目晚过期一个窗口,而版本号失效(设备/共享任一写入)始终先一步生效。
+ */
+function sharedFreshForMs(shared: RenderProfileResult): number {
+  const entry = shared.resolved as Partial<RenderCacheEntry>;
+  return typeof entry.freshForMs === 'number' && entry.freshForMs > 0
+    ? Math.min(entry.freshForMs, MAX_FRESH_MS)
+    : MAX_FRESH_MS;
 }

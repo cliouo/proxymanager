@@ -6,6 +6,7 @@ import { useUnsavedGuard } from '@/lib/client/useUnsavedGuard';
 import { PageTopbar } from '@/components/PageChrome';
 import { ScopePill } from '@/components/Topbar';
 import { CodeEditor } from '@/components/ui/CodeEditor';
+import { DeviceOverrideStrip } from './_components/DeviceOverrideStrip';
 import { ProfileBindingBar } from './_components/ProfileBindingBar';
 import styles from './base.module.css';
 
@@ -237,6 +238,9 @@ export default function BasePage() {
 
         {/* per-profile node source binding */}
         <ProfileBindingBar />
+
+        {/* 设备覆盖的反向标注(有设备且有交集时才出现) */}
+        <DeviceOverrideStrip content={content} />
 
         {/* status strip */}
         {(loadError || status) && (
