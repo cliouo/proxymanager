@@ -2,8 +2,9 @@
  * One-time migration for Phase T (模版类型): 给存量的模版系列 profile 打上
  * `kind: 'template'`。
  *
- * 名单规则（与 DEVICE-LAYER-DESIGN.md §8.2 一致）：`name` 以 `simple` 或
- * `general` 开头的 profile → 模版；其余一律不动。ProfileSchema 给 `kind` 定了
+ * 名单规则（与 DEVICE-LAYER-DESIGN.md §8.2 的语义一致）：生产中的
+ * `template-simple*` / `template-general*`，以及早期 `simple*` / `general*`
+ * profile → 模版；其余一律不动。ProfileSchema 给 `kind` 定了
  * `.default('normal')`，所以**不打标的记录无需回填**（parse-forward 即可）——
  * 这个脚本只负责把「本来就是模版」的那几份标出来。
  *
