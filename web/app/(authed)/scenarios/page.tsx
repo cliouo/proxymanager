@@ -9,6 +9,7 @@ interface ScenarioDescriptor {
   id: string;
   title: string;
   description?: string;
+  scope?: 'profile' | 'device';
   navHref?: string;
 }
 
@@ -65,9 +66,12 @@ export default function ScenariosIndexPage() {
                     <h2 className="text-[24px] font-medium tracking-[-0.015em] leading-[1.2] text-[var(--fg)] group-hover:text-[var(--color-primary)] transition-colors">
                       {s.title}
                     </h2>
-                    <code className="shrink-0 font-mono text-[11px] text-[var(--color-muted)] tracking-[0.04em]">
-                      {s.id}
-                    </code>
+                    <div className="flex shrink-0 items-center gap-2">
+                      {s.scope === 'device' && <span className="pill acc plain">设备级</span>}
+                      <code className="font-mono text-[11px] text-[var(--color-muted)] tracking-[0.04em]">
+                        {s.id}
+                      </code>
+                    </div>
                   </div>
                   {s.description && (
                     <p className="mt-1.5 text-[13px] text-[var(--color-muted)] leading-[1.6]">

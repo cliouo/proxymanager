@@ -102,8 +102,10 @@ return 1
  *       fields and URI aliases before strict fixed-Mihomo validation.
  *  16 → weakly typed hysteria bandwidth/hop integers coerce to strings and
  *       tab-padded node names are accepted; previously-skipped nodes appear.
+ *  18 → typed device features inject device-scoped Tailscale nodes, groups and
+ *       routes after the RFC 7386 patch and before final validation.
  */
-const RENDER_CACHE_EPOCH = 17;
+const RENDER_CACHE_EPOCH = 18;
 
 export type RenderCacheStatus = 'hit' | 'miss' | 'bypass';
 
@@ -416,6 +418,8 @@ export interface RenderDeviceResult extends RenderProfileResult {
   sharedCache: RenderCacheStatus | null;
 }
 
+const DEVICE_RENDER_SNAPSHOT_ATTEMPTS = 3;
+
 /**
  * 渲染某台设备的最终配置 = 共享渲染 + 该设备的 base_patch。
  *
@@ -433,6 +437,15 @@ export async function renderDeviceConfig(
   profileName: string,
   deviceName: string,
   opts: RenderProfileOptions = {},
+): Promise<RenderDeviceResult> {
+  return renderDeviceConfigAttempt(profileName, deviceName, opts, 0);
+}
+
+async function renderDeviceConfigAttempt(
+  profileName: string,
+  deviceName: string,
+  opts: RenderProfileOptions,
+  attempt: number,
 ): Promise<RenderDeviceResult> {
   const redis = getRedis();
   const providerUrlBase = opts.providerUrlBase ?? null;
@@ -473,6 +486,15 @@ export async function renderDeviceConfig(
       (entry.providerUrlBase ?? null) === providerUrlBase &&
       Date.now() - entry.renderedAt < entry.freshForMs
     ) {
+      // version、设备记录和缓存项分三次读取。只有尾部版本仍等于开头版本，
+      // 三者才属于同一代；否则这次“命中”可能带着刚被改掉的补丁或密钥。
+      const versionAfterHit = readConfigVersion(await redis.get<unknown>(REDIS_KEYS.configVersion));
+      if (!versionAfterHit.cacheable || versionAfterHit.version !== version) {
+        if (attempt + 1 >= DEVICE_RENDER_SNAPSHOT_ATTEMPTS) {
+          throw ProblemDetailsError.preconditionFailed('配置正在更新，请稍后重试。');
+        }
+        return renderDeviceConfigAttempt(profileName, deviceName, opts, attempt + 1);
+      }
       return {
         resolved: entry,
         baseEtag: entry.baseEtag,
@@ -487,7 +509,12 @@ export async function renderDeviceConfig(
 
   // 共享渲染:全部选项语义(noCache 强刷上游、providerUrlBase 进 URL)照单传下去。
   const shared = await renderProfileConfig(profileName, opts);
-  const content = buildDeviceConfig(shared.resolved.content, device.base_patch, device.name);
+  const content = buildDeviceConfig(
+    shared.resolved.content,
+    device.base_patch,
+    device.name,
+    device.features,
+  );
 
   const resolved: CachedResolveOutput = {
     ...shared.resolved,
@@ -510,11 +537,16 @@ export async function renderDeviceConfig(
     ...resolved,
   };
   // 落缓存前复读一次版本号:渲染期间若有并发写(设备改补丁 / 共享层保存),我们手上
-  // 这份产物已经是旧世界的了。仍按 `version` 写进去,会造出一条「标着旧版本号、内容
-  // 却是渲染中途状态」的条目 —— 它不会被命中(版本比对失配),但会一直占着键直到过期,
-  // 而且下一次写入前它就是唯一的历史。跳过写入即可:结果照常返回,只是不落缓存。
+  // 这份产物已经是旧世界的了。不能只跳过缓存后仍把它下发,尤其旧产物可能还带着刚
+  // 轮换的密钥;整个设备快照重读并重渲染,连续三次竞争才返回 412 让客户端稍后重试。
   const versionAfter = readConfigVersion(await redis.get<unknown>(REDIS_KEYS.configVersion));
   const stillCurrent = versionAfter.cacheable && versionAfter.version === version;
+  if (!stillCurrent) {
+    if (attempt + 1 >= DEVICE_RENDER_SNAPSHOT_ATTEMPTS) {
+      throw ProblemDetailsError.preconditionFailed('配置正在更新，请稍后重试。');
+    }
+    return renderDeviceConfigAttempt(profileName, deviceName, opts, attempt + 1);
+  }
   if (cacheableVersion && stillCurrent) {
     await redis.set(cacheKey, entry, {
       ex: Math.ceil(entry.freshForMs / 1000) + EX_SLACK_SECONDS,

@@ -18,9 +18,15 @@
 
 import { parseDocument, stringify } from 'yaml';
 import { ConfigValidationError } from '@/lib/config/errors';
+import { emitDeviceFeaturesYaml } from '@/lib/engine/deviceFeatures';
 import { parseBaseDocument } from '@/lib/engine/parser';
 import { validateFinalRenderedConfig } from '@/lib/engine/resolve';
-import { MAX_BASE_PATCH_BYTES, MAX_BASE_PATCH_DEPTH } from '@/schemas';
+import {
+  DeviceFeaturesSchema,
+  MAX_BASE_PATCH_BYTES,
+  MAX_BASE_PATCH_DEPTH,
+  type DeviceFeatures,
+} from '@/schemas';
 
 /**
  * 由共享层管理的区块 —— 补丁里出现即拒。
@@ -301,15 +307,21 @@ export function redactRenderedYaml(content: string): string {
  *
  * preflight 与设备渲染都调它，所以「设备产物合法」在整个系统里只有一个定义。
  */
-export function buildDeviceConfig(sharedYaml: string, patch: unknown, deviceLabel: string): string {
+export function buildDeviceConfig(
+  sharedYaml: string,
+  patch: unknown,
+  deviceLabel: string,
+  features: DeviceFeatures = DeviceFeaturesSchema.parse({}),
+): string {
   assertValidDevicePatch(patch, deviceLabel);
   const patched = renderDevicePatchedYaml(sharedYaml, patch);
+  const withFeatures = emitDeviceFeaturesYaml(patched, features, deviceLabel);
 
   // parseBaseDocument 抛的 BaseParseError 本身就是 ConfigValidationError，但它的
   // 措辞是「base 怎么了」—— 设备场景要点名是哪台设备，否则用户在共享层保存被拦时
   // 完全不知道该去改哪台设备的补丁。
   try {
-    parseBaseDocument(patched);
+    parseBaseDocument(withFeatures);
   } catch (error) {
     throw patchIssue(
       error instanceof ConfigValidationError ? error.issue.code : 'device_patch_structure_invalid',
@@ -321,7 +333,7 @@ export function buildDeviceConfig(sharedYaml: string, patch: unknown, deviceLabe
   }
 
   try {
-    validateFinalRenderedConfig(patched);
+    validateFinalRenderedConfig(withFeatures);
   } catch (error) {
     throw patchIssue(
       'device_patch_final_invalid',
@@ -332,5 +344,5 @@ export function buildDeviceConfig(sharedYaml: string, patch: unknown, deviceLabe
     );
   }
 
-  return patched;
+  return withFeatures;
 }

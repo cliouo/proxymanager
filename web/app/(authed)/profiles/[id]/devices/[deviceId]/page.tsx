@@ -12,6 +12,8 @@ import { useToast } from '@/components/ui/Toast';
 import { COMMON_PATCH_KEYS, randomSecret } from '@/lib/profiles/devicePresets';
 import { TEMPLATE_NOT_DISTRIBUTABLE, isTemplateProfile } from '@/lib/profiles/kind';
 import type { DeviceRecord } from '../../_components/DevicePanel';
+import type { PublicTailscaleDeviceFeature } from '@/schemas';
+import { TailscaleDeviceCard } from './_components/TailscaleDeviceCard';
 import styles from '../../../profiles.module.css';
 
 /**
@@ -232,6 +234,17 @@ export default function DeviceDetailPage() {
 
   const keys = Object.keys(patch);
   const unusedCommon = COMMON_PATCH_KEYS.filter((k) => !(k.key in patch));
+  const updateTailscale = useCallback((feature: PublicTailscaleDeviceFeature | null) => {
+    setPreview(null);
+    setPreviewError(null);
+    setDevice((current) => {
+      if (!current) return current;
+      const features = { ...(current.features ?? {}) };
+      if (feature) features.tailscale = feature;
+      else delete features.tailscale;
+      return { ...current, features };
+    });
+  }, []);
 
   return (
     <>
@@ -462,6 +475,16 @@ export default function DeviceDetailPage() {
               )}
             </div>
           </section>
+
+          {/* ④ 本设备功能 */}
+          <TailscaleDeviceCard
+            profileId={profileId}
+            deviceId={deviceId}
+            deviceName={device?.name ?? ''}
+            initialFeature={device?.features?.tailscale ?? null}
+            isTemplate={isTemplate}
+            onChanged={updateTailscale}
+          />
 
           {/* ⑤ 危险区 */}
           <section className="panel">

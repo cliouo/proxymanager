@@ -1,6 +1,6 @@
 import { withProblemDetails } from '@/lib/http/handler';
 import { ProblemDetailsError } from '@/lib/http/problem';
-import { createDevice, listProfileDevices } from '@/lib/services/deviceService';
+import { createDevice, listProfileDevices, publicDevice } from '@/lib/services/deviceService';
 import { DeviceCreateSchema } from '@/schemas';
 
 export const dynamic = 'force-dynamic';
@@ -14,7 +14,7 @@ type Ctx = RouteContext<'/api/v1/profiles/[id]/devices'>;
  */
 export const GET = withProblemDetails(async (_request: Request, ctx: Ctx) => {
   const { id } = await ctx.params;
-  const data = await listProfileDevices(id);
+  const data = (await listProfileDevices(id)).map(publicDevice);
   return Response.json({ data, meta: { total: data.length } });
 });
 
@@ -26,7 +26,7 @@ export const POST = withProblemDetails(async (request: Request, ctx: Ctx) => {
   const input = DeviceCreateSchema.parse(raw);
   const created = await createDevice(id, input);
   return Response.json(
-    { data: created },
+    { data: publicDevice(created) },
     {
       status: 201,
       headers: { Location: `/api/v1/profiles/${id}/devices/${created.id}` },

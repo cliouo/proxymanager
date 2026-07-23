@@ -23,6 +23,12 @@ upstream data, then commit against the same planning/config version. New
 mutation paths that can change rendered output must preserve this invariant and
 return structured, credential-free validation issues.
 
+Device patches and device-scoped feature mutations must derive their complete
+candidate and write set from the same version-bracketed device snapshot, pass
+the shared preflight gate, and commit with config-version CAS. Feature secrets
+must never appear in public device APIs, previews, audit snapshots, errors, or
+migration output.
+
 ## Shared subscription mutation invariant
 
 A profile-scoped action must not rewrite a subscription used by another profile

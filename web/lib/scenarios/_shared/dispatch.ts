@@ -73,6 +73,11 @@ export async function dispatch(req: DispatchRequest): Promise<DispatchResponse> 
   if (!scenario) {
     throw ProblemDetailsError.notFound(`Unknown scenario "${req.scenario}".`);
   }
+  if (scenario.descriptor.scope === 'device') {
+    throw ProblemDetailsError.unprocessable(
+      `场景「${req.scenario}」是设备级功能，不能通过 profile 级 /api/v1/ops 写入；请使用具体设备的 features 子资源。`,
+    );
+  }
   const handler = scenario.ops[req.op];
   if (!handler) {
     throw ProblemDetailsError.notFound(

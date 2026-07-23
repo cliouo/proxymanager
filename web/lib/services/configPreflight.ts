@@ -206,7 +206,7 @@ function assertDevicePatchesValid(sharedContent: string, devices: readonly Devic
   const failures: { name: string; issue: ConfigValidationError }[] = [];
   for (const device of devices) {
     try {
-      buildDeviceConfig(sharedContent, device.base_patch, device.name);
+      buildDeviceConfig(sharedContent, device.base_patch, device.name, device.features);
     } catch (error) {
       if (error instanceof ConfigValidationError) {
         failures.push({ name: device.name, issue: error });
@@ -227,10 +227,10 @@ function assertDevicePatchesValid(sharedContent: string, devices: readonly Devic
       : '';
   throw new ConfigValidationError({
     code: first.issue.issue.code,
-    message: `${first.issue.message}${others} —— 请先修改或删除该设备的补丁，再保存共享层改动。`,
+    message: `${first.issue.message}${others} —— 请先修改该设备的差异或设备功能，再保存共享层改动。`,
     section: 'devices',
     path: `devices[${first.name}].${first.issue.issue.path}`,
-    resource: 'device-patch',
+    resource: 'device',
   });
 }
 

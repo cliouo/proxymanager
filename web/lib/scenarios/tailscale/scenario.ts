@@ -1,6 +1,10 @@
 /**
- * `tailscale` — one-click tailnet access via fixed Mihomo's embedded tsnet
- * outbound (`type: tailscale`).
+ * Legacy shared Tailscale implementation.
+ *
+ * P2 moved all new writes to a typed feature under a concrete device. This
+ * module remains for shape detection, old audit inverses and migration tests;
+ * the profile-scoped dispatcher rejects `scope: device`, so these handlers are
+ * no longer a public path for creating shared Tailscale artifacts.
  *
  * Philosophy: generator, not a config layer. The scenario mints ordinary
  * artifacts — a base-literal tailscale proxy (static credentialed node →
@@ -50,7 +54,13 @@ import {
   listProxyGroups,
 } from '@/lib/services/proxyGroupService';
 import { ProxyGroupCreateSchema, RuleCreateSchema, type ProxyGroup, type Rule } from '@/schemas';
-import type { AuditEventInput, InverseHandler, OpContext, OpHandler, Scenario } from '../_shared/types';
+import type {
+  AuditEventInput,
+  InverseHandler,
+  OpContext,
+  OpHandler,
+  Scenario,
+} from '../_shared/types';
 
 /* ─── Constants ─────────────────────────────────────────────────────── */
 
@@ -535,7 +545,9 @@ const disable: OpHandler = async (ctx, raw) => {
   );
 
   if (!nodeSnapshot && !group && doomedRules.length === 0) {
-    throw ProblemDetailsError.notFound(`没有找到可拆除的 tailscale 产物("${nodeName}"/"${groupName}")。`);
+    throw ProblemDetailsError.notFound(
+      `没有找到可拆除的 tailscale 产物("${nodeName}"/"${groupName}")。`,
+    );
   }
 
   const snap: DisableSnapshot = {
@@ -641,7 +653,11 @@ const inverseEnable: InverseHandler = async (ctx, event) => {
     rules: removedRules,
   };
   return {
-    data: { nodeName, groupName, removed: { node: nodeRemoved, group: group !== null, ruleIds: ruleDeletes } },
+    data: {
+      nodeName,
+      groupName,
+      removed: { node: nodeRemoved, group: group !== null, ruleIds: ruleDeletes },
+    },
     events: [{ action: 'disable', target: { kind: 'proxy', name: nodeName }, before: snap }],
   };
 };
@@ -763,9 +779,7 @@ export async function summariseTailscale(profileId: string): Promise<TailscaleSu
       type: g.type,
       proxies: g.proxies,
       managedShape:
-        g.type === 'select' &&
-        g['dialer-proxy'] === undefined &&
-        (g.proxies ?? []).length === 1,
+        g.type === 'select' && g['dialer-proxy'] === undefined && (g.proxies ?? []).length === 1,
     }));
   const groupNames = new Set(groups.map((g) => g.name));
 
@@ -790,8 +804,9 @@ export const tailscaleScenario: Scenario = {
   descriptor: {
     id: 'tailscale',
     title: 'Tailscale',
+    scope: 'device',
     description:
-      '一键接入 tailnet：写入 base 字面 tailscale 节点、一个 select 策略组与 CGNAT 规则 —— 之后都是普通模块管辖的普通产物。',
+      '按设备接入 tailnet：每台设备拥有独立 hostname、认证密钥与运行状态目录，共享配置保持不变。',
     navHref: '/scenarios/tailscale',
   },
   ops: {

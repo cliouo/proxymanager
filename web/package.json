@@ -27,6 +27,7 @@
     "migrate:collection-slug": "tsx --env-file=.env.local scripts/migrate-collection-slug.ts",
     "migrate:config-per-profile": "tsx --env-file=.env.local scripts/migrate-config-per-profile.ts",
     "migrate:profile-kind": "tsx --env-file=.env.local scripts/migrate-profile-kind.ts",
+    "migrate:tailscale-device": "tsx --env-file=.env.local scripts/migrate-tailscale-device.ts",
     "vercel:dev": "vercel dev",
     "vercel:link": "vercel link",
     "vercel:deploy": "vercel deploy",

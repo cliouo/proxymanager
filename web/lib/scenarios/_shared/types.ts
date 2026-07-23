@@ -121,6 +121,8 @@ export interface ScenarioDescriptor {
   id: string;
   title: string;
   description?: string;
+  /** 功能作用层：profile = 共享层（默认）；device = 按设备启用。 */
+  scope?: 'profile' | 'device';
   /**
    * Optional sidebar entry. Should match a real Next.js route under
    * `app/(authed)/scenarios/{id}/page.tsx`.

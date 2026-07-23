@@ -209,7 +209,7 @@ describe('renderDeviceConfig', () => {
     await expect(renderDeviceConfig('home', 'macbook')).rejects.toThrow(/proxies/);
   });
 
-  it('渲染期间版本号变了就不落缓存(不留「旧版本号 + 中途内容」的条目)', async () => {
+  it('渲染期间版本号变了会重读整份设备快照，再缓存新一代产物', async () => {
     // 渲染进行到一半时有并发写:共享渲染返回后版本号已经不是最初读到的那个。
     mocks.resolveConfig.mockImplementation(async () => {
       store.counters.set(REDIS_KEYS.configVersion, 4);
@@ -218,8 +218,37 @@ describe('renderDeviceConfig', () => {
 
     const out = await renderDeviceConfig('home', 'macbook');
 
-    expect(out.resolved.content).toContain('mixed-port: 7891'); // 结果照常返回
-    expect(store.kv.has(REDIS_KEYS.deviceRenderCache('home', 'd-1'))).toBe(false);
+    expect(out.resolved.content).toContain('mixed-port: 7891');
+    expect(mocks.resolveConfig).toHaveBeenCalledTimes(2);
+    expect(store.kv.has(REDIS_KEYS.deviceRenderCache('home', 'd-1'))).toBe(true);
+  });
+
+  it('缓存命中前若版本变化，会拒绝旧条目并用新设备记录重试', async () => {
+    await renderDeviceConfig('home', 'macbook');
+    mocks.resolveConfig.mockClear();
+    mocks.getDeviceByName.mockResolvedValue(
+      device({ base_patch: { 'mixed-port': 7999 }, updated_at: 2 }),
+    );
+
+    let versionReads = 0;
+    const originalGet = fakeRedis.get;
+    fakeRedis.get = async (key: string) => {
+      if (key === REDIS_KEYS.configVersion) {
+        versionReads += 1;
+        if (versionReads === 2) {
+          store.counters.set(REDIS_KEYS.configVersion, 4);
+        }
+      }
+      return originalGet(key);
+    };
+    try {
+      const out = await renderDeviceConfig('home', 'macbook');
+      expect(out.cache).toBe('miss');
+      expect(out.resolved.content).toContain('mixed-port: 7999');
+      expect(mocks.resolveConfig).toHaveBeenCalled();
+    } finally {
+      fakeRedis.get = originalGet;
+    }
   });
 
   it('读版本号在读设备记录之前(否则「新版本+旧补丁」会被永久缓存)', async () => {

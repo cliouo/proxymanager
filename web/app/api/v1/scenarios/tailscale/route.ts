@@ -1,17 +1,35 @@
 import { withProblemDetails } from '@/lib/http/handler';
 import { resolveScopeProfile } from '@/lib/profileScope';
 import { summariseTailscale } from '@/lib/scenarios/tailscale/scenario';
+import { listProfileDevices, publicDevice } from '@/lib/services/deviceService';
 
 export const dynamic = 'force-dynamic';
 
 /**
- * Read side of the tailscale scenario: shape-detected artifacts (tailscale
- * base-literal nodes, groups referencing them, rules targeting those groups)
- * plus the base's rule anchors for the wizard form. auth-key values never
- * leave the server — nodes carry a `hasAuthKey` flag instead.
+ * Device-scoped Tailscale overview. Legacy shared artifacts remain visible so
+ * operators know why device preflight is blocked, but this endpoint no longer
+ * drives a wizard that writes new shared nodes. No auth key leaves the server.
  */
 export const GET = withProblemDetails(async (request: Request) => {
-  const { id: profileId } = await resolveScopeProfile(request);
-  const summary = await summariseTailscale(profileId);
-  return Response.json({ data: summary });
+  const profile = await resolveScopeProfile(request);
+  const [legacy, devices] = await Promise.all([
+    summariseTailscale(profile.id),
+    listProfileDevices(profile.id),
+  ]);
+  return Response.json({
+    data: {
+      profile: { id: profile.id, name: profile.name, kind: profile.kind },
+      legacy,
+      devices: devices.map((device) => {
+        const safe = publicDevice(device);
+        return {
+          id: safe.id,
+          name: safe.name,
+          display_name: safe.display_name,
+          basePatchCount: Object.keys(safe.base_patch).length,
+          features: safe.features,
+        };
+      }),
+    },
+  });
 });

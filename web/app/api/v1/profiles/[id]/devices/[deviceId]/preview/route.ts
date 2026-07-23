@@ -35,7 +35,12 @@ export const GET = withProblemDetails(async (_request: Request, ctx: Ctx) => {
   let deviceYaml: string | null = null;
   const issues: ConfigValidationError['issue'][] = [];
   try {
-    deviceYaml = buildDeviceConfig(shared.resolved.content, device.base_patch, device.name);
+    deviceYaml = buildDeviceConfig(
+      shared.resolved.content,
+      device.base_patch,
+      device.name,
+      device.features,
+    );
   } catch (error) {
     if (!(error instanceof ConfigValidationError)) throw error;
     issues.push(error.issue);

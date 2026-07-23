@@ -127,7 +127,13 @@ export async function cloneDevices(
   const cloned: Record<string, Device> = {};
   for (const device of devices) {
     const id = crypto.randomUUID();
-    cloned[id] = { ...device, id, created_at: now, updated_at: now };
+    cloned[id] = {
+      ...device,
+      id,
+      features: {},
+      created_at: now,
+      updated_at: now,
+    };
   }
   await getRedis()
     .multi()

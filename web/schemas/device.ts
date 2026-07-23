@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { NAME_REGEX, NAME_HINT } from './profile';
+import { RuleCreateSchema } from './rule';
 
 /**
  * 设备 (Device) —— 挂在 profile 下的**差量实体**。
@@ -25,6 +26,131 @@ export const MAX_BASE_PATCH_BYTES = 32 * 1024;
 export const MAX_BASE_PATCH_DEPTH = 8;
 
 const DISPLAY_NAME_MAX = 120;
+const FEATURE_NAME_MAX = 128;
+const FeatureGeneratedNameSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(FEATURE_NAME_MAX)
+  .regex(/^[^\u0000-\u001f\u007f,]+$/, '名称不能包含逗号或控制字符');
+const TailscaleCidrSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(64)
+  .superRefine((value, ctx) => {
+    const parsed = RuleCreateSchema.safeParse({
+      anchor: 'device-feature',
+      type: value.includes(':') ? 'IP-CIDR6' : 'IP-CIDR',
+      value,
+      policy: 'Tailscale',
+      options: ['no-resolve'],
+      source: 'manual',
+    });
+    if (!parsed.success) {
+      ctx.addIssue({ code: 'custom', message: '必须是合法的 IPv4 或 IPv6 CIDR' });
+    }
+  });
+
+export const TailscaleHostnameSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(63)
+  .regex(/^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/, 'hostname 只能含字母、数字和中划线');
+
+const TailscaleControlUrlSchema = z
+  .string()
+  .trim()
+  .url()
+  .max(512)
+  .superRefine((value, ctx) => {
+    const parsed = new URL(value);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      ctx.addIssue({ code: 'custom', message: 'controlUrl 只支持 http 或 https' });
+    }
+    if (parsed.username || parsed.password || parsed.search || parsed.hash) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'controlUrl 不能包含账号、密码、查询参数或片段',
+      });
+    }
+  });
+
+/** Persisted device-scoped Tailscale instance. The auth key never leaves server APIs. */
+export const TailscaleDeviceFeatureSchema = z
+  .object({
+    hostname: TailscaleHostnameSchema,
+    authKey: z.string().trim().min(1).max(256).regex(/^\S+$/, 'authKey 不能包含空白').optional(),
+    controlUrl: TailscaleControlUrlSchema.optional(),
+    stateDir: z
+      .string()
+      .trim()
+      .min(1)
+      .max(256)
+      .regex(/^[^\u0000-\u001f\u007f]+$/, 'stateDir 不能包含控制字符')
+      .optional(),
+    ephemeral: z.boolean().default(false),
+    acceptRoutes: z.boolean().default(true),
+    udp: z.boolean().default(true),
+    exitNode: z.string().trim().min(1).max(128).optional(),
+    exitNodeAllowLanAccess: z.boolean().default(false),
+    nodeName: FeatureGeneratedNameSchema.optional(),
+    groupName: FeatureGeneratedNameSchema.optional(),
+    extraCidrs: z
+      .array(TailscaleCidrSchema)
+      .max(64)
+      .default([])
+      .superRefine((values, ctx) => {
+        const seen = new Set<string>();
+        values.forEach((value, index) => {
+          if (seen.has(value)) {
+            ctx.addIssue({
+              code: 'custom',
+              message: '额外 CIDR 不能重复',
+              path: [index],
+            });
+          }
+          seen.add(value);
+        });
+      }),
+  })
+  .strict();
+
+export type TailscaleDeviceFeature = z.infer<typeof TailscaleDeviceFeatureSchema>;
+
+export const DeviceFeaturesSchema = z
+  .object({
+    tailscale: TailscaleDeviceFeatureSchema.optional(),
+  })
+  .strict()
+  .default({});
+
+export type DeviceFeatures = z.infer<typeof DeviceFeaturesSchema>;
+
+/** Dedicated write payload. Omitted key means preserve; null explicitly clears it. */
+export const TailscaleDeviceFeatureUpdateSchema = TailscaleDeviceFeatureSchema.omit({
+  authKey: true,
+}).extend({
+  authKey: z
+    .string()
+    .trim()
+    .min(1)
+    .max(256)
+    .regex(/^\S+$/, 'authKey 不能包含空白')
+    .nullable()
+    .optional(),
+});
+
+export type TailscaleDeviceFeatureUpdate = z.input<typeof TailscaleDeviceFeatureUpdateSchema>;
+
+export interface PublicTailscaleDeviceFeature extends Omit<TailscaleDeviceFeature, 'authKey'> {
+  hasAuthKey: boolean;
+}
+
+export interface PublicDeviceFeatures {
+  tailscale?: PublicTailscaleDeviceFeature;
+}
 
 export const DeviceSchema = z.object({
   id: z.uuid(),
@@ -41,6 +167,11 @@ export const DeviceSchema = z.object({
    * （proxies / proxy-groups / rules / rule-providers 由共享层管理）、尺寸与深度上限。
    */
   base_patch: z.record(z.string(), z.unknown()).default({}),
+  /**
+   * Typed device-only feature instances. They are injected after base_patch at render time.
+   * Generic device PATCH does not accept this field; each feature has a dedicated API.
+   */
+  features: DeviceFeaturesSchema,
   created_at: z.number().int(),
   updated_at: z.number().int(),
 });
@@ -65,3 +196,11 @@ export const DeviceUpdateSchema = z.object({
 });
 
 export type DeviceUpdate = z.infer<typeof DeviceUpdateSchema>;
+
+export function publicDeviceFeatures(features: DeviceFeatures): PublicDeviceFeatures {
+  const tailscale = features.tailscale;
+  if (!tailscale) return {};
+  const safe = { ...tailscale };
+  delete safe.authKey;
+  return { tailscale: { ...safe, hasAuthKey: Boolean(tailscale.authKey) } };
+}
