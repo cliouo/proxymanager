@@ -181,6 +181,8 @@ async function main(): Promise<void> {
     name: PROFILE_NAME,
     display_name: DISPLAY_NAME,
     source: { type: 'none' },
+    // 这一份就是模版本体 —— 直接标好，新种下的 simple 不必再跑 migrate:profile-kind。
+    kind: 'template',
     notes:
       '最简单用法的模板: 三个策略组(默认/自动选择/dns),全部节点自动纳入,' +
       '规则只保留局域网直连 + MATCH 走默认,不做分流。',

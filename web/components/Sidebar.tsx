@@ -2,9 +2,15 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '@/lib/client/api';
 import { clearAdminKey } from '@/lib/client/auth-storage';
+import {
+  TEMPLATE_BADGE,
+  TEMPLATE_TAGLINE,
+  isTemplateProfile,
+  partitionProfilesByKind,
+} from '@/lib/profiles/kind';
 import {
   ALL_NAV,
   EXTENSIONS_NAV,
@@ -14,7 +20,12 @@ import {
   SYSTEM_NAV,
   type NavItem,
 } from '@/components/nav';
-import { profileMark, sourceLabel, useProfiles } from '@/components/profile/ProfileContext';
+import {
+  profileMark,
+  sourceLabel,
+  useProfiles,
+  type Profile,
+} from '@/components/profile/ProfileContext';
 
 /**
  * v2「Signal Console」侧边栏 —— 固定 228px / 平板横屏图标轨 / 移动端抽屉。
@@ -130,11 +141,15 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
  * 配置文件切换器(Phase 2)。选中一项即把「正在编辑的配置文件」切到它 —— 写
  * `pm.active_profile` cookie 并重载,于是 /base、/proxy-groups、/rules 等都作用到它。
  * 每行尾部的齿轮去该配置文件的设置页(绑定/订阅链接/删除)。
+ *
+ * Phase T:模版(kind=template)列在分隔线下的「模版」小节并加徽章,但**允许激活**
+ * —— 激活即编辑模版内容,这正是维护模版的正规方式(见 DEVICE-LAYER-DESIGN.md §8.1)。
  */
 function ProfileSwitcher({ onNavigate }: { onNavigate: () => void }) {
   const { profiles, activeProfile, setActiveProfile } = useProfiles();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const { normal, templates } = useMemo(() => partitionProfilesByKind(profiles), [profiles]);
 
   useEffect(() => {
     if (!open) return;
@@ -160,6 +175,39 @@ function ProfileSwitcher({ onNavigate }: { onNavigate: () => void }) {
   const activeId = activeProfile?.id ?? null;
   const name = activeProfile?.name ?? 'default';
 
+  function row(p: Profile) {
+    const template = isTemplateProfile(p);
+    return (
+      <div key={p.id} className={`pp-row${p.id === activeId ? ' on' : ''}`}>
+        <button
+          type="button"
+          className="pp-pick"
+          onClick={() => {
+            if (p.id === activeId) {
+              go();
+            } else {
+              setActiveProfile(p.name); // writes cookie + reloads
+            }
+          }}
+        >
+          <span className="dot" />
+          <span className="nm">{p.name}</span>
+          {template && <span className="tpl">{TEMPLATE_BADGE}</span>}
+          <span className="tail">{p.id === activeId ? '正在编辑' : sourceLabel(p)}</span>
+        </button>
+        <Link
+          className="pp-gear"
+          href={`/profiles/${p.id}`}
+          onClick={go}
+          aria-label={`${p.name} 设置`}
+          title="绑定与设置"
+        >
+          ⚙
+        </Link>
+      </div>
+    );
+  }
+
   return (
     <div className="side-switch" ref={ref}>
       <button
@@ -177,40 +225,26 @@ function ProfileSwitcher({ onNavigate }: { onNavigate: () => void }) {
         <span className="caret">▾</span>
       </button>
       <div className={`profile-pop${open ? ' open' : ''}`}>
-        <div className="pp-label">配置文件 · {profiles.length}</div>
+        <div className="pp-label">配置文件 · {normal.length}</div>
         {profiles.length === 0 ? (
           <div className="pp-li" style={{ color: 'var(--muted)', cursor: 'default' }}>
             尚无配置文件记录
           </div>
+        ) : normal.length === 0 ? (
+          <div className="pp-li" style={{ color: 'var(--muted)', cursor: 'default' }}>
+            只有模版,尚无配置文件
+          </div>
         ) : (
-          profiles.map((p) => (
-            <div key={p.id} className={`pp-row${p.id === activeId ? ' on' : ''}`}>
-              <button
-                type="button"
-                className="pp-pick"
-                onClick={() => {
-                  if (p.id === activeId) {
-                    go();
-                  } else {
-                    setActiveProfile(p.name); // writes cookie + reloads
-                  }
-                }}
-              >
-                <span className="dot" />
-                <span className="nm">{p.name}</span>
-                <span className="tail">{p.id === activeId ? '正在编辑' : sourceLabel(p)}</span>
-              </button>
-              <Link
-                className="pp-gear"
-                href={`/profiles/${p.id}`}
-                onClick={go}
-                aria-label={`${p.name} 设置`}
-                title="绑定与设置"
-              >
-                ⚙
-              </Link>
+          normal.map(row)
+        )}
+        {templates.length > 0 && (
+          <>
+            <div className="pp-sep" />
+            <div className="pp-label" title={TEMPLATE_TAGLINE}>
+              模版 · {templates.length}
             </div>
-          ))
+            {templates.map(row)}
+          </>
         )}
         <div className="pp-sep" />
         <Link className="pp-li pp-act" href="/profiles" onClick={go}>

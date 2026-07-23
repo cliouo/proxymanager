@@ -40,6 +40,16 @@ const NAME_HINT = 'must contain only lowercase letters, digits, and dashes';
  */
 const DISPLAY_NAME_MAX = 120;
 
+/**
+ * 「普通配置文件」还是「模版」。存量记录没有这个字段 → 默认 `normal`，parse-forward
+ * 无需回填迁移。模版的语义与普通配置文件**完全一致**（可编辑、可预览、可激活），
+ * 只差三件事：不对外分发（`/api/sub/{token}/{profile}` 404）、UI 单列一节加徽章、
+ * 新建流把它置顶为「从模版新建」。判定与文案见 `lib/profiles/kind.ts`。
+ */
+export const ProfileKindSchema = z.enum(['normal', 'template']);
+
+export type ProfileKind = z.infer<typeof ProfileKindSchema>;
+
 /** Single-select node source. Discriminated on `type`. */
 export const ProfileSourceSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('none') }),
@@ -59,6 +69,8 @@ export const ProfileSchema = z.object({
   display_name: z.string().max(DISPLAY_NAME_MAX).optional(),
   /** The single source this profile resolves nodes from. See file header. */
   source: ProfileSourceSchema.default(DEFAULT_PROFILE_SOURCE),
+  /** 普通配置文件 / 模版。缺字段的存量记录 parse-forward 成 `normal`。 */
+  kind: ProfileKindSchema.default('normal'),
   notes: z.string().optional(),
   created_at: z.number().int().optional(),
   updated_at: z.number().int(),
@@ -70,6 +82,7 @@ export const ProfileCreateSchema = z.object({
   name: z.string().min(1).regex(NAME_REGEX, NAME_HINT),
   display_name: z.string().max(DISPLAY_NAME_MAX).optional(),
   source: ProfileSourceSchema.default(DEFAULT_PROFILE_SOURCE),
+  kind: ProfileKindSchema.default('normal'),
   notes: z.string().optional(),
   /**
    * Clone source (Phase 2). When set to an existing profile id, the new profile
@@ -87,6 +100,8 @@ export const ProfileUpdateSchema = z.object({
   name: z.string().min(1).regex(NAME_REGEX, NAME_HINT).optional(),
   display_name: z.string().max(DISPLAY_NAME_MAX).nullable().optional(),
   source: ProfileSourceSchema.optional(),
+  /** 可在普通配置文件与模版之间互转 —— 转换只改这一个字段，不动任何内容。 */
+  kind: ProfileKindSchema.optional(),
   notes: z.string().nullable().optional(),
 });
 

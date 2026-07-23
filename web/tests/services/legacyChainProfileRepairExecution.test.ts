@@ -110,6 +110,7 @@ const profile: Profile = {
   id: PROFILE_ID,
   name: 'default',
   source: { type: 'collection', id: COLLECTION_ID },
+  kind: 'normal',
   updated_at: 1,
 };
 
@@ -273,6 +274,7 @@ describe('legacy chain profile recovery execution', () => {
         id: OTHER_PROFILE_ID,
         name: 'other',
         source: { type: 'collection', id: COLLECTION_ID },
+        kind: 'normal',
         updated_at: 1,
       },
     ];

@@ -2031,6 +2031,16 @@ textarea.input {
   color: var(--faint);
   flex: none;
 }
+/* 模版徽章 —— 切换器「模版」小节里标记 kind=template 的行(Phase T)。 */
+.profile-pop .pp-row .pp-pick .tpl {
+  flex: none;
+  font: 9px var(--font-mono);
+  letter-spacing: 0.06em;
+  padding: 2px 5px;
+  border-radius: var(--r-sm);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
 .profile-pop .pp-row.on .pp-pick {
   color: var(--accent);
 }

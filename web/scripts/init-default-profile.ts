@@ -53,6 +53,7 @@ async function main(): Promise<void> {
     id: crypto.randomUUID(),
     name: DEFAULT_PROFILE_NAME,
     source: DEFAULT_PROFILE_SOURCE,
+    kind: 'normal',
     created_at: now,
     updated_at: now,
   };

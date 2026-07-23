@@ -7,7 +7,13 @@ import { ApiError, api } from '@/lib/client/api';
 import { copyText } from '@/lib/client/clipboard';
 import { PageTopbar } from '@/components/PageChrome';
 import { ScopePill } from '@/components/Topbar';
+import { useProfiles } from '@/components/profile/ProfileContext';
 import { Placeholder, SkeletonStat } from '@/components/ui/Reveal';
+import {
+  TEMPLATE_NOT_DISTRIBUTABLE,
+  TEMPLATE_TAGLINE,
+  isTemplateProfile,
+} from '@/lib/profiles/kind';
 import styles from './page.module.css';
 
 /* ---------- API shapes (kept local; only the fields the dashboard reads) ---------- */
@@ -119,6 +125,10 @@ const R = {
 };
 
 export default function DashboardPage() {
+  // 正在编辑的配置文件可能是模版 —— 模版可编辑、可预览,但不对外分发,
+  // 所以这页顶部的订阅地址卡对它是误导,必须先亮明身份(Phase T)。
+  const { activeProfile } = useProfiles();
+  const editingTemplate = isTemplateProfile(activeProfile);
   const [meta, setMeta] = useState<Meta | null>(null);
   const [counts, setCounts] = useState<Counts | null>(null);
   const [groups, setGroups] = useState<ProxyGroup[]>([]);
@@ -225,6 +235,29 @@ export default function DashboardPage() {
         <div className="grow" />
       </PageTopbar>
 
+      {/* —— 正在编辑模版:横幅 + 下方订阅卡的「不可分发」修正 —— */}
+      {editingTemplate && (
+        <div
+          className="panel"
+          style={{
+            borderColor: 'color-mix(in srgb, var(--accent) 40%, transparent)',
+            marginBottom: 22,
+          }}
+        >
+          <div
+            className="panel-body"
+            style={{ display: 'flex', gap: 10, alignItems: 'baseline', fontSize: 13 }}
+          >
+            <span className="pill acc plain">正在编辑模版</span>
+            <span style={{ color: 'var(--muted)' }}>
+              「{activeProfile?.name}」是模版 —— 内容照常编辑与预览,但<b>不对外分发</b>
+              ,下方订阅地址对它一律 404。要下发,请到{' '}
+              <Link href="/profiles">配置文件</Link> 从它新建一份。{TEMPLATE_TAGLINE}
+            </span>
+          </div>
+        </div>
+      )}
+
       {error && (
         <div
           className="panel"
@@ -246,7 +279,9 @@ export default function DashboardPage() {
         </div>
         <div className={styles.subPanel}>
           <div className={styles.subStatus}>
-            {meta ? (
+            {editingTemplate ? (
+              <span className="pill warn">{TEMPLATE_NOT_DISTRIBUTABLE}</span>
+            ) : meta ? (
               meta.hasBase ? (
                 <span className="pill ok">渲染正常</span>
               ) : (
@@ -272,10 +307,15 @@ export default function DashboardPage() {
           </div>
 
           <div className={styles.quick}>
-            <button className="btn primary" onClick={copy} disabled={!meta}>
+            {/* 模版的这条 URL 一定 404(route 层拦截)—— 不给一个注定失败的复制动作。 */}
+            <button className="btn primary" onClick={copy} disabled={!meta || editingTemplate}>
               {copyFailed ? '复制失败' : copied ? '已复制 ✓' : '复制 URL'}
             </button>
-            <button className="btn" onClick={() => setQrOpen(true)} disabled={!meta}>
+            <button
+              className="btn"
+              onClick={() => setQrOpen(true)}
+              disabled={!meta || editingTemplate}
+            >
               显示二维码
             </button>
             <Link className="btn" href={R.config}>
@@ -284,8 +324,17 @@ export default function DashboardPage() {
           </div>
 
           <div className={styles.hint}>
-            把这条 URL 粘贴进客户端作订阅地址即可；内容随 base / 规则 / 策略组实时渲染。
-            {!meta?.hasBase && meta && ' 当前 base 尚未初始化，下发的是空骨架。'}
+            {editingTemplate ? (
+              <>
+                模版没有可用的下发地址 —— 这条 URL 请求会 404。要下发，请从这份模版
+                新建一份配置文件；渲染结果仍可正常预览。
+              </>
+            ) : (
+              <>
+                把这条 URL 粘贴进客户端作订阅地址即可；内容随 base / 规则 / 策略组实时渲染。
+                {!meta?.hasBase && meta && ' 当前 base 尚未初始化，下发的是空骨架。'}
+              </>
+            )}
           </div>
         </div>
       </section>

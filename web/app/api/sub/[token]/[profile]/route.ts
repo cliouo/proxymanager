@@ -2,7 +2,10 @@ import { renderProfileConfig } from '@/lib/engine/renderCache';
 import { attachmentDisposition } from '@/lib/http/contentDisposition';
 import { etagMatches } from '@/lib/http/etag';
 import { withProblemDetails } from '@/lib/http/handler';
+import { ProblemDetailsError } from '@/lib/http/problem';
 import { guardSubToken } from '@/lib/http/subGuard';
+import { TEMPLATE_NOT_DISTRIBUTABLE, isTemplateProfile } from '@/lib/profiles/kind';
+import { getProfileByName } from '@/lib/repos/profilesRepo';
 
 export const dynamic = 'force-dynamic';
 // P3-18: a cold render (8 concurrent upstream fetches + full YAML build) can run
@@ -17,8 +20,18 @@ export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
   // one; rate-limit failed attempts by IP (P1-2/P1-3).
   await guardSubToken(request, token, profile);
 
-  // Any profile is distributable by name — renderProfileConfig binds its
-  // source and 404s an unknown name (see lib/engine/renderCache).
+  // 模版不对外分发 —— 在**渲染之前**拦掉,别为一份注定 404 的请求付渲染成本
+  // (renderProfileConfig 自己只 404 未知名字,不认识 kind)。措辞与未知名字的
+  // 404 同一套 Problem Details,不额外暴露「这个名字存在」以外的信息。
+  const record = await getProfileByName(profile);
+  if (isTemplateProfile(record)) {
+    throw ProblemDetailsError.notFound(
+      `Profile "${profile}" 是模版,${TEMPLATE_NOT_DISTRIBUTABLE} —— 请从它新建一份配置文件再分发。`,
+    );
+  }
+
+  // 其余配置文件都可按名字分发 —— renderProfileConfig 绑定其来源,
+  // 未知名字由它 404(见 lib/engine/renderCache)。
   const url = new URL(request.url);
   const noCache = url.searchParams.get('noCache') === '1';
   // Data loading + resolveConfig now live behind the render cache — when

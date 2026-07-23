@@ -82,6 +82,7 @@ const profile: Profile = {
   id: PROFILE_ID,
   name: 'default',
   source: { type: 'none' },
+  kind: 'normal',
   updated_at: 1,
 };
 
