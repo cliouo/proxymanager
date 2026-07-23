@@ -17,6 +17,9 @@ import { resolveScopeProfile } from '@/lib/profileScope';
 import { resolveActor } from '@/lib/services/rulesService';
 
 export const dynamic = 'force-dynamic';
+// 与设备/订阅 preview 路由同档:get_config_full / preview_device_config 这类读
+// action 可能触发冷渲染拉上游订阅,给明确上限而不是平台默认的 10s。
+export const maxDuration = 60;
 
 const ToolRequestSchema = z.object({
   name: z.string().min(1).max(64),

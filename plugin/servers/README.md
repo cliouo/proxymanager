@@ -1,7 +1,8 @@
 # proxymanager MCP bridge — 接线说明
 
-把 ProxyManager 应用内的 action 注册表（约 30 个工具）以 **MCP** 形式暴露给任何支持 skill 的
-客户端（Claude Code / Codex / …），让它们驱动**同一个后端、同一套服务端写入门控**。
+把 ProxyManager 应用内的 action 注册表（40+ 个工具，运行时从 bootstrap 实时拉取、不硬编码）以
+**MCP** 形式暴露给任何支持 skill 的客户端（Claude Code / Codex / …），让它们驱动
+**同一个后端、同一套服务端写入门控**。
 
 这是**桥接**不是重写：工具 schema 实时取自 `/api/v1/assistant/bootstrap`，调用代理到
 `/api/v1/assistant/tool`；写操作由 MCP host 的 form elicitation 向用户确认后，桥接内部再调用
@@ -53,12 +54,19 @@ node proxymanager-mcp.mjs
 
 ## 非 plugin 客户端（Codex / 手动）的等价 `.mcp.json`
 
+Bundle 是提交进仓库的单文件，**无需克隆整个仓库**，直接从 GitHub 下载即可：
+
+```bash
+curl -fsSL --create-dirs -o ~/.proxymanager/proxymanager-mcp.mjs \
+  https://raw.githubusercontent.com/cliouo/proxymanager/main/plugin/servers/dist/proxymanager-mcp.bundle.mjs
+```
+
 ```json
 {
   "mcpServers": {
     "proxymanager": {
       "command": "node",
-      "args": ["/绝对路径/proxymanager/plugin/servers/dist/proxymanager-mcp.bundle.mjs"],
+      "args": ["/Users/你/.proxymanager/proxymanager-mcp.mjs"],
       "env": {
         "PROXYMANAGER_BASE_URL": "http://localhost:3000",
         "PROXYMANAGER_ADMIN_KEY": "xxxx",

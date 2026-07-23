@@ -15515,12 +15515,14 @@ async function fetchTools() {
     throw new Error(`Unable to load ProxyManager tools (${res.status}).`);
   }
   const { data } = await res.json();
-  const tools = (data?.tools ?? []).map((t) => ({
+  const synthetic = [LIST_PROFILES_TOOL, SELECT_PROFILE_TOOL];
+  const syntheticNames = new Set(synthetic.map((t) => t.name));
+  const tools = (data?.tools ?? []).filter((t) => !syntheticNames.has(t.function.name)).map((t) => ({
     name: t.function.name,
     description: t.function.description,
     inputSchema: t.function.parameters || { type: "object", properties: {} }
   }));
-  tools.push(LIST_PROFILES_TOOL, SELECT_PROFILE_TOOL);
+  tools.push(...synthetic);
   return tools;
 }
 function okResult(envelope) {

@@ -71,7 +71,9 @@
   跑隔离审计？（CC-only，不进可移植核）
 - **per-profile 绑定**：确认 MCP server 服务端解析 active profile（bootstrap/cookie 或本桥接的
   `?profile=`），skill 永不传 profileId——保住 confirm-token 的 profile 绑定。
-- **neverList 当前为空**：`neverList.ts` 是占位（`NEVER_LIST_ACTIONS` 空 Set）。随工具面扩张，
-  把「AI 永不可碰」（改鉴权 / 整块覆盖 base / 批量删规则超 N 条 / 轮换订阅 token）在此单点收口。
+- ~~**neverList 当前为空**~~ → **已收口（2026-07-23）**：`NEVER_LIST_ACTIONS` 现含
+  `delete_profile` / `edit_auth` / `rotate_sub_token` / `overwrite_base` / `bulk_delete_rules`，
+  并有契约测试（`tests/ai/neverList.test.ts`）保证黑名单名字永不出现在 registry。
+  收录标准写在 `neverList.ts` 头注释：单张确认卡无法承载其爆炸半径的操作才进来。
 - **eval harness**：每 skill ≥3 场景 + 无-skill 基线，跨 Haiku/Sonnet/Opus 回归；重点覆盖单轮跨域
   （加 RULE-SET 规则 + 建其 provider + 让组指向它）验证 hub→spoke 路由与孤儿检查触发。

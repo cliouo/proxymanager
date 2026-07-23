@@ -25,7 +25,8 @@
 | **规则**              | `Rule` (`rule.ts`)                       | 一条分流规则：`type`(DOMAIN/IP-CIDR/RULE-SET/GEOIP/MATCH…) + `value` + `policy`，挂在某个 `anchor` 下                           | `add_rule` / `update_rule` / `delete_rule`。**全部规则**由平台托管                                                                           |
 | **规则集**            | `RuleSet` / rule-provider (`ruleSet.ts`) | 一份域名/IP 列表。`source=local`(平台托管 `content`) 或 `remote`(mihomo 直接抓 `url`)                                           | `list_rule_providers` / `create_/update_/delete_rule_provider`；远程转本地用 `localize_rule_provider`                                        |
 | **策略组**            | `ProxyGroup` (`proxyGroup.ts`)           | mihomo `proxy-group`：`select`/`url-test`/`fallback`/`load-balance` 路由分组；固定 v1.19.28 已移除 `relay`                      | `list_proxy_groups` / `create_/update_/delete_proxy_group`；改 filter 前先 `preview_proxy_group_members`                                     |
-| **profile**           | `Profile` (`profile.ts`)                 | 一份「配置文件」。`name` 是 kebab 标识(resolver 按 name 查)，`display_name` 是客户端导入后显示名；`source` 单选绑定一个节点来源 | Phase 2 起每个 profile **独占** base/rules/proxy-groups                                                                                      |
+| **profile**           | `Profile` (`profile.ts`)                 | 一份「配置文件」。`name` 是 kebab 标识(resolver 按 name 查)，`display_name` 是客户端导入后显示名；`source` 单选绑定一个节点来源；`kind` ∈ `normal`/`template`（**模版不分发**、不存 Tailscale 身份、新建时置顶供克隆） | Phase 2 起每个 profile **独占** base/rules/proxy-groups（+devices）；AI 可 `list_profiles`/`create_profile`/`update_profile`，**删除仅 UI**（neverList） |
+| **设备**              | `Device` (`device.ts`)                   | 挂在 profile 下的**差量实体**：共享渲染 + RFC 7386 `base_patch`（只动最终产物顶层键）+ 类型化设备级功能（Tailscale）。名字进设备订阅 URL `/api/sub/{token}/{profile}/{device}`，每 profile ≤16 台 | `list_devices` / `preview_device_config` / `create_/update_/delete_device` / `set_/remove_device_tailscale`——详见 **managing-devices** skill |
 | **锚点**              | base.yaml 注释标记                       | `rules:` 块里的 `# === ANCHOR: <name> ===` 占位；规则按 anchor 分组、渲染时注入到对应标记处                                     | 规则的 `anchor` 字段必须命中 base 已声明的锚点                                                                                               |
 
 **Profile.source**(`ProfileSourceSchema`，三选一判别联合)：
@@ -63,9 +64,9 @@ Phase 2 把 **base / rules / proxy-groups** 改为**每个 profile 各自拥有*
 
 **clone-on-create（`ProfileCreateSchema.copy_from`，uuid 可选）**
 
-- 设为某个现有 profile id → 新 profile **深拷贝**该 profile 的 base + proxy-groups + rules + taxonomy（**生成新 id，保留名字**）。
-- 省略 → 新 profile 拿一份从 `default` profile 的 base 复制的**空骨架**，无策略组、无规则。
-- `copy_from` **不落库**，仅是创建期指令。
+- 设为某个现有 profile id → 新 profile **深拷贝**该 profile 的 base + proxy-groups + rules + taxonomy + **devices**（**生成新 id，保留名字**；每台设备的 `features` **清空**——Tailscale hostname/key 是设备身份，克隆必冲突，需在新 profile 重新启用）。
+- 省略 → 新 profile 拿一份从 `default` profile 的 base 复制的**空骨架**，无策略组、无规则、无设备。
+- `copy_from` **不落库**，仅是创建期指令。模版（`kind=template`）在新建流程里置顶，是 clone 的常用来源。
 
 **active-profile cookie（`lib/profileScope.ts`）**
 
@@ -150,7 +151,9 @@ Phase 2 把 **base / rules / proxy-groups** 改为**每个 profile 各自拥有*
 ## 六、实体关系速览
 
 ```
-Profile (per-profile 拥有 base/rules/proxy-groups)
+Profile (per-profile 拥有 base/rules/proxy-groups/devices; kind normal/template, 模版不分发)
+  ├─ Device ×N ── base_patch(RFC 7386 顶层差量) + features.tailscale(typed)
+  │                名字进 /api/sub/{token}/{profile}/{device} (?format=base64 可选)
   └─ source ── none │ subscription(id) │ collection(id)
                               │              │
                      Subscription ◀──成员──── Collection (节点池: ids + tags)
