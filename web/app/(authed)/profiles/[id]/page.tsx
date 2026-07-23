@@ -13,7 +13,7 @@ import {
   TEMPLATE_TAGLINE,
   isTemplateProfile,
 } from '@/lib/profiles/kind';
-import { DevicePanel, type DeviceRecord } from './_components/DevicePanel';
+import type { DeviceRecord } from '@/components/devices';
 import styles from '../profiles.module.css';
 
 type ProfileSource =
@@ -632,16 +632,41 @@ export default function ProfileDetailPage() {
             )}
           </section>
 
-          {/* 设备 —— 订阅链接之后。模版同样显示:模版的设备差量会随「从模版新建」
-              一起拷贝到新配置文件,这正是模版的价值所在;只是模版自己不分发。 */}
-          <DevicePanel
-            profileId={id}
-            profileName={profile?.name ?? ''}
-            devices={devices}
-            loading={devicesLoading}
-            distributable={!isTemplate}
-            onChanged={() => void reloadDevices()}
-          />
+          {/* 设备 —— 管理入口在「设备」页(跟随正在编辑的配置文件,与 /base 一致);
+              这里只留一行摘要。非活动配置文件先切换再跳,保持全站单一作用域规则。 */}
+          <section className="panel">
+            <div className="panel-head">
+              <h2>设备</h2>
+              {!devicesLoading && devices.length > 0 && (
+                <span className="crumb">{devices.length} 台</span>
+              )}
+              <div className={styles.grow} />
+              {activeProfile?.id === id ? (
+                <Link className="btn sm" href="/devices">
+                  管理设备
+                </Link>
+              ) : (
+                <button
+                  type="button"
+                  className="btn sm"
+                  onClick={() => profile && setActiveProfile(profile.name, '/devices')}
+                  disabled={!profile}
+                  title="设备跟随正在编辑的配置文件 —— 会先切换到这一份"
+                >
+                  切换到此配置并管理设备
+                </button>
+              )}
+            </div>
+            <div className="panel-body">
+              <div className={styles.srcNote} style={{ marginTop: 0 }}>
+                <span className="g">⌁</span>
+                <span>
+                  共享配置服务所有设备,每台设备只叠加少量差异。新建、差异编辑与 Tailscale
+                  都在「设备」页。
+                </span>
+              </div>
+            </div>
+          </section>
 
           {/* 操作 */}
           <section className="panel">

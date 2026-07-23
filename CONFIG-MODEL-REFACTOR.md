@@ -29,7 +29,7 @@
 - `renderRule`（`web/lib/engine/renderer.ts:18`）已特判 `MATCH`→`MATCH,policy`，其余 `type,value,policy`。**缺修饰符拼接。**
 - `renderBase` 已按锚点注入、组内按 `rank` 升序。
 - 内建策略（DIRECT/REJECT/REJECT-DROP/PASS/COMPATIBLE）已在 `parseBase().policies` 中，规则 policy 用它们可通过 `ensureValidAnchorAndPolicy`。
-- `/rules` 页已重定向到 `/scenarios/rule-anchor-append`（规则编辑 UI）。
+- 规则编辑 UI 住在 `/rules`（IA v3 起为真身；`/scenarios/rule-anchor-append` 是跳转壳，方向与早期相反）。
 - 导航 `PRIMARY_NAV`（`web/components/Sidebar.tsx:9`）：总览 / 基础配置(/base) / 规则集(/rule-sets) / 订阅源 / 操作历史。
 
 ## 3. Schema 变更（唯一的数据契约改动）

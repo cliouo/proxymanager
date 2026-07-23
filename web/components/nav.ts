@@ -1,7 +1,9 @@
 /**
  * 侧边栏信息架构（v2「Signal Console」外壳与 Topbar 共享）。
  *
- * 分组对齐 open-design v2 原型:概览 / 当前配置文件 / 资源库·共享 / 系统。
+ * 分组:概览 / 当前配置文件 / 资源库·共享 / 系统。
+ * 「当前配置文件」组的顺序即数据流:结构 → 策略组 → 链式代理 → 规则 →
+ * 最终配置(共享渲染) → 设备(共享渲染 + 每台差异)。
  * 「绑定与设置」(profile-settings) 指向当前配置文件的设置页,id 是动态的,
  * 故不在此静态表里,由 Sidebar 用 ProfilesContext 的 current.id 现算。
  * 「配置文件」总览(/profiles)收编进侧边栏顶部的配置文件切换器,不再占独立导航项。
@@ -19,19 +21,10 @@ export const OVERVIEW_NAV: NavItem[] = [{ href: '/', label: '概览', icon: '◎
 export const PROFILE_NAV: NavItem[] = [
   { href: '/base', label: '结构 base', icon: '{}' },
   { href: '/proxy-groups', label: '策略组', icon: '⌥' },
-  { href: '/scenarios/rule-anchor-append', label: '规则', icon: '#' },
-  { href: '/config', label: '最终配置', icon: '▣' },
-];
-
-/**
- * 扩展 —— 高级功能，与核心编辑流水线分开陈列。
- * 这里是场景导航项的唯一真相源：Sidebar 静态渲染本表，不再按
- * `/api/v1/scenarios` 动态拼「更多场景」，也不再维护一份中文名 override。
- */
-export const EXTENSIONS_NAV: NavItem[] = [
   { href: '/scenarios/chained-proxy', label: '链式代理', icon: '⛓' },
-  { href: '/scenarios/tailscale', label: 'Tailscale', icon: '⊡' },
-  { href: '/scenarios', label: '扩展中心', icon: '✦' },
+  { href: '/rules', label: '规则', icon: '#' },
+  { href: '/config', label: '最终配置', icon: '▣' },
+  { href: '/devices', label: '设备', icon: '⌁' },
 ];
 
 /** 资源库 · 共享 —— 跨配置文件共享的节点与规则资源。 */
@@ -47,13 +40,7 @@ export const SYSTEM_NAV: NavItem[] = [
   { href: '/docs', label: 'API 文档', icon: '❡' },
 ];
 
-export const ALL_NAV: NavItem[] = [
-  ...OVERVIEW_NAV,
-  ...PROFILE_NAV,
-  ...EXTENSIONS_NAV,
-  ...LIBRARY_NAV,
-  ...SYSTEM_NAV,
-];
+export const ALL_NAV: NavItem[] = [...OVERVIEW_NAV, ...PROFILE_NAV, ...LIBRARY_NAV, ...SYSTEM_NAV];
 
 /** topbar 标题：精确命中优先，否则取最长前缀，再退到分类兜底。 */
 export function titleForPath(pathname: string): string {
@@ -66,6 +53,6 @@ export function titleForPath(pathname: string): string {
   if (prefix) return prefix.label;
 
   if (pathname.startsWith('/profiles')) return '配置文件';
-  if (pathname.startsWith('/scenarios')) return '场景';
+  if (pathname.startsWith('/scenarios')) return '扩展';
   return 'ProxyManager';
 }

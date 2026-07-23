@@ -11,7 +11,8 @@ import { CodeEditor } from '@/components/ui/CodeEditor';
 import { useToast } from '@/components/ui/Toast';
 import { COMMON_PATCH_KEYS, randomSecret } from '@/lib/profiles/devicePresets';
 import { TEMPLATE_NOT_DISTRIBUTABLE, isTemplateProfile } from '@/lib/profiles/kind';
-import type { DeviceRecord } from '../../_components/DevicePanel';
+import { useProfiles } from '@/components/profile/ProfileContext';
+import type { DeviceRecord } from '@/components/devices';
 import type { PublicTailscaleDeviceFeature } from '@/schemas';
 import { TailscaleDeviceCard } from './_components/TailscaleDeviceCard';
 import styles from '../../../profiles.module.css';
@@ -58,6 +59,10 @@ export default function DeviceDetailPage() {
   const params = useParams<{ id: string; deviceId: string }>();
   const { id: profileId, deviceId } = params;
   const toast = useToast();
+  // 从「设备」页(当前配置文件)进来时返回它;查看非活动配置文件的设备则回其设置页。
+  const { activeProfile } = useProfiles();
+  const backHref = activeProfile?.id === profileId ? '/devices' : `/profiles/${profileId}`;
+  const backLabel = activeProfile?.id === profileId ? '返回设备列表' : '返回配置文件';
 
   const [device, setDevice] = useState<DeviceRecord | null>(null);
   const [profileName, setProfileName] = useState('');
@@ -219,12 +224,12 @@ export default function DeviceDetailPage() {
     setDeleting(true);
     try {
       await api(`/api/v1/profiles/${profileId}/devices/${deviceId}`, { method: 'DELETE' });
-      router.push(`/profiles/${profileId}`);
+      router.push(backHref);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : '删除失败');
       setDeleting(false);
     }
-  }, [device, profileId, deviceId, router]);
+  }, [device, profileId, deviceId, router, backHref]);
 
   const subUrl = useMemo(() => {
     // 模版一律不给链接 —— 给了也是一条注定 404 的链接（route 层同样拦）。
@@ -257,8 +262,8 @@ export default function DeviceDetailPage() {
         )}
         <span className="crumb">{keys.length} 项差异</span>
         <div className="grow" />
-        <Link className="btn ghost sm" href={`/profiles/${profileId}`}>
-          返回配置文件
+        <Link className="btn ghost sm" href={backHref}>
+          {backLabel}
         </Link>
         {isTemplate && <span className="pill acc plain">{TEMPLATE_NOT_DISTRIBUTABLE}</span>}
         <button

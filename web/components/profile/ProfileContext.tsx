@@ -54,8 +54,11 @@ interface ProfilesValue {
   current: Profile | null;
   /** 正在编辑的配置文件 —— /base、/proxy-groups、/rules 等作用于它。回退到 current。 */
   activeProfile: Profile | null;
-  /** 切换正在编辑的配置文件:写 cookie 并重载页面以按新作用域重新取数。 */
-  setActiveProfile: (name: string) => void;
+  /**
+   * 切换正在编辑的配置文件:写 cookie 并重载页面以按新作用域重新取数。
+   * 传 `redirectTo` 则重载到该路径(例:从别的配置文件的设置页跳去它的设备页)。
+   */
+  setActiveProfile: (name: string, redirectTo?: string) => void;
   /** 清除 active cookie 并回退到 current(无重载)—— 删除当前活动配置文件后调用。 */
   clearActiveProfile: () => void;
   loaded: boolean;
@@ -122,11 +125,16 @@ export function ProfilesProvider({ children }: { children: React.ReactNode }) {
     [activeName, profiles, current],
   );
 
-  const setActiveProfile = useCallback((name: string) => {
+  const setActiveProfile = useCallback((name: string, redirectTo?: string) => {
     // Persist for the server (resolveScopeProfile) and reload so every
     // scope-reading fetch re-runs under the new cookie.
     document.cookie = `${ACTIVE_PROFILE_COOKIE}=${encodeURIComponent(name)}; path=/; max-age=31536000; SameSite=Lax`;
-    window.location.reload();
+    // 只接受站内路径("/x" 而非 "//host" 或绝对 URL),杜绝未来调用方引入 open redirect。
+    if (redirectTo && redirectTo.startsWith('/') && !redirectTo.startsWith('//')) {
+      window.location.href = redirectTo;
+    } else {
+      window.location.reload();
+    }
   }, []);
 
   const clearActiveProfile = useCallback(() => {
