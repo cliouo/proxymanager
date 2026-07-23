@@ -11,15 +11,7 @@ import {
   isTemplateProfile,
   partitionProfilesByKind,
 } from '@/lib/profiles/kind';
-import {
-  ALL_NAV,
-  EXTENSIONS_NAV,
-  LIBRARY_NAV,
-  OVERVIEW_NAV,
-  PROFILE_NAV,
-  SYSTEM_NAV,
-  type NavItem,
-} from '@/components/nav';
+import { LIBRARY_NAV, OVERVIEW_NAV, PROFILE_NAV, SYSTEM_NAV, type NavItem } from '@/components/nav';
 import {
   profileMark,
   sourceLabel,
@@ -31,9 +23,9 @@ import {
  * v2「Signal Console」侧边栏 —— 固定 228px / 平板横屏图标轨 / 移动端抽屉。
  * `open` 控制移动端抽屉显隐；点导航触发 `onClose` 收起抽屉。
  *
- * 顶部为配置文件切换器(ProfileSwitcher),其下导航按「当前配置文件 / 扩展 /
- * 资源库 / 系统」四段组织,对齐 v2 原型的 profile-centric IA。导航项全部来自
- * `components/nav.ts` 这一处真相源(含扩展组),不再按场景注册表动态拼装。
+ * 顶部为配置文件切换器(ProfileSwitcher),其下导航按「当前配置文件 /
+ * 资源库 / 系统」三段组织,对齐 profile-centric IA。导航项全部来自
+ * `components/nav.ts` 这一处真相源,不按场景注册表动态拼装。
  */
 export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
   const pathname = usePathname();
@@ -51,23 +43,21 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
     window.location.href = '/login';
   }
 
+  // 设备详情页路由挂在 /profiles/[id]/devices/* 下,但按 IA 属于「设备」——
+  // 点亮设备项而不是绑定与设置。
+  const onDeviceDetail = /^\/profiles\/[^/]+\/devices\//.test(pathname);
+
   function isActive(href: string): boolean {
     if (href === '/') return pathname === '/';
-    // 「扩展中心」(/scenarios) 是全部 /scenarios/* 的前缀:只在没有更具体的
-    // 导航项(规则 / 链式代理 / Tailscale)命中时才点亮它。
-    if (href === '/scenarios') {
-      return (
-        pathname.startsWith('/scenarios') &&
-        !ALL_NAV.some((n) => n.href.startsWith('/scenarios/') && pathname.startsWith(n.href))
-      );
-    }
+    if (href === '/devices') return pathname.startsWith('/devices') || onDeviceDetail;
     return pathname.startsWith(href);
   }
 
   // 「绑定与设置」指向正在编辑的配置文件的设置页;无记录时退到管理总览。
   const profileSettingsHref = activeProfile ? `/profiles/${activeProfile.id}` : '/profiles';
   const profileSettingsActive =
-    pathname === profileSettingsHref || (pathname.startsWith('/profiles/') && !!activeProfile);
+    !onDeviceDetail &&
+    (pathname === profileSettingsHref || (pathname.startsWith('/profiles/') && !!activeProfile));
 
   return (
     <aside className={`side${open ? ' open' : ''}`}>
@@ -100,13 +90,6 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
             active={profileSettingsActive}
             onClick={onClose}
           />
-        </div>
-
-        <div className="nav-group">
-          <div className="nav-label">扩展</div>
-          {EXTENSIONS_NAV.map((item) => (
-            <NavLink key={item.href} item={item} active={isActive(item.href)} onClick={onClose} />
-          ))}
         </div>
 
         <div className="nav-group">

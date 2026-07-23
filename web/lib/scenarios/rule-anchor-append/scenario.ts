@@ -357,9 +357,10 @@ export async function runRuleOp(ctx: OpContext, op: string, payload: unknown): P
 export const ruleAnchorAppendScenario: Scenario = {
   descriptor: {
     id: 'rule-anchor-append',
-    title: '规则编辑',
+    title: '规则',
     description: '管理 base.yaml 锚点下的规则列表，按锚点 / 策略 / 类型筛选。',
-    navHref: '/scenarios/rule-anchor-append',
+    // 页面住在一级路由 /rules;旧路径 /scenarios/rule-anchor-append 仅存跳转壳。
+    navHref: '/rules',
   },
   ops: {
     create,

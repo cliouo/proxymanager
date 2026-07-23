@@ -86,6 +86,22 @@
 .statBand {
   margin-bottom: 22px;
 }
+/* 配置资源带 5 张卡(含设备):桌面 5 列,平板 3 列,手机 2 列。 */
+.statRow5 {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 14px;
+}
+@media (max-width: 1200px) {
+  .statRow5 {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+@media (max-width: 700px) {
+  .statRow5 {
+    grid-template-columns: 1fr 1fr;
+  }
+}
 .bandHead {
   display: flex;
   align-items: baseline;

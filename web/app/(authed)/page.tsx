@@ -116,8 +116,9 @@ function fmtTime(ts: number): string {
 const R = {
   base: '/base',
   proxyGroups: '/proxy-groups',
-  rules: '/scenarios/rule-anchor-append',
+  rules: '/rules',
   chained: '/scenarios/chained-proxy',
+  devices: '/devices',
   subscriptions: '/subscriptions',
   ruleSets: '/rule-sets',
   config: '/config',
@@ -140,6 +141,27 @@ export default function DashboardPage() {
   const [copied, setCopied] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
   const [qrOpen, setQrOpen] = useState(false);
+  const [deviceStats, setDeviceStats] = useState<{ total: number; tailscale: number } | null>(null);
+
+  // 设备数跟随正在编辑的配置文件,单独拉取;失败只让卡片留在「–」。
+  useEffect(() => {
+    if (!activeProfile) return;
+    let cancelled = false;
+    api<{ data: { features?: { tailscale?: unknown } }[] }>(
+      `/api/v1/profiles/${activeProfile.id}/devices`,
+    )
+      .then((r) => {
+        if (cancelled) return;
+        setDeviceStats({
+          total: r.data.length,
+          tailscale: r.data.filter((d) => d.features?.tailscale).length,
+        });
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [activeProfile]);
 
   useEffect(() => {
     let cancelled = false;
@@ -346,9 +368,10 @@ export default function DashboardPage() {
             配置资源
           </span>
         </div>
-        <section className="stat-row">
+        <section className={styles.statRow5}>
           {!counts ? (
             <>
+              <SkeletonStat />
               <SkeletonStat />
               <SkeletonStat />
               <SkeletonStat />
@@ -375,6 +398,15 @@ export default function DashboardPage() {
                 <div className="k">链式代理</div>
                 <div className="v">{chainCount}</div>
                 <div className="d">前置池 / 链式出站</div>
+              </Link>
+              <Link className="stat" href={R.devices}>
+                <div className="k">设备</div>
+                <div className="v">{deviceStats ? deviceStats.total : '–'}</div>
+                <div className="d">
+                  {deviceStats && deviceStats.tailscale > 0
+                    ? `Tailscale ×${deviceStats.tailscale}`
+                    : '共享配置 + 每台差异'}
+                </div>
               </Link>
             </>
           )}
