@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   listDevices: vi.fn(),
   getDevice: vi.fn(),
   getProfile: vi.fn(),
+  listProfiles: vi.fn(),
   recordEvent: vi.fn(),
 }));
 
@@ -30,15 +31,21 @@ vi.mock('@/lib/repos/devicesRepo', () => ({
   listDevices: mocks.listDevices,
   getDevice: mocks.getDevice,
 }));
-vi.mock('@/lib/repos/profilesRepo', () => ({ getProfile: mocks.getProfile }));
+vi.mock('@/lib/repos/profilesRepo', () => ({
+  getProfile: mocks.getProfile,
+  listProfiles: mocks.listProfiles,
+}));
 vi.mock('@/lib/repos/auditRepo', () => ({ recordEvent: mocks.recordEvent }));
 
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { ConfigValidationError } from '@/lib/config/errors';
 import {
   createDevice,
+  deleteDeviceTailscaleFeature,
   deleteDevice,
+  getDeviceTailscaleFeature,
   patchDevice,
+  putDeviceTailscaleFeature,
   undoDeviceEvent,
 } from '@/lib/services/deviceService';
 import { MAX_DEVICES_PER_PROFILE } from '@/schemas';
@@ -50,6 +57,7 @@ function device(over: Partial<Device> = {}): Device {
     id: crypto.randomUUID(),
     name: 'macbook',
     base_patch: {},
+    features: {},
     created_at: 1,
     updated_at: 1,
     ...over,
@@ -80,11 +88,15 @@ describe('deviceService', () => {
     bracketDevices = [];
     lastCandidateDevices = null;
     mocks.getProfile.mockResolvedValue({ id: PROFILE_ID, name: 'home' });
+    mocks.listProfiles.mockResolvedValue([{ id: PROFILE_ID, name: 'home', kind: 'normal' }]);
     mocks.listDevices.mockResolvedValue([]);
     mocks.getDevice.mockResolvedValue(null);
     mocks.preflightProfileConfig.mockImplementation(
       async (_profileId: string, build: (s: { devices: Device[] }) => { devices: Device[] }) => {
-        const state = { devices: bracketDevices };
+        const state = {
+          devices: bracketDevices,
+          profile: { id: PROFILE_ID, name: 'home', kind: 'normal' as const },
+        };
         const patch = await build(state);
         lastCandidateDevices = patch.devices;
         return { configVersion: 42, candidate: { ...state, ...patch } };
@@ -209,6 +221,61 @@ describe('deviceService', () => {
     expect(mocks.recordEvent.mock.calls[0][0].before.base_patch).toEqual({ 'mixed-port': 1 });
   });
 
+  it('never leaks a previously stored feature auth key through generic update audit snapshots', async () => {
+    const current = device({
+      name: 'server',
+      features: {
+        tailscale: {
+          hostname: 'server-ts',
+          authKey: 'must-not-reach-audit',
+          acceptRoutes: true,
+          udp: true,
+          ephemeral: false,
+          exitNodeAllowLanAccess: false,
+          extraCidrs: [],
+        },
+      },
+    });
+    setBracketSnapshot([current]);
+
+    await patchDevice(PROFILE_ID, current.id, { notes: 'renamed rack' });
+
+    const event = mocks.recordEvent.mock.calls[0][0];
+    expect(event.before.features.tailscale).toMatchObject({
+      hostname: 'server-ts',
+      hasAuthKey: true,
+    });
+    expect(event.after.features.tailscale).toMatchObject({
+      hostname: 'server-ts',
+      hasAuthKey: true,
+    });
+    expect(JSON.stringify(event)).not.toContain('must-not-reach-audit');
+    expect(event.undoable).toBe(false);
+  });
+
+  it('keeps secret-free feature snapshots schema-faithful for generic undo', async () => {
+    const current = device({
+      features: {
+        tailscale: {
+          hostname: 'server-ts',
+          acceptRoutes: true,
+          udp: true,
+          ephemeral: false,
+          exitNodeAllowLanAccess: false,
+          extraCidrs: [],
+        },
+      },
+    });
+    setBracketSnapshot([current]);
+
+    await patchDevice(PROFILE_ID, current.id, { notes: 'new note' });
+
+    const event = mocks.recordEvent.mock.calls[0][0];
+    expect(event.undoable).toBe(true);
+    expect(event.before.features.tailscale).not.toHaveProperty('hasAuthKey');
+    expect(event.before.features.tailscale).not.toHaveProperty('authKey');
+  });
+
   it('clears a nullable field on null', async () => {
     const current = device({ name: 'macbook', notes: 'old' });
     setBracketSnapshot([current]);
@@ -232,9 +299,316 @@ describe('deviceService', () => {
     expect(mocks.recordEvent.mock.calls[0][0].op).toBe('device.delete');
   });
 
+  it('never leaks a feature auth key through generic delete audit snapshots', async () => {
+    const current = device({
+      name: 'server',
+      features: {
+        tailscale: {
+          hostname: 'server-ts',
+          authKey: 'delete-audit-secret',
+          acceptRoutes: true,
+          udp: true,
+          ephemeral: false,
+          exitNodeAllowLanAccess: false,
+          extraCidrs: [],
+        },
+      },
+    });
+    mocks.getDevice.mockResolvedValue(current);
+    setBracketSnapshot([current]);
+
+    await deleteDevice(PROFILE_ID, current.id);
+
+    const event = mocks.recordEvent.mock.calls[0][0];
+    expect(event.before.features.tailscale.hasAuthKey).toBe(true);
+    expect(JSON.stringify(event)).not.toContain('delete-audit-secret');
+  });
+
   it('deleting an unknown device is a no-op, not an error', async () => {
     await expect(deleteDevice(PROFILE_ID, 'ghost')).resolves.toBe(false);
     expect(mocks.commitDeviceChanges).not.toHaveBeenCalled();
+  });
+});
+
+describe('deviceService Tailscale feature', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    bracketDevices = [];
+    lastCandidateDevices = null;
+    mocks.getProfile.mockResolvedValue({
+      id: PROFILE_ID,
+      name: 'home',
+      kind: 'normal',
+      source: { type: 'none' },
+      updated_at: 1,
+    });
+    mocks.listProfiles.mockResolvedValue([
+      {
+        id: PROFILE_ID,
+        name: 'home',
+        kind: 'normal',
+        source: { type: 'none' },
+        updated_at: 1,
+      },
+    ]);
+    mocks.listDevices.mockResolvedValue([]);
+    mocks.preflightProfileConfig.mockImplementation(
+      async (_profileId: string, build: (s: { devices: Device[] }) => { devices: Device[] }) => {
+        const state = {
+          devices: bracketDevices,
+          profile: { id: PROFILE_ID, name: 'home', kind: 'normal' as const },
+        };
+        const patch = await build(state);
+        lastCandidateDevices = patch.devices;
+        return { configVersion: 42, candidate: { ...state, ...patch } };
+      },
+    );
+    mocks.commitDeviceChanges.mockResolvedValue({ ok: true, currentVersion: 43 });
+    mocks.recordEvent.mockResolvedValue(undefined);
+  });
+
+  it('stores the auth key but only returns presence metadata and audits a redacted snapshot', async () => {
+    const current = device({ name: 'server' });
+    setBracketSnapshot([current]);
+
+    const result = await putDeviceTailscaleFeature(PROFILE_ID, current.id, {
+      hostname: 'server-ts',
+      authKey: 'tskey-secret',
+    });
+
+    expect(lastCandidateDevices?.[0].features.tailscale?.authKey).toBe('tskey-secret');
+    expect(result.feature).toMatchObject({ hostname: 'server-ts', hasAuthKey: true });
+    expect(result.feature).not.toHaveProperty('authKey');
+    expect(mocks.recordEvent.mock.calls[0][0]).toMatchObject({
+      op: 'device.tailscale.update',
+      undoable: false,
+      after: { hostname: 'server-ts', hasAuthKey: true },
+    });
+    expect(JSON.stringify(mocks.recordEvent.mock.calls[0][0])).not.toContain('tskey-secret');
+  });
+
+  it('preserves an existing auth key when the dedicated PUT omits it', async () => {
+    const current = device({
+      features: {
+        tailscale: {
+          hostname: 'old',
+          authKey: 'keep-me',
+          acceptRoutes: true,
+          udp: true,
+          ephemeral: false,
+          exitNodeAllowLanAccess: false,
+          extraCidrs: [],
+        },
+      },
+    });
+    setBracketSnapshot([current]);
+
+    await putDeviceTailscaleFeature(PROFILE_ID, current.id, { hostname: 'new' });
+    expect(lastCandidateDevices?.[0].features.tailscale?.authKey).toBe('keep-me');
+  });
+
+  it('clears an existing auth key only when authKey is explicitly null', async () => {
+    const current = device({
+      features: {
+        tailscale: {
+          hostname: 'server',
+          authKey: 'remove-me',
+          acceptRoutes: true,
+          udp: true,
+          ephemeral: false,
+          exitNodeAllowLanAccess: false,
+          extraCidrs: [],
+        },
+      },
+    });
+    setBracketSnapshot([current]);
+
+    await putDeviceTailscaleFeature(PROFILE_ID, current.id, {
+      hostname: 'server',
+      authKey: null,
+    });
+    expect(lastCandidateDevices?.[0].features.tailscale?.authKey).toBeUndefined();
+  });
+
+  it('blocks a duplicate control-url + hostname in the same profile', async () => {
+    const target = device({ name: 'a' });
+    const occupied = device({
+      name: 'b',
+      features: {
+        tailscale: {
+          hostname: 'same-host',
+          acceptRoutes: true,
+          udp: true,
+          ephemeral: false,
+          exitNodeAllowLanAccess: false,
+          extraCidrs: [],
+        },
+      },
+    });
+    setBracketSnapshot([target, occupied]);
+
+    await expect(
+      putDeviceTailscaleFeature(PROFILE_ID, target.id, { hostname: 'SAME-HOST' }),
+    ).rejects.toMatchObject({ problem: { status: 409 } });
+    expect(mocks.commitDeviceChanges).not.toHaveBeenCalled();
+  });
+
+  it('uses the version-bracketed profile kind to reject device identity on templates', async () => {
+    const current = device({ name: 'server' });
+    setBracketSnapshot([current]);
+    // The cheap pre-read still says normal, but the stable preflight snapshot
+    // already reflects a concurrent conversion to template.
+    mocks.preflightProfileConfig.mockImplementation(
+      async (
+        _profileId: string,
+        build: (state: { devices: Device[]; profile: { kind: 'template' } }) => {
+          devices: Device[];
+        },
+      ) => {
+        const state = {
+          devices: bracketDevices,
+          profile: { id: PROFILE_ID, name: 'home', kind: 'template' as const },
+        };
+        const patch = await build(state);
+        return { configVersion: 42, candidate: { ...state, ...patch } };
+      },
+    );
+
+    await expect(
+      putDeviceTailscaleFeature(PROFILE_ID, current.id, {
+        hostname: 'server',
+      }),
+    ).rejects.toMatchObject({ problem: { status: 422 } });
+    expect(mocks.commitDeviceChanges).not.toHaveBeenCalled();
+  });
+
+  it('returns a warning, not a rejection, for a cross-profile collision', async () => {
+    const current = device({ name: 'server' });
+    setBracketSnapshot([current]);
+    mocks.listProfiles.mockResolvedValue([
+      {
+        id: PROFILE_ID,
+        name: 'home',
+        kind: 'normal',
+        source: { type: 'none' },
+        updated_at: 1,
+      },
+      {
+        id: 'p-2',
+        name: 'lab',
+        kind: 'normal',
+        source: { type: 'none' },
+        updated_at: 1,
+      },
+    ]);
+    mocks.listDevices.mockImplementation(async (profileId: string) =>
+      profileId === 'p-2'
+        ? [
+            device({
+              name: 'lab-server',
+              features: {
+                tailscale: {
+                  hostname: 'same-host',
+                  acceptRoutes: true,
+                  udp: true,
+                  ephemeral: false,
+                  exitNodeAllowLanAccess: false,
+                  extraCidrs: [],
+                },
+              },
+            }),
+          ]
+        : [],
+    );
+
+    const result = await putDeviceTailscaleFeature(PROFILE_ID, current.id, {
+      hostname: 'same-host',
+    });
+    expect(result.warnings.join('')).toContain('lab/lab-server');
+  });
+
+  it('reports an audit outage as a post-commit warning instead of a failed PUT', async () => {
+    const current = device({ name: 'server' });
+    setBracketSnapshot([current]);
+    mocks.recordEvent.mockRejectedValue(new Error('audit unavailable'));
+
+    const result = await putDeviceTailscaleFeature(PROFILE_ID, current.id, {
+      hostname: 'server-ts',
+    });
+
+    expect(result.feature?.hostname).toBe('server-ts');
+    expect(result.warnings.join('')).toContain('配置已保存');
+    expect(mocks.commitDeviceChanges).toHaveBeenCalledOnce();
+  });
+
+  it('GET never exposes the stored auth key', async () => {
+    const current = device({
+      features: {
+        tailscale: {
+          hostname: 'server',
+          authKey: 'never-return',
+          acceptRoutes: true,
+          udp: true,
+          ephemeral: false,
+          exitNodeAllowLanAccess: false,
+          extraCidrs: [],
+        },
+      },
+    });
+    mocks.getDevice.mockResolvedValue(current);
+    const result = await getDeviceTailscaleFeature(PROFILE_ID, current.id);
+    expect(result.feature).toMatchObject({ hostname: 'server', hasAuthKey: true });
+    expect(JSON.stringify(result)).not.toContain('never-return');
+  });
+
+  it('deletes only this feature through the same preflight and CAS path', async () => {
+    const current = device({
+      features: {
+        tailscale: {
+          hostname: 'server',
+          acceptRoutes: true,
+          udp: true,
+          ephemeral: false,
+          exitNodeAllowLanAccess: false,
+          extraCidrs: [],
+        },
+      },
+    });
+    setBracketSnapshot([current]);
+
+    await expect(deleteDeviceTailscaleFeature(PROFILE_ID, current.id)).resolves.toEqual({
+      feature: null,
+      warnings: [],
+    });
+    expect(lastCandidateDevices?.[0].features.tailscale).toBeUndefined();
+    expect(mocks.commitDeviceChanges).toHaveBeenCalledWith(
+      PROFILE_ID,
+      { writes: [lastCandidateDevices?.[0]] },
+      42,
+    );
+  });
+
+  it('reports an audit outage as a post-commit warning instead of a failed DELETE', async () => {
+    const current = device({
+      features: {
+        tailscale: {
+          hostname: 'server',
+          acceptRoutes: true,
+          udp: true,
+          ephemeral: false,
+          exitNodeAllowLanAccess: false,
+          extraCidrs: [],
+        },
+      },
+    });
+    setBracketSnapshot([current]);
+    mocks.recordEvent.mockRejectedValue(new Error('audit unavailable'));
+
+    const result = await deleteDeviceTailscaleFeature(PROFILE_ID, current.id);
+
+    expect(result?.feature).toBeNull();
+    expect(result?.warnings.join('')).toContain('配置已保存');
+    expect(mocks.commitDeviceChanges).toHaveBeenCalledOnce();
   });
 });
 
@@ -249,7 +623,10 @@ describe('undoDeviceEvent', () => {
     mocks.listDevices.mockResolvedValue([]);
     mocks.preflightProfileConfig.mockImplementation(
       async (_profileId: string, build: (s: { devices: Device[] }) => { devices: Device[] }) => {
-        const state = { devices: bracketDevices };
+        const state = {
+          devices: bracketDevices,
+          profile: { id: PROFILE_ID, name: 'home', kind: 'normal' as const },
+        };
         const patch = await build(state);
         lastCandidateDevices = patch.devices;
         return { configVersion: 42, candidate: { ...state, ...patch } };

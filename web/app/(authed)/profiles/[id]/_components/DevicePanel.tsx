@@ -6,6 +6,7 @@ import { ApiError, api } from '@/lib/client/api';
 import { DEVICE_PRESETS, buildPresetPatch, type DevicePreset } from '@/lib/profiles/devicePresets';
 import { useToast } from '@/components/ui/Toast';
 import { TEMPLATE_NOT_DISTRIBUTABLE } from '@/lib/profiles/kind';
+import type { PublicDeviceFeatures } from '@/schemas';
 import styles from '../../profiles.module.css';
 
 /**
@@ -21,6 +22,7 @@ export interface DeviceRecord {
   display_name?: string;
   notes?: string;
   base_patch: Record<string, unknown>;
+  features?: PublicDeviceFeatures;
   created_at: number;
   updated_at: number;
 }
@@ -133,6 +135,11 @@ export function DevicePanel({
                   <b className="mono">{device.name}</b>
                   <span>
                     {diffCountLabel(device)}
+                    {device.features?.tailscale
+                      ? device.features.tailscale.hasAuthKey
+                        ? ' · Tailscale 已配置'
+                        : ' · Tailscale 未提供密钥'
+                      : ''}
                     {device.display_name ? ` · 显示名 ${device.display_name}` : ''}
                     {device.notes ? ` · ${device.notes}` : ''}
                   </span>

@@ -72,6 +72,7 @@ function device(over: Partial<Device>): Device {
     id: crypto.randomUUID(),
     name: 'macbook',
     base_patch: {},
+    features: {},
     created_at: 1,
     updated_at: 1,
     ...over,
@@ -173,5 +174,52 @@ describe('preflightProfileConfig — 设备闸口', () => {
       device({ base_patch: { dns: { listen: '0.0.0.0:53' } } }),
     ]);
     await expect(preflight()).resolves.toBeDefined();
+  });
+
+  it('validates a typed device Tailscale feature against the candidate render', async () => {
+    mocks.listDevices.mockResolvedValue([
+      device({
+        name: 'server',
+        features: {
+          tailscale: {
+            hostname: 'server-ts',
+            acceptRoutes: true,
+            udp: true,
+            ephemeral: false,
+            exitNodeAllowLanAccess: false,
+            extraCidrs: [],
+          },
+        },
+      }),
+    ]);
+    await expect(preflight()).resolves.toBeDefined();
+  });
+
+  it('blocks a device feature while the shared candidate still contains legacy Tailscale', async () => {
+    mocks.resolveConfig.mockResolvedValue({
+      content: RENDERED.replace(
+        'proxies: []',
+        'proxies:\n  - {name: old-ts, type: tailscale, hostname: old}',
+      ),
+    });
+    mocks.listDevices.mockResolvedValue([
+      device({
+        name: 'server',
+        features: {
+          tailscale: {
+            hostname: 'server-ts',
+            acceptRoutes: true,
+            udp: true,
+            ephemeral: false,
+            exitNodeAllowLanAccess: false,
+            extraCidrs: [],
+          },
+        },
+      }),
+    ]);
+
+    const error = (await preflight().catch((cause: unknown) => cause)) as ConfigValidationError;
+    expect(error.issue.code).toBe('device_tailscale_legacy_conflict');
+    expect(error.message).toContain('server');
   });
 });

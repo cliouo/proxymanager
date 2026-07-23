@@ -298,6 +298,108 @@ rules:
   it('accepts an empty patch and returns the shared document unchanged', () => {
     expect(buildDeviceConfig(SHARED, {}, 'dev')).toBe(SHARED);
   });
+
+  it('injects a typed Tailscale instance only into this device render', () => {
+    const out = buildDeviceConfig(SHARED, {}, 'server', {
+      tailscale: {
+        hostname: 'server-ts',
+        authKey: 'tskey-secret',
+        acceptRoutes: true,
+        udp: true,
+        ephemeral: false,
+        exitNodeAllowLanAccess: false,
+        extraCidrs: ['10.23.0.0/16'],
+      },
+    });
+    const parsed = parse(out) as {
+      proxies: Array<Record<string, unknown>>;
+      'proxy-groups': Array<Record<string, unknown>>;
+      rules: string[];
+    };
+    expect(parsed.proxies).toContainEqual(
+      expect.objectContaining({
+        name: 'ts-server-ts',
+        type: 'tailscale',
+        hostname: 'server-ts',
+        'auth-key': 'tskey-secret',
+      }),
+    );
+    expect(parsed['proxy-groups']).toContainEqual({
+      name: 'Tailscale',
+      type: 'select',
+      proxies: ['ts-server-ts'],
+    });
+    expect(parsed.rules).toEqual([
+      'IP-CIDR,100.64.0.0/10,Tailscale,no-resolve',
+      'IP-CIDR,10.23.0.0/16,Tailscale,no-resolve',
+      'MATCH,DIRECT',
+    ]);
+  });
+
+  it('places device Tailscale routes before overlapping shared rules', () => {
+    const sharedWithOverlap = SHARED.replace(
+      '  - MATCH,DIRECT',
+      '  - IP-CIDR,100.64.0.0/10,DIRECT,no-resolve\n  - MATCH,DIRECT',
+    );
+    const out = buildDeviceConfig(sharedWithOverlap, {}, 'server', {
+      tailscale: {
+        hostname: 'server-ts',
+        acceptRoutes: true,
+        udp: true,
+        ephemeral: false,
+        exitNodeAllowLanAccess: false,
+        extraCidrs: [],
+      },
+    });
+    const parsed = parse(out) as { rules: string[] };
+    expect(parsed.rules).toEqual([
+      'IP-CIDR,100.64.0.0/10,Tailscale,no-resolve',
+      'IP-CIDR,100.64.0.0/10,DIRECT,no-resolve',
+      'MATCH,DIRECT',
+    ]);
+  });
+
+  it('blocks device Tailscale while a legacy shared Tailscale node remains', () => {
+    const legacy = SHARED.replace(
+      'proxies: []',
+      'proxies:\n  - {name: old-ts, type: tailscale, hostname: old}',
+    );
+    const issue = issueOf(() =>
+      buildDeviceConfig(legacy, {}, 'server', {
+        tailscale: {
+          hostname: 'server',
+          acceptRoutes: true,
+          udp: true,
+          ephemeral: false,
+          exitNodeAllowLanAccess: false,
+          extraCidrs: [],
+        },
+      }),
+    );
+    expect(issue.code).toBe('device_tailscale_legacy_conflict');
+    expect(issue.message).toContain('先迁移');
+  });
+
+  it('rejects node or group names that collide across proxy namespaces', () => {
+    const shared = SHARED.replace(
+      'proxy-groups: []',
+      'proxy-groups:\n  - {name: occupied, type: select, proxies: [DIRECT]}',
+    );
+    const issue = issueOf(() =>
+      buildDeviceConfig(shared, {}, 'server', {
+        tailscale: {
+          hostname: 'server',
+          nodeName: 'occupied',
+          acceptRoutes: true,
+          udp: true,
+          ephemeral: false,
+          exitNodeAllowLanAccess: false,
+          extraCidrs: [],
+        },
+      }),
+    );
+    expect(issue.code).toBe('device_tailscale_name_conflict');
+  });
 });
 
 /* ─── 预览掩码 ──────────────────────────────────────────────────────── */

@@ -18,15 +18,23 @@ import {
   listDevices,
   type DeviceChanges,
 } from '@/lib/repos/devicesRepo';
-import { getProfile } from '@/lib/repos/profilesRepo';
+import { getProfile, listProfiles } from '@/lib/repos/profilesRepo';
 import type { AuditEventInput } from '@/lib/scenarios/_shared/types';
 import { preflightProfileConfig } from '@/lib/services/configPreflight';
 import {
   DeviceCreateSchema,
+  TailscaleDeviceFeatureSchema,
+  TailscaleDeviceFeatureUpdateSchema,
   DeviceUpdateSchema,
   MAX_DEVICES_PER_PROFILE,
+  publicDeviceFeatures,
   type Device,
   type DeviceCreate,
+  type Profile,
+  type PublicDeviceFeatures,
+  type PublicTailscaleDeviceFeature,
+  type TailscaleDeviceFeature,
+  type TailscaleDeviceFeatureUpdate,
   type DeviceUpdate,
 } from '@/schemas';
 
@@ -34,9 +42,10 @@ function nowSeconds(): number {
   return Math.floor(Date.now() / 1000);
 }
 
-async function requireProfile(profileId: string): Promise<void> {
+async function requireProfile(profileId: string): Promise<Profile> {
   const profile = await getProfile(profileId);
   if (!profile) throw ProblemDetailsError.notFound(`profile ${profileId} 不存在。`);
+  return profile;
 }
 
 /** 一次设备变更的完整计划，全部从版本括号内的稳定快照推导。 */
@@ -62,13 +71,13 @@ interface DevicePlan<T> {
  */
 async function mutateDevices<T>(
   profileId: string,
-  plan: (current: readonly Device[]) => DevicePlan<T>,
+  plan: (current: readonly Device[], profile: Readonly<Profile>) => DevicePlan<T>,
 ): Promise<T> {
   let planned: DevicePlan<T> | null = null;
   const checked = await preflightProfileConfig(profileId, (state) => {
     // 每次重跑都从这一刻的快照重新计划(preflight 内部若因快照不稳定而重读,
     // 这个回调也会拿到新的 state)。
-    planned = plan(state.devices);
+    planned = plan(state.devices, state.profile);
     return { devices: planned.devices };
   });
   if (!planned) {
@@ -102,13 +111,47 @@ function assertNameFree(devices: readonly Device[], name: string, exceptId?: str
  */
 function auditSnapshot(device: Device | null): unknown {
   if (!device) return undefined;
+  const tailscale = device.features.tailscale;
+  let safeFeatures: unknown = {};
+  if (tailscale) {
+    const { authKey, ...safeTailscale } = tailscale;
+    safeFeatures = {
+      tailscale: {
+        ...safeTailscale,
+        // Presence metadata is useful for a non-undoable secret-bearing
+        // event. Do not add `hasAuthKey:false`: snapshots without a secret
+        // remain schema-faithful and can safely power generic undo.
+        ...(authKey ? { hasAuthKey: true } : {}),
+      },
+    };
+  }
   return {
     id: device.id,
     name: device.name,
     display_name: device.display_name,
     notes: device.notes,
     base_patch: redactSensitive(device.base_patch),
+    // Feature storage uses typed camelCase fields (`authKey`), while the raw
+    // YAML redactor primarily knows Mihomo's kebab-case keys (`auth-key`).
+    // Use a schema-aware projection instead of relying on a generic key-name
+    // heuristic, otherwise a later device PATCH/DELETE can leak a previously
+    // stored Tailscale key into its audit snapshot.
+    features: safeFeatures,
   };
+}
+
+function touchesDeviceSecrets(device: Device | null): boolean {
+  return Boolean(
+    device && (touchesSensitiveKeys(device.base_patch) || device.features?.tailscale?.authKey),
+  );
+}
+
+export interface PublicDevice extends Omit<Device, 'features'> {
+  features: PublicDeviceFeatures;
+}
+
+export function publicDevice(device: Device): PublicDevice {
+  return { ...device, features: publicDeviceFeatures(device.features ?? {}) };
 }
 
 export async function listProfileDevices(profileId: string): Promise<Device[]> {
@@ -145,6 +188,7 @@ export async function createDevice(profileId: string, input: DeviceCreate): Prom
       ...(parsed.display_name !== undefined ? { display_name: parsed.display_name } : {}),
       ...(parsed.notes !== undefined ? { notes: parsed.notes } : {}),
       base_patch: parsed.base_patch,
+      features: {},
       created_at: ts,
       updated_at: ts,
     };
@@ -161,7 +205,7 @@ export async function createDevice(profileId: string, input: DeviceCreate): Prom
     target: { kind: 'device', id: device.id, name: device.name },
     after: auditSnapshot(device),
     profileId,
-    undoable: !touchesSensitiveKeys(device.base_patch),
+    undoable: !touchesDeviceSecrets(device),
   });
   return device;
 }
@@ -205,9 +249,7 @@ export async function patchDevice(
     before: auditSnapshot(before),
     after: auditSnapshot(next),
     profileId,
-    undoable:
-      !touchesSensitiveKeys((before as Device | null)?.base_patch ?? {}) &&
-      !touchesSensitiveKeys(next.base_patch),
+    undoable: !touchesDeviceSecrets(before) && !touchesDeviceSecrets(next),
   });
   return next;
 }
@@ -226,6 +268,7 @@ function deviceFromSnapshot(raw: unknown, now: number): Device {
     ...(snap.display_name !== undefined ? { display_name: snap.display_name } : {}),
     ...(snap.notes !== undefined ? { notes: snap.notes } : {}),
     base_patch: snap.base_patch ?? {},
+    features: snap.features ?? {},
     created_at: snap.created_at ?? now,
     updated_at: now,
   };
@@ -369,7 +412,196 @@ export async function deleteDevice(profileId: string, deviceId: string): Promise
     target: { kind: 'device', id: deleted.id, name: deleted.name },
     before: auditSnapshot(deleted),
     profileId,
-    undoable: !touchesSensitiveKeys(deleted.base_patch),
+    undoable: !touchesDeviceSecrets(deleted),
   });
   return true;
+}
+
+/* ─── 设备级 Tailscale ─────────────────────────────────────────────── */
+
+export interface TailscaleFeatureResult {
+  feature: PublicTailscaleDeviceFeature | null;
+  warnings: string[];
+}
+
+const AUDIT_WARNING = '配置已保存，但审计记录写入失败；请检查审计存储。';
+
+function publicTailscale(
+  feature: TailscaleDeviceFeature | undefined,
+): PublicTailscaleDeviceFeature | null {
+  return publicDeviceFeatures({ tailscale: feature }).tailscale ?? null;
+}
+
+function sameTailnetIdentity(
+  a: Pick<TailscaleDeviceFeature, 'hostname' | 'controlUrl'>,
+  b: Pick<TailscaleDeviceFeature, 'hostname' | 'controlUrl'>,
+): boolean {
+  return (
+    a.hostname.toLowerCase() === b.hostname.toLowerCase() &&
+    canonicalControlUrl(a.controlUrl) === canonicalControlUrl(b.controlUrl)
+  );
+}
+
+function canonicalControlUrl(value: string | undefined): string {
+  const parsed = new URL(value ?? 'https://controlplane.tailscale.com');
+  const path = parsed.pathname.replace(/\/+$/, '');
+  return `${parsed.protocol}//${parsed.host.toLowerCase()}${path}`;
+}
+
+async function crossProfileWarnings(
+  profileId: string,
+  deviceId: string,
+  feature: TailscaleDeviceFeature | undefined,
+): Promise<string[]> {
+  if (!feature) return [];
+  try {
+    const profiles = await listProfiles();
+    const collisions: string[] = [];
+    for (const profile of profiles) {
+      if (profile.id === profileId || profile.kind === 'template') continue;
+      for (const device of await listDevices(profile.id)) {
+        const other = device.features.tailscale;
+        if (device.id !== deviceId && other && sameTailnetIdentity(feature, other)) {
+          collisions.push(`${profile.name}/${device.name}`);
+        }
+      }
+    }
+    return collisions.length === 0
+      ? []
+      : [
+          `另有设备使用相同 control-url + hostname：${collisions.join('、')}。如果它们属于同一 tailnet，请改 hostname。`,
+        ];
+  } catch {
+    // 跨 profile 检查只是建议，不能让一次已经通过 preflight + CAS 的保存
+    // 因后置读取暂时失败而向客户端谎报“保存失败”。
+    return ['已保存；跨配置文件的 hostname 冲突检查暂时不可用，请稍后刷新确认。'];
+  }
+}
+
+export async function getDeviceTailscaleFeature(
+  profileId: string,
+  deviceId: string,
+): Promise<TailscaleFeatureResult> {
+  const device = await getProfileDevice(profileId, deviceId);
+  return {
+    feature: publicTailscale(device.features.tailscale),
+    warnings: await crossProfileWarnings(profileId, deviceId, device.features.tailscale),
+  };
+}
+
+export async function putDeviceTailscaleFeature(
+  profileId: string,
+  deviceId: string,
+  input: TailscaleDeviceFeatureUpdate,
+): Promise<TailscaleFeatureResult> {
+  await requireProfile(profileId);
+  const parsed = TailscaleDeviceFeatureUpdateSchema.parse(input);
+
+  let beforeFeature: TailscaleDeviceFeature | undefined;
+  const updated = await mutateDevices(profileId, (current, stableProfile) => {
+    const target = current.find((d) => d.id === deviceId);
+    if (!target) throw ProblemDetailsError.notFound(`设备 ${deviceId} 不存在。`);
+    if (stableProfile.kind === 'template') {
+      throw ProblemDetailsError.unprocessable(
+        '模版不保存 Tailscale 设备身份；请从模版新建普通配置后，在具体设备上启用。',
+      );
+    }
+    const existing = target.features?.tailscale;
+    const { authKey: submittedAuthKey, ...featureFields } = parsed;
+    const authKey =
+      submittedAuthKey === undefined
+        ? existing?.authKey
+        : submittedAuthKey === null
+          ? undefined
+          : submittedAuthKey;
+    const feature = TailscaleDeviceFeatureSchema.parse({
+      ...featureFields,
+      ...(authKey ? { authKey } : {}),
+    });
+    const duplicate = current.find(
+      (device) =>
+        device.id !== deviceId &&
+        device.features?.tailscale &&
+        sameTailnetIdentity(feature, device.features.tailscale),
+    );
+    if (duplicate) {
+      throw ProblemDetailsError.conflict(
+        `设备「${duplicate.name}」已经使用相同的 control-url + hostname，请为每台设备设置独立 hostname。`,
+      );
+    }
+    beforeFeature = target.features?.tailscale;
+    const next: Device = {
+      ...target,
+      features: { ...(target.features ?? {}), tailscale: feature },
+      updated_at: nowSeconds(),
+    };
+    return {
+      devices: current.map((device) => (device.id === deviceId ? next : device)),
+      changes: { writes: [next] },
+      outcome: next,
+    };
+  });
+
+  let auditWarning: string | null = null;
+  try {
+    await recordEvent({
+      op: 'device.tailscale.update',
+      actor: 'admin',
+      target: { kind: 'device', id: updated.id, name: updated.name },
+      before: publicTailscale(beforeFeature),
+      after: publicTailscale(updated.features.tailscale),
+      profileId,
+      undoable: false,
+    });
+  } catch {
+    // CAS 已提交。不能把审计旁路故障谎报成保存失败，否则客户端重试会重复写入。
+    auditWarning = AUDIT_WARNING;
+  }
+  return {
+    feature: publicTailscale(updated.features.tailscale),
+    warnings: [
+      ...(auditWarning ? [auditWarning] : []),
+      ...(await crossProfileWarnings(profileId, deviceId, updated.features.tailscale)),
+    ],
+  };
+}
+
+export async function deleteDeviceTailscaleFeature(
+  profileId: string,
+  deviceId: string,
+): Promise<TailscaleFeatureResult | null> {
+  await requireProfile(profileId);
+  let before: Device | null = null;
+  const changed = await mutateDevices(profileId, (current) => {
+    const target = current.find((d) => d.id === deviceId);
+    if (!target) throw ProblemDetailsError.notFound(`设备 ${deviceId} 不存在。`);
+    if (!target.features?.tailscale) {
+      return { devices: [...current], changes: {}, outcome: false };
+    }
+    before = target;
+    const features = { ...(target.features ?? {}) };
+    delete features.tailscale;
+    const next: Device = { ...target, features, updated_at: nowSeconds() };
+    return {
+      devices: current.map((device) => (device.id === deviceId ? next : device)),
+      changes: { writes: [next] },
+      outcome: true,
+    };
+  });
+  if (!changed || !before) return null;
+  const previous: Device = before;
+  const warnings: string[] = [];
+  try {
+    await recordEvent({
+      op: 'device.tailscale.delete',
+      actor: 'admin',
+      target: { kind: 'device', id: previous.id, name: previous.name },
+      before: publicTailscale(previous.features.tailscale),
+      profileId,
+      undoable: false,
+    });
+  } catch {
+    warnings.push(AUDIT_WARNING);
+  }
+  return { feature: null, warnings };
 }

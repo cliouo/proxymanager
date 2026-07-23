@@ -1,6 +1,11 @@
 import { withProblemDetails } from '@/lib/http/handler';
 import { ProblemDetailsError } from '@/lib/http/problem';
-import { deleteDevice, getProfileDevice, patchDevice } from '@/lib/services/deviceService';
+import {
+  deleteDevice,
+  getProfileDevice,
+  patchDevice,
+  publicDevice,
+} from '@/lib/services/deviceService';
 import { DeviceUpdateSchema } from '@/schemas';
 
 export const dynamic = 'force-dynamic';
@@ -9,7 +14,7 @@ type Ctx = RouteContext<'/api/v1/profiles/[id]/devices/[deviceId]'>;
 
 export const GET = withProblemDetails(async (_request: Request, ctx: Ctx) => {
   const { id, deviceId } = await ctx.params;
-  return Response.json({ data: await getProfileDevice(id, deviceId) });
+  return Response.json({ data: publicDevice(await getProfileDevice(id, deviceId)) });
 });
 
 /**
@@ -22,7 +27,7 @@ export const PATCH = withProblemDetails(async (request: Request, ctx: Ctx) => {
     throw ProblemDetailsError.badRequest('Request body must be valid JSON.');
   });
   const patch = DeviceUpdateSchema.parse(raw);
-  return Response.json({ data: await patchDevice(id, deviceId, patch) });
+  return Response.json({ data: publicDevice(await patchDevice(id, deviceId, patch)) });
 });
 
 export const DELETE = withProblemDetails(async (_request: Request, ctx: Ctx) => {
