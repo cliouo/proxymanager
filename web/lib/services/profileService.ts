@@ -9,6 +9,7 @@ import {
   upsertProfile,
 } from '@/lib/repos/profilesRepo';
 import { getBase, setBase } from '@/lib/repos/baseRepo';
+import { cloneDevices } from '@/lib/repos/devicesRepo';
 import { upsertRules, listRules } from '@/lib/repos/rulesRepo';
 import { listProxyGroups, upsertProxyGroups } from '@/lib/repos/proxyGroupsRepo';
 import { invalidateResolvedSnapshot } from '@/lib/repos/resolvedRepo';
@@ -117,6 +118,12 @@ async function cloneProfileConfig(
   for (const [name, tag] of Object.entries(srcTax)) {
     await destTax.set(name, tag);
   }
+
+  // Devices come along (new ids, names preserved) — a clone that dropped them
+  // would silently 404 every device sub link the user had handed out. Only the
+  // full-clone path copies them: the "blank skeleton" path has no groups/rules
+  // for a patch to be meaningful against either.
+  await cloneDevices(srcId, destId, now);
 }
 
 export async function createProfile(input: ProfileCreate): Promise<Profile> {
@@ -167,6 +174,7 @@ export async function createProfile(input: ProfileCreate): Promise<Profile> {
         .del(REDIS_KEYS.rules(profile.id))
         .del(REDIS_KEYS.proxyGroups(profile.id))
         .del(REDIS_KEYS.taxonomy.groups(profile.id))
+        .del(REDIS_KEYS.devices(profile.id))
         .exec()
         .catch(() => undefined);
       throw err;
@@ -246,6 +254,9 @@ export async function deleteProfile(id: string): Promise<boolean> {
       .del(REDIS_KEYS.rules(id))
       .del(REDIS_KEYS.proxyGroups(id))
       .del(REDIS_KEYS.taxonomy.groups(id))
+      // repoDelete already drops devices in its own multi; this is the
+      // belt-and-braces sweep that runs with the rest of the owned config.
+      .del(REDIS_KEYS.devices(id))
       .exec();
     invalidateSnapshot();
   }

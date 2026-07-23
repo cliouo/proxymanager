@@ -44,7 +44,10 @@ const fakeRedis = {
     if (h.size === 0) return null;
     return Object.fromEntries([...h].map(([f, v]) => [f, clone(v)]));
   },
-  get: async (key: string) => (kv.has(key) ? kv.get(key)! : null),
+  // config:version 由 incr 维护在 counters 里 —— get 也要能读到它，
+  // 否则闸口读出的版本与 CAS 比对的版本永远对不上。
+  get: async (key: string) =>
+    counters.has(key) ? counters.get(key)! : kv.has(key) ? kv.get(key)! : null,
   set: async (key: string, value: string) => {
     kv.set(key, value);
   },
@@ -57,6 +60,32 @@ const fakeRedis = {
   hset: async (key: string, payload: Record<string, unknown>) => {
     const h = hashOf(key);
     for (const [f, v] of Object.entries(payload)) h.set(f, clone(v));
+  },
+  /** CAS_RULE_SET_CHANGE 的行为等价实现（规则集写入现在走闸口 + CAS）。 */
+  eval: async (_script: string, keys: string[], args: (string | number)[]) => {
+    const [versionKey, setsKey, contentKey, ...ruleKeys] = keys;
+    const a = args.map(String);
+    const current = counters.get(versionKey) ?? 0;
+    if (current !== Number(a[0])) return [0, String(current)];
+    if (a[1] === 'write') {
+      hashOf(setsKey).set(a[2], JSON.parse(a[3]));
+      kv.set(contentKey, a[4]);
+    } else if (a[1] === 'delete') {
+      hashOf(setsKey).delete(a[2]);
+      kv.delete(contentKey);
+    }
+    let i = 6;
+    for (let g = 0; g < Number(a[5]); g += 1) {
+      const count = Number(a[i]);
+      i += 1;
+      for (let r = 0; r < count; r += 1) {
+        hashOf(ruleKeys[g]).set(a[i], JSON.parse(a[i + 1]));
+        i += 2;
+      }
+    }
+    const next = current + 1;
+    counters.set(versionKey, next);
+    return [1, String(next)];
   },
   hdel: async (key: string, field: string) => (hashOf(key).delete(field) ? 1 : 0),
   multi: () => {

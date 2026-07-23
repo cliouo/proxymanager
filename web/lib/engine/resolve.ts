@@ -1317,8 +1317,12 @@ function validateFinalProxyDocument(doc: ReturnType<typeof parseDocument>): void
  * materialised. Mihomo resolves proxy/group/provider/rule names from the final
  * document; validating the split inputs earlier cannot detect dangling names
  * created by pruning, template merge, or a typo in a base literal.
+ *
+ * Exported for the device layer (lib/engine/devicePatch.ts): a device's patched
+ * document is a final rendered config too, and must clear the exact same bar —
+ * there is deliberately no second, weaker validator for devices.
  */
-function validateFinalRenderedConfig(content: string): void {
+export function validateFinalRenderedConfig(content: string): void {
   let doc: ReturnType<typeof parseDocument>;
   try {
     doc = parseBaseDocument(content);

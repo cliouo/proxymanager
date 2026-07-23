@@ -1,8 +1,10 @@
 import { ConfigPreflightUnavailableError, ConfigValidationError } from '@/lib/config/errors';
+import { buildDeviceConfig } from '@/lib/engine/devicePatch';
 import { resolveConfig } from '@/lib/engine/resolve';
 import { getBase } from '@/lib/repos/baseRepo';
 import { listCollections } from '@/lib/repos/collectionsRepo';
 import { getConfigVersion } from '@/lib/repos/configVersionRepo';
+import { listDevices } from '@/lib/repos/devicesRepo';
 import { getProfile } from '@/lib/repos/profilesRepo';
 import { listProxyGroups } from '@/lib/repos/proxyGroupsRepo';
 import { listProxyGroupTemplates } from '@/lib/repos/proxyGroupTemplatesRepo';
@@ -18,6 +20,7 @@ import { resolveSubscriptionProxies } from '@/lib/services/subscriptionFetcher';
 import type { FetchSubscriptionProxiesResult } from '@/lib/services/subscriptionFetcher';
 import type {
   Collection,
+  Device,
   Profile,
   ProxyGroup,
   ProxyGroupTemplate,
@@ -36,6 +39,16 @@ export interface ProfileConfigState {
   templates: ProxyGroupTemplate[];
   ruleSets: RuleSet[];
   collections: Collection[];
+  /**
+   * The profile's devices. Not a render input for the SHARED config — the
+   * shared render never sees them — but every device's patch must still be
+   * valid against whatever the candidate renders to, so they belong in the
+   * state a preflight brackets and validates.
+   *
+   * A device mutation replaces this array in its candidate; a shared-layer
+   * mutation leaves it alone and thereby re-validates every stored device.
+   */
+  devices: Device[];
 }
 
 export type ProfileConfigCandidate = Partial<Omit<ProfileConfigState, 'profile'>>;
@@ -139,7 +152,7 @@ export async function preflightProfileConfig(
   const candidate: ProfileConfigState = { ...state, ...patch };
 
   try {
-    await resolveConfig(
+    const resolved = await resolveConfig(
       candidate.baseContent,
       candidate.rules,
       candidate.subscriptions,
@@ -156,6 +169,13 @@ export async function preflightProfileConfig(
         subscriptionResolver: resolveSubscriptionForPreflight,
       },
     );
+    // The single device gate. Every write path in the app already funnels
+    // through this function, so extending it here — and ONLY here — means no
+    // entry point can mutate the shared layer into a state that breaks a
+    // device, and no device patch can be stored without being checked against
+    // the exact document it will be applied to. N ≤ 16 in-memory
+    // patch+validate rounds over one already-computed render.
+    assertDevicePatchesValid(resolved.content, candidate.devices);
   } catch (error) {
     if (
       error instanceof ConfigValidationError ||
@@ -170,6 +190,48 @@ export async function preflightProfileConfig(
   }
 
   return { configVersion: version, candidate };
+}
+
+/**
+ * Validate every device's patch against the candidate's rendered output.
+ *
+ * Failures are aggregated so one save reports ALL broken devices rather than
+ * making the user fix them one round-trip at a time; the thrown issue names the
+ * offending device(s), because "your save was rejected" without a device name
+ * is unactionable when the conflict lives in a patch the user isn't looking at.
+ */
+function assertDevicePatchesValid(sharedContent: string, devices: readonly Device[]): void {
+  if (devices.length === 0) return;
+
+  const failures: { name: string; issue: ConfigValidationError }[] = [];
+  for (const device of devices) {
+    try {
+      buildDeviceConfig(sharedContent, device.base_patch, device.name);
+    } catch (error) {
+      if (error instanceof ConfigValidationError) {
+        failures.push({ name: device.name, issue: error });
+        continue;
+      }
+      throw error;
+    }
+  }
+  if (failures.length === 0) return;
+
+  const first = failures[0];
+  const others =
+    failures.length > 1
+      ? `（另有 ${failures.length - 1} 台设备也受影响：${failures
+          .slice(1)
+          .map((f) => f.name)
+          .join('、')}）`
+      : '';
+  throw new ConfigValidationError({
+    code: first.issue.issue.code,
+    message: `${first.issue.message}${others} —— 请先修改或删除该设备的补丁，再保存共享层改动。`,
+    section: 'devices',
+    path: `devices[${first.name}].${first.issue.issue.path}`,
+    resource: 'device-patch',
+  });
 }
 
 /** Apply id-keyed upserts/deletes without mutating the loaded snapshot. */
@@ -199,17 +261,27 @@ async function loadStableProfileState(
 ): Promise<{ version: number; state: ProfileConfigState }> {
   for (let attempt = 0; attempt < SNAPSHOT_READ_ATTEMPTS; attempt += 1) {
     const version = await getConfigVersion();
-    const [profile, base, rules, subscriptions, proxyGroups, templates, ruleSets, collections] =
-      await Promise.all([
-        getProfile(profileId),
-        getBase(profileId),
-        listRules(profileId),
-        listSubscriptions(),
-        listProxyGroups(profileId),
-        listProxyGroupTemplates(),
-        listRuleSets(),
-        listCollections(),
-      ]);
+    const [
+      profile,
+      base,
+      rules,
+      subscriptions,
+      proxyGroups,
+      templates,
+      ruleSets,
+      collections,
+      devices,
+    ] = await Promise.all([
+      getProfile(profileId),
+      getBase(profileId),
+      listRules(profileId),
+      listSubscriptions(),
+      listProxyGroups(profileId),
+      listProxyGroupTemplates(),
+      listRuleSets(),
+      listCollections(),
+      listDevices(profileId),
+    ]);
     const after = await getConfigVersion();
     if (version !== after) continue;
     if (!profile || !base) {
@@ -232,6 +304,7 @@ async function loadStableProfileState(
         templates,
         ruleSets,
         collections,
+        devices,
       },
     };
   }

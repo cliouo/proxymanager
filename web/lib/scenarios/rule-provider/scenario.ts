@@ -23,13 +23,14 @@ import { referencedProviderNamesInBaseYaml } from '@/lib/engine/renderer';
 import { getBase } from '@/lib/repos/baseRepo';
 import { listProfiles } from '@/lib/repos/profilesRepo';
 import { listRules } from '@/lib/repos/rulesRepo';
-import { getRuleSetByName, upsertRuleSet } from '@/lib/repos/ruleSetsRepo';
+import { getRuleSetByName } from '@/lib/repos/ruleSetsRepo';
 import {
   createRuleSet,
-  deleteRuleSet,
+  deleteRuleSetChecked,
   getRuleSet,
   patchRuleSet,
   replaceRuleSet,
+  restoreRuleSet,
 } from '@/lib/services/ruleSetService';
 import { RuleSetCreateSchema, RuleSetUpdateSchema, type RuleSet } from '@/schemas';
 import type { InverseHandler, OpHandler, Scenario } from '../_shared/types';
@@ -106,7 +107,7 @@ const del: OpHandler = async (_ctx, raw) => {
       `规则集 "${before.name}" 仍被 ${baseRefCount} 个配置文件的 base 正文以 \`rule-set:\` 引用，无法删除；请先在这些 base 中移除引用。`,
     );
   }
-  const removed = await deleteRuleSet(id);
+  const removed = await deleteRuleSetChecked(id);
   if (!removed) throw ProblemDetailsError.notFound(`Rule set ${id} not found.`);
   return {
     data: null,
@@ -133,7 +134,8 @@ const inverseCreate: InverseHandler = async (_ctx, event) => {
   if (current.updated_at !== after.updated_at) {
     throw ProblemDetailsError.conflict(`Rule set ${after.id} was modified after this event.`);
   }
-  await deleteRuleSet(after.id);
+  // 撤销同样过闸口:把一条规则集删掉,对引用它的配置文件而言与正向删除一样危险。
+  await deleteRuleSetChecked(after.id);
   return {
     data: null,
     events: [
@@ -154,7 +156,7 @@ const inverseUpdate: InverseHandler = async (_ctx, event) => {
     throw ProblemDetailsError.conflict(`Rule set ${after.id} was modified after this event.`);
   }
   const reverted: RuleSet = { ...before, updated_at: Math.floor(Date.now() / 1000) };
-  await upsertRuleSet(reverted);
+  await restoreRuleSet(reverted, current);
   return {
     data: reverted,
     events: [
@@ -179,7 +181,7 @@ const inverseDelete: InverseHandler = async (_ctx, event) => {
     throw ProblemDetailsError.conflict(`Rule set name "${before.name}" is taken; cannot restore.`);
   }
   const restored: RuleSet = { ...before, updated_at: Math.floor(Date.now() / 1000) };
-  await upsertRuleSet(restored);
+  await restoreRuleSet(restored, null);
   return {
     data: restored,
     events: [

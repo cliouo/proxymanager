@@ -15,31 +15,85 @@ const store = new Map<string, RuleSet>();
 const kv = new Map<string, string>();
 /** Plain-key counters (config:version INCRs land here). */
 const counters = new Map<string, number>();
+/** Any other hash the service touches (profiles / per-profile rules). */
+const hashes = new Map<string, Map<string, unknown>>();
+
+function hash(key: string): Map<string, unknown> {
+  if (key === 'rule-sets') return store as unknown as Map<string, unknown>;
+  let m = hashes.get(key);
+  if (!m) {
+    m = new Map();
+    hashes.set(key, m);
+  }
+  return m;
+}
+
 const fakeRedis = {
-  hgetall: async () => (store.size === 0 ? null : Object.fromEntries(store)),
-  hget: async (_k: string, id: string) => store.get(id) ?? null,
-  get: async (key: string) => (kv.has(key) ? kv.get(key) : null),
+  hgetall: async (key: string) => {
+    const m = hash(key);
+    return m.size === 0 ? null : Object.fromEntries(m);
+  },
+  hget: async (key: string, id: string) => hash(key).get(id) ?? null,
+  get: async (key: string) => {
+    if (counters.has(key)) return counters.get(key)!;
+    return kv.has(key) ? kv.get(key) : null;
+  },
   set: async (key: string, value: string) => {
     kv.set(key, value);
   },
   del: async (key: string) => (kv.delete(key) ? 1 : 0),
-  hset: async (_k: string, payload: Record<string, RuleSet>) => {
-    for (const [id, value] of Object.entries(payload)) store.set(id, value);
+  hset: async (key: string, payload: Record<string, unknown>) => {
+    const m = hash(key);
+    for (const [id, value] of Object.entries(payload)) m.set(id, value);
   },
-  hdel: async (_k: string, id: string) => {
-    return store.delete(id) ? 1 : 0;
-  },
+  hdel: async (key: string, id: string) => (hash(key).delete(id) ? 1 : 0),
   incr: async (key: string) => {
     const next = (counters.get(key) ?? 0) + 1;
     counters.set(key, next);
     return next;
+  },
+  /**
+   * CAS_RULE_SET_CHANGE 的行为等价实现:比对 config:version → 写/删规则集
+   * (meta + 正文) → 级联写规则 → INCR。参数布局与 repo 里的脚本一一对应。
+   */
+  eval: async (_script: string, keys: string[], args: (string | number)[]) => {
+    const [versionKey, setsKey, contentKey, ...ruleKeys] = keys;
+    const a = args.map(String);
+    const expected = Number(a[0]);
+    const current = counters.get(versionKey) ?? 0;
+    if (current !== expected) return [0, String(current)];
+
+    const mode = a[1];
+    const setId = a[2];
+    if (mode === 'write') {
+      hash(setsKey).set(setId, JSON.parse(a[3]));
+      kv.set(contentKey, a[4]);
+    } else if (mode === 'delete') {
+      hash(setsKey).delete(setId);
+      kv.delete(contentKey);
+    }
+
+    const groupCount = Number(a[5]);
+    let i = 6;
+    for (let g = 0; g < groupCount; g += 1) {
+      const ruleKey = ruleKeys[g];
+      const count = Number(a[i]);
+      i += 1;
+      for (let r = 0; r < count; r += 1) {
+        hash(ruleKey).set(a[i], JSON.parse(a[i + 1]));
+        i += 2;
+      }
+    }
+    const next = current + 1;
+    counters.set(versionKey, next);
+    return [1, String(next)];
   },
   // Chainable multi — the repo bundles meta hset + content set + the
   // config:version INCR into one multi() (and hdel + del + incr on delete).
   multi: () => {
     const ops: Array<() => Promise<unknown>> = [];
     const tx = {
-      hset: (key: string, payload: Record<string, RuleSet>) => {
+      hset: (key: string, payload: Record<string, unknown>) => {
         ops.push(() => fakeRedis.hset(key, payload));
         return tx;
       },
@@ -78,6 +132,8 @@ let svc: typeof import('@/lib/services/ruleSetService');
 beforeEach(async () => {
   store.clear();
   kv.clear();
+  counters.clear();
+  hashes.clear();
   svc = await import('@/lib/services/ruleSetService');
 });
 
@@ -159,8 +215,8 @@ describe('ruleSetService', () => {
 
   it('delete returns true then false', async () => {
     const a = await svc.createRuleSet({ name: 'a', format: 'yaml', content: '' });
-    expect(await svc.deleteRuleSet(a.id)).toBe(true);
-    expect(await svc.deleteRuleSet(a.id)).toBe(false);
+    expect(await svc.deleteRuleSetChecked(a.id)).toBe(true);
+    expect(await svc.deleteRuleSetChecked(a.id)).toBe(false);
   });
 
   it('list sorts by name', async () => {

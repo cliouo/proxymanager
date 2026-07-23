@@ -22,6 +22,8 @@ export const AuditTargetSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('rule-set'), name: z.string().min(1) }),
   z.object({ kind: z.literal('base'), field: z.string().optional() }),
   z.object({ kind: z.literal('profile') }),
+  /** 设备层 (P1)。`name` 冗余存一份,历史页要显示「设备 · {name}」而设备可能已被删。 */
+  z.object({ kind: z.literal('device'), id: z.string().min(1), name: z.string().min(1) }),
 ]);
 
 export const AuditOpSchema = z

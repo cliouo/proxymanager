@@ -48,6 +48,7 @@ const CANDIDATE = {
   templates: [],
   ruleSets: [],
   collections: [],
+  devices: [],
 } as ProfileConfigState;
 
 function statusOf(error: unknown): number | undefined {

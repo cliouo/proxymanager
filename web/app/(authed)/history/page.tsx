@@ -20,7 +20,8 @@ type AuditTarget =
   | { kind: 'proxy'; name: string }
   | { kind: 'proxy-group'; name: string }
   | { kind: 'base'; field?: string }
-  | { kind: 'profile' };
+  | { kind: 'profile' }
+  | { kind: 'device'; id: string; name: string };
 
 interface AuditEvent {
   id: string;
@@ -150,6 +151,16 @@ function EventBody({ e, undone }: { e: AuditEvent; undone: boolean }) {
     );
   }
 
+  if (kind === 'device' && e.target?.kind === 'device') {
+    const hint = valueHint(e.after ?? e.before);
+    return (
+      <>
+        <span className="tag">设备 · {e.target.name}</span>
+        {hint && <span style={{ fontSize: 12, color: 'var(--muted)' }}>{hint}</span>}
+      </>
+    );
+  }
+
   if (kind === 'profile') {
     const hint = valueHint(e.after ?? e.before);
     return hint ? <span style={{ fontSize: 12, color: 'var(--muted)' }}>{hint}</span> : null;
@@ -198,6 +209,7 @@ function eventHaystack(e: AuditEvent): string {
   if (t) {
     if ('name' in t) parts.push(t.name);
     if (t.kind === 'base' && t.field) parts.push(t.field);
+    if (t.kind === 'device') parts.push(t.name);
   }
   for (const v of [e.before, e.after]) {
     if (v && typeof v === 'object' && !Array.isArray(v)) {

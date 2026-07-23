@@ -28,8 +28,9 @@ import { z } from 'zod';
  * Adding those is purely additive; existing records parse forward.
  */
 
-const NAME_REGEX = /^[a-z0-9-]+$/;
-const NAME_HINT = 'must contain only lowercase letters, digits, and dashes';
+/** Shared with `schemas/device.ts` — a device name is a URL segment too. */
+export const NAME_REGEX = /^[a-z0-9-]+$/;
+export const NAME_HINT = 'must contain only lowercase letters, digits, and dashes';
 
 /**
  * Human-facing subscription name. UNLIKE `name` (the kebab-case URL/file slug),

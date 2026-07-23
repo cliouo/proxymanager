@@ -37,7 +37,8 @@ export type AuditTarget =
   | { kind: 'proxy'; name: string }
   | { kind: 'proxy-group'; name: string }
   | { kind: 'rule-set'; name: string }
-  | { kind: 'base'; field?: string };
+  | { kind: 'base'; field?: string }
+  | { kind: 'device'; id: string; name: string };
 
 /**
  * What a handler emits per mutation. The dispatcher prefixes `action` with

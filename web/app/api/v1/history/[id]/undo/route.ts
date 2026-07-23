@@ -10,6 +10,7 @@ import { getRule as getRuleRepo, listRules as listRulesRepo } from '@/lib/repos/
 import { getProfileByName } from '@/lib/repos/profilesRepo';
 import { computeNextRank, resolveActor } from '@/lib/services/rulesService';
 import { preflightAndCommitProfileChanges } from '@/lib/services/profileConfigMutationService';
+import { undoDeviceEvent } from '@/lib/services/deviceService';
 import { DEFAULT_PROFILE_NAME, type AuditEvent } from '@/schemas';
 
 export const dynamic = 'force-dynamic';
@@ -46,8 +47,11 @@ export const POST = withProblemDetails(async (request: Request, ctx: Ctx) => {
     throw ProblemDetailsError.conflict(`Event ${id} was already undone by ${event.undone_by}.`);
   }
 
-  const inverse = resolveInverse(event.op);
-  if (!inverse) {
+  // 设备事件不在 scenario 注册表里（设备是实体，不是场景），它的撤销由
+  // deviceService 直接提供 —— 但走的仍是同一条 preflight + CAS 通道。
+  const isDeviceEvent = target?.kind === 'device';
+  const inverse = isDeviceEvent ? null : resolveInverse(event.op);
+  if (!isDeviceEvent && !inverse) {
     throw ProblemDetailsError.unprocessable(`No inverse registered for op "${event.op}".`);
   }
 
@@ -87,13 +91,19 @@ export const POST = withProblemDetails(async (request: Request, ctx: Ctx) => {
     taxonomy: createTaxonomyStore(profileId),
   };
 
-  const result = await inverse(opCtx, {
-    id: event.id,
-    before: event.before,
-    after: event.after,
-    target,
-    ruleId: event.ruleId,
-  });
+  const result = isDeviceEvent
+    ? await undoDeviceEvent(profileId, {
+        op: event.op,
+        before: event.before,
+        after: event.after,
+      })
+    : await inverse!(opCtx, {
+        id: event.id,
+        before: event.before,
+        after: event.after,
+        target,
+        ruleId: event.ruleId,
+      });
 
   // Record the inverse mutation as its own event, pointing back at the
   // original via `undoes`. Audit op string is derived from the original
