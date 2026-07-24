@@ -340,7 +340,7 @@ export default function SubscriptionsPage() {
   return (
     <>
       <PageTopbar>
-        <h1>订阅源</h1>
+        <h1>节点订阅</h1>
         <ScopePill shared />
         {loaded && (
           <span className="crumb">
@@ -406,8 +406,8 @@ export default function SubscriptionsPage() {
       {tab === 'subs' ? (
         <section id={`${tabsId}-panel-subs`} role="tabpanel" aria-labelledby={`${tabsId}-tab-subs`}>
           <div className={styles.lead}>
-            订阅源是平台向上游机场拉取的<b>输入</b>；启用后处理并注入 proxies。
-            处理后由平台中转下发的<b>公开节点链接</b>
+            节点订阅是平台从上游获取节点的<b>来源</b>；启用后处理并加入配置。 处理后由平台中转下发的
+            <b>公开节点链接</b>
             带令牌、属秘钥——点每行的「分发」按需查看与复制，不在列表明文展示。 源站地址、UA
             与节点处理都在「编辑」里维护。
           </div>

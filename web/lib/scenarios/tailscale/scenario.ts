@@ -807,7 +807,7 @@ export const tailscaleScenario: Scenario = {
     scope: 'device',
     description:
       '按设备接入 tailnet：每台设备拥有独立 hostname、认证密钥与运行状态目录，共享配置保持不变。',
-    // 跨设备状态并入「设备」页;旧路径 /scenarios/tailscale 仅存跳转壳。
+    // Tailscale 是设备能力，管理入口统一落在设备工作台。
     navHref: '/devices',
   },
   ops: {

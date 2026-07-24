@@ -2,38 +2,36 @@
 @import './styles/v2-components.css';
 
 /* ============================================================
-   ProxyManager · Redesign v2 — "Signal Console"
-   深 / 浅双主题语义 token。默认浅色「Daylight Console」；
-   深色由 :root[data-theme="dark"] 覆盖（next-themes 写入 data-theme）。
-   组件类直接吃 var(--surface) 等翻转变量；Tailwind 工具类经下方
-   @theme inline 映射到同一组变量，bg-surface / text-fg-2 / border-border 随主题翻转。
+   ProxyManager · approachable infrastructure workspace
+   默认浅色，深色由 :root[data-theme="dark"] 覆盖。
+   中性色轻微偏向品牌蓝绿色，让大面积界面更柔和而不失技术可信感。
    ============================================================ */
 
 :root {
   color-scheme: light;
-  --bg: #eef1f4;
-  --surface: #ffffff;
-  --surface-2: #f3f5f8;
-  --surface-3: #e7ebf0;
-  --fg: #161a1f;
-  --fg-2: #3b424c;
-  --muted: #646d7a;
-  --faint: #98a1ad;
-  --border: #e3e8ed;
-  --border-2: #d1d8e0;
+  --bg: oklch(95.5% 0.011 206);
+  --surface: oklch(99% 0.004 206);
+  --surface-2: oklch(97% 0.007 206);
+  --surface-3: oklch(92.5% 0.014 206);
+  --fg: oklch(22% 0.025 223);
+  --fg-2: oklch(38% 0.024 220);
+  --muted: oklch(50% 0.02 220);
+  --faint: oklch(64% 0.017 220);
+  --border: oklch(88% 0.015 210);
+  --border-2: oklch(80.5% 0.022 210);
 
-  --accent: #0c84c4;
-  --accent-dim: rgba(12, 132, 196, 0.12);
-  --accent-on: #ffffff;
+  --accent: oklch(52% 0.105 184);
+  --accent-dim: oklch(52% 0.105 184 / 0.12);
+  --accent-on: oklch(98.5% 0.008 184);
 
-  --ok: #1a9d54;
-  --ok-dim: rgba(26, 157, 84, 0.13);
-  --warn: #b0791b;
-  --warn-dim: rgba(176, 121, 27, 0.14);
-  --danger: #d6453c;
-  --danger-dim: rgba(214, 69, 60, 0.12);
-  --ai: #7c5fd6;
-  --ai-dim: rgba(124, 95, 214, 0.12);
+  --ok: oklch(55% 0.14 151);
+  --ok-dim: oklch(55% 0.14 151 / 0.13);
+  --warn: oklch(58% 0.12 76);
+  --warn-dim: oklch(58% 0.12 76 / 0.14);
+  --danger: oklch(57% 0.18 29);
+  --danger-dim: oklch(57% 0.18 29 / 0.12);
+  --ai: oklch(55% 0.12 294);
+  --ai-dim: oklch(55% 0.12 294 / 0.11);
 
   --code-bg: #f7f9fb;
   --code-fg: #2b313a;
@@ -50,13 +48,14 @@
 
   /* P3-40: overlay 阴影 token —— 浅色用中性偏冷的柔和投影，深色见下方 dark 覆盖。
      取代散落在 popover / drawer / modal 里的硬编码 rgba(0,0,0,.35–.5)。 */
-  --shadow-pop: 0 10px 30px rgba(22, 30, 40, 0.12);
-  --shadow-drawer: -18px 0 48px rgba(22, 30, 40, 0.16);
-  --shadow-modal: 0 24px 70px rgba(22, 30, 40, 0.22);
+  --shadow-soft: 0 1px 3px oklch(22% 0.025 223 / 0.1);
+  --shadow-pop: 0 12px 34px oklch(22% 0.025 223 / 0.16);
+  --shadow-drawer: -18px 0 48px oklch(22% 0.025 223 / 0.18);
+  --shadow-modal: 0 24px 70px oklch(22% 0.025 223 / 0.24);
 
   /* ---------- 结构性 token（与主题无关） ---------- */
   --font-sans:
-    -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', var(--font-noto-sc),
+    var(--font-noto-sc), -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI',
     'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
   --font-mono:
     var(--font-jetbrains), ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas,
@@ -65,7 +64,13 @@
   --r-sm: 6px;
   --r-md: 10px;
   --r-lg: 14px;
-  --side-w: 228px;
+  --side-w: 264px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
   --ease: cubic-bezier(0.2, 0, 0, 1);
   --motion-fast: 140ms;
   --motion-med: 220ms;
@@ -110,32 +115,32 @@
   --color-dot-error: var(--danger);
 }
 
-/* ---------- dark theme — 深石墨「Signal Console」 ---------- */
+/* ---------- dark theme ---------- */
 :root[data-theme='dark'] {
   color-scheme: dark;
-  --bg: #0c0e11;
-  --surface: #12151a;
-  --surface-2: #171b21;
-  --surface-3: #1d222a;
-  --fg: #e7eaee;
-  --fg-2: #bac1cb;
-  --muted: #8b93a0;
-  --faint: #5b626e;
-  --border: #21262e;
-  --border-2: #2c333d;
+  --bg: oklch(15.5% 0.014 220);
+  --surface: oklch(19.5% 0.016 220);
+  --surface-2: oklch(23% 0.017 220);
+  --surface-3: oklch(27% 0.019 220);
+  --fg: oklch(91% 0.012 215);
+  --fg-2: oklch(76% 0.018 215);
+  --muted: oklch(63% 0.018 215);
+  --faint: oklch(47% 0.017 215);
+  --border: oklch(29% 0.018 215);
+  --border-2: oklch(36% 0.022 215);
 
-  --accent: #56d4ff;
-  --accent-dim: rgba(86, 212, 255, 0.12);
-  --accent-on: #07181f;
+  --accent: oklch(73% 0.105 175);
+  --accent-dim: oklch(73% 0.105 175 / 0.12);
+  --accent-on: oklch(17% 0.02 184);
 
-  --ok: #46d188;
-  --ok-dim: rgba(70, 209, 136, 0.13);
-  --warn: #e5b13c;
-  --warn-dim: rgba(229, 177, 60, 0.13);
-  --danger: #f0655a;
-  --danger-dim: rgba(240, 101, 90, 0.13);
-  --ai: #b095f5;
-  --ai-dim: rgba(176, 149, 245, 0.13);
+  --ok: oklch(72% 0.13 151);
+  --ok-dim: oklch(72% 0.13 151 / 0.13);
+  --warn: oklch(77% 0.12 80);
+  --warn-dim: oklch(77% 0.12 80 / 0.13);
+  --danger: oklch(70% 0.16 29);
+  --danger-dim: oklch(70% 0.16 29 / 0.13);
+  --ai: oklch(74% 0.11 294);
+  --ai-dim: oklch(74% 0.11 294 / 0.12);
 
   --code-bg: #0a0c0f;
   --code-fg: #ccd5df;
@@ -148,9 +153,10 @@
   --scrim: rgba(5, 7, 9, 0.5);
 
   /* P3-40: 深色 overlay 阴影 —— 更重的纯黑投影撑起层次。 */
-  --shadow-pop: 0 8px 32px rgba(0, 0, 0, 0.45);
-  --shadow-drawer: -24px 0 64px rgba(0, 0, 0, 0.45);
-  --shadow-modal: 0 24px 80px rgba(0, 0, 0, 0.5);
+  --shadow-soft: 0 1px 3px oklch(3% 0 0 / 0.35);
+  --shadow-pop: 0 8px 32px oklch(3% 0 0 / 0.48);
+  --shadow-drawer: -24px 0 64px oklch(3% 0 0 / 0.48);
+  --shadow-modal: 0 24px 80px oklch(3% 0 0 / 0.54);
 }
 
 /* ---------- Tailwind v4 token 映射 ----------
@@ -210,7 +216,7 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--fg);
-  font: 14px/1.55 var(--font-sans);
+  font: 14.5px/1.6 var(--font-sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -224,6 +230,13 @@ a {
 button {
   font: inherit;
   color: inherit;
+}
+button:not(:disabled),
+a {
+  touch-action: manipulation;
+}
+button:not(:disabled) {
+  cursor: pointer;
 }
 input,
 select,
@@ -239,6 +252,22 @@ textarea {
   /* outline 自动跟随元素自身圆角（现代浏览器），不写 border-radius 以免压掉胶囊按钮的圆角 */
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+.skip-link {
+  position: fixed;
+  top: 10px;
+  left: 12px;
+  z-index: calc(var(--z-toast) + 1);
+  padding: 9px 12px;
+  border-radius: var(--r-md);
+  color: var(--accent-on);
+  background: var(--accent);
+  box-shadow: var(--shadow-pop);
+  transform: translateY(-160%);
+  transition: transform var(--motion-fast) var(--ease);
+}
+.skip-link:focus {
+  transform: translateY(0);
 }
 code,
 pre,

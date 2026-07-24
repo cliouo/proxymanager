@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type KeyboardEvent } from 'react';
 import { parse, stringify } from 'yaml';
 import { ApiError, api } from '@/lib/client/api';
 import { useUnsavedGuard } from '@/lib/client/useUnsavedGuard';
@@ -16,6 +16,7 @@ import type { DeviceRecord } from '@/components/devices';
 import type { PublicTailscaleDeviceFeature } from '@/schemas';
 import { TailscaleDeviceCard } from './_components/TailscaleDeviceCard';
 import styles from '../../../profiles.module.css';
+import detailStyles from './device-detail.module.css';
 
 /**
  * 设备详情页 —— 用户在这里看到的**永远是差异**，不提供「合并后全量编辑」视图。
@@ -36,6 +37,14 @@ const SENSITIVE_KEYS = new Set([
 const TOKEN_MASK = '••••••••';
 
 type Patch = Record<string, unknown>;
+type DeviceTab = 'differences' | 'tailscale' | 'preview';
+const DEVICE_TABS: DeviceTab[] = ['differences', 'tailscale', 'preview'];
+
+function tabFromHash(hash: string): DeviceTab {
+  if (hash === '#tailscale') return 'tailscale';
+  if (hash === '#preview') return 'preview';
+  return 'differences';
+}
 
 function isSensitive(key: string): boolean {
   return SENSITIVE_KEYS.has(key.toLowerCase());
@@ -80,6 +89,8 @@ export default function DeviceDetailPage() {
   const [preview, setPreview] = useState<{ shared: string; device: string | null } | null>(null);
   const [previewBusy, setPreviewBusy] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
+  const [tab, setTab] = useState<DeviceTab>('differences');
+  const [tailscaleDirty, setTailscaleDirty] = useState(false);
 
   const hydrate = useCallback((d: DeviceRecord) => {
     setDevice(d);
@@ -113,6 +124,46 @@ export default function DeviceDetailPage() {
     void reload();
   }, [reload]);
 
+  useEffect(() => {
+    const syncFromLocation = () => setTab(tabFromHash(window.location.hash));
+    syncFromLocation();
+    window.addEventListener('hashchange', syncFromLocation);
+    window.addEventListener('popstate', syncFromLocation);
+    return () => {
+      window.removeEventListener('hashchange', syncFromLocation);
+      window.removeEventListener('popstate', syncFromLocation);
+    };
+  }, []);
+
+  const selectTab = useCallback((next: DeviceTab) => {
+    setTab(next);
+    const nextHash = `#${next}`;
+    if (window.location.hash !== nextHash) {
+      // 分栏不是新的工作步骤，替换当前地址可保留深链接，也不会用浏览器后退堆出
+      // 一串仅 hash 不同的历史记录。
+      window.history.replaceState(window.history.state, '', nextHash);
+    }
+  }, []);
+
+  const onTabKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLButtonElement>) => {
+      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+      event.preventDefault();
+      const currentIndex = DEVICE_TABS.indexOf(tab);
+      const next =
+        event.key === 'Home'
+          ? DEVICE_TABS[0]
+          : event.key === 'End'
+            ? DEVICE_TABS[DEVICE_TABS.length - 1]
+            : event.key === 'ArrowRight'
+              ? DEVICE_TABS[(currentIndex + 1) % DEVICE_TABS.length]
+              : DEVICE_TABS[(currentIndex - 1 + DEVICE_TABS.length) % DEVICE_TABS.length];
+      selectTab(next);
+      requestAnimationFrame(() => document.getElementById(`tab-${next}`)?.focus());
+    },
+    [selectTab, tab],
+  );
+
   /** 已保存补丁对应的 raw 文本 —— dirty 的基准之一。 */
   const savedRawText = useMemo(
     () =>
@@ -126,11 +177,12 @@ export default function DeviceDetailPage() {
    * 只比补丁对象是不够的：raw 里有语法错误时补丁根本没更新，用户敲了一屏字
    * 却被判定为「没有未保存修改」，切走时毫无提醒 —— 那些字就没了。
    */
-  const dirty = useMemo(() => {
+  const patchDirty = useMemo(() => {
     if (!device) return false;
     if (JSON.stringify(patch) !== JSON.stringify(device.base_patch ?? {})) return true;
     return rawText !== savedRawText;
   }, [device, patch, rawText, savedRawText]);
+  const dirty = patchDirty || tailscaleDirty;
   useUnsavedGuard(dirty);
 
   /**
@@ -250,14 +302,22 @@ export default function DeviceDetailPage() {
       return { ...current, features };
     });
   }, []);
+  const tailscaleLabel = isTemplate
+    ? '模版不配置'
+    : device?.features?.tailscale?.hasAuthKey
+      ? '已启用'
+      : device?.features?.tailscale
+        ? '待完成'
+        : '未配置';
 
   return (
     <>
-      <PageTopbar>
-        <h1>设备 · {device?.name ?? '…'}</h1>
+      <PageTopbar contentMaxWidth={1180}>
+        <h1>{device?.display_name || device?.name || '设备'}</h1>
+        {device?.display_name && <span className="crumb">{device.name}</span>}
         {dirty && (
           <span className="is-dirty" style={{ display: 'inline-flex' }}>
-            <span className="unsaved-dot" title="有未保存修改" />
+            <span className="unsaved-dot" title="设备差异有未保存修改" />
           </span>
         )}
         <span className="crumb">{keys.length} 项差异</span>
@@ -266,30 +326,34 @@ export default function DeviceDetailPage() {
           {backLabel}
         </Link>
         {isTemplate && <span className="pill acc plain">{TEMPLATE_NOT_DISTRIBUTABLE}</span>}
-        <button
-          type="button"
-          className="btn sm"
-          disabled={!subUrl}
-          title={isTemplate ? '模版不对外分发，这台设备没有订阅链接' : undefined}
-          onClick={async () => {
-            try {
-              await navigator.clipboard.writeText(subUrl);
-              toast('已复制该设备的订阅链接');
-            } catch {
-              toast('复制失败');
-            }
-          }}
-        >
-          订阅链接 ⧉
-        </button>
-        <button
-          type="button"
-          className="btn primary sm"
-          onClick={() => void save()}
-          disabled={saving || !dirty || !!rawError}
-        >
-          {saving ? '保存中 …' : '保存'}
-        </button>
+        {!dirty && (
+          <button
+            type="button"
+            className="btn sm"
+            disabled={!subUrl}
+            title={isTemplate ? '模版不对外分发，这台设备没有订阅链接' : undefined}
+            onClick={async () => {
+              try {
+                await navigator.clipboard.writeText(subUrl);
+                toast('已复制该设备的订阅链接');
+              } catch {
+                toast('复制失败');
+              }
+            }}
+          >
+            复制订阅链接
+          </button>
+        )}
+        {patchDirty && (
+          <button
+            type="button"
+            className="btn primary sm"
+            onClick={() => void save()}
+            disabled={saving || !patchDirty || !!rawError}
+          >
+            {saving ? '保存中 …' : '保存差异'}
+          </button>
+        )}
       </PageTopbar>
 
       {error && <div className={styles.errBanner}>{error}</div>}
@@ -299,223 +363,315 @@ export default function DeviceDetailPage() {
           <span className="g">⋯</span>
           <span>加载设备…</span>
         </div>
+      ) : !device ? (
+        <div className={detailStyles.loadFailure}>
+          <b>无法打开这台设备</b>
+          <p>{error ?? '设备可能已经被删除，或当前配置文件不可访问。'}</p>
+          <Link className="btn" href={backHref}>
+            {backLabel}
+          </Link>
+        </div>
       ) : (
-        <div style={{ display: 'grid', gap: 18 }}>
-          {/* ① 差异清单 */}
-          <section className="panel">
-            <div className="panel-head">
-              <h2>差异清单</h2>
-              <div className={styles.grow} />
-              <span className="crumb">
-                {cardsLocked ? 'raw 补丁有语法错误 · 卡片暂时只读' : '移除一项 = 回到共享配置的值'}
-              </span>
+        <div className={detailStyles.page}>
+          <section className={detailStyles.inheritanceContext}>
+            <span className={detailStyles.inheritanceMark} aria-hidden="true">
+              ＋
+            </span>
+            <div>
+              <span className={detailStyles.contextEyebrow}>继承共享配置</span>
+              <h2>{profileName}</h2>
+              <p>共享层持续提供基础配置、代理策略和规则，这里只维护这台设备不同的部分。</p>
             </div>
-            <div className="panel-body">
-              {cardsLocked && (
-                <div className={styles.srcNote} style={{ marginTop: 0, marginBottom: 12 }}>
-                  <span className="g">⚠</span>
-                  <span>
-                    下面的 <b>raw 补丁有语法错误</b>
-                    ，卡片操作已暂时锁定 —— 否则改卡片会用上一份能解析的补丁覆盖你正在
-                    修的文本。先把 raw 改成合法 YAML，卡片会自动解锁。
+            <dl className={detailStyles.contextStats}>
+              <div>
+                <dt>配置差异</dt>
+                <dd>{keys.length === 0 ? '无差异' : `${keys.length} 项`}</dd>
+              </div>
+              <div>
+                <dt>Tailscale</dt>
+                <dd>{tailscaleLabel}</dd>
+              </div>
+            </dl>
+          </section>
+
+          <nav className={detailStyles.tabs} role="tablist" aria-label="设备设置">
+            <button
+              id="tab-differences"
+              type="button"
+              role="tab"
+              aria-selected={tab === 'differences'}
+              aria-controls="panel-differences"
+              tabIndex={tab === 'differences' ? 0 : -1}
+              onClick={() => selectTab('differences')}
+              onKeyDown={onTabKeyDown}
+            >
+              配置差异
+              <span>{keys.length}</span>
+            </button>
+            <button
+              id="tab-tailscale"
+              type="button"
+              role="tab"
+              aria-selected={tab === 'tailscale'}
+              aria-controls="panel-tailscale"
+              tabIndex={tab === 'tailscale' ? 0 : -1}
+              onClick={() => selectTab('tailscale')}
+              onKeyDown={onTabKeyDown}
+            >
+              Tailscale
+              <span>{tailscaleDirty ? '未保存' : tailscaleLabel}</span>
+            </button>
+            <button
+              id="tab-preview"
+              type="button"
+              role="tab"
+              aria-selected={tab === 'preview'}
+              aria-controls="panel-preview"
+              tabIndex={tab === 'preview' ? 0 : -1}
+              onClick={() => selectTab('preview')}
+              onKeyDown={onTabKeyDown}
+            >
+              生效预览
+              {preview && <span>已渲染</span>}
+            </button>
+          </nav>
+
+          <section
+            id="panel-differences"
+            role="tabpanel"
+            aria-labelledby="tab-differences"
+            hidden={tab !== 'differences'}
+            className={detailStyles.tabPanel}
+          >
+            <div className={detailStyles.stack}>
+              <section className="panel">
+                <div className="panel-head">
+                  <h2>差异清单</h2>
+                  <div className={styles.grow} />
+                  <span className="crumb">
+                    {cardsLocked
+                      ? 'raw 补丁有语法错误 · 卡片暂时只读'
+                      : '移除一项 = 回到共享配置的值'}
                   </span>
                 </div>
-              )}
-              {keys.length === 0 ? (
-                <div className={styles.srcNote} style={{ marginTop: 0 }}>
-                  <span className="g">▪</span>
-                  <span>
-                    这台设备目前<b>没有任何差异</b>，下发内容与共享配置完全一致。
-                    从下面挑一个常用键，或直接在 raw 补丁里写。
-                  </span>
-                </div>
-              ) : (
-                keys.map((key) => (
-                  <div key={key} className={styles.dangerRow} style={{ marginBottom: 10 }}>
-                    <div className="gw">
-                      <b className="mono">{key}</b>
-                      <span>
-                        {labelFor(key)} · {displayValue(key, patch[key])}
-                        {MANAGED_KEYS.has(key) && (
-                          <b style={{ color: 'var(--danger)' }}>
-                            {' '}
-                            · 该键由共享层管理，保存会被拒绝
-                          </b>
-                        )}
-                      </span>
+                <div className="panel-body">
+                  {cardsLocked && (
+                    <div className={detailStyles.lockNotice}>
+                      <span>⚠</span>
+                      <p>
+                        <b>raw 补丁有语法错误，卡片操作已暂时锁定。</b>
+                        先把下面的 YAML 改合法，避免卡片操作覆盖正在修复的文本。
+                      </p>
                     </div>
-                    {isSensitive(key) && (
-                      <button
-                        type="button"
-                        className="btn sm"
-                        disabled={cardsLocked}
-                        title={cardsLocked ? 'raw 补丁有语法错误' : undefined}
-                        onClick={() => writePatch({ ...patch, [key]: randomSecret() })}
-                      >
-                        重新生成
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      className="btn sm"
-                      disabled={cardsLocked}
-                      title={cardsLocked ? 'raw 补丁有语法错误' : undefined}
-                      onClick={() => removeKey(key)}
-                    >
-                      移除
-                    </button>
-                  </div>
-                ))
-              )}
+                  )}
+                  {keys.length === 0 ? (
+                    <div className={detailStyles.noDifferences}>
+                      <span>＝</span>
+                      <div>
+                        <b>这台设备与共享配置完全一致</b>
+                        <p>之后共享配置发生变化时，它会自动跟随，不需要重复维护。</p>
+                      </div>
+                    </div>
+                  ) : (
+                    keys.map((key) => (
+                      <div key={key} className={detailStyles.differenceRow}>
+                        <div className={detailStyles.differenceCopy}>
+                          <b className="mono">{key}</b>
+                          <span>
+                            {labelFor(key)} · {displayValue(key, patch[key])}
+                            {MANAGED_KEYS.has(key) && (
+                              <b style={{ color: 'var(--danger)' }}>
+                                {' '}
+                                · 该键由共享层管理，保存会被拒绝
+                              </b>
+                            )}
+                          </span>
+                        </div>
+                        {isSensitive(key) && (
+                          <button
+                            type="button"
+                            className="btn sm"
+                            disabled={cardsLocked}
+                            title={cardsLocked ? 'raw 补丁有语法错误' : undefined}
+                            onClick={() => writePatch({ ...patch, [key]: randomSecret() })}
+                          >
+                            重新生成
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className="btn sm"
+                          disabled={cardsLocked}
+                          title={cardsLocked ? 'raw 补丁有语法错误' : undefined}
+                          onClick={() => removeKey(key)}
+                        >
+                          移除
+                        </button>
+                      </div>
+                    ))
+                  )}
 
-              {unusedCommon.length > 0 && (
-                <div className="field" style={{ marginTop: 14, marginBottom: 0 }}>
-                  <label>添加差异</label>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                    {unusedCommon.map((k) => (
-                      <button
-                        key={k.key}
-                        type="button"
-                        className="btn sm"
-                        disabled={cardsLocked}
-                        title={cardsLocked ? 'raw 补丁有语法错误' : k.hint}
-                        onClick={() =>
-                          writePatch({
-                            ...patch,
-                            [k.key]: k.key === 'secret' ? randomSecret() : '',
-                          })
-                        }
-                      >
-                        ＋ {k.label}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="hint">
-                    加完在下面的 raw 补丁里填值（空字符串会原样下发，记得改）。
-                  </div>
+                  {unusedCommon.length > 0 && (
+                    <div className={detailStyles.addDifference}>
+                      <label>添加差异</label>
+                      <div>
+                        {unusedCommon.map((item) => (
+                          <button
+                            key={item.key}
+                            type="button"
+                            className="btn sm"
+                            disabled={cardsLocked}
+                            title={cardsLocked ? 'raw 补丁有语法错误' : item.hint}
+                            onClick={() =>
+                              writePatch({
+                                ...patch,
+                                [item.key]: item.key === 'secret' ? randomSecret() : '',
+                              })
+                            }
+                          >
+                            ＋ {item.label}
+                          </button>
+                        ))}
+                      </div>
+                      <p>添加后在 raw 补丁中填写具体值，空字符串也会被原样下发。</p>
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
-          </section>
+              </section>
 
-          {/* ② raw 补丁 */}
-          <section className="panel">
-            <div className="panel-head">
-              <h2>raw 补丁</h2>
-              <div className={styles.grow} />
-              <span className="crumb">YAML · 与上面的卡片是同一份数据</span>
-            </div>
-            <div className="panel-body">
-              <div className={styles.srcNote} style={{ marginTop: 0, marginBottom: 12 }}>
-                <span className="g">⌗</span>
-                <span>
-                  对象<b>逐字段合并</b> · 数组<b>整段替换</b> · <span className="mono">null</span>
-                  <b>删除该键</b> ·{' '}
-                  <span className="mono">proxies / proxy-groups / rules / rule-providers</span>{' '}
-                  由共享层管理，不可写。
-                </span>
-              </div>
-              <CodeEditor
-                value={rawText}
-                onChange={onRawChange}
-                onSave={() => void save()}
-                dirty={dirty}
-                label="base_patch · yaml"
-                minHeight={220}
-              />
-              {rawError && (
-                <div className={styles.errBanner} style={{ marginTop: 10 }}>
-                  {rawError}
+              <section className="panel">
+                <div className="panel-head">
+                  <h2>raw 补丁</h2>
+                  <div className={styles.grow} />
+                  <span className="crumb">YAML · 与上面的差异清单是同一份数据</span>
                 </div>
-              )}
-            </div>
-          </section>
-
-          {/* ③ 生效预览 */}
-          <section className="panel">
-            <div className="panel-head">
-              <h2>生效预览</h2>
-              <div className={styles.grow} />
-              <button
-                type="button"
-                className="btn sm"
-                onClick={() => void loadPreview()}
-                disabled={previewBusy}
-              >
-                {previewBusy ? '渲染中 …' : preview ? '重新渲染' : '渲染对比'}
-              </button>
-            </div>
-            <div className="panel-body">
-              <div className={styles.srcNote} style={{ marginTop: 0, marginBottom: 12 }}>
-                <span className="g">⇲</span>
-                <span>
-                  左为<b>共享渲染</b>，右为<b>本设备渲染</b>
-                  ；预览基于**已保存**的补丁，改完记得先保存。
-                </span>
-              </div>
-              {previewError && <div className={styles.errBanner}>{previewError}</div>}
-              {preview && (
-                <div
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
-                    gap: 12,
-                  }}
-                >
+                <div className="panel-body">
+                  <div className={detailStyles.rawExplanation}>
+                    <span>补丁规则</span>
+                    <p>
+                      对象逐字段合并，数组整段替换，<code>null</code> 删除该键。
+                      <code>proxies</code>、<code>proxy-groups</code>、<code>rules</code> 和
+                      <code>rule-providers</code> 仍由共享层管理。
+                    </p>
+                  </div>
                   <CodeEditor
-                    value={preview.shared}
-                    readOnly
-                    label="共享渲染"
-                    minHeight={280}
-                    hint=""
+                    value={rawText}
+                    onChange={onRawChange}
+                    onSave={() => void save()}
+                    dirty={patchDirty}
+                    label="base_patch · yaml"
+                    minHeight={220}
                   />
-                  <CodeEditor
-                    value={preview.device ?? '（补丁无效，无法渲染 —— 见上方错误）'}
-                    readOnly
-                    label={`设备渲染 · ${device?.name ?? ''}`}
-                    minHeight={280}
-                    hint=""
-                  />
+                  {rawError && (
+                    <div className={styles.errBanner} style={{ marginTop: 10 }}>
+                      {rawError}
+                    </div>
+                  )}
                 </div>
-              )}
+              </section>
             </div>
           </section>
 
-          {/* ④ 本设备功能 */}
-          <TailscaleDeviceCard
-            profileId={profileId}
-            deviceId={deviceId}
-            deviceName={device?.name ?? ''}
-            initialFeature={device?.features?.tailscale ?? null}
-            isTemplate={isTemplate}
-            onChanged={updateTailscale}
-          />
+          <section
+            id="panel-tailscale"
+            role="tabpanel"
+            aria-labelledby="tab-tailscale"
+            hidden={tab !== 'tailscale'}
+            className={detailStyles.tabPanel}
+          >
+            <TailscaleDeviceCard
+              profileId={profileId}
+              deviceId={deviceId}
+              deviceName={device.name}
+              initialFeature={device.features?.tailscale ?? null}
+              isTemplate={isTemplate}
+              onChanged={updateTailscale}
+              onDirtyChange={setTailscaleDirty}
+            />
+          </section>
 
-          {/* ⑤ 危险区 */}
-          <section className="panel">
-            <div className="panel-head">
-              <h2>危险区</h2>
-            </div>
-            <div className="panel-body">
-              <div className={styles.dangerRow}>
-                <div className="gw">
-                  <b>删除设备</b>
-                  <span>
-                    删除后它的订阅链接立即 <b>404</b>
-                    ，已在用这条链接的客户端将拉不到配置。共享配置与其它设备不受影响。
-                  </span>
-                </div>
+          <section
+            id="panel-preview"
+            role="tabpanel"
+            aria-labelledby="tab-preview"
+            hidden={tab !== 'preview'}
+            className={detailStyles.tabPanel}
+          >
+            <section className="panel">
+              <div className="panel-head">
+                <h2>生效预览</h2>
+                <div className={styles.grow} />
                 <button
                   type="button"
-                  className="btn sm danger"
-                  onClick={() => void remove()}
-                  disabled={deleting}
+                  className="btn sm"
+                  onClick={() => void loadPreview()}
+                  disabled={previewBusy}
                 >
-                  {deleting ? '删除中 …' : '删除设备'}
+                  {previewBusy ? '渲染中 …' : preview ? '重新渲染' : '渲染对比'}
                 </button>
               </div>
-            </div>
+              <div className="panel-body">
+                <div className={detailStyles.previewExplanation}>
+                  <span>共享配置</span>
+                  <b>＋</b>
+                  <span>已保存的设备差异</span>
+                  <b>＝</b>
+                  <strong>设备最终配置</strong>
+                </div>
+                {dirty && (
+                  <div className={detailStyles.previewNotice}>
+                    当前还有未保存的设备差异，预览只会使用上一次保存的版本。
+                  </div>
+                )}
+                {previewError && <div className={styles.errBanner}>{previewError}</div>}
+                {!preview && !previewError && (
+                  <div className={detailStyles.previewEmpty}>
+                    <b>还没有生成对比</b>
+                    <p>渲染后可以并排检查共享配置和这台设备最终收到的配置。</p>
+                  </div>
+                )}
+                {preview && (
+                  <div className={detailStyles.previewGrid}>
+                    <CodeEditor
+                      value={preview.shared}
+                      readOnly
+                      label="共享渲染"
+                      minHeight={320}
+                      hint=""
+                    />
+                    <CodeEditor
+                      value={preview.device ?? '（补丁无效，无法渲染，请检查上方错误）'}
+                      readOnly
+                      label={`设备渲染 · ${device.name}`}
+                      minHeight={320}
+                      hint=""
+                    />
+                  </div>
+                )}
+              </div>
+            </section>
           </section>
+
+          <details className={detailStyles.dangerZone}>
+            <summary>设备管理</summary>
+            <div>
+              <div>
+                <b>删除设备</b>
+                <p>
+                  删除后它的订阅链接立即
+                  404，已经使用这条链接的客户端将无法继续更新。共享配置和其他设备不受影响。
+                </p>
+              </div>
+              <button
+                type="button"
+                className="btn sm danger"
+                onClick={() => void remove()}
+                disabled={deleting}
+              >
+                {deleting ? '删除中 …' : '删除设备'}
+              </button>
+            </div>
+          </details>
         </div>
       )}
     </>

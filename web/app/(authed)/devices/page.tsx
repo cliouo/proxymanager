@@ -5,26 +5,61 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ApiError, api } from '@/lib/client/api';
 import { PageTopbar } from '@/components/PageChrome';
 import { ScopePill } from '@/components/Topbar';
+import { NavIcon } from '@/components/NavIcon';
 import { useProfiles } from '@/components/profile/ProfileContext';
 import { useToast } from '@/components/ui/Toast';
-import { NewDeviceModal, diffCountLabel, type DeviceRecord } from '@/components/devices';
+import { NewDeviceModal, type DeviceRecord } from '@/components/devices';
+import { COMMON_PATCH_KEYS } from '@/lib/profiles/devicePresets';
 import { TEMPLATE_NOT_DISTRIBUTABLE, isTemplateProfile } from '@/lib/profiles/kind';
-import styles from '../profiles/profiles.module.css';
-
-/**
- * 设备页 —— 当前配置文件的设备工作台(作用域与 /base、/rules 一致)。
- *
- * 心智模型:配置文件是底,每台设备 = 底 + 几张差异贴纸。这里管列表、新建、
- * 删除与订阅链接;单台设备的差异与 Tailscale 在它的详情页编辑。
- * 旧版共享 base 里的 Tailscale 遗留在此提示迁移(原 /scenarios/tailscale 页并入)。
- */
+import styles from './devices.module.css';
 
 const TOKEN_MASK = '••••••••';
+const PATCH_LABELS = new Map(COMMON_PATCH_KEYS.map((item) => [item.key, item.label]));
 
 interface LegacyTailscale {
   nodes: Array<{ name: string; hostname?: string }>;
   groups: Array<{ id: string }>;
   rules: Array<{ id: string }>;
+}
+
+type TailscaleState = {
+  label: string;
+  detail: string;
+  tone: 'idle' | 'warn' | 'ok';
+};
+
+function tailscaleState(device: DeviceRecord, isTemplate: boolean): TailscaleState {
+  const feature = device.features?.tailscale;
+  if (isTemplate) {
+    return {
+      label: '模版不配置',
+      detail: '从模版新建普通配置后再启用',
+      tone: 'idle',
+    };
+  }
+  if (!feature) {
+    return {
+      label: '未配置',
+      detail: '需要时可让这台设备接入 Tailnet',
+      tone: 'idle',
+    };
+  }
+  if (!feature.hasAuthKey) {
+    return {
+      label: '待完成',
+      detail: `${feature.hostname} · 还没有认证密钥`,
+      tone: 'warn',
+    };
+  }
+  return {
+    label: '已启用',
+    detail: `${feature.hostname} · 可以加入 Tailnet`,
+    tone: 'ok',
+  };
+}
+
+function patchLabels(device: DeviceRecord): string[] {
+  return Object.keys(device.base_patch ?? {}).map((key) => PATCH_LABELS.get(key) ?? key);
 }
 
 export default function DevicesPage() {
@@ -37,7 +72,6 @@ export default function DevicesPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
-  const [busyId, setBusyId] = useState<string | null>(null);
   const [reveal, setReveal] = useState(false);
   const requestSequence = useRef(0);
 
@@ -57,7 +91,6 @@ export default function DevicesPage() {
       const [list, meta, summary] = await Promise.all([
         api<{ data: DeviceRecord[] }>(`/api/v1/profiles/${activeProfile.id}/devices`),
         api<{ data: { subBase: string } }>('/api/v1/meta').catch(() => null),
-        // 仅为「旧版共享 Tailscale 待迁移」提示;拉不到就不提示,不挡页面。
         api<{ data: { legacy: LegacyTailscale } }>(
           `/api/v1/scenarios/tailscale?profile=${encodeURIComponent(activeProfile.name)}`,
         ).catch(() => null),
@@ -66,46 +99,25 @@ export default function DevicesPage() {
       setDevices(list.data);
       setSubBase(meta?.data.subBase ?? null);
       setLegacy(summary?.data.legacy ?? null);
-    } catch (e) {
+    } catch (cause) {
       if (requestId !== requestSequence.current) return;
-      setError(e instanceof ApiError ? e.message : '设备加载失败');
+      setError(cause instanceof ApiError ? cause.message : '设备加载失败');
     } finally {
       if (requestId === requestSequence.current) setLoading(false);
     }
   }, [activeProfile]);
 
   useEffect(() => {
+    setDevices([]);
+    setLegacy(null);
+    setReveal(false);
+    setError(null);
+  }, [activeProfile?.id]);
+
+  useEffect(() => {
     void reload();
   }, [reload]);
 
-  const remove = useCallback(
-    async (device: DeviceRecord) => {
-      if (!activeProfile) return;
-      if (
-        !confirm(
-          `确认删除设备「${device.name}」？\n\n它的订阅链接会立即 404 —— 已经在用这条链接的客户端将拉不到配置。此操作不可撤销。`,
-        )
-      ) {
-        return;
-      }
-      setBusyId(device.id);
-      setError(null);
-      try {
-        await api(`/api/v1/profiles/${activeProfile.id}/devices/${device.id}`, {
-          method: 'DELETE',
-        });
-        toast(`已删除设备「${device.name}」`);
-        void reload();
-      } catch (e) {
-        setError(e instanceof ApiError ? e.message : '删除失败');
-      } finally {
-        setBusyId(null);
-      }
-    },
-    [activeProfile, reload, toast],
-  );
-
-  // 共享链接(不含设备差异)。设备行只放「复制」,不逐行铺 URL。
   const { sharedRealUrl, sharedShownUrl } = useMemo(() => {
     if (!activeProfile) return { sharedRealUrl: '', sharedShownUrl: '' };
     const path = `/${encodeURIComponent(activeProfile.name)}`;
@@ -114,14 +126,14 @@ export default function DevicesPage() {
     if (reveal) return { sharedRealUrl: real, sharedShownUrl: real };
     const cut = subBase.lastIndexOf('/');
     return { sharedRealUrl: real, sharedShownUrl: `${subBase.slice(0, cut)}/${TOKEN_MASK}${path}` };
-  }, [activeProfile, subBase, reveal]);
+  }, [activeProfile, reveal, subBase]);
 
   const deviceUrl = useCallback(
     (device: DeviceRecord) =>
       subBase && activeProfile
         ? `${subBase}/${encodeURIComponent(activeProfile.name)}/${encodeURIComponent(device.name)}`
         : '',
-    [subBase, activeProfile],
+    [activeProfile, subBase],
   );
 
   const copyDeviceUrl = useCallback(
@@ -130,7 +142,7 @@ export default function DevicesPage() {
       if (!url) return;
       try {
         await navigator.clipboard.writeText(url);
-        toast(`已复制设备「${device.name}」的订阅链接`);
+        toast(`已复制设备「${device.display_name || device.name}」的订阅链接`);
       } catch {
         toast('复制失败');
       }
@@ -138,16 +150,26 @@ export default function DevicesPage() {
     [deviceUrl, toast],
   );
 
-  const tailscaleCount = devices.filter((d) => d.features?.tailscale).length;
+  const copySharedUrl = useCallback(async () => {
+    if (!sharedRealUrl) return;
+    try {
+      await navigator.clipboard.writeText(sharedRealUrl);
+      toast('已复制共享订阅链接');
+    } catch {
+      toast('复制失败，请显示链接后手动复制');
+    }
+  }, [sharedRealUrl, toast]);
+
+  const tailscaleCount = devices.filter((device) => device.features?.tailscale).length;
 
   return (
     <>
-      <PageTopbar>
+      <PageTopbar contentMaxWidth={1120}>
         <h1>设备</h1>
         <ScopePill />
         {!loading && devices.length > 0 && (
           <span className="crumb">
-            {devices.length} 台{tailscaleCount > 0 ? ` · Tailscale ×${tailscaleCount}` : ''}
+            {devices.length} 台{tailscaleCount > 0 ? ` · Tailscale ${tailscaleCount}` : ''}
           </span>
         )}
         {isTemplate && <span className="pill acc plain">{TEMPLATE_NOT_DISTRIBUTABLE}</span>}
@@ -156,171 +178,185 @@ export default function DevicesPage() {
           type="button"
           className="btn primary"
           onClick={() => setCreating(true)}
-          disabled={!activeProfile || loading}
+          disabled={!activeProfile || loading || (!!error && devices.length === 0)}
         >
           ＋ 添加设备
         </button>
       </PageTopbar>
 
-      {error && <div className={styles.errBanner}>{error}</div>}
+      <div className={styles.page}>
+        <header className={styles.orientation}>
+          <div>
+            <span className="eyebrow">设备工作台</span>
+            <h2>共享一套配置，只记录每台设备不同的地方</h2>
+            <p>
+              所有设备都从共享配置开始。没有差异时会自动跟随共享配置，设备自己的功能只作用于它的订阅。
+            </p>
+          </div>
+          <div className={styles.equation} aria-label="设备订阅的组成">
+            <span>共享配置</span>
+            <b>＋</b>
+            <span>设备差异</span>
+            <b>＋</b>
+            <span>设备功能</span>
+            <b>＝</b>
+            <strong>设备订阅</strong>
+          </div>
+        </header>
 
-      <div style={{ display: 'grid', gap: 18, maxWidth: 980 }}>
-        {/* 旧版共享 Tailscale —— 迁移提示(原 /scenarios/tailscale 总览页并入) */}
-        {legacy && legacy.nodes.length > 0 && (
-          <section className="panel">
-            <div className="panel-head">
-              <h2>发现旧版共享 Tailscale</h2>
-              <span className="pill warn">待迁移</span>
-            </div>
-            <div className="panel-body">
-              <div className={styles.srcNote} style={{ marginTop: 0 }}>
-                <span className="g">⚠</span>
-                <span>
-                  共享 base 仍含 {legacy.nodes.length} 个 Tailscale 节点(
-                  {legacy.nodes.map((n) => n.name).join('、')}
-                  )。为避免两套产物并存,设备级接入会被预检拦截 —— 请用{' '}
-                  <span className="mono">migrate:tailscale-device</span> 指定目标设备,先 dry-run
-                  再迁移;迁移不会在页面后台自动发生。
-                </span>
-              </div>
+        {!profilesLoaded ? (
+          <div className={styles.loadingBlock}>正在读取当前配置…</div>
+        ) : !activeProfile ? (
+          <section className={styles.emptyState}>
+            <span className={styles.emptyMark}>
+              <NavIcon name="devices" size={22} />
+            </span>
+            <div>
+              <h2>先选择一个配置文件</h2>
+              <p>设备需要挂在具体配置文件下面，才能继承它的基础配置、代理策略和分流规则。</p>
             </div>
           </section>
-        )}
-
-        {/* 设备列表 */}
-        <section className="panel">
-          <div className="panel-body">
-            {!profilesLoaded || (loading && devices.length === 0 && !error) ? (
-              <div className={styles.srcNote} style={{ marginTop: 0 }}>
-                <span className="g">⋯</span>
-                <span>加载设备…</span>
-              </div>
-            ) : !activeProfile ? (
-              <div className={styles.srcNote} style={{ marginTop: 0 }}>
-                <span className="g">▪</span>
-                <span>尚未选择配置文件。</span>
-              </div>
-            ) : error && devices.length === 0 ? (
-              // 拉取失败时状态未知 —— 不能落进「还没有设备」的空态引导。
-              <div className={styles.srcNote} style={{ marginTop: 0 }}>
-                <span className="g">⚠</span>
-                <span>设备列表加载失败,请刷新重试。</span>
-              </div>
-            ) : devices.length === 0 ? (
-              <div className={styles.srcNote} style={{ marginTop: 0 }}>
-                <span className="g">▪</span>
-                <span>
-                  还没有设备。<b>共享配置服务所有设备</b>
-                  ;当同一份配置要发给多台机器、而它们之间只有少量差异(控制器端口、密钥、
-                  面板目录、进程匹配、Tailscale…),给每台建一个<b>设备</b>
-                  ,只写差异即可 —— 共享层改一次,全设备生效。
-                  <br />
-                  差异太大(比如策略组成员就该不同)说明那是<b>另一份配置文件</b>
-                  ,请用克隆而不是设备。
+        ) : (
+          <>
+            <section className={styles.sharedCard} aria-labelledby="shared-config-title">
+              <div className={styles.sharedMain}>
+                <span className={styles.sharedMark}>
+                  <NavIcon name="config" size={21} />
                 </span>
-              </div>
-            ) : (
-              devices.map((device) => {
-                const tailscale = device.features?.tailscale;
-                return (
-                  <div key={device.id} className={styles.dangerRow} style={{ marginBottom: 10 }}>
-                    <div className="gw">
-                      <b className="mono">{device.name}</b>
-                      <span>
-                        {diffCountLabel(device)}
-                        {tailscale
-                          ? ` · Tailscale ${tailscale.hasAuthKey ? '已配置' : '未提供密钥'}(${tailscale.hostname})`
-                          : ''}
-                        {device.display_name ? ` · 显示名 ${device.display_name}` : ''}
-                        {device.notes ? ` · ${device.notes}` : ''}
-                      </span>
-                    </div>
-                    {!isTemplate && (
-                      <button
-                        type="button"
-                        className="btn sm"
-                        onClick={() => void copyDeviceUrl(device)}
-                        disabled={!subBase}
-                        title="共享配置 + 该设备差异的订阅链接"
-                      >
-                        复制链接
-                      </button>
-                    )}
-                    <Link
-                      className="btn sm"
-                      href={`/profiles/${activeProfile.id}/devices/${device.id}`}
-                      title="设备的差异清单、Tailscale 与生效预览"
-                    >
-                      设置
-                    </Link>
+                <div className={styles.sharedCopy}>
+                  <span className={styles.sharedEyebrow}>所有设备的起点</span>
+                  <h2 id="shared-config-title">共享配置</h2>
+                  <p>
+                    基础配置、代理策略、分流规则和链式代理都在这里维护，修改一次会同步影响所有设备。
+                  </p>
+                </div>
+                <div className={styles.sharedMetric}>
+                  <b>{loading ? '…' : error && devices.length === 0 ? '—' : devices.length}</b>
+                  <span>台设备继承</span>
+                </div>
+                <div className={styles.sharedActions}>
+                  <Link className="btn" href="/base">
+                    编辑共享配置
+                  </Link>
+                  {!isTemplate && (
                     <button
                       type="button"
-                      className="btn sm danger"
-                      onClick={() => void remove(device)}
-                      disabled={busyId === device.id}
+                      className="btn"
+                      disabled={!sharedRealUrl}
+                      onClick={() => void copySharedUrl()}
                     >
-                      {busyId === device.id ? '删除中 …' : '删除'}
+                      复制共享链接
                     </button>
-                  </div>
-                );
-              })
-            )}
-          </div>
-        </section>
-
-        {/* 共享链接 —— 不含任何设备差异;设备各用各的链接(行内复制)。 */}
-        {activeProfile &&
-          (isTemplate ? (
-            <div className={styles.srcNote}>
-              <span className="g">⊘</span>
-              <span>
-                这是<b>模版</b>,{TEMPLATE_NOT_DISTRIBUTABLE}
-                ,这些设备没有订阅链接;它们会随「从模版新建」拷贝到新配置文件,在那里下发。
-              </span>
-            </div>
-          ) : (
-            <section className="panel">
-              <div className="panel-head">
-                <h2>共享订阅链接</h2>
-                <span className="crumb">不含设备差异</span>
+                  )}
+                </div>
               </div>
-              <div className="panel-body">
-                <div className="dist-url">
+
+              {isTemplate ? (
+                <div className={styles.templateNote}>
+                  模版不直接分发。这里的共享配置和设备差异会复制到新配置文件，再由新配置文件生成链接。
+                </div>
+              ) : (
+                <div className={styles.sharedDistribution}>
+                  <div>
+                    <span>共享订阅链接</span>
+                    <small>只包含共享配置，不含任何设备差异或 Tailscale</small>
+                  </div>
                   <code>{sharedShownUrl}</code>
-                  <button
-                    type="button"
-                    className="urlbtn"
-                    onClick={() => setReveal((v) => !v)}
-                    title="显示 / 隐藏令牌"
-                  >
+                  <button type="button" onClick={() => setReveal((value) => !value)}>
                     {reveal ? '隐藏' : '显示'}
                   </button>
-                  <button
-                    type="button"
-                    className="urlbtn"
-                    disabled={!sharedRealUrl}
-                    onClick={async () => {
-                      try {
-                        await navigator.clipboard.writeText(sharedRealUrl);
-                        toast('已复制共享订阅链接');
-                      } catch {
-                        toast('复制失败 · 请点「显示」后手动选取');
-                      }
-                    }}
-                  >
-                    复制
-                  </button>
                 </div>
-                <div className={styles.srcNote} style={{ marginTop: 12 }}>
-                  <span className="g">⇲</span>
-                  <span>
-                    客户端要取得某台设备的差异与 Tailscale,必须用该设备自己的链接(行内「复制链接」);
-                    共享链接永远只下发共享层。两者共用同一把令牌,轮换时一起失效。
-                  </span>
-                </div>
-              </div>
+              )}
             </section>
-          ))}
+
+            <div className={styles.inheritanceLine}>
+              <span aria-hidden="true" />
+              <p>下面每台设备都继承共享配置，卡片只展示它不同的部分。</p>
+            </div>
+
+            {legacy && legacy.nodes.length > 0 && (
+              <aside className={styles.legacyNotice} role="status">
+                <span className={styles.legacyIcon}>
+                  <NavIcon name="tailscale" size={18} />
+                </span>
+                <div>
+                  <b>{isTemplate ? '模版中发现旧版共享 Tailscale' : '发现旧版共享 Tailscale'}</b>
+                  {isTemplate ? (
+                    <p>
+                      请先用这个模版建立普通配置，再到普通配置的设备页执行迁移。模版本身不保存
+                      Tailscale 设备身份。
+                    </p>
+                  ) : (
+                    <p>
+                      共享配置里仍有 {legacy.nodes.length}{' '}
+                      个旧节点。需要先迁移到具体设备，才能使用新的设备级 Tailscale。
+                    </p>
+                  )}
+                </div>
+                {!isTemplate && <code>migrate:tailscale-device</code>}
+              </aside>
+            )}
+
+            {error && (
+              <div className={styles.errorBanner} role="alert">
+                <div>
+                  <b>设备列表加载失败</b>
+                  <span>{error}</span>
+                </div>
+                <button type="button" className="btn sm" onClick={() => void reload()}>
+                  重试
+                </button>
+              </div>
+            )}
+
+            {!(error && devices.length === 0) && (
+              <section className={styles.devicesSection} aria-labelledby="device-list-title">
+                <div className={styles.sectionHeading}>
+                  <div>
+                    <h2 id="device-list-title">设备</h2>
+                    <p>为某台设备设置少量差异，或启用只属于它的 Tailscale。</p>
+                  </div>
+                  {!loading && !error && <span>{devices.length} / 16</span>}
+                </div>
+
+                {loading && devices.length === 0 && !error ? (
+                  <div className={styles.deviceGrid} aria-label="正在加载设备">
+                    <div className={styles.skeletonCard} />
+                    <div className={styles.skeletonCard} />
+                  </div>
+                ) : devices.length === 0 && !error ? (
+                  <div className={styles.emptyState}>
+                    <span className={styles.emptyMark}>
+                      <NavIcon name="devices" size={22} />
+                    </span>
+                    <div>
+                      <h3>还没有设备</h3>
+                      <p>
+                        如果同一份配置要给手机、电脑或服务器使用，只需给它们建立名字，并记录不同的端口、密钥或设备功能。
+                      </p>
+                    </div>
+                    <button type="button" className="btn primary" onClick={() => setCreating(true)}>
+                      添加第一台设备
+                    </button>
+                  </div>
+                ) : (
+                  <div className={styles.deviceGrid}>
+                    {devices.map((device) => (
+                      <DeviceCard
+                        key={device.id}
+                        device={device}
+                        profileId={activeProfile.id}
+                        isTemplate={isTemplate}
+                        canCopy={!!deviceUrl(device)}
+                        onCopy={copyDeviceUrl}
+                      />
+                    ))}
+                  </div>
+                )}
+              </section>
+            )}
+          </>
+        )}
       </div>
 
       {creating && activeProfile && (
@@ -336,5 +372,90 @@ export default function DevicesPage() {
         />
       )}
     </>
+  );
+}
+
+function DeviceCard({
+  device,
+  profileId,
+  isTemplate,
+  canCopy,
+  onCopy,
+}: {
+  device: DeviceRecord;
+  profileId: string;
+  isTemplate: boolean;
+  canCopy: boolean;
+  onCopy: (device: DeviceRecord) => Promise<void>;
+}) {
+  const displayName = device.display_name || device.name;
+  const labels = patchLabels(device);
+  const tailscale = tailscaleState(device, isTemplate);
+  const detailHref = `/profiles/${profileId}/devices/${device.id}`;
+
+  return (
+    <article className={styles.deviceCard}>
+      <header className={styles.deviceHeader}>
+        <span className={styles.deviceMark}>{displayName.slice(0, 1).toUpperCase()}</span>
+        <div className={styles.deviceIdentity}>
+          <h3 className={device.display_name ? undefined : styles.monoName}>{displayName}</h3>
+          {device.display_name && <code>{device.name}</code>}
+          {device.notes && <p>{device.notes}</p>}
+        </div>
+        <span className={styles.inheritBadge}>继承共享配置</span>
+      </header>
+
+      <div className={styles.capabilities}>
+        <Link className={styles.capabilityRow} href={`${detailHref}#differences`}>
+          <span className={styles.capabilityIcon}>
+            <NavIcon name="base" size={17} />
+          </span>
+          <span className={styles.capabilityCopy}>
+            <span>配置差异</span>
+            <strong>{labels.length === 0 ? '无差异' : `${labels.length} 项差异`}</strong>
+            <small>
+              {labels.length === 0
+                ? '完全跟随共享配置'
+                : `${labels.slice(0, 3).join('、')}${labels.length > 3 ? ` 等 ${labels.length} 项` : ''}`}
+            </small>
+          </span>
+          <span className={styles.rowArrow} aria-hidden="true">
+            ›
+          </span>
+        </Link>
+
+        <Link className={styles.capabilityRow} href={`${detailHref}#tailscale`}>
+          <span className={`${styles.capabilityIcon} ${styles[tailscale.tone]}`}>
+            <NavIcon name="tailscale" size={17} />
+          </span>
+          <span className={styles.capabilityCopy}>
+            <span>Tailscale</span>
+            <strong>{tailscale.label}</strong>
+            <small>{tailscale.detail}</small>
+          </span>
+          <span className={styles.rowArrow} aria-hidden="true">
+            ›
+          </span>
+        </Link>
+      </div>
+
+      <footer className={styles.deviceFooter}>
+        {isTemplate ? (
+          <span>模版设备不生成订阅链接</span>
+        ) : (
+          <button
+            type="button"
+            className="btn ghost sm"
+            disabled={!canCopy}
+            onClick={() => void onCopy(device)}
+          >
+            复制订阅链接
+          </button>
+        )}
+        <Link className="btn sm" href={detailHref}>
+          查看设备
+        </Link>
+      </footer>
+    </article>
   );
 }

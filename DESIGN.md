@@ -1,7 +1,8 @@
-# ProxyManager 设计规范 v2 — "Signal Console"
+# ProxyManager 设计规范
 
-> 本文件取代旧版「Heritage Atelier」设计规范。AI 实现 UI 时以本文件 + 对应原型 HTML 为准；
-> 原型是视觉与交互的唯一参照（open-design 项目「Web Prototype」：`v2/*.html` + `css/v2.css` + `js/v2.js`）。
+> 当前视觉语言、信息架构与响应式规则以 [`web/DESIGN.md`](web/DESIGN.md) 为准。
+> 本文件保留 Signal Console 阶段的页面能力与旧组件契约，供维护存量页面时参考；
+> 两者冲突时以 `web/DESIGN.md` 和当前实现为准。
 >
 > **落地修正**：原型 `css/v2.css` 的 `:root` 默认是**浅色「Daylight Console」**，深色走
 > `:root[data-theme="dark"]`。本仓库实现以 CSS 为准：**默认浅色**，三态切换 light / dark / system

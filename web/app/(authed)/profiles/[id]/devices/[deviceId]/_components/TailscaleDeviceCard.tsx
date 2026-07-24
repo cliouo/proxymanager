@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ApiError, api } from '@/lib/client/api';
 import { useToast } from '@/components/ui/Toast';
 import type { PublicTailscaleDeviceFeature } from '@/schemas';
+import styles from '../device-detail.module.css';
 
 interface TailscaleFeatureResult {
   feature: PublicTailscaleDeviceFeature | null;
@@ -56,6 +57,7 @@ export function TailscaleDeviceCard({
   initialFeature,
   isTemplate,
   onChanged,
+  onDirtyChange,
 }: {
   profileId: string;
   deviceId: string;
@@ -63,6 +65,7 @@ export function TailscaleDeviceCard({
   initialFeature: PublicTailscaleDeviceFeature | null;
   isTemplate: boolean;
   onChanged: (feature: PublicTailscaleDeviceFeature | null) => void;
+  onDirtyChange: (dirty: boolean) => void;
 }) {
   const toast = useToast();
   const [feature, setFeature] = useState(initialFeature);
@@ -102,6 +105,21 @@ export function TailscaleDeviceCard({
       form.hostname.trim().length <= 63 &&
       /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/.test(form.hostname.trim()),
     [form.hostname],
+  );
+  const formDirty = useMemo(
+    () => editing && JSON.stringify(form) !== JSON.stringify(formFrom(feature, deviceName)),
+    [deviceName, editing, feature, form],
+  );
+
+  useEffect(() => {
+    onDirtyChange(formDirty);
+  }, [formDirty, onDirtyChange]);
+
+  useEffect(
+    () => () => {
+      onDirtyChange(false);
+    },
+    [onDirtyChange],
   );
 
   const edit = useCallback(() => {
@@ -193,7 +211,7 @@ export function TailscaleDeviceCard({
   }, [deviceId, deviceName, onChanged, profileId, toast]);
 
   return (
-    <section id="tailscale" className="panel scroll-mt-20">
+    <section id="tailscale" className="panel">
       <div className="panel-head">
         <h2>Tailscale</h2>
         <span className={`pill ${feature?.hasAuthKey ? 'ok' : 'idle'}`}>
@@ -214,42 +232,32 @@ export function TailscaleDeviceCard({
       </div>
 
       <div className="panel-body">
-        <div
-          className="rounded-lg border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2.5 text-[12px] leading-6 text-[var(--muted)]"
-          style={{ marginBottom: 14 }}
-        >
+        <div className={styles.featureIntro}>
           这是设备功能，不写入共享 base。只有通过
-          <b className="text-[var(--fg)]">这台设备的订阅链接</b>
+          <b>这台设备的订阅链接</b>
           获取配置时，系统才会注入 Tailscale 节点、单成员策略组和 tailnet 路由。
         </div>
 
         {error && (
-          <div
-            role="alert"
-            className="mb-3 rounded-lg border border-[color-mix(in_srgb,var(--danger)_35%,transparent)] bg-[var(--danger-dim)] px-3 py-2 text-[12px] text-[var(--danger)]"
-          >
+          <div role="alert" className={`${styles.featureFeedback} ${styles.featureError}`}>
             {error}
           </div>
         )}
         {warnings.map((warning) => (
-          <div
-            key={warning}
-            role="status"
-            className="mb-3 rounded-lg border border-[color-mix(in_srgb,var(--warn)_35%,transparent)] bg-[var(--warn-dim)] px-3 py-2 text-[12px] text-[var(--fg-2)]"
-          >
+          <div key={warning} role="status" className={styles.featureWarning}>
             {warning}
           </div>
         ))}
 
         {isTemplate ? (
-          <p className="m-0 text-[12.5px] leading-6 text-[var(--muted)]">
+          <p className={styles.featureParagraph}>
             模版只保留可复用的共享配置与基础设备差异。Tailscale hostname、认证与状态目录
             都属于具体设备，请从模版新建普通配置后再启用。
           </p>
         ) : editing ? (
-          <div className="grid gap-4">
-            <div className="grid gap-4 md:grid-cols-2">
-              <div className="field" style={{ marginBottom: 0 }}>
+          <div className={styles.formStack}>
+            <div className={styles.formGrid}>
+              <div className={`field ${styles.fieldReset}`}>
                 <label htmlFor="tailscale-hostname">Tailnet hostname</label>
                 <input
                   id="tailscale-hostname"
@@ -263,7 +271,7 @@ export function TailscaleDeviceCard({
                 />
                 <div className="hint">每台真实设备都应使用独立 hostname。</div>
               </div>
-              <div className="field" style={{ marginBottom: 0 }}>
+              <div className={`field ${styles.fieldReset}`}>
                 <label htmlFor="tailscale-auth-key">
                   Auth key {feature?.hasAuthKey ? '· 已保存' : '· 未设置'}
                 </label>
@@ -292,7 +300,7 @@ export function TailscaleDeviceCard({
             </div>
 
             {feature?.hasAuthKey && !isTemplate && (
-              <label className="flex items-center gap-2 text-[12px] text-[var(--muted)]">
+              <label className={styles.checkRow}>
                 <input
                   type="checkbox"
                   checked={form.clearAuthKey}
@@ -308,14 +316,14 @@ export function TailscaleDeviceCard({
               </label>
             )}
             {isTemplate && (
-              <p className="m-0 text-[12px] leading-5 text-[var(--muted)]">
+              <p className={styles.featureParagraph}>
                 模版可以保存字段结构，但不能保存认证密钥；请从模版建立普通配置后，在具体
                 设备中填写。
               </p>
             )}
 
-            <div className="grid gap-3 sm:grid-cols-2">
-              <label className="flex items-center gap-2 text-[12px] text-[var(--fg-2)]">
+            <div className={styles.checkGrid}>
+              <label className={styles.checkRow}>
                 <input
                   type="checkbox"
                   checked={form.acceptRoutes}
@@ -325,7 +333,7 @@ export function TailscaleDeviceCard({
                 />
                 接受 tailnet 子网路由
               </label>
-              <label className="flex items-center gap-2 text-[12px] text-[var(--fg-2)]">
+              <label className={styles.checkRow}>
                 <input
                   type="checkbox"
                   checked={form.udp}
@@ -337,11 +345,9 @@ export function TailscaleDeviceCard({
               </label>
             </div>
 
-            <details className="rounded-lg border border-[var(--border)] px-3 py-2.5">
-              <summary className="cursor-pointer text-[12px] font-medium text-[var(--fg-2)]">
-                高级设置
-              </summary>
-              <div className="mt-4 grid gap-4 md:grid-cols-2">
+            <details className={styles.advancedSettings}>
+              <summary>高级设置</summary>
+              <div className={styles.advancedGrid}>
                 <TextField
                   id="tailscale-control-url"
                   label="Control URL"
@@ -377,7 +383,7 @@ export function TailscaleDeviceCard({
                   placeholder="100.64.0.9 或节点名"
                   onChange={(value) => setForm((current) => ({ ...current, exitNode: value }))}
                 />
-                <div className="field" style={{ marginBottom: 0 }}>
+                <div className={`field ${styles.fieldReset}`}>
                   <label htmlFor="tailscale-extra-cidrs">额外 CIDR</label>
                   <textarea
                     id="tailscale-extra-cidrs"
@@ -392,8 +398,8 @@ export function TailscaleDeviceCard({
                   <div className="hint">每行或逗号分隔；100.64.0.0/10 会自动加入。</div>
                 </div>
               </div>
-              <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                <label className="flex items-center gap-2 text-[12px] text-[var(--fg-2)]">
+              <div className={styles.checkGrid}>
+                <label className={styles.checkRow}>
                   <input
                     type="checkbox"
                     checked={form.ephemeral}
@@ -403,7 +409,7 @@ export function TailscaleDeviceCard({
                   />
                   使用临时节点
                 </label>
-                <label className="flex items-center gap-2 text-[12px] text-[var(--fg-2)]">
+                <label className={styles.checkRow}>
                   <input
                     type="checkbox"
                     checked={form.exitNodeAllowLanAccess}
@@ -420,7 +426,7 @@ export function TailscaleDeviceCard({
               </div>
             </details>
 
-            <div className="flex flex-wrap justify-end gap-2">
+            <div className={styles.actionRow}>
               <button
                 type="button"
                 className="btn sm ghost"
@@ -443,8 +449,8 @@ export function TailscaleDeviceCard({
             </div>
           </div>
         ) : feature ? (
-          <div className="grid gap-4">
-            <dl className="grid gap-x-6 gap-y-3 text-[12px] sm:grid-cols-2">
+          <div className={styles.formStack}>
+            <dl className={styles.infoGrid}>
               <Info label="Hostname" value={feature.hostname} mono />
               <Info
                 label="Auth key"
@@ -463,7 +469,7 @@ export function TailscaleDeviceCard({
                 mono
               />
             </dl>
-            <div className="flex flex-wrap justify-end gap-2">
+            <div className={styles.actionRow}>
               <button
                 type="button"
                 className="btn sm danger"
@@ -475,7 +481,7 @@ export function TailscaleDeviceCard({
             </div>
           </div>
         ) : (
-          <p className="m-0 text-[12.5px] leading-6 text-[var(--muted)]">
+          <p className={styles.featureParagraph}>
             这台设备当前只使用共享配置和自己的基础差异。启用后，hostname、auth key 与 state dir
             都属于这台设备，不会影响同一配置文件下的手机、电脑或服务器。
           </p>
@@ -499,7 +505,7 @@ function TextField({
   onChange: (value: string) => void;
 }) {
   return (
-    <div className="field" style={{ marginBottom: 0 }}>
+    <div className={`field ${styles.fieldReset}`}>
       <label htmlFor={id}>{label}</label>
       <input
         id={id}
@@ -515,9 +521,9 @@ function TextField({
 
 function Info({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
   return (
-    <div>
-      <dt className="mb-1 text-[11px] text-[var(--faint)]">{label}</dt>
-      <dd className={`m-0 text-[var(--fg-2)] ${mono ? 'font-mono' : ''}`}>{value}</dd>
+    <div className={styles.infoItem}>
+      <dt>{label}</dt>
+      <dd className={mono ? 'mono' : undefined}>{value}</dd>
     </div>
   );
 }

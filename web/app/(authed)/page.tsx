@@ -233,7 +233,9 @@ export default function DashboardPage() {
   // P1-4: the 4th 配置资源 card links to /scenarios/chained-proxy (R.chained) but
   // was mislabelled as 规则集 (a duplicate of the 共享资源 card). It's meant to be
   // the chained-proxy stat — a chain wrap is a group carrying `dialer-proxy`.
-  const chainCount = groups.filter((g) => (g as { 'dialer-proxy'?: string })['dialer-proxy']).length;
+  const chainCount = groups.filter(
+    (g) => (g as { 'dialer-proxy'?: string })['dialer-proxy'],
+  ).length;
 
   const anchorsApplied = snapshot?.anchorsApplied ?? 0;
   const rulesDesc =
@@ -273,8 +275,8 @@ export default function DashboardPage() {
             <span className="pill acc plain">正在编辑模版</span>
             <span style={{ color: 'var(--muted)' }}>
               「{activeProfile?.name}」是模版 —— 内容照常编辑与预览,但<b>不对外分发</b>
-              ,下方订阅地址对它一律 404。要下发,请到{' '}
-              <Link href="/profiles">配置文件</Link> 从它新建一份。{TEMPLATE_TAGLINE}
+              ,下方订阅地址对它一律 404。要下发,请到 <Link href="/profiles">配置文件</Link>{' '}
+              从它新建一份。{TEMPLATE_TAGLINE}
             </span>
           </div>
         </div>
@@ -385,7 +387,7 @@ export default function DashboardPage() {
                 <div className="d">base 结构中可注入位</div>
               </Link>
               <Link className="stat" href={R.proxyGroups}>
-                <div className="k">策略组</div>
+                <div className="k">代理策略</div>
                 <div className="v">{counts.proxyGroups}</div>
                 <div className="d">{groups.length > 0 ? groupBreakdown : '尚无策略组'}</div>
               </Link>
@@ -430,7 +432,7 @@ export default function DashboardPage() {
           ) : (
             <>
               <Link className="stat" href={R.subscriptions}>
-                <div className="k">订阅源</div>
+                <div className="k">节点订阅</div>
                 <div className="v">{counts.subscriptions}</div>
                 <div className="d">
                   {subsInjected !== undefined
@@ -439,7 +441,7 @@ export default function DashboardPage() {
                 </div>
               </Link>
               <Link className="stat" href={R.ruleSets}>
-                <div className="k">引用规则集</div>
+                <div className="k">规则资源</div>
                 <div className="v">{counts.ruleSets}</div>
                 <div className="d">rule-set 库，按需注入 rule-providers</div>
               </Link>
@@ -562,17 +564,13 @@ function buildAlerts(meta: Meta | null, snapshot: Snapshot | null, snapshotError
         ? {
             tone: 'warn',
             tag: '快照读取失败',
-            body: (
-              <>无法读取渲染摘要(网络或服务异常)。稍后刷新重试;这不代表配置本身有问题。</>
-            ),
+            body: <>无法读取渲染摘要(网络或服务异常)。稍后刷新重试;这不代表配置本身有问题。</>,
           }
         : {
             tone: 'acc',
             tag: '未渲染',
             body: (
-              <>
-                还没有渲染记录。打开「最终配置」或让客户端访问订阅地址后，这里会显示注入与告警摘要。
-              </>
+              <>还没有生成记录。打开「配置预览」或让客户端访问订阅地址后，这里会显示检查摘要。</>
             ),
             href: '/config',
             cta: '去渲染 →',

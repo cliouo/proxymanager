@@ -1,13 +1,7 @@
 import type { Metadata } from 'next';
-import { Inter, Noto_Sans_SC, JetBrains_Mono, Fraunces } from 'next/font/google';
+import { Noto_Sans_SC, JetBrains_Mono } from 'next/font/google';
 import './globals.css';
 import { ThemeProvider } from '@/components/theme/ThemeProvider';
-
-const inter = Inter({
-  subsets: ['latin'],
-  variable: '--font-inter',
-  display: 'swap',
-});
 
 const notoSC = Noto_Sans_SC({
   subsets: ['latin'],
@@ -19,13 +13,6 @@ const notoSC = Noto_Sans_SC({
 const jetbrains = JetBrains_Mono({
   subsets: ['latin'],
   variable: '--font-jetbrains',
-  display: 'swap',
-});
-
-const fraunces = Fraunces({
-  subsets: ['latin'],
-  variable: '--font-fraunces',
-  axes: ['opsz', 'SOFT'],
   display: 'swap',
 });
 
@@ -47,7 +34,7 @@ export default function RootLayout({
     // does not affect descendants.
     <html
       lang="zh-CN"
-      className={`${inter.variable} ${notoSC.variable} ${jetbrains.variable} ${fraunces.variable}`}
+      className={`${notoSC.variable} ${jetbrains.variable}`}
       suppressHydrationWarning
     >
       <body suppressHydrationWarning>

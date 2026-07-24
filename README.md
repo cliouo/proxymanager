@@ -65,7 +65,7 @@ proxymanager/
 ├── extension/   Chrome MV3 扩展（WXT）：域名收集 + 测速 + 规则写回
 ├── plugin/      Claude Code 插件：5 个 Agent Skill + MCP↔HTTP 桥接
 ├── docs/        协议兼容性等文档
-├── DESIGN.md    UI 设计规范（Signal Console）
+├── DESIGN.md    UI 设计规范入口（当前前端规范见 web/DESIGN.md）
 └── REQUIREMENTS.md  需求与演进记录
 ```
 

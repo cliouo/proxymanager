@@ -63,7 +63,9 @@ const EXAMPLES = [
 ];
 
 function newConversationId(): string {
-  return globalThis.crypto?.randomUUID?.() ?? `c-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return (
+    globalThis.crypto?.randomUUID?.() ?? `c-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  );
 }
 
 // Persist the conversation so a refresh / reopen restores it. The browser now
@@ -107,7 +109,11 @@ function loadPersisted(): Restored | null {
           }
         : m,
     );
-    return { conversationId: p.conversationId, messages, convo: Array.isArray(p.convo) ? p.convo : [] };
+    return {
+      conversationId: p.conversationId,
+      messages,
+      convo: Array.isArray(p.convo) ? p.convo : [],
+    };
   } catch {
     return null;
   }
@@ -118,7 +124,12 @@ function persist(conversationId: string, messages: UiMessage[], convo: ChatMessa
   const write = (msgs: UiMessage[], cv: ChatMessage[]) =>
     window.localStorage.setItem(
       STORE_KEY,
-      JSON.stringify({ conversationId, messages: msgs, convo: cv, savedAt: Date.now() } satisfies Persisted),
+      JSON.stringify({
+        conversationId,
+        messages: msgs,
+        convo: cv,
+        savedAt: Date.now(),
+      } satisfies Persisted),
     );
   try {
     write(messages, convo);
@@ -309,7 +320,10 @@ export function AssistantPanel() {
           i === mIndex && m.role === 'assistant'
             ? {
                 role: 'assistant',
-                blocks: [...m.blocks, { type: 'error', message: `${failed} 项确认失败，可逐条重试。` }],
+                blocks: [
+                  ...m.blocks,
+                  { type: 'error', message: `${failed} 项确认失败，可逐条重试。` },
+                ],
               }
             : m,
         ),
@@ -412,7 +426,7 @@ export function AssistantPanel() {
           {
             type: 'error',
             message:
-              '尚未配置 AI 凭证——请到左侧「AI 配置」页填入 DeepSeek 的 Base URL / 模型 / API Key 后再使用。',
+              '尚未配置 AI 凭证，请到左侧「助手设置」页填入 DeepSeek 的 Base URL、模型和 API Key 后再使用。',
           },
         ]);
       } else if (err instanceof DOMException && err.name === 'AbortError') {
@@ -502,7 +516,10 @@ export function AssistantPanel() {
         {messages.length === 0 ? (
           <>
             <div className="ai-msg bot">
-              <p>你好，我是配置助手。问我任何 mihomo / clash 配置问题，我会查官方文档、结合你当前配置作答。</p>
+              <p>
+                你好，我是配置助手。问我任何 mihomo / clash
+                配置问题，我会查官方文档、结合你当前配置作答。
+              </p>
               <p>写操作（增删改规则、规则集、配置区块）会先给出 diff 卡片，确认后才执行。</p>
             </div>
             <div className="ai-suggests">

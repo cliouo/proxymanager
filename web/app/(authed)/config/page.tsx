@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ApiError, api } from '@/lib/client/api';
 import { copyText } from '@/lib/client/clipboard';
@@ -7,6 +8,7 @@ import { PageTopbar } from '@/components/PageChrome';
 import { ScopePill } from '@/components/Topbar';
 import { useProfiles } from '@/components/profile/ProfileContext';
 import { CodeView } from '@/components/ui/CodeView';
+import { TEMPLATE_NOT_DISTRIBUTABLE, isTemplateProfile } from '@/lib/profiles/kind';
 import styles from './config.module.css';
 
 interface PreviewData {
@@ -28,6 +30,7 @@ type Tab = 'yaml' | 'summary';
 export default function ConfigPage() {
   const { activeProfile } = useProfiles();
   const activeName = activeProfile?.name ?? 'default';
+  const isTemplate = isTemplateProfile(activeProfile);
   const [preview, setPreview] = useState<PreviewData | null>(null);
   const [meta, setMeta] = useState<Meta | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -36,28 +39,32 @@ export default function ConfigPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [tab, setTab] = useState<Tab>('yaml');
   const [inspOpen, setInspOpen] = useState(false);
+  const [urlRevealed, setUrlRevealed] = useState(false);
 
-  const load = useCallback(async (opts?: { silent?: boolean }) => {
-    if (!opts?.silent) setLoadError(null);
-    try {
-      const [previewRes, metaRes] = await Promise.all([
-        api<{ data: PreviewData }>(`/api/v1/preview/${encodeURIComponent(activeName)}`),
-        api<{ data: Meta }>('/api/v1/meta').catch(() => null),
-      ]);
-      setPreview(previewRes.data);
-      if (metaRes) setMeta(metaRes.data);
-      setLoadError(null);
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 404) {
-        setPreview(null);
-        setLoadError('尚未设置基础配置，先到「结构骨架」页粘贴 base.yaml 并保存。');
-      } else {
-        setLoadError(err instanceof Error ? err.message : String(err));
+  const load = useCallback(
+    async (opts?: { silent?: boolean }) => {
+      if (!opts?.silent) setLoadError(null);
+      try {
+        const [previewRes, metaRes] = await Promise.all([
+          api<{ data: PreviewData }>(`/api/v1/preview/${encodeURIComponent(activeName)}`),
+          api<{ data: Meta }>('/api/v1/meta').catch(() => null),
+        ]);
+        setPreview(previewRes.data);
+        if (metaRes) setMeta(metaRes.data);
+        setLoadError(null);
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 404) {
+          setPreview(null);
+          setLoadError('尚未设置基础配置。先填写端口、DNS 等基础内容，才能生成完整配置。');
+        } else {
+          setLoadError(err instanceof Error ? err.message : String(err));
+        }
+      } finally {
+        setLoaded(true);
       }
-    } finally {
-      setLoaded(true);
-    }
-  }, [activeName]);
+    },
+    [activeName],
+  );
 
   useEffect(() => {
     load();
@@ -96,6 +103,8 @@ export default function ConfigPage() {
   const subUrl = meta?.subBase
     ? `${meta.subBase}/${encodeURIComponent(activeName)}`
     : (meta?.subscriptionUrl ?? '');
+  const shownSubUrl = urlRevealed ? subUrl : subUrl.replace(/(\/api\/sub\/)[^/]+/, '$1••••••••');
+  const needsBase = loadError?.startsWith('尚未设置基础配置') ?? false;
 
   async function copyConfig() {
     if (!content) return;
@@ -106,7 +115,7 @@ export default function ConfigPage() {
   }
 
   async function copyUrl() {
-    if (!subUrl) return;
+    if (isTemplate || !subUrl) return;
     if (!(await copyText(subUrl))) return;
     setCopied('url');
     setTimeout(() => setCopied(null), 1500);
@@ -125,150 +134,251 @@ export default function ConfigPage() {
 
   return (
     <div className={styles.workbench}>
-      {/* —— 页头注入共享 topbar(对齐 v2/config.html:标题 / pill / 渲染状态 /
-          crumb / 重新渲染 / 下载 / 复制全文 上提,视图条只留 tabs + 检查) —— */}
       <PageTopbar>
-        <h1>最终配置</h1>
+        <h1>配置预览</h1>
         <ScopePill />
-        {loaded && preview && <span className="pill ok">渲染成功</span>}
-        {preview && (
-          <span className="crumb num">
-            build {preview.build_id.slice(0, 8)} · {lineCount} 行
-          </span>
-        )}
+        {isTemplate && <span className="pill acc plain">{TEMPLATE_NOT_DISTRIBUTABLE}</span>}
         <div className="grow" />
-        <button className="btn" onClick={refresh} disabled={refreshing}>
-          {refreshing ? '渲染中…' : '重新渲染'}
-        </button>
-        <button className="btn" onClick={download} disabled={!content}>
-          下载
-        </button>
-        <button className="btn primary" onClick={copyConfig} disabled={!content}>
-          {copied === 'config' ? '已复制 ✓' : '复制全文'}
-        </button>
       </PageTopbar>
 
       <div className={styles.view}>
+        <section className={styles.readiness} aria-live="polite">
+          <div
+            className={`${styles.readinessIcon}${
+              loadError ? ` ${styles.isWarning}` : loaded ? ` ${styles.isReady}` : ''
+            }`}
+          >
+            {!loaded ? '…' : loadError ? '!' : '✓'}
+          </div>
+          <div className={styles.readinessCopy}>
+            <h2>
+              {!loaded
+                ? '正在生成配置'
+                : loadError
+                  ? '配置暂不可用'
+                  : isTemplate
+                    ? '模版预览已就绪'
+                    : '配置已就绪'}
+            </h2>
+            <p>
+              {!loaded
+                ? '正在组合基础配置、节点与分流规则。'
+                : loadError
+                  ? loadError
+                  : isTemplate
+                    ? `已生成 ${lineCount.toLocaleString()} 行 YAML，可检查和下载，但模版不生成订阅地址。`
+                    : `已生成 ${lineCount.toLocaleString()} 行 YAML，包含 ${totalRules.toLocaleString()} 条注入规则。`}
+            </p>
+          </div>
+          {preview && (
+            <div className={styles.readinessMeta}>
+              <span className="num">build {preview.build_id.slice(0, 8)}</span>
+              <span>{byteLen.toLocaleString()} 字节</span>
+            </div>
+          )}
+          <div className={styles.actions}>
+            <button
+              className="btn ghost"
+              onClick={refresh}
+              disabled={refreshing}
+              aria-busy={refreshing || undefined}
+            >
+              {refreshing ? '检查中…' : '重新检查'}
+            </button>
+            <button className="btn" onClick={download} disabled={!content}>
+              下载 YAML
+            </button>
+            {!isTemplate && (
+              <button className="btn primary" onClick={copyUrl} disabled={!subUrl || !!loadError}>
+                {copied === 'url' ? '地址已复制' : '复制订阅地址'}
+              </button>
+            )}
+          </div>
+        </section>
+
         <div className={styles.bar}>
-          <div className="tabs">
+          <div className="tabs" role="tablist" aria-label="配置预览视图">
             <button
               className={`tab${tab === 'yaml' ? ' on' : ''}`}
               onClick={() => setTab('yaml')}
+              role="tab"
+              aria-selected={tab === 'yaml'}
             >
-              渲染产物
+              YAML 配置
             </button>
             <button
               className={`tab${tab === 'summary' ? ' on' : ''}`}
               onClick={() => setTab('summary')}
+              role="tab"
+              aria-selected={tab === 'summary'}
             >
-              渲染摘要
+              生成摘要
             </button>
           </div>
-          <div style={{ flex: 1 }} />
-          <span className={styles.note}>只读 · 由 base + 资源实时渲染</span>
+          <div className={styles.barGrow} />
+          <span className={styles.note}>只读预览，修改请前往对应配置页面</span>
+          {tab === 'yaml' && (
+            <button className="btn sm" onClick={copyConfig} disabled={!content}>
+              {copied === 'config' ? 'YAML 已复制' : '复制 YAML'}
+            </button>
+          )}
           <button className={`btn sm ${styles.inspBtn}`} onClick={() => setInspOpen(true)}>
-            注入 / 警告
+            检查详情
           </button>
         </div>
 
         {tab === 'yaml' ? (
           <div className={`codebox ${styles.code}`}>
             {!loaded ? (
-              <pre className="cm-com">正在渲染最终配置 …</pre>
+              <div className={styles.loadingState}>正在组合最终配置…</div>
             ) : loadError ? (
-              <pre style={{ color: 'var(--warn)' }}>{loadError}</pre>
+              <div className={styles.emptyState}>
+                <span className={styles.emptyMark}>!</span>
+                <div>
+                  <h3>{needsBase ? '先完成基础配置' : '无法生成配置'}</h3>
+                  <p>{loadError}</p>
+                </div>
+                {needsBase && (
+                  <Link className="btn primary" href="/base">
+                    打开基础配置
+                  </Link>
+                )}
+              </div>
             ) : (
-              /* CodeMirror 只读视图：虚拟化渲染，几万行也只为可视行建 DOM */
               <CodeView value={content} className={styles.cmFill} />
             )}
           </div>
         ) : (
           <div className={styles.summary}>
-            <div className="panel" style={{ maxWidth: 560 }}>
-              <div className="panel-body">
-                <div className={styles.sumRow}>
-                  <span>渲染产物</span>
-                  <span className="num">
-                    {lineCount} 行 · {byteLen.toLocaleString()} 字节
-                  </span>
+            <section className={styles.summaryCard}>
+              <div className={styles.summaryHead}>
+                <div>
+                  <h2>本次生成结果</h2>
+                  <p>
+                    {isTemplate
+                      ? '这些数据用于检查模版内容，不代表存在可分发的订阅地址。'
+                      : '这些数据用于排查问题，不影响订阅地址。'}
+                  </p>
                 </div>
-                {preview?.build_id && (
-                  <div className={styles.sumRow}>
-                    <span>构建标识</span>
-                    <span className="num">{preview.build_id}</span>
-                  </div>
-                )}
-                <div className={styles.sumRow}>
-                  <span>注入锚点</span>
-                  <span className="num">{anchors.length} 个</span>
-                </div>
-                <div className={styles.sumRow}>
-                  <span>注入规则</span>
-                  <span className="num">{totalRules} 条</span>
-                </div>
-                <div className={styles.sumRow}>
-                  <span>未匹配锚点</span>
-                  <span className="num">{unmatched.length} 个</span>
-                </div>
-                <div className={styles.sumRow}>
-                  <span>基础配置</span>
-                  <span className="num">{meta?.hasBase === false ? '未初始化' : '已就绪'}</span>
-                </div>
+                {!loadError &&
+                  loaded &&
+                  (isTemplate ? (
+                    <span className="pill acc">{TEMPLATE_NOT_DISTRIBUTABLE}</span>
+                  ) : (
+                    <span className="pill ok">可以使用</span>
+                  ))}
               </div>
-            </div>
+              <div className={styles.sumRow}>
+                <span>YAML 大小</span>
+                <span className="num">
+                  {lineCount.toLocaleString()} 行 · {byteLen.toLocaleString()} 字节
+                </span>
+              </div>
+              {preview?.build_id && (
+                <div className={styles.sumRow}>
+                  <span>构建标识</span>
+                  <span className="num">{preview.build_id}</span>
+                </div>
+              )}
+              <div className={styles.sumRow}>
+                <span>已注入规则</span>
+                <span className="num">
+                  {totalRules.toLocaleString()} 条，分布在 {anchors.length} 个位置
+                </span>
+              </div>
+              <div className={styles.sumRow}>
+                <span>需要注意</span>
+                <span className="num">{unmatched.length} 个未匹配锚点</span>
+              </div>
+              <div className={styles.sumRow}>
+                <span>基础配置</span>
+                <span className="num">{meta?.hasBase === false ? '未完成' : '已就绪'}</span>
+              </div>
+            </section>
           </div>
         )}
       </div>
 
-      <aside className={`${styles.inspector}${inspOpen ? ` ${styles.open}` : ''}`}>
-        <button className={`btn ghost sm ${styles.inspClose}`} onClick={() => setInspOpen(false)}>
-          关闭
-        </button>
-
-        <div className={`${styles.inspH} ${styles.first}`}>锚点注入 · {totalRules} 条</div>
-        {anchors.length === 0 ? (
-          <div style={{ fontSize: 12, color: 'var(--muted)', padding: '4px 8px' }}>
-            未注入任何规则
+      <button
+        type="button"
+        className={`${styles.inspectorScrim}${inspOpen ? ` ${styles.open}` : ''}`}
+        onClick={() => setInspOpen(false)}
+        aria-label="关闭检查详情"
+      />
+      <aside
+        className={`${styles.inspector}${inspOpen ? ` ${styles.open}` : ''}`}
+        aria-label="配置检查详情"
+      >
+        <header className={styles.inspectorHead}>
+          <div>
+            <span>检查结果</span>
+            <h2>生成详情</h2>
           </div>
-        ) : (
-          anchors.map((a) => (
-            <div className={styles.inj} key={a.anchor}>
-              <span>{a.anchor}</span>
-              <span className={styles.injN}>+{a.ruleCount}</span>
-            </div>
-          ))
-        )}
+          <button className={`btn ghost sm ${styles.inspClose}`} onClick={() => setInspOpen(false)}>
+            关闭
+          </button>
+        </header>
 
-        <div className={styles.inspH}>警告</div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {unmatched.length > 0 ? (
-            unmatched.map((a) => (
-              <span className="pill warn" key={a}>
-                锚点 {a} 无对应标记
-              </span>
-            ))
-          ) : (
-            <span className="pill ok">所有锚点均已匹配</span>
-          )}
+        <div className={`${styles.checkSummary}${unmatched.length > 0 ? ` ${styles.warn}` : ''}`}>
+          <span>{unmatched.length > 0 ? '!' : '✓'}</span>
+          <div>
+            <b>
+              {unmatched.length > 0 ? `${unmatched.length} 个位置需要注意` : '所有注入位置均已匹配'}
+            </b>
+            <small>本次共注入 {totalRules.toLocaleString()} 条分流规则</small>
+          </div>
         </div>
 
-        {subUrl && (
-          <>
-            <div className={styles.inspH}>订阅地址</div>
-            <div
-              style={{
-                font: '11.5px var(--font-mono)',
-                color: 'var(--fg-2)',
-                wordBreak: 'break-all',
-                marginBottom: 8,
-              }}
-            >
-              {subUrl}
+        <section className={styles.inspectorSection}>
+          <div className={styles.sectionHead}>
+            <h3>规则注入</h3>
+            <span>{anchors.length} 个位置</span>
+          </div>
+          {anchors.length === 0 ? (
+            <p className={styles.muted}>未注入任何规则。</p>
+          ) : (
+            <div className={styles.injectionList}>
+              {anchors.map((anchor) => (
+                <div className={styles.inj} key={anchor.anchor}>
+                  <span>{anchor.anchor}</span>
+                  <span className={styles.injN}>+{anchor.ruleCount}</span>
+                </div>
+              ))}
             </div>
-            <button className="btn sm" style={{ width: '100%' }} onClick={copyUrl}>
-              {copied === 'url' ? '已复制 ✓' : '复制订阅 URL'}
+          )}
+        </section>
+
+        {unmatched.length > 0 && (
+          <section className={styles.inspectorSection}>
+            <div className={styles.sectionHead}>
+              <h3>需要注意</h3>
+              <span>{unmatched.length} 项</span>
+            </div>
+            <div className={styles.warningList}>
+              {unmatched.map((anchor) => (
+                <div key={anchor}>锚点 {anchor} 没有找到对应标记</div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {subUrl && !isTemplate && (
+          <section className={styles.inspectorSection}>
+            <div className={styles.sectionHead}>
+              <h3>订阅地址</h3>
+              <span>令牌默认隐藏</span>
+            </div>
+            <div className={styles.subscriptionUrl}>
+              <code>{shownSubUrl}</code>
+              <button type="button" onClick={() => setUrlRevealed((value) => !value)}>
+                {urlRevealed ? '隐藏' : '显示'}
+              </button>
+            </div>
+            <button className={`btn primary ${styles.copyUrl}`} onClick={copyUrl}>
+              {copied === 'url' ? '地址已复制' : '复制订阅地址'}
             </button>
-          </>
+            <p className={styles.credentialHint}>持有此地址即可拉取配置，请按访问凭证保管。</p>
+          </section>
         )}
       </aside>
     </div>

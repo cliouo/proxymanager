@@ -82,7 +82,11 @@ export default function RuleSetsPage() {
           '/api/v1/rules?limit=500',
         )
           .then((r) => ({ ok: true as const, data: r.data, total: r.meta?.total ?? r.data.length }))
-          .catch(() => ({ ok: false as const, data: [] as { type: string; value: string }[], total: 0 })),
+          .catch(() => ({
+            ok: false as const,
+            data: [] as { type: string; value: string }[],
+            total: 0,
+          })),
       ]);
       setSets(list.data);
       setMeta(m.data);
@@ -164,7 +168,7 @@ export default function RuleSetsPage() {
     // of letting the user confirm then bounce off a 409).
     const set = sets.find((s) => s.id === id);
     const label = set?.name ?? '该规则集';
-    const used = set ? usage[set.name] ?? 0 : 0;
+    const used = set ? (usage[set.name] ?? 0) : 0;
     const inBase = set?.referenced_in_base ?? false;
     const consequence =
       used > 0 || inBase
@@ -182,7 +186,7 @@ export default function RuleSetsPage() {
   return (
     <>
       <PageTopbar contentMaxWidth={1320}>
-        <h1>规则集</h1>
+        <h1>规则资源</h1>
         <ScopePill shared />
         {loaded && (
           <span className="crumb">
@@ -250,7 +254,9 @@ export default function RuleSetsPage() {
                 加载中 …
               </div>
             ) : filtered.length === 0 ? (
-              <div style={{ color: 'var(--muted)', fontSize: 13, padding: 8 }}>没有匹配的规则集</div>
+              <div style={{ color: 'var(--muted)', fontSize: 13, padding: 8 }}>
+                没有匹配的规则集
+              </div>
             ) : (
               filtered.map((s) => {
                 const used = usage[s.name] ?? 0;
@@ -324,7 +330,12 @@ export default function RuleSetsPage() {
               ) : (
                 <div
                   className="panel pm-pulse"
-                  style={{ padding: '56px 24px', textAlign: 'center', color: 'var(--faint)', fontSize: 13 }}
+                  style={{
+                    padding: '56px 24px',
+                    textAlign: 'center',
+                    color: 'var(--faint)',
+                    fontSize: 13,
+                  }}
                 >
                   加载内容 …
                 </div>
@@ -343,7 +354,12 @@ export default function RuleSetsPage() {
           ) : (
             <div
               className="panel"
-              style={{ padding: '56px 24px', textAlign: 'center', color: 'var(--muted)', fontSize: 13 }}
+              style={{
+                padding: '56px 24px',
+                textAlign: 'center',
+                color: 'var(--muted)',
+                fontSize: 13,
+              }}
             >
               从左侧选择一个规则集，或点「＋ 新建规则集」
             </div>
@@ -512,11 +528,20 @@ function LocalDetail({
               ? '被 base 结构直接引用（如 DNS rule-set: 策略），已注入 rule-providers 下发。'
               : '未被规则引用 · 留库不下发（到「规则」页加 RULE-SET 规则启用）。'}
           {behavior === 'domain' && (
-            <span style={{ color: 'var(--faint)' }}> behavior=domain 时每行一个域名，性能优于 classical。</span>
+            <span style={{ color: 'var(--faint)' }}>
+              {' '}
+              behavior=domain 时每行一个域名，性能优于 classical。
+            </span>
           )}
         </div>
 
-        <CodeEditor value={content} onChange={setContent} onSave={save} dirty={dirty} minHeight={300} />
+        <CodeEditor
+          value={content}
+          onChange={setContent}
+          onSave={save}
+          dirty={dirty}
+          minHeight={300}
+        />
       </div>
     </section>
   );
@@ -582,7 +607,8 @@ function RemoteDetail({
   }
 
   async function localize() {
-    if (!confirm(`抓取 ${hostOf(set.url)} 的当前内容并转为本平台托管？之后由你在平台内维护。`)) return;
+    if (!confirm(`抓取 ${hostOf(set.url)} 的当前内容并转为本平台托管？之后由你在平台内维护。`))
+      return;
     setLocalizing(true);
     try {
       await api(`/api/v1/rule-sets/${set.id}/localize`, { method: 'POST' });
