@@ -41,7 +41,10 @@ function parseError(message: string): { title: string; detail?: string } {
     return { title, detail };
   }
   if (/DEEPSEEK_API_KEY|尚未配置|not configured/i.test(message)) {
-    return { title: '助手尚未配置', detail: '请到「AI 配置」页填写模型服务的 Base URL / 模型 / API Key。' };
+    return {
+      title: '助手尚未配置',
+      detail: '请到「助手设置」页填写模型服务的 Base URL、模型和 API Key。',
+    };
   }
   if (/abort/i.test(message)) return { title: '请求已取消' };
   return { title: '出错了', detail: message };

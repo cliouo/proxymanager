@@ -31,12 +31,12 @@ export default function AuthedLayout({ children }: { children: React.ReactNode }
     setNavOpen(false);
   }, [pathname]);
 
-  // ESC 关抽屉；跨断点（≥961px）回到固定栏时复位 open 态。
+  // ESC 关抽屉；跨断点（≥1101px）回到固定栏时复位 open 态。
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape') setNavOpen(false);
     }
-    const mq = window.matchMedia('(min-width: 961px)');
+    const mq = window.matchMedia('(min-width: 1101px)');
     function onWide(e: MediaQueryListEvent) {
       if (e.matches) setNavOpen(false);
     }
@@ -65,24 +65,27 @@ export default function AuthedLayout({ children }: { children: React.ReactNode }
     <ProfilesProvider>
       <PageChromeProvider>
         <ToastProvider>
-        <AssistantProvider>
-          <div className="app">
-            <RouteProgress />
-            <Sidebar open={navOpen} onClose={() => setNavOpen(false)} />
-            <div className="main">
-              <Topbar onMenu={() => setNavOpen((v) => !v)} />
-              <Content fill={fill} pathname={pathname}>
-                {children}
-              </Content>
+          <AssistantProvider>
+            <a className="skip-link" href="#main-content">
+              跳到主要内容
+            </a>
+            <div className="app">
+              <RouteProgress />
+              <Sidebar open={navOpen} onClose={() => setNavOpen(false)} />
+              <div className="main">
+                <Topbar onMenu={() => setNavOpen((v) => !v)} />
+                <Content fill={fill} pathname={pathname}>
+                  {children}
+                </Content>
+              </div>
+              <div
+                className={`scrim${navOpen ? ' open' : ''}`}
+                onClick={() => setNavOpen(false)}
+                aria-hidden
+              />
+              <AssistantPanel />
             </div>
-            <div
-              className={`scrim${navOpen ? ' open' : ''}`}
-              onClick={() => setNavOpen(false)}
-              aria-hidden
-            />
-            <AssistantPanel />
-          </div>
-        </AssistantProvider>
+          </AssistantProvider>
         </ToastProvider>
       </PageChromeProvider>
     </ProfilesProvider>
@@ -102,7 +105,12 @@ function Content({
   const chrome = usePageChrome();
   const maxWidth = !fill && chrome?.contentMaxWidth ? chrome.contentMaxWidth : undefined;
   return (
-    <main className={`content${fill ? ' fill' : ''}`} style={maxWidth ? { maxWidth } : undefined}>
+    <main
+      id="main-content"
+      className={`content${fill ? ' fill' : ''}`}
+      style={maxWidth ? { maxWidth } : undefined}
+      tabIndex={-1}
+    >
       {fill ? (
         children
       ) : (

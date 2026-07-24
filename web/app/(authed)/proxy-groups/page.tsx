@@ -161,7 +161,11 @@ export default function ProxyGroupsPage() {
     const id = dragId.current;
     if (!id || id === overId) return;
     setDragOrder((prev) => {
-      const order = (prev[section] ?? sections.find((s) => s.section === section)?.items.map((g) => g.id) ?? []).slice();
+      const order = (
+        prev[section] ??
+        sections.find((s) => s.section === section)?.items.map((g) => g.id) ??
+        []
+      ).slice();
       const from = order.indexOf(id);
       if (from === -1) return prev;
       order.splice(from, 1);
@@ -238,14 +242,14 @@ export default function ProxyGroupsPage() {
   return (
     <>
       <PageTopbar contentMaxWidth={1080}>
-        <h1>策略组</h1>
+        <h1>代理策略</h1>
         <ScopePill />
         <span className="crumb">
           {groups.length} 个 · {sectionCount} 个分区
         </span>
         <div className="grow" />
         <Link className="btn primary" href="/proxy-groups/new">
-          ＋ 新建策略组
+          ＋ 新建策略
         </Link>
       </PageTopbar>
 
@@ -297,7 +301,10 @@ export default function ProxyGroupsPage() {
             ))}
             {exitChips.length > 4 && (
               <span className={`${styles.flItem} ${styles.pool}`}>
-                {exitChips.slice(4, 8).map((g) => g.name).join(' · ')}
+                {exitChips
+                  .slice(4, 8)
+                  .map((g) => g.name)
+                  .join(' · ')}
                 {exitChips.length > 8 ? ' · 其他 ↓' : ' ↓'}
               </span>
             )}
@@ -312,7 +319,10 @@ export default function ProxyGroupsPage() {
             ))}
             {regionChips.length > 4 && (
               <span className={`${styles.flItem} ${styles.pool}`}>
-                {regionChips.slice(4, 8).map((g) => g.name).join(' · ')}
+                {regionChips
+                  .slice(4, 8)
+                  .map((g) => g.name)
+                  .join(' · ')}
                 {regionChips.length > 8 ? ' · 其他 ↓' : ' ↓'}
               </span>
             )}
@@ -437,7 +447,8 @@ export default function ProxyGroupsPage() {
       )}
 
       <div className={styles.rankNote}>
-        ⠿ 拖动行可调整组在 proxy-groups 块中的渲染顺序(rank,步长 10)· 分区 section 仅用于本页组织,不写入配置
+        ⠿ 拖动行可调整组在 proxy-groups 块中的渲染顺序(rank,步长 10)· 分区 section
+        仅用于本页组织,不写入配置
       </div>
 
       {toastMsg && (

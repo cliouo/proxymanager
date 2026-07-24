@@ -307,7 +307,7 @@ export default function HistoryPage() {
   return (
     <>
       <PageTopbar contentMaxWidth={860}>
-        <h1>操作历史</h1>
+        <h1>操作记录</h1>
         {/* P2-19: the audit log is account-wide (history/route.ts has no profile
             filter), so a per-profile pill was misleading — use the neutral one. */}
         <ScopePill neutral />

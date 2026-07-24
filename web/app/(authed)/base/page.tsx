@@ -193,7 +193,7 @@ export default function BasePage() {
       {/* —— 页头注入共享 topbar(对齐 v2/base.html:标题 / pill / 未保存点 /
           crumb / 校验 / 保存 ⌘S 上提,编辑器内只留 etag·行字节·检查) —— */}
       <PageTopbar>
-        <h1>结构 base</h1>
+        <h1>基础配置</h1>
         <ScopePill />
         {dirty && (
           <span className="is-dirty" style={{ display: 'inline-flex' }}>
@@ -229,11 +229,11 @@ export default function BasePage() {
           </button>
         </div>
 
-        {/* role hint */}
+        {/* 给普通用户解释本页职责，专业字段保留为补充。 */}
         <div className={styles.hint}>
-          这里只编辑骨架(dns / 策略组 / 嗅探 / tun / 订阅源 / 规则集声明 等)。
-          <code>rules:</code> 块只放锚点标记 —— 规则统一到「规则」页管理。校验按钮检查骨架；
-          保存还会试算完整配置，并显示未通过的具体位置与原因。
+          这里维护所有设备共用的运行基础，包括端口、DNS、嗅探和 TUN。
+          <code>rules:</code> 中只需保留注入位置，具体流量去向请到「分流规则」管理。
+          保存前系统会试算完整配置，并指出无法使用的具体位置。
         </div>
 
         {/* per-profile node source binding */}

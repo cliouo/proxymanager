@@ -11,7 +11,15 @@ import {
   isTemplateProfile,
   partitionProfilesByKind,
 } from '@/lib/profiles/kind';
-import { LIBRARY_NAV, OVERVIEW_NAV, PROFILE_NAV, SYSTEM_NAV, type NavItem } from '@/components/nav';
+import { NavIcon } from '@/components/NavIcon';
+import {
+  ADVANCED_NAV,
+  LIBRARY_NAV,
+  OVERVIEW_NAV,
+  PROFILE_NAV,
+  SYSTEM_NAV,
+  type NavItem,
+} from '@/components/nav';
 import {
   profileMark,
   sourceLabel,
@@ -20,8 +28,8 @@ import {
 } from '@/components/profile/ProfileContext';
 
 /**
- * v2「Signal Console」侧边栏 —— 固定 228px / 平板横屏图标轨 / 移动端抽屉。
- * `open` 控制移动端抽屉显隐；点导航触发 `onClose` 收起抽屉。
+ * 任务导向侧边栏。桌面固定展示完整语义，窄屏直接切为抽屉，
+ * 不再依赖悬停展开的图标轨道。
  *
  * 顶部为配置文件切换器(ProfileSwitcher),其下导航按「当前配置文件 /
  * 资源库 / 系统」三段组织,对齐 profile-centric IA。导航项全部来自
@@ -60,14 +68,14 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
     (pathname === profileSettingsHref || (pathname.startsWith('/profiles/') && !!activeProfile));
 
   return (
-    <aside className={`side${open ? ' open' : ''}`}>
+    <aside className={`side${open ? ' open' : ''}`} aria-label="主导航">
       <div className="side-brand">
         <Link href="/" className="logo" onClick={onClose} aria-label="ProxyManager">
           PM
         </Link>
         <div>
           <b>ProxyManager</b>
-          <span>signal console</span>
+          <span>配置与分发</span>
         </div>
       </div>
 
@@ -81,40 +89,55 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
         </div>
 
         <div className="nav-group">
-          <div className="nav-label">当前配置文件</div>
+          <div className="nav-label">编辑当前配置</div>
           {PROFILE_NAV.map((item) => (
             <NavLink key={item.href} item={item} active={isActive(item.href)} onClick={onClose} />
           ))}
           <NavLink
-            item={{ href: profileSettingsHref, label: '绑定与设置', icon: '⚙' }}
+            item={{
+              href: profileSettingsHref,
+              label: '配置文件设置',
+              icon: 'settings',
+              description: '来源、模版与删除',
+            }}
             active={profileSettingsActive}
             onClick={onClose}
           />
         </div>
 
         <div className="nav-group">
-          <div className="nav-label">
-            资源库<span className="sh">· 共享</span>
-          </div>
-          {LIBRARY_NAV.map((item) => (
+          <div className="nav-label">高级配置</div>
+          {ADVANCED_NAV.map((item) => (
             <NavLink key={item.href} item={item} active={isActive(item.href)} onClick={onClose} />
           ))}
         </div>
 
         <div className="nav-group">
-          <div className="nav-label">系统</div>
+          <div className="nav-label">共享资源</div>
+          {LIBRARY_NAV.map((item) => (
+            <NavLink key={item.href} item={item} active={isActive(item.href)} onClick={onClose} />
+          ))}
+        </div>
+
+        <div className="nav-group nav-group-compact">
+          <div className="nav-label">更多</div>
           {SYSTEM_NAV.map((item) => (
             <NavLink key={item.href} item={item} active={isActive(item.href)} onClick={onClose} />
           ))}
           <button type="button" className="nav-item" onClick={signOut}>
-            <span className="ic">⏻</span>退出登录
+            <span className="ic">
+              <NavIcon name="logout" />
+            </span>
+            <span className="nav-copy">
+              <span className="nav-name">退出登录</span>
+            </span>
           </button>
         </div>
       </nav>
 
       <div className="side-foot">
-        <span>{buildId ? buildId.slice(0, 7) : 'dev'}</span>
-        <span>signal console</span>
+        <span className="side-foot-label">当前版本</span>
+        <span className="num">{buildId ? buildId.slice(0, 7) : 'dev'}</span>
       </div>
     </aside>
   );
@@ -185,7 +208,7 @@ function ProfileSwitcher({ onNavigate }: { onNavigate: () => void }) {
           aria-label={`${p.name} 设置`}
           title="绑定与设置"
         >
-          ⚙
+          <NavIcon name="settings" size={16} />
         </Link>
       </div>
     );
@@ -193,6 +216,7 @@ function ProfileSwitcher({ onNavigate }: { onNavigate: () => void }) {
 
   return (
     <div className="side-switch" ref={ref}>
+      <span className="side-switch-label">正在编辑</span>
       <button
         type="button"
         className="profile-switch"
@@ -203,7 +227,7 @@ function ProfileSwitcher({ onNavigate }: { onNavigate: () => void }) {
         <span className="pf-ic">{profileMark(name)}</span>
         <span className="pf-txt">
           <span className="pf-name">{name}</span>
-          <span className="pf-sub">{activeProfile ? '正在编辑' : '尚未初始化'}</span>
+          <span className="pf-sub">{activeProfile ? '配置文件' : '尚未初始化'}</span>
         </span>
         <span className="caret">▾</span>
       </button>
@@ -251,9 +275,19 @@ function NavLink({
   onClick: () => void;
 }) {
   return (
-    <Link href={item.href} className={`nav-item${active ? ' on' : ''}`} onClick={onClick}>
-      <span className="ic">{item.icon}</span>
-      {item.label}
+    <Link
+      href={item.href}
+      className={`nav-item${active ? ' on' : ''}`}
+      onClick={onClick}
+      aria-current={active ? 'page' : undefined}
+    >
+      <span className="ic">
+        <NavIcon name={item.icon} />
+      </span>
+      <span className="nav-copy">
+        <span className="nav-name">{item.label}</span>
+        {item.description && <span className="nav-desc">{item.description}</span>}
+      </span>
     </Link>
   );
 }

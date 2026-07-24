@@ -152,7 +152,7 @@ export default function AssistantSettingsPage() {
   return (
     <>
       <PageTopbar contentMaxWidth={1100}>
-        <h1>AI 配置</h1>
+        <h1>助手设置</h1>
         {loaded && hasStoredKey && <span className="pill ai">已启用</span>}
         <div className="grow" />
       </PageTopbar>

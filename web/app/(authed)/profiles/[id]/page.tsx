@@ -103,8 +103,12 @@ export default function ProfileDetailPage() {
   const fid = useId();
   const toast = useToast();
   // Keep the sidebar switcher (shared ProfileContext) in sync after rename/delete.
-  const { reload: reloadSwitcher, activeProfile, clearActiveProfile, setActiveProfile } =
-    useProfiles();
+  const {
+    reload: reloadSwitcher,
+    activeProfile,
+    clearActiveProfile,
+    setActiveProfile,
+  } = useProfiles();
 
   const [profile, setProfile] = useState<Profile | null>(null);
   const [subs, setSubs] = useState<SubscriptionLite[]>([]);
@@ -329,7 +333,7 @@ export default function ProfileDetailPage() {
         <Link className={styles.back} href="/profiles">
           ‹ 配置文件
         </Link>
-        <h1>绑定与设置</h1>
+        <h1>配置文件设置</h1>
         {dirty && (
           <span className="is-dirty" style={{ display: 'inline-flex' }}>
             <span className="unsaved-dot" title="有未保存改动" />
