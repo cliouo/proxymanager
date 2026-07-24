@@ -35,10 +35,12 @@ description: >-
 | 策略组成员 / filter / exclude-filter / 地区组 / select·url-test·fallback / 组吃错节点 | **load skill `synthesizing-proxy-groups`**                                  |
 | 节点处理 / 算子 / 重命名 / 改名 / 去重 / 加旗 / 排序 / 类型·地区过滤 / 本地源改名     | **load skill `editing-node-operators`**（**所有改名都归它**，含本地源改名） |
 | 整体优化 / 通盘检查 / 审一遍 / 清理没用的规则和规则集                                 | **load skill `optimizing-whole-config`**                                    |
+| 设备 / 设备差量·补丁 / 按设备不同(端口·secret) / 设备级 Tailscale / 设备订阅链接      | **load skill `managing-devices`**（模版 kind 与分发语义也在它那里）         |
 | 分流规则增删改（DOMAIN/GEOIP/IP-CIDR/RULE-SET/MATCH…）                                | 本 skill · `references/rules.md`                                            |
 | 规则集 / rule-providers 库 + 两步生效                                                 | 本 skill · `references/rule-providers.md`                                   |
 | dns / sniffer / tun / 端口 / 顶层标量等骨架区块                                       | 本 skill · `references/skeleton-config.md`                                  |
 | 节点从哪来 / proxies / 订阅源                                                         | 本 skill · `references/node-sources.md`                                     |
+| 配置文件生命周期：新建 / 从模版新建 / 绑定订阅源·聚合订阅 / 改名·转模版               | 本 skill · `list_profiles` → `create_profile` / `update_profile`            |
 
 **复合任务**：一句话常跨域。例「把 figma.com 走香港」需两步且**有先后**：① 若没有香港组，
 先 `load synthesizing-proxy-groups` 建地区组；② 再 `add_rule` 加 `DOMAIN-SUFFIX,figma.com,香港`
@@ -74,8 +76,10 @@ bridge 则把 token 留在进程内并请求 host 显示人类确认表单。只
 - 改 base 骨架区块前，先用 `get_config_section` 看清现状，确保新值是**完整、正确**的 YAML。
 - 此门控由服务端（`confirm.ts` 一次性令牌 + `neverList.ts` 硬黑名单）兜底，本 skill 仅描述、不是安全边界。
 
-跨配置文件操作时，先 `list_profiles`，再用 `select_profile` 切到一个**精确 profile name**。每个
+跨配置文件操作时，先 `list_profiles`，再用 `select_profile` 切到一个**精确 profile name**
+（`select_profile` 仅 MCP 桥接有；网页端作用域由侧栏切换器决定，`list_profiles` 两端都可用）。每个
 profile 都要重新读取、预检并生成自己的确认卡；不要复用另一 profile 的 preview 版本或确认状态。
+`create_profile` 新建后作用域**不会**自动切过去——先切换再动新配置的内容。
 
 ---
 
@@ -140,6 +144,8 @@ profile 都要重新读取、预检并生成自己的确认卡；不要复用另
 | `migrate_direct_alias`                          | `preview_direct_alias_migration`（使用同一 profile 返回的 version + base ETag） |
 | `repair_legacy_profile`                         | `preview_legacy_profile_repair`（候选须含逐组预览过的非法筛选修复）             |
 | `repair_legacy_chain_profile`                   | `preview_legacy_chain_profile_repair`（严格预检隔离源 / 陈旧链和全部筛选）      |
+| `create_profile`                                | `list_profiles`（查重名；「从模版新建」把模版 id 填 `copy_from`，克隆不继承绑定）|
+| `update_profile`                                | `list_profiles`（拿 id 与现状；改名会断分发链接、转模版即停止分发，先提醒）     |
 
 - **`add_rule` 必须显式传 `anchor`**——它必须是 base.yaml 已声明的锚点（`prelude` / `manual` / `late`），
   否则 422；不确定就用 `manual`（主体规则锚点）。锚点注释语法见 `references/domain-model.md`，
@@ -156,10 +162,13 @@ profile 都要重新读取、预检并生成自己的确认卡；不要复用另
 写：`add_rule` · `update_rule` · `delete_rule` · `list_rule_providers` · `create_rule_provider` ·
 `update_rule_provider` · `delete_rule_provider` · `localize_rule_provider` ·
 `set_config_section` · `delete_config_section` · `migrate_direct_alias` · `repair_legacy_profile`
-· `repair_legacy_chain_profile`
+· `repair_legacy_chain_profile` · `create_profile` · `update_profile`
+
+> 配置文件**删除**不开放给 AI（服务端 neverList 硬黑名单），需要删除时引导用户到界面操作。
 
 > 不归本 hub 的：策略组（`synthesizing-proxy-groups`）、算子与所有改名含本地源改名
-> （`editing-node-operators`）、整体优化（`optimizing-whole-config`）、节点池只读真相
+> （`editing-node-operators`）、整体优化（`optimizing-whole-config`）、设备层与设备级
+> Tailscale（`managing-devices`）、节点池只读真相
 > （`list_proxy_nodes` 在本 hub，但要改节点数量得改订阅源）。
 
 ---

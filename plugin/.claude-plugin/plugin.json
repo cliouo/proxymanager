@@ -1,8 +1,8 @@
 {
   "name": "proxymanager",
   "displayName": "ProxyManager 配置助手",
-  "version": "0.3.0",
-  "description": "Drive a ProxyManager clash/mihomo proxy-config instance from any skill-aware agent: edit routing rules, the rule-set library, proxy-groups, the base.yaml skeleton, and subscription node-processing operators — every write gated behind ProxyManager's server-side confirmation handshake. 4 skills (1 hub + 3 deep-dive spokes) on one `proxymanager` MCP server.",
+  "version": "0.4.0",
+  "description": "Drive a ProxyManager clash/mihomo proxy-config instance from any skill-aware agent: edit routing rules, the rule-set library, proxy-groups, the base.yaml skeleton, subscription node-processing operators, and per-device overlays with device-scoped Tailscale — every write gated behind ProxyManager's server-side confirmation handshake. 5 skills (1 hub + 4 deep-dive spokes) on one `proxymanager` MCP server.",
   "author": { "name": "cliouo" },
   "homepage": "https://github.com/cliouo/proxymanager",
   "repository": "https://github.com/cliouo/proxymanager",

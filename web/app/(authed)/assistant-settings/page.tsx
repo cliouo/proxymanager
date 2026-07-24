@@ -26,7 +26,7 @@ const EFFORT_OPTS: { value: AssistantConfig['reasoningEffort']; label: string }[
 ];
 
 /**
- * The assistant is organised as 4 Agent Skills (1 hub + 3 deep-dive spokes)
+ * The assistant is organised as 5 Agent Skills (1 hub + 4 deep-dive spokes)
  * sitting on one `proxymanager` MCP server — see plugin/skills/*. Keep these
  * labels in sync with the SKILL.md frontmatter if the skill set changes.
  */
@@ -48,6 +48,12 @@ const SKILLS: { name: string; label: string; kind: string; desc: string }[] = [
     label: '节点处理',
     kind: 'spoke',
     desc: '订阅源 / 聚合订阅的算子管线：过滤 / 改名 / 去重 / 排序 / 加旗 / 类型·地区过滤，以及所有节点改名（含本地源）。',
+  },
+  {
+    name: 'managing-devices',
+    label: '设备差量',
+    kind: 'spoke',
+    desc: '设备层：每台设备 = 共享渲染 + 差量补丁；候选补丁先对真实渲染试算，设备级 Tailscale（auth key 永不回显），模版与设备订阅链接语义。',
   },
   {
     name: 'optimizing-whole-config',
@@ -281,7 +287,7 @@ export default function AssistantSettingsPage() {
           <section className="panel">
             <div className="panel-head">
               <h2>技能与工具</h2>
-              <span className="sub">Agent Skills · 31 工具</span>
+              <span className="sub">Agent Skills · 49 工具</span>
             </div>
             <div className="panel-body" style={{ padding: '12px 18px' }}>
               {SKILLS.map((s) => (
@@ -338,27 +344,42 @@ export default function AssistantSettingsPage() {
           <span className="sub">同一套技能 · 同一个后端 · 同一套写入门控</span>
         </div>
         <div className={`panel-body ${styles.prose}`}>
-          网页内 AI 只是这套能力的一个客户端。相同的 <b>4 个技能 + 1 个 <code>proxymanager</code> MCP
-          server</b> 已打包成可移植插件（仓库 <code>plugin/</code>），任何支持 Agent Skills 的客户端
-          （Claude Code / Codex）都能驱动<b>同一个 ProxyManager 后端</b>，且写操作同样要过服务端确认门控。
-          <h3>Claude Code（插件方式）</h3>
-          <pre className={styles.code}>{`# 1) 装桥接依赖（首次）
-cd plugin/servers && npm install
+          网页内 AI 只是这套能力的一个客户端。相同的{' '}
+          <b>
+            5 个技能 + 1 个 <code>proxymanager</code> MCP server
+          </b>{' '}
+          已打包成可移植插件（公开仓库 <code>github.com/cliouo/proxymanager</code>，仓库根即插件
+          marketplace），任何支持 Agent Skills 的客户端都能驱动<b>同一个 ProxyManager 后端</b>
+          ，写操作同样过服务端确认门控。
+          <h3>Claude Code（GitHub 远程安装，推荐）</h3>
+          <pre className={styles.code}>{`# 无需克隆仓库，两条命令装上（需 Claude Code ≥ v2.1.207）
+/plugin marketplace add cliouo/proxymanager
+/plugin install proxymanager@proxymanager
 
-# 2) 以插件加载，注入你的管理员密钥
-PROXYMANAGER_ADMIN_KEY=xxxx \\
-PROXYMANAGER_BASE_URL=http://localhost:3000 \\
-claude --plugin-dir ./plugin
+# 安装/启用时自动弹配置表单：实例地址、Admin Key（存系统 Keychain）、默认 Profile 等
 
-# 3) 会话内核对
-/help   # 应见 4 个 proxymanager 技能
-/mcp    # 应见 proxymanager (stdio) 已连接`}</pre>
-          <h3>其它客户端（Codex / 手动 .mcp.json）</h3>
-          <pre className={styles.code}>{`{
+# 会话内核对
+/help   # 应见 5 个 proxymanager 技能
+/mcp    # 应见 proxymanager (stdio) 已连接
+
+# 更新（第三方 marketplace 默认不自动更新；可在 /plugin 面板开 autoUpdate）
+/plugin update proxymanager@proxymanager`}</pre>
+          非交互安装（脚本 / CI）：
+          <pre className={styles.code}>{`claude plugin install proxymanager@proxymanager \\
+  --config base_url=http://localhost:3000 --config admin_key=xxxx`}</pre>
+          <h3>Codex / 其它 MCP 客户端（单文件 bundle，无需克隆仓库）</h3>
+          <pre
+            className={styles.code}
+          >{`# MCP 桥接是提交进仓库的 esbuild 单文件产物，零 npm 依赖，直接下载即可用
+curl -fsSL --create-dirs -o ~/.proxymanager/proxymanager-mcp.mjs \\
+  https://raw.githubusercontent.com/cliouo/proxymanager/main/plugin/servers/dist/proxymanager-mcp.bundle.mjs
+
+# 然后在客户端的 MCP 配置（如 .mcp.json / Codex config.toml 的等价段）里接上：
+{
   "mcpServers": {
     "proxymanager": {
       "command": "node",
-      "args": ["/绝对路径/proxymanager/plugin/servers/proxymanager-mcp.mjs"],
+      "args": ["/Users/你/.proxymanager/proxymanager-mcp.mjs"],
       "env": {
         "PROXYMANAGER_BASE_URL": "http://localhost:3000",
         "PROXYMANAGER_ADMIN_KEY": "xxxx",
@@ -367,6 +388,11 @@ claude --plugin-dir ./plugin
     }
   }
 }`}</pre>
+          <h3>本地开发（改 skill / 桥接时）</h3>
+          <pre
+            className={styles.code}
+          >{`git clone https://github.com/cliouo/proxymanager && cd proxymanager
+claude --plugin-dir ./plugin   # 跳过 marketplace 直接加载本地插件`}</pre>
           <table className={styles.envTable}>
             <thead>
               <tr>

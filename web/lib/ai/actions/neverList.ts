@@ -4,17 +4,30 @@
  * registered: even if a dangerous action were added to the registry by
  * mistake, the orchestrator refuses it here.
  *
- * Today no registered action is dangerous (the write actions are scoped rule
- * edits), but the guard also caps blast radius and stays as the single place
- * to encode "AI must never touch X" as the action surface grows.
+ * Curation rule: an operation lands here when a single confirmed card cannot
+ * meaningfully convey its blast radius — irreversible whole-resource loss,
+ * credential/token change, or breaking every distributed client link at once.
+ * A registry test asserts none of these names is ever registered.
  */
 
 import type { ActionDef } from './types';
 
 /** Action names that must never be AI-invocable, even if registered. */
-const NEVER_LIST_ACTIONS = new Set<string>([
-  // Examples of what belongs here as the surface grows:
-  // 'edit_auth', 'rotate_sub_token', 'overwrite_base', 'bulk_delete_rules'
+export const NEVER_LIST_ACTIONS = new Set<string>([
+  // 整份 profile 连根删除（base/规则/策略组/设备一并消失，无逆操作）——
+  // profile 生命周期里唯一 UI-only 的一环（create/update 已注册）。
+  'delete_profile',
+  // 鉴权面：ADMIN_KEY / 登录凭证。AI 改鉴权 = 改掉自己被门控的锁。
+  'edit_auth',
+  // 分发令牌轮换：令牌是 secret（AI 全程不可见），且轮换瞬间废掉所有已导入
+  // 客户端的订阅链接。
+  'rotate_sub_token',
+  // 整块覆盖 base 文件。写骨架只允许路径级 set_config_section（有禁改根表）；
+  // 全文覆盖会绕过锚点/标记完整性检查。
+  'overwrite_base',
+  // 无差别批量删规则。删除必须逐条（delete_rule 单条 + 确认卡），批量清理走
+  // optimizing-whole-config 的逐条编号清单。
+  'bulk_delete_rules',
 ]);
 
 export class NeverListError extends Error {

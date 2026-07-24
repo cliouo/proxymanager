@@ -30,6 +30,7 @@ const ORDER = [
   'managing-clash-config',
   'synthesizing-proxy-groups',
   'editing-node-operators',
+  'managing-devices',
   'optimizing-whole-config',
 ];
 

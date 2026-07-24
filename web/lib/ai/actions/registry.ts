@@ -10,6 +10,7 @@
 import { searchMihomoDocs } from '../docs';
 import { CONFIG_READ_ACTIONS } from './primitives/configReads';
 import { CONFIG_WRITE_ACTIONS } from './primitives/configWrites';
+import { DEVICE_READ_ACTIONS, DEVICE_WRITE_ACTIONS } from './primitives/deviceWrites';
 import {
   DIRECT_MIGRATION_READ_ACTIONS,
   DIRECT_MIGRATION_WRITE_ACTIONS,
@@ -25,6 +26,7 @@ import {
   LEGACY_CHAIN_PROFILE_REPAIR_WRITE_ACTIONS,
 } from './primitives/legacyChainProfileRepair';
 import { OPERATOR_READ_ACTIONS, OPERATOR_WRITE_ACTIONS } from './primitives/operatorWrites';
+import { PROFILE_READ_ACTIONS, PROFILE_WRITE_ACTIONS } from './primitives/profileWrites';
 import { PROXY_GROUP_READ_ACTIONS, PROXY_GROUP_WRITE_ACTIONS } from './primitives/proxyGroupWrites';
 import { READ_ACTIONS } from './primitives/reads';
 import {
@@ -37,11 +39,13 @@ import type { ActionDef } from './types';
 
 const ALL_ACTIONS: ActionDef[] = [
   ...READ_ACTIONS,
+  ...PROFILE_READ_ACTIONS,
   ...CONFIG_READ_ACTIONS,
   ...RULE_PROVIDER_READ_ACTIONS,
   ...PROXY_GROUP_READ_ACTIONS,
   ...OPERATOR_READ_ACTIONS,
   ...LOCAL_NODE_READ_ACTIONS,
+  ...DEVICE_READ_ACTIONS,
   ...DIRECT_MIGRATION_READ_ACTIONS,
   ...LEGACY_PROFILE_REPAIR_READ_ACTIONS,
   ...LEGACY_CHAIN_PROFILE_REPAIR_READ_ACTIONS,
@@ -49,10 +53,12 @@ const ALL_ACTIONS: ActionDef[] = [
   ...SKILL_REF_ACTIONS,
   searchMihomoDocs,
   ...WRITE_ACTIONS,
+  ...PROFILE_WRITE_ACTIONS,
   ...RULE_PROVIDER_WRITE_ACTIONS,
   ...PROXY_GROUP_WRITE_ACTIONS,
   ...OPERATOR_WRITE_ACTIONS,
   ...LOCAL_NODE_WRITE_ACTIONS,
+  ...DEVICE_WRITE_ACTIONS,
   ...CONFIG_WRITE_ACTIONS,
   ...DIRECT_MIGRATION_WRITE_ACTIONS,
   ...LEGACY_PROFILE_REPAIR_WRITE_ACTIONS,

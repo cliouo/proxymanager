@@ -5,7 +5,7 @@
  * Exposes ProxyManager's in-app action registry as MCP tools by proxying to the
  * existing HTTP API — so any skill-aware client (Claude Code, Codex, …) drives
  * the SAME backend the browser assistant uses, with the SAME server-side write
- * gate. This is a BRIDGE, not a reimplementation: the 30-ish action schemas come
+ * gate. This is a BRIDGE, not a reimplementation: the 40+ action schemas come
  * live from /api/v1/assistant/bootstrap and calls proxy to /api/v1/assistant/tool.
  *
  * Auth: `Authorization: Bearer ${PROXYMANAGER_ADMIN_KEY}` (see web/lib/auth.ts
@@ -141,12 +141,20 @@ async function fetchTools() {
   }
   const { data } = await res.json();
   // data.tools: OpenAI-style [{ type:'function', function:{ name, description, parameters } }]
-  const tools = (data?.tools ?? []).map((t) => ({
-    name: t.function.name,
-    description: t.function.description,
-    inputSchema: t.function.parameters || { type: "object", properties: {} },
-  }));
-  tools.push(LIST_PROFILES_TOOL, SELECT_PROFILE_TOOL);
+  // The server registry also exposes `list_profiles` (for the browser
+  // assistant); callTool() intercepts that name locally regardless, so the
+  // bridge's synthetic variant must win the tools/list entry — drop any
+  // server tool that collides with a synthetic name to keep names unique.
+  const synthetic = [LIST_PROFILES_TOOL, SELECT_PROFILE_TOOL];
+  const syntheticNames = new Set(synthetic.map((t) => t.name));
+  const tools = (data?.tools ?? [])
+    .filter((t) => !syntheticNames.has(t.function.name))
+    .map((t) => ({
+      name: t.function.name,
+      description: t.function.description,
+      inputSchema: t.function.parameters || { type: "object", properties: {} },
+    }));
+  tools.push(...synthetic);
   return tools;
 }
 

@@ -6,7 +6,7 @@
     {
       "name": "proxymanager",
       "source": "./plugin",
-      "description": "ProxyManager 配置助手:4 个 skill + MCP 桥接,驱动你的 ProxyManager 实例(clash/mihomo 配置、规则、策略组、节点算子),所有写入过服务端确认门控。"
+      "description": "ProxyManager 配置助手:5 个 skill + MCP 桥接,驱动你的 ProxyManager 实例(clash/mihomo 配置、规则、策略组、节点算子、设备与设备级 Tailscale),所有写入过服务端确认门控。"
     }
   ]
 }

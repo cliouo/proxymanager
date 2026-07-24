@@ -1,7 +1,7 @@
 # ProxyManager 配置助手 · Skill Plugin
 
 把 ProxyManager 的内置 AI 从「一个巨型 system prompt + 浏览器自管的 tool loop」改造成**官方
-Agent Skills 规范**的可移植包：**4 个 skill（1 hub + 3 深水区 spoke）** 坐在**一个 `proxymanager`
+Agent Skills 规范**的可移植包：**5 个 skill（1 hub + 4 深水区 spoke）** 坐在**一个 `proxymanager`
 MCP server** 上。任何支持 skill 的客户端（网页内 AI / Claude Code 本地 / Codex）都能用同一套工作法
 驱动同一个 ProxyManager 后端。
 
@@ -16,6 +16,7 @@ plugin/
 │   ├── managing-clash-config/        # hub：常驻入口 + 横切护栏 + 规则/规则集/骨架/读
 │   ├── synthesizing-proxy-groups/    # spoke：策略组成员合成 + filter 试算
 │   ├── editing-node-operators/       # spoke：算子管线 + 所有改名(含本地源)
+│   ├── managing-devices/             # spoke：设备差量补丁 + 设备级 Tailscale + 模版/分发语义
 │   └── optimizing-whole-config/      # spoke：整体优化编排
 │       └── 每个 skill 含 SKILL.md + references/(占位) [+ assets/]
 ├── hooks/
@@ -30,13 +31,14 @@ plugin/
 仓库根 .claude-plugin/marketplace.json   # 公开安装入口(单仓库同时是应用仓库和 marketplace)
 ```
 
-## 4 个 skill 一览
+## 5 个 skill 一览
 
 | skill                         | 何时触发                                                                | 拥有工具(数) |
 | ----------------------------- | ----------------------------------------------------------------------- | ------------ |
-| `managing-clash-config` (hub) | 任何配置请求；规则 / 规则集 / dns/sniffer/tun / 节点真相 / 复合任务路由 | 18           |
-| `synthesizing-proxy-groups`   | 策略组成员 / filter / 地区组 / 组吃错节点                               | 6            |
+| `managing-clash-config` (hub) | 任何配置请求；规则 / 规则集 / dns/sniffer/tun / 节点真相 / 配置文件生命周期 / 复合任务路由 | 28 |
+| `synthesizing-proxy-groups`   | 策略组成员 / filter / 地区组 / 组吃错节点                               | 11           |
 | `editing-node-operators`      | 算子管线 / 重命名 / 加旗 / 去重 / 本地源改名                            | 9            |
+| `managing-devices`            | 设备差量补丁 / 按设备不同 / 设备级 Tailscale / 模版与设备订阅链接       | 7            |
 | `optimizing-whole-config`     | 整体优化 / 通盘检查（单点小改不触发）                                   | 7            |
 
 > 工具有意跨 skill 复用（如 `add_rule` / `update_proxy_group`）：同一 MCP server，
@@ -100,12 +102,12 @@ claude plugin validate ./plugin   # 插件
 claude plugin validate .          # 仓库根 marketplace
 ```
 
-会话内核对：`/help` 应见 `/proxymanager:managing-clash-config` 等 4 个 skill；`/mcp` 应见 proxymanager (stdio) 已连接。
+会话内核对：`/help` 应见 `/proxymanager:managing-clash-config` 等 5 个 skill；`/mcp` 应见 proxymanager (stdio) 已连接。
 
 ## 当前状态
 
-- ✅ 4 个 SKILL.md（完整 frontmatter + 正文，已应用压测修法：改名归并到 operators、spoke 安全地板、复合任务路由）
-- ✅ 15 个 `references/*` 全部填成正文（逐文件对照 primitives 源码核验）
+- ✅ 5 个 SKILL.md（完整 frontmatter + 正文，已应用压测修法：改名归并到 operators、spoke 安全地板、复合任务路由）
+- ✅ 16 个 `references/*` 全部填成正文（逐文件对照 primitives 源码核验）
 - ✅ MCP 桥接 server（可跑，代理 registry；写操作由 host form elicitation 展示脱敏 diff 并要求人类确认）+ plugin 清单
 - ✅ **网页内 AI 已切到 skill 来源**：`web/lib/ai/systemPrompt.ts` 由 `scripts/build-skills.mjs`
   从本 plugin 的 SKILL.md **组装**（`skills.generated.ts`）；新增 `get_skill_reference` 工具按需读 references。
