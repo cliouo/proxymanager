@@ -1,0 +1,612 @@
+.page {
+  display: grid;
+  gap: 18px;
+}
+
+.inheritanceContext {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-4);
+  min-height: 92px;
+  padding: 16px 18px;
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-soft);
+  outline: 1px solid var(--border);
+}
+
+.inheritanceMark {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: var(--r-lg);
+  color: var(--accent);
+  background: var(--accent-dim);
+  font-size: 20px;
+  font-weight: 500;
+}
+
+.contextEyebrow {
+  display: block;
+  color: var(--accent);
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+}
+
+.inheritanceContext h2 {
+  margin: 2px 0 0;
+  font: 650 14px var(--font-mono);
+}
+
+.inheritanceContext p {
+  max-width: 68ch;
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.55;
+  text-wrap: pretty;
+}
+
+.contextStats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(86px, auto));
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.contextStats div {
+  padding: 8px 11px;
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+}
+
+.contextStats dt {
+  color: var(--muted);
+  font-size: 9.5px;
+}
+
+.contextStats dd {
+  margin: 2px 0 0;
+  color: var(--fg-2);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 48px;
+  padding: 4px;
+  border-radius: var(--r-lg);
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.tabs button {
+  min-width: 0;
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex: 1;
+  padding: 0 14px;
+  border: 0;
+  border-radius: var(--r-md);
+  color: var(--muted);
+  background: transparent;
+  font-size: 12.5px;
+  font-weight: 620;
+  transition:
+    transform var(--motion-fast) var(--ease),
+    opacity var(--motion-fast) var(--ease);
+}
+
+.tabs button[aria-selected='true'] {
+  color: var(--fg);
+  background: var(--surface);
+  box-shadow: var(--shadow-soft);
+}
+
+.tabs button:active {
+  transform: scale(0.97);
+}
+
+.tabs button span {
+  overflow: hidden;
+  max-width: 96px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  color: var(--muted);
+  background: var(--surface-3);
+  font-size: 9.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.tabPanel[hidden] {
+  display: none;
+}
+
+.stack {
+  display: grid;
+  gap: 18px;
+}
+
+.lockNotice,
+.noDifferences,
+.rawExplanation,
+.previewNotice,
+.previewEmpty {
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+}
+
+.lockNotice,
+.noDifferences {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 12px 14px;
+}
+
+.lockNotice {
+  margin-bottom: 12px;
+  color: var(--warn);
+  background: var(--warn-dim);
+}
+
+.lockNotice > span,
+.noDifferences > span {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--r-md);
+  background: var(--surface);
+  font-weight: 650;
+}
+
+.lockNotice p,
+.noDifferences p {
+  margin: 0;
+  color: var(--fg-2);
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+
+.lockNotice b,
+.noDifferences b {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--fg);
+  font-size: 12px;
+}
+
+.noDifferences > span {
+  color: var(--accent);
+}
+
+.differenceRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 52px;
+}
+
+.differenceRow + .differenceRow {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.differenceCopy {
+  min-width: 0;
+  flex: 1;
+}
+
+.differenceCopy > b {
+  display: block;
+  overflow: hidden;
+  color: var(--fg);
+  font-size: 12.5px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.differenceCopy > span {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.addDifference {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.addDifference label {
+  color: var(--fg-2);
+  font-size: 11.5px;
+  font-weight: 650;
+}
+
+.addDifference > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.addDifference p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10.5px;
+}
+
+.rawExplanation {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+}
+
+.rawExplanation > span {
+  color: var(--accent);
+  font-size: 10.5px;
+  font-weight: 650;
+}
+
+.rawExplanation p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10.5px;
+  line-height: 1.6;
+}
+
+.rawExplanation code {
+  margin: 0 3px;
+  color: var(--fg-2);
+}
+
+.previewExplanation {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-bottom: 12px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.previewExplanation b {
+  color: var(--faint);
+  font-weight: 500;
+}
+
+.previewExplanation strong {
+  color: var(--accent);
+  font-weight: 650;
+}
+
+.previewNotice {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  color: var(--warn);
+  background: var(--warn-dim);
+  font-size: 11.5px;
+}
+
+.previewEmpty {
+  min-height: 180px;
+  display: grid;
+  place-content: center;
+  padding: 20px;
+  text-align: center;
+}
+
+.previewEmpty b {
+  font-size: 13px;
+}
+
+.previewEmpty p {
+  max-width: 48ch;
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.previewGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.featureIntro {
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border-radius: var(--r-md);
+  color: var(--muted);
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--border);
+  font-size: 11.5px;
+  line-height: 1.65;
+}
+
+.featureIntro b {
+  color: var(--fg);
+}
+
+.featureFeedback,
+.featureWarning {
+  margin-bottom: 12px;
+  padding: 9px 11px;
+  border-radius: var(--r-md);
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+
+.featureError {
+  color: var(--danger);
+  background: var(--danger-dim);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger) 30%, transparent);
+}
+
+.featureWarning {
+  color: var(--fg-2);
+  background: var(--warn-dim);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 30%, transparent);
+}
+
+.featureParagraph {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+  text-wrap: pretty;
+}
+
+.formStack {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.formGrid,
+.advancedGrid,
+.checkGrid,
+.infoGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.formGrid,
+.advancedGrid {
+  gap: var(--space-4);
+}
+
+.checkGrid {
+  gap: var(--space-3);
+}
+
+.checkRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--fg-2);
+  font-size: 11.5px;
+}
+
+.checkRow input {
+  accent-color: var(--accent);
+}
+
+.fieldReset {
+  margin-bottom: 0;
+}
+
+.advancedSettings {
+  padding: 10px 12px;
+  border-radius: var(--r-md);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.advancedSettings summary {
+  cursor: pointer;
+  color: var(--fg-2);
+  font-size: 11.5px;
+  font-weight: 620;
+}
+
+.advancedGrid,
+.advancedSettings .checkGrid {
+  margin-top: var(--space-4);
+}
+
+.actionRow {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.infoGrid {
+  gap: 12px 24px;
+  margin: 0;
+}
+
+.infoItem {
+  min-width: 0;
+}
+
+.infoItem dt {
+  margin-bottom: 3px;
+  color: var(--muted);
+  font-size: 10.5px;
+}
+
+.infoItem dd {
+  overflow-wrap: anywhere;
+  margin: 0;
+  color: var(--fg-2);
+  font-size: 11.5px;
+}
+
+.dangerZone {
+  border-radius: var(--r-md);
+  color: var(--muted);
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.dangerZone summary {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  cursor: pointer;
+  font-size: 11.5px;
+  font-weight: 620;
+}
+
+.dangerZone > div {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: 12px 14px 14px;
+  border-top: 1px solid var(--border);
+}
+
+.dangerZone > div > div {
+  min-width: 0;
+  flex: 1;
+}
+
+.dangerZone b {
+  color: var(--fg-2);
+  font-size: 12px;
+}
+
+.dangerZone p {
+  max-width: 78ch;
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 10.5px;
+  line-height: 1.55;
+}
+
+.loadFailure {
+  min-height: 180px;
+  display: grid;
+  place-content: center;
+  justify-items: start;
+  padding: 24px;
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.loadFailure b {
+  font-size: 14px;
+}
+
+.loadFailure p {
+  margin: 4px 0 14px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+@media (max-width: 760px) {
+  .inheritanceContext {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .contextStats {
+    grid-column: 1 / -1;
+  }
+
+  .tabs {
+    overflow-x: auto;
+    justify-content: flex-start;
+  }
+
+  .tabs button {
+    min-width: 132px;
+    flex: none;
+  }
+
+  .previewGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .formGrid,
+  .advancedGrid,
+  .infoGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 520px) {
+  .inheritanceContext {
+    padding: 14px;
+  }
+
+  .tabs {
+    margin-inline: -4px;
+  }
+
+  .tabs button {
+    min-width: 0;
+    flex: 1;
+    gap: 4px;
+    padding-inline: 7px;
+    font-size: 11.5px;
+  }
+
+  .tabs button span {
+    max-width: 54px;
+    padding-inline: 4px;
+    font-size: 9px;
+  }
+
+  .differenceRow {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .differenceCopy {
+    flex-basis: calc(100% - 80px);
+  }
+
+  .dangerZone > div {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .dangerZone :global(.btn) {
+    width: 100%;
+  }
+
+  .checkGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .actionRow :global(.btn) {
+    flex: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tabs button {
+    transition: none;
+  }
+}

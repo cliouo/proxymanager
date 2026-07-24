@@ -31,7 +31,7 @@ export default function ScenariosIndexPage() {
       </PageTopbar>
 
       <p className="text-[14px] text-[var(--color-muted)] leading-[1.6]">
-        每个扩展聚焦 Clash 配置的一个切片；常用能力已收进侧边栏一级导航（规则、链式代理、设备）。
+        每个扩展聚焦 Clash 配置的一个切片；常用入口会回到对应任务页，设备级能力统一在设备中管理。
       </p>
 
       {/* P1-11: 弃用写死暖粉底（深色发浑），改用主题感知的 danger-dim 约定 */}

@@ -2,6 +2,7 @@
 
 import { usePathname } from 'next/navigation';
 import { useAssistant } from '@/components/assistant/AssistantContext';
+import { NavIcon } from '@/components/NavIcon';
 import { titleForPath } from '@/components/nav';
 import { usePageChrome } from '@/components/PageChrome';
 import { useProfiles } from '@/components/profile/ProfileContext';
@@ -24,20 +25,21 @@ export function ScopePill({ shared, neutral }: { shared?: boolean; neutral?: boo
   if (neutral) {
     return (
       <span className="pill idle plain" title="账户级视图 · 不区分配置文件">
-        全账户
+        全部配置
       </span>
     );
   }
   if (shared) {
     return (
       <span className="pill ai plain" title="账户级共享资源 · 所有配置文件共用">
-        账户共享
+        共享资源
       </span>
     );
   }
   if (!activeProfile) return null;
   return (
     <span className="pill acc plain" title="正在编辑的配置文件">
+      <span className="scope-prefix">配置 · </span>
       {activeProfile.name}
     </span>
   );
@@ -68,13 +70,8 @@ export function Topbar({ onMenu }: { onMenu: () => void }) {
 
   return (
     <header className="topbar">
-      <button
-        type="button"
-        className="btn ghost sm menu-btn"
-        onClick={onMenu}
-        aria-label="打开导航"
-      >
-        ☰
+      <button type="button" className="btn ghost menu-btn" onClick={onMenu} aria-label="打开导航">
+        <NavIcon name="menu" />
       </button>
       {chrome?.topbar ?? (
         <>
@@ -82,12 +79,13 @@ export function Topbar({ onMenu }: { onMenu: () => void }) {
           {/* P3-41: 去孤儿类 tb-scope(无 CSS 定义) */}
           {shared ? (
             <span className="pill ai plain" title="账户级共享资源 · 所有配置文件共用">
-              账户共享
+              共享资源
             </span>
           ) : (
             !managementOnly &&
             activeProfile && (
               <span className="pill acc plain" title="正在编辑的配置文件">
+                <span className="scope-prefix">配置 · </span>
                 {activeProfile.name}
               </span>
             )
@@ -103,8 +101,10 @@ export function Topbar({ onMenu }: { onMenu: () => void }) {
         aria-label="配置助手"
         aria-expanded={assistant.open}
       >
-        <span className="spark">✦</span>
-        助手
+        <span className="spark">
+          <NavIcon name="assistant" size={17} />
+        </span>
+        <span className="ai-label">配置助手</span>
       </button>
     </header>
   );
