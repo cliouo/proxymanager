@@ -2130,6 +2130,11 @@ function validateTlsFieldDependencies(
   index: number,
   type: string,
 ): void {
+  // `skip-cert-verify` is deliberately absent: it is a sub-option of TLS (verify
+  // the cert once TLS is on), not a TLS-intent flag. mihomo ignores it under
+  // `tls: false`, and airport templates routinely carry it inertly, so requiring
+  // TLS for it wrongly rejects whole subscriptions. Its boolean type is still
+  // checked in validateCommonFields.
   const fieldsByType: Readonly<Record<string, readonly string[]>> = {
     vmess: [
       'alpn',
