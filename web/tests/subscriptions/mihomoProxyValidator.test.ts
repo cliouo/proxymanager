@@ -924,6 +924,24 @@ describe('fixed Mihomo v1.19.28 proxy node validation', () => {
     expect(validateMihomoProxyList([proxy])).toEqual([proxy]);
   });
 
+  it.each(['v2ray-plugin', 'gost-plugin'])(
+    'accepts inert %s skip-cert-verify when plugin TLS is disabled',
+    (plugin) => {
+      for (const skipCertVerify of [false, true]) {
+        const proxy = {
+          ...portableStructuralMinimums[0],
+          plugin,
+          'plugin-opts': {
+            mode: 'websocket',
+            tls: false,
+            'skip-cert-verify': skipCertVerify,
+          },
+        };
+        expect(validateMihomoProxyList([proxy])).toEqual([proxy]);
+      }
+    },
+  );
+
   it.each([
     [
       'unknown plugin',
@@ -944,15 +962,6 @@ describe('fixed Mihomo v1.19.28 proxy node validation', () => {
         'plugin-opts': { mode: 'tls', unknown: true },
       },
       'plugin-opts',
-    ],
-    [
-      'websocket TLS field without TLS',
-      {
-        ...portableStructuralMinimums[0],
-        plugin: 'v2ray-plugin',
-        'plugin-opts': { mode: 'websocket', 'skip-cert-verify': false },
-      },
-      'plugin-opts.tls',
     ],
   ])('rejects ambiguous or poisoned Shadowsocks plugin input: %s', (_label, proxy, field) => {
     expect(() => validateMihomoProxyList([proxy])).toThrow(
@@ -1107,6 +1116,34 @@ describe('fixed Mihomo v1.19.28 proxy node validation', () => {
       expect(() => validateMihomoProxyList([{ ...valid, [field]: value }])).toThrow(
         new RegExp(`field "${field}"`),
       );
+    }
+  });
+
+  it.each(['vmess', 'vless', 'http', 'socks5', 'gost-relay'])(
+    'accepts inert %s skip-cert-verify when TLS is disabled',
+    (type) => {
+      const base = portableStructuralMinimums.find((candidate) => candidate.type === type)!;
+      for (const skipCertVerify of [false, true]) {
+        const proxy = { ...base, tls: false, 'skip-cert-verify': skipCertVerify };
+        expect(validateMihomoProxyList([proxy])).toEqual([proxy]);
+      }
+    },
+  );
+
+  it('accepts inert XHTTP download skip-cert-verify when download TLS is disabled', () => {
+    const vless = portableStructuralMinimums.find((candidate) => candidate.type === 'vless')!;
+    for (const skipCertVerify of [false, true]) {
+      const proxy = {
+        ...vless,
+        network: 'xhttp',
+        'xhttp-opts': {
+          'download-settings': {
+            tls: false,
+            'skip-cert-verify': skipCertVerify,
+          },
+        },
+      };
+      expect(validateMihomoProxyList([proxy])).toEqual([proxy]);
     }
   });
 

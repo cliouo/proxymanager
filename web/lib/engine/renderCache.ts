@@ -104,8 +104,9 @@ return 1
  *       tab-padded node names are accepted; previously-skipped nodes appear.
  *  18 → typed device features inject device-scoped Tailscale nodes, groups and
  *       routes after the RFC 7386 patch and before final validation.
+ *  19 → subscriptions may carry inert skip-cert-verify while tls is disabled.
  */
-const RENDER_CACHE_EPOCH = 18;
+const RENDER_CACHE_EPOCH = 19;
 
 export type RenderCacheStatus = 'hit' | 'miss' | 'bypass';
 

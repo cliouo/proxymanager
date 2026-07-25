@@ -69,6 +69,32 @@ describe('normaliseToClashProviderYaml', () => {
     expect(result.yaml).toContain('US-01');
   });
 
+  it('keeps VMess nodes with inert skip-cert-verify while TLS is disabled', () => {
+    const source = `proxies:
+  - name: vmess-no-tls
+    type: vmess
+    server: vmess.example.com
+    port: 12345
+    uuid: 00000000-0000-0000-0000-000000000000
+    alterId: 1
+    cipher: auto
+    tls: false
+    skip-cert-verify: false
+    udp: true
+`;
+
+    const result = normaliseToClashProviderYaml(source);
+    const [proxy] = (parse(result.yaml) as { proxies: Record<string, unknown>[] }).proxies;
+
+    expect(result.proxyCount).toBe(1);
+    expect(proxy).toMatchObject({
+      name: 'vmess-no-tls',
+      type: 'vmess',
+      tls: false,
+      'skip-cert-verify': false,
+    });
+  });
+
   it('canonicalizes only known no-loss legacy provider fields', () => {
     const legacy = `proxies:
   - name: ss-tcp

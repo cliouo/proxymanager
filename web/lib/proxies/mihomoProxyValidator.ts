@@ -1494,7 +1494,6 @@ function validateWebsocketPluginOptions(
     'fingerprint',
     'certificate',
     'private-key',
-    'skip-cert-verify',
   ]);
 }
 
@@ -1988,7 +1987,6 @@ function validateXhttpDownloadSettings(
     'alpn',
     'ech-opts',
     'reality-opts',
-    'skip-cert-verify',
     'fingerprint',
     'certificate',
     'private-key',
@@ -2135,7 +2133,6 @@ function validateTlsFieldDependencies(
   const fieldsByType: Readonly<Record<string, readonly string[]>> = {
     vmess: [
       'alpn',
-      'skip-cert-verify',
       'fingerprint',
       'certificate',
       'private-key',
@@ -2147,7 +2144,6 @@ function validateTlsFieldDependencies(
     ],
     vless: [
       'alpn',
-      'skip-cert-verify',
       'fingerprint',
       'certificate',
       'private-key',
@@ -2156,16 +2152,9 @@ function validateTlsFieldDependencies(
       'ech-opts',
       'reality-opts',
     ],
-    http: ['sni', 'skip-cert-verify', 'fingerprint', 'certificate', 'private-key'],
-    socks5: ['skip-cert-verify', 'fingerprint', 'certificate', 'private-key'],
-    'gost-relay': [
-      'sni',
-      'skip-cert-verify',
-      'fingerprint',
-      'certificate',
-      'private-key',
-      'client-fingerprint',
-    ],
+    http: ['sni', 'fingerprint', 'certificate', 'private-key'],
+    socks5: ['fingerprint', 'certificate', 'private-key'],
+    'gost-relay': ['sni', 'fingerprint', 'certificate', 'private-key', 'client-fingerprint'],
   };
   const dependentFields = fieldsByType[type];
   if (dependentFields !== undefined) {
