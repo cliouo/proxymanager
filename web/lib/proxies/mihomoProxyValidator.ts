@@ -2132,10 +2132,14 @@ function validateTlsFieldDependencies(
   index: number,
   type: string,
 ): void {
+  // `skip-cert-verify` is deliberately absent: it is a sub-option of TLS (verify
+  // the cert once TLS is on), not a TLS-intent flag. mihomo ignores it under
+  // `tls: false`, and airport templates routinely carry it inertly, so requiring
+  // TLS for it wrongly rejects whole subscriptions. Its boolean type is still
+  // checked in validateCommonFields.
   const fieldsByType: Readonly<Record<string, readonly string[]>> = {
     vmess: [
       'alpn',
-      'skip-cert-verify',
       'fingerprint',
       'certificate',
       'private-key',
@@ -2147,7 +2151,6 @@ function validateTlsFieldDependencies(
     ],
     vless: [
       'alpn',
-      'skip-cert-verify',
       'fingerprint',
       'certificate',
       'private-key',
@@ -2156,16 +2159,9 @@ function validateTlsFieldDependencies(
       'ech-opts',
       'reality-opts',
     ],
-    http: ['sni', 'skip-cert-verify', 'fingerprint', 'certificate', 'private-key'],
-    socks5: ['skip-cert-verify', 'fingerprint', 'certificate', 'private-key'],
-    'gost-relay': [
-      'sni',
-      'skip-cert-verify',
-      'fingerprint',
-      'certificate',
-      'private-key',
-      'client-fingerprint',
-    ],
+    http: ['sni', 'fingerprint', 'certificate', 'private-key'],
+    socks5: ['fingerprint', 'certificate', 'private-key'],
+    'gost-relay': ['sni', 'fingerprint', 'certificate', 'private-key', 'client-fingerprint'],
   };
   const dependentFields = fieldsByType[type];
   if (dependentFields !== undefined) {

@@ -1135,6 +1135,17 @@ describe('fixed Mihomo v1.19.28 proxy node validation', () => {
     },
   );
 
+  it.each(['vmess', 'vless'])(
+    'accepts inert skip-cert-verify on plaintext %s nodes (mihomo ignores it under tls:false)',
+    (type) => {
+      const base = portableStructuralMinimums.find((candidate) => candidate.type === type)!;
+      for (const skip of [false, true]) {
+        const node = { ...base, tls: false, 'skip-cert-verify': skip };
+        expect(validateMihomoProxyList([node])).toEqual([node]);
+      }
+    },
+  );
+
   it('validates VMess TLSMirror recursively and requires TLS plus a primary key', () => {
     const vmess = portableStructuralMinimums[4];
     const options = {
