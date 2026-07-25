@@ -196,8 +196,10 @@ admit only the fixed local routing controls (`tfo`, `mptcp`, `interface-name`,
 `rematch` reject all common endpoint/smux controls. It also closes common smux,
 TLS/ECH/Reality, transport, Shadowsocks plugin, WireGuard peer/Amnezia, Snell
 obfs, Hysteria2 Realm, Trojan SS, Sudoku HTTP-mask, and TLS-mirror nested
-objects. TLS-only fields, including VMess/VLESS Reality or ECH and VMess
-TLS-mirror, require `tls: true`. VLESS flow is limited to empty or
+objects. TLS-intent fields, including VMess/VLESS Reality or ECH and VMess
+TLS-mirror, require `tls: true`. Top-level and nested `skip-cert-verify` flags
+remain strictly boolean, but may be carried inertly while their corresponding
+`tls` switch is false, matching Mihomo's decoder behavior. VLESS flow is limited to empty or
 `xtls-rprx-vision`; packet encoding is limited to `packetaddr`, `packet`, or
 `xudp` and conflicts with the `packet-addr`/`xudp` aliases. TUIC relay and
 congestion values, Shadowsocks plugins, and transport selectors use fixed
