@@ -16,7 +16,7 @@
  * `us` token also swallows AU-stralia / R-us-sia nodes).
  */
 
-import { z } from 'zod';
+import { z } from '@/lib/openapi/zod';
 import { stringify } from 'yaml';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { matchFilter } from '@/lib/proxies/filterMatch';

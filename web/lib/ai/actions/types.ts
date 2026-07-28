@@ -18,7 +18,7 @@
  * (see ./neverList.ts) and stay REST/UI-only.
  */
 
-import type { z } from 'zod';
+import type { z } from '@/lib/openapi/zod';
 
 export type ActionRisk = 'read' | 'write';
 

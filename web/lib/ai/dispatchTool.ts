@@ -9,7 +9,7 @@
 import { getAction } from './actions/registry';
 import { assertWriteAllowed } from './actions/neverList';
 import { mintConfirmation } from './confirm';
-import { ZodError } from 'zod';
+import { z } from '@/lib/openapi/zod';
 import { ConfigPreflightUnavailableError, ConfigValidationError } from '@/lib/config/errors';
 import { ClientSafeProblemDetailsError, ProblemDetailsError } from '@/lib/http/problem';
 import {
@@ -86,7 +86,7 @@ export function safeToolError(
   if (error instanceof SubscriptionResolutionValidationError && error.contentIssue) {
     return { error: describeSubscriptionContentIssue(error.contentIssue) };
   }
-  if (error instanceof ZodError) {
+  if (error instanceof z.ZodError) {
     return { error: '工具参数校验失败，请检查字段格式。' };
   }
   if (error instanceof ClientSafeProblemDetailsError) {

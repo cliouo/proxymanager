@@ -1,4 +1,4 @@
-import { ZodError } from 'zod';
+import { z } from '@/lib/openapi/zod';
 import { withProblemDetails } from '@/lib/http/handler';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { resolveScopeProfile } from '@/lib/profileScope';
@@ -137,7 +137,7 @@ export const POST = withProblemDetails(async (request: Request) => {
           status: err.problem.status,
           error: { title: err.problem.title, detail: err.problem.detail },
         });
-      } else if (err instanceof ZodError) {
+      } else if (err instanceof z.ZodError) {
         // Per-op validation failure (empty value, YAML-hostile chars) → a 422
         // result for that op, not a whole-batch 500.
         results.push({

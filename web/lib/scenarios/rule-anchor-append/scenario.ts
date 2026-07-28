@@ -21,7 +21,7 @@
  * handlers refuse with 409 if the live rule has moved past the snapshot.
  */
 
-import { z } from 'zod';
+import { z } from '@/lib/openapi/zod';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { preflightAndCommitProfileChanges } from '@/lib/services/profileConfigMutationService';
 import {

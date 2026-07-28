@@ -1,6 +1,5 @@
-import './setup';
 import { OpenAPIRegistry } from '@asteasolutions/zod-to-openapi';
-import { z } from 'zod';
+import { z } from './zod';
 
 import {
   BaseConfigSchema,
@@ -24,6 +23,9 @@ import {
   RuleSetResponseSchema,
   RuleSetSchema,
   RuleSetUpdateSchema,
+  SetupBootstrapRequestSchema,
+  SetupBootstrapResponseSchema,
+  SetupStatusSchema,
   StringArrayResponseSchema,
   SubscriptionCreateSchema,
   SubscriptionListResponseSchema,
@@ -60,6 +62,9 @@ registry.register('ProxyUpdate', ProxyUpdateSchema);
 registry.register('BaseConfig', BaseConfigSchema);
 registry.register('BaseUpdateRequest', BaseUpdateRequestSchema);
 registry.register('BaseValidationResult', BaseValidationResultSchema);
+registry.register('SetupStatus', SetupStatusSchema);
+registry.register('SetupBootstrapRequest', SetupBootstrapRequestSchema);
+registry.register('SetupBootstrapResponse', SetupBootstrapResponseSchema);
 
 registry.register('Problem', ProblemSchema);
 registry.register('BatchRequest', BatchRequestSchema);
@@ -90,6 +95,96 @@ registry.registerPath({
 
 registry.registerPath({
   method: 'get',
+  path: '/api/v1/setup/status',
+  summary: 'Read setup status',
+  description:
+    'Returns an uncached, side-effect-free empty/recoverable/configured/blocked classification derived from raw profile, base, proxy-group, and rule inventory. Invalid schemas and WRONGTYPE storage are blocked; exact starter provenance is returned only while every starter resource still matches.',
+  tags: ['setup'],
+  responses: {
+    200: {
+      description: 'Current setup state and recovery diagnostics',
+      headers: {
+        'Cache-Control': {
+          description: 'Always no-store because setup state is a CAS precondition.',
+          schema: { type: 'string', enum: ['no-store'] },
+        },
+      },
+      content: {
+        'application/json': {
+          schema: z.object({ data: SetupStatusSchema }),
+        },
+      },
+    },
+    503: {
+      description: 'Redis or another status dependency is temporarily unavailable',
+      content: { 'application/problem+json': { schema: ProblemSchema } },
+    },
+    500: {
+      description: 'An unclassified server error occurred',
+      content: { 'application/problem+json': { schema: ProblemSchema } },
+    },
+  },
+});
+
+registry.registerPath({
+  method: 'post',
+  path: '/api/v1/setup/bootstrap',
+  summary: 'Atomically bootstrap the starter configuration',
+  description:
+    'Strictly accepts expected_revision and starter-v1. The starter leaves listener ports to the importing proxy client. The server derives empty or recoverable state, preflights the exact final candidate, then atomically writes resources, provenance, a non-undoable audit event, snapshot invalidation, and one config-version bump.',
+  tags: ['setup'],
+  request: {
+    body: {
+      required: true,
+      content: { 'application/json': { schema: SetupBootstrapRequestSchema } },
+    },
+  },
+  responses: {
+    200: {
+      description: 'A server-classified recoverable default profile was completed',
+      content: {
+        'application/json': {
+          schema: z.object({ data: SetupBootstrapResponseSchema }),
+        },
+      },
+    },
+    201: {
+      description: 'Starter configuration created from an empty state',
+      content: {
+        'application/json': {
+          schema: z.object({ data: SetupBootstrapResponseSchema }),
+        },
+      },
+    },
+    409: {
+      description: 'Setup is already configured or blocked and no writes were applied',
+      content: { 'application/problem+json': { schema: ProblemSchema } },
+    },
+    412: {
+      description: 'Setup state changed during preflight or atomic commit',
+      content: { 'application/problem+json': { schema: ProblemSchema } },
+    },
+    422: {
+      description: 'The exact starter or repaired candidate is invalid',
+      content: { 'application/problem+json': { schema: ProblemSchema } },
+    },
+    503: {
+      description: 'Redis or final candidate validation is temporarily unavailable',
+      content: { 'application/problem+json': { schema: ProblemSchema } },
+    },
+    400: {
+      description: 'Request body is not valid JSON',
+      content: { 'application/problem+json': { schema: ProblemSchema } },
+    },
+    500: {
+      description: 'An unclassified server error occurred',
+      content: { 'application/problem+json': { schema: ProblemSchema } },
+    },
+  },
+});
+
+registry.registerPath({
+  method: 'get',
   path: '/api/v1/base',
   summary: 'Read base config',
   description:
@@ -112,7 +207,7 @@ registry.registerPath({
   path: '/api/v1/base',
   summary: 'Replace base config',
   description:
-    'Validates the new YAML, checks that all existing rules still reference valid anchors / policies, then writes atomically. Pass If-Match with the current etag for optimistic concurrency control.',
+    'Validates the exact final rendered candidate, then writes against the same config version. If no base exists, the first write is create-only; concurrent initializers cannot overwrite each other. Pass If-Match with the current etag for optimistic concurrency control on updates.',
   tags: ['base'],
   request: {
     body: { content: { 'application/json': { schema: BaseUpdateRequestSchema } } },
@@ -123,11 +218,20 @@ registry.registerPath({
       content: { 'application/json': { schema: BaseValidationResponseSchema } },
     },
     412: {
-      description: 'If-Match etag did not match current value',
+      description:
+        'Concurrency conflict: If-Match failed, the preflight config version changed, or another writer won first initialization',
+      content: { 'application/problem+json': { schema: ProblemSchema } },
+    },
+    404: {
+      description: 'Target profile configuration is missing',
       content: { 'application/problem+json': { schema: ProblemSchema } },
     },
     422: {
-      description: 'YAML invalid, or new base would orphan existing rules',
+      description: 'Candidate YAML or exact final rendered configuration is invalid',
+      content: { 'application/problem+json': { schema: ProblemSchema } },
+    },
+    503: {
+      description: 'Final candidate validation is temporarily unavailable',
       content: { 'application/problem+json': { schema: ProblemSchema } },
     },
   },

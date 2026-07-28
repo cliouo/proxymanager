@@ -24,6 +24,27 @@ export class ConfigValidationError extends Error {
 }
 
 /**
+ * A required stored render input is absent.
+ *
+ * Keep this separate from {@link ConfigValidationError}: an uninitialised
+ * profile/base is a missing resource, not evidence that the user's candidate
+ * is invalid.
+ */
+export class ConfigMissingError extends Error {
+  public readonly resource: 'profile' | 'base';
+
+  constructor(resource: 'profile' | 'base') {
+    super(
+      resource === 'profile'
+        ? 'The profile configuration is missing.'
+        : 'The base configuration has not been initialized.',
+    );
+    this.name = 'ConfigMissingError';
+    this.resource = resource;
+  }
+}
+
+/**
  * The optional full-config preflight could not reach its validator. This is
  * deliberately separate from ConfigValidationError: temporary infrastructure
  * failures must never be reported as if the user's configuration were invalid.

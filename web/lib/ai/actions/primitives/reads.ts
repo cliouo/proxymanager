@@ -8,7 +8,7 @@
  * names, provider names) and the user's own rule entries.
  */
 
-import { z } from 'zod';
+import { z } from '@/lib/openapi/zod';
 import { listProxyGroups } from '@/lib/repos/proxyGroupsRepo';
 import { listProxyGroupTemplates } from '@/lib/repos/proxyGroupTemplatesRepo';
 import { listRules } from '@/lib/repos/rulesRepo';

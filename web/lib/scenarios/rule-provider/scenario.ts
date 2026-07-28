@@ -17,7 +17,7 @@
  * handlers refuse with 409 if the live record moved past the snapshot.
  */
 
-import { z } from 'zod';
+import { z } from '@/lib/openapi/zod';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { referencedProviderNamesInBaseYaml } from '@/lib/engine/renderer';
 import { getBase } from '@/lib/repos/baseRepo';

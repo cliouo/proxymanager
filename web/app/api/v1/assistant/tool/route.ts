@@ -9,7 +9,7 @@
  * proxy.ts.
  */
 
-import { z } from 'zod';
+import { z } from '@/lib/openapi/zod';
 import { dispatchToolCall } from '@/lib/ai/dispatchTool';
 import { withProblemDetails } from '@/lib/http/handler';
 import { ProblemDetailsError } from '@/lib/http/problem';

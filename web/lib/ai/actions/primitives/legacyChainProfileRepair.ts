@@ -1,7 +1,7 @@
 /** Confirmation-gated repair for legacy chain/source validation deadlocks. */
 
 import { stringify } from 'yaml';
-import { z } from 'zod';
+import { z } from '@/lib/openapi/zod';
 import { ClientSafeProblemDetailsError } from '@/lib/http/problem';
 import {
   executeLegacyChainProfileRepair,

@@ -5,7 +5,7 @@
  * proxy-groups / etc., not just rules. Node credentials are never exposed.
  */
 
-import { z } from 'zod';
+import { z } from '@/lib/openapi/zod';
 import {
   buildOutline,
   fullRedactedYaml,

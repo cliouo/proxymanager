@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from '@/lib/openapi/zod';
 import { MAX_RULESET_CONTENT } from './base';
 
 /**

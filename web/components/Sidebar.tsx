@@ -37,13 +37,17 @@ import {
  */
 export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
   const pathname = usePathname();
-  const { activeProfile } = useProfiles();
-  const [buildId, setBuildId] = useState<string | null>(null);
+  const { activeProfile, loading: profilesLoading, error: profilesError } = useProfiles();
+  const [meta, setMeta] = useState<{ buildId: string | null; hasBase: boolean } | null>(null);
+  const [metaError, setMetaError] = useState(false);
 
   useEffect(() => {
-    api<{ data: { buildId: string | null } }>('/api/v1/meta')
-      .then((r) => setBuildId(r.data.buildId))
-      .catch(() => undefined);
+    api<{ data: { buildId: string | null; hasBase: boolean } }>('/api/v1/meta')
+      .then((response) => {
+        setMeta(response.data);
+        setMetaError(false);
+      })
+      .catch(() => setMetaError(true));
   }, []);
 
   function signOut() {
@@ -66,6 +70,19 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   const profileSettingsActive =
     !onDeviceDetail &&
     (pathname === profileSettingsHref || (pathname.startsWith('/profiles/') && !!activeProfile));
+  const profileReady = !profilesLoading && !profilesError && Boolean(activeProfile);
+  const profilePrerequisite = profilesError
+    ? '需要先重新读取配置文件列表'
+    : profilesLoading
+      ? '正在读取配置文件列表'
+      : '需要先选择配置文件';
+  const basePrerequisite = metaError
+    ? '无法确认当前配置是否已有 base'
+    : !meta
+      ? '正在检查当前配置的 base'
+      : !meta.hasBase
+        ? '需要先完成基础配置'
+        : undefined;
 
   return (
     <aside className={`side${open ? ' open' : ''}`} aria-label="主导航">
@@ -91,7 +108,19 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
         <div className="nav-group">
           <div className="nav-label">编辑当前配置</div>
           {PROFILE_NAV.map((item) => (
-            <NavLink key={item.href} item={item} active={isActive(item.href)} onClick={onClose} />
+            <NavLink
+              key={item.href}
+              item={item}
+              active={isActive(item.href)}
+              onClick={onClose}
+              disabledReason={
+                !profileReady
+                  ? profilePrerequisite
+                  : item.href === '/base'
+                    ? undefined
+                    : basePrerequisite
+              }
+            />
           ))}
           <NavLink
             item={{
@@ -102,13 +131,20 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
             }}
             active={profileSettingsActive}
             onClick={onClose}
+            disabledReason={!profileReady ? profilePrerequisite : undefined}
           />
         </div>
 
         <div className="nav-group">
           <div className="nav-label">高级配置</div>
           {ADVANCED_NAV.map((item) => (
-            <NavLink key={item.href} item={item} active={isActive(item.href)} onClick={onClose} />
+            <NavLink
+              key={item.href}
+              item={item}
+              active={isActive(item.href)}
+              onClick={onClose}
+              disabledReason={!profileReady ? profilePrerequisite : basePrerequisite}
+            />
           ))}
         </div>
 
@@ -137,7 +173,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
 
       <div className="side-foot">
         <span className="side-foot-label">当前版本</span>
-        <span className="num">{buildId ? buildId.slice(0, 7) : 'dev'}</span>
+        <span className="num">{meta?.buildId ? meta.buildId.slice(0, 7) : 'dev'}</span>
       </div>
     </aside>
   );
@@ -152,7 +188,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
  * —— 激活即编辑模版内容,这正是维护模版的正规方式(见 DEVICE-LAYER-DESIGN.md §8.1)。
  */
 function ProfileSwitcher({ onNavigate }: { onNavigate: () => void }) {
-  const { profiles, activeProfile, setActiveProfile } = useProfiles();
+  const { profiles, activeProfile, setActiveProfile, loading, error, reload } = useProfiles();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const { normal, templates } = useMemo(() => partitionProfilesByKind(profiles), [profiles]);
@@ -179,7 +215,7 @@ function ProfileSwitcher({ onNavigate }: { onNavigate: () => void }) {
   }
 
   const activeId = activeProfile?.id ?? null;
-  const name = activeProfile?.name ?? 'default';
+  const name = activeProfile?.name ?? (loading ? '读取中' : error ? '读取失败' : '未选择');
 
   function row(p: Profile) {
     const template = isTemplateProfile(p);
@@ -227,13 +263,41 @@ function ProfileSwitcher({ onNavigate }: { onNavigate: () => void }) {
         <span className="pf-ic">{profileMark(name)}</span>
         <span className="pf-txt">
           <span className="pf-name">{name}</span>
-          <span className="pf-sub">{activeProfile ? '配置文件' : '尚未初始化'}</span>
+          <span className="pf-sub">
+            {error
+              ? '读取失败，保留上次结果'
+              : loading
+                ? activeProfile
+                  ? '正在刷新配置文件'
+                  : '正在读取配置文件'
+                : activeProfile
+                  ? '配置文件'
+                  : '尚未初始化'}
+          </span>
         </span>
         <span className="caret">▾</span>
       </button>
       <div className={`profile-pop${open ? ' open' : ''}`}>
         <div className="pp-label">配置文件 · {normal.length}</div>
-        {profiles.length === 0 ? (
+        {loading && !activeProfile ? (
+          <div className="pp-li" style={{ color: 'var(--muted)', cursor: 'default' }} role="status">
+            正在读取配置文件
+          </div>
+        ) : error ? (
+          <div className="pp-li" style={{ cursor: 'default', display: 'block' }} role="alert">
+            <span style={{ color: 'var(--danger)', display: 'block' }}>配置文件读取失败</span>
+            <button
+              type="button"
+              className="btn sm"
+              style={{ marginTop: 8 }}
+              disabled={loading}
+              aria-busy={loading}
+              onClick={() => void reload()}
+            >
+              {loading ? '正在重试' : '重试'}
+            </button>
+          </div>
+        ) : profiles.length === 0 ? (
           <div className="pp-li" style={{ color: 'var(--muted)', cursor: 'default' }}>
             尚无配置文件记录
           </div>
@@ -269,11 +333,40 @@ function NavLink({
   item,
   active,
   onClick,
+  disabledReason,
 }: {
   item: NavItem;
   active: boolean;
   onClick: () => void;
+  disabledReason?: string;
 }) {
+  const content = (
+    <>
+      <span className="ic">
+        <NavIcon name={item.icon} />
+      </span>
+      <span className="nav-copy">
+        <span className="nav-name">{item.label}</span>
+        <span className="nav-desc">{disabledReason ?? item.description}</span>
+      </span>
+    </>
+  );
+
+  if (disabledReason) {
+    return (
+      <span
+        className="nav-item disabled"
+        role="link"
+        aria-disabled="true"
+        tabIndex={0}
+        title={disabledReason}
+        data-prerequisite={disabledReason}
+      >
+        {content}
+      </span>
+    );
+  }
+
   return (
     <Link
       href={item.href}
@@ -281,13 +374,7 @@ function NavLink({
       onClick={onClick}
       aria-current={active ? 'page' : undefined}
     >
-      <span className="ic">
-        <NavIcon name={item.icon} />
-      </span>
-      <span className="nav-copy">
-        <span className="nav-name">{item.label}</span>
-        {item.description && <span className="nav-desc">{item.description}</span>}
-      </span>
+      {content}
     </Link>
   );
 }

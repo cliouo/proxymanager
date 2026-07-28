@@ -73,6 +73,13 @@ export const REDIS_KEYS = {
    */
   profiles: 'profiles',
   /**
+   * Factual receipt for the last successful built-in starter bootstrap.
+   * This is not a setup-complete flag: status still derives ownership from
+   * profiles/base/groups/rules and only exposes this provenance while every
+   * referenced starter resource still matches exactly.
+   */
+  setupProvenance: 'setup:provenance',
+  /**
    * Cached summary of the most recent successful resolveConfig() — node
    * names, collisions, per-sub status. Readers (UI pickers, AI tools) that
    * only need the resolved node list can hit this instead of re-running the

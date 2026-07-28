@@ -1,5 +1,9 @@
-import { ZodError } from 'zod';
-import { ConfigPreflightUnavailableError, ConfigValidationError } from '@/lib/config/errors';
+import { z } from '@/lib/openapi/zod';
+import {
+  ConfigMissingError,
+  ConfigPreflightUnavailableError,
+  ConfigValidationError,
+} from '@/lib/config/errors';
 import {
   PROBLEM_BASE_URL,
   ProblemDetailsError,
@@ -36,6 +40,16 @@ function toProblemResponse(err: unknown): Response {
     });
   }
 
+  if (err instanceof ConfigMissingError) {
+    return problemResponse({
+      type: `${PROBLEM_BASE_URL}/config-missing`,
+      title: 'Configuration not found',
+      status: 404,
+      detail: err.message,
+      resource: err.resource,
+    });
+  }
+
   if (err instanceof ConfigPreflightUnavailableError) {
     return problemResponse({
       type: `${PROBLEM_BASE_URL}/config-validation-unavailable`,
@@ -45,7 +59,7 @@ function toProblemResponse(err: unknown): Response {
     });
   }
 
-  if (err instanceof ZodError) {
+  if (err instanceof z.ZodError) {
     return problemResponse({
       type: `${PROBLEM_BASE_URL}/validation-error`,
       title: 'Request validation failed',
@@ -75,7 +89,7 @@ function toProblemResponse(err: unknown): Response {
 }
 
 /** Turn Zod issues into a single human-readable detail string, e.g. "标识: ...; url: ...". */
-function formatZodIssues(err: ZodError): string {
+function formatZodIssues(err: z.ZodError): string {
   return err.issues
     .map((issue) => {
       const path = issue.path.join('.');

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ConfigPreflightUnavailableError } from '@/lib/config/errors';
+import { ConfigMissingError, ConfigPreflightUnavailableError } from '@/lib/config/errors';
 import { parseBaseDocument } from '@/lib/engine/parser';
 import { resolveConfig } from '@/lib/engine/resolve';
 import { withProblemDetails } from '@/lib/http/handler';
@@ -95,6 +95,34 @@ describe('withProblemDetails configuration errors', () => {
     expect(JSON.stringify(body)).not.toContain('upstream.invalid');
   });
 
+  it('returns a structured 422 when a final rule remains reachable after MATCH', async () => {
+    const base = [
+      'rules:',
+      '  - MATCH,DIRECT',
+      '  - DOMAIN,example.com,DIRECT',
+    ].join('\n');
+    const { response, body } = await problemFrom(() =>
+      resolveConfig(base, [], [], [], [], { persistSnapshot: false }),
+    );
+
+    expect(response.status).toBe(422);
+    expect(body).toEqual({
+      type: 'https://proxymanager.dev/errors/config-validation',
+      title: 'Configuration validation failed',
+      status: 422,
+      detail: 'Full config render rejected: an active MATCH rule must be the final rule.',
+      errors: [
+        {
+          code: 'final_rule_after_match',
+          message: 'Full config render rejected: an active MATCH rule must be the final rule.',
+          section: 'rules',
+          path: 'rules[1]',
+          resource: 'rendered-config',
+        },
+      ],
+    });
+  });
+
   it('keeps an unknown infrastructure failure generic in production', async () => {
     vi.stubEnv('NODE_ENV', 'production');
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -123,6 +151,21 @@ describe('withProblemDetails configuration errors', () => {
       title: 'Service Unavailable',
       status: 503,
       detail: 'Configuration validation is temporarily unavailable.',
+    });
+  });
+
+  it('keeps missing stored configuration distinct from an invalid candidate', async () => {
+    const { response, body } = await problemFrom(() => {
+      throw new ConfigMissingError('base');
+    });
+
+    expect(response.status).toBe(404);
+    expect(body).toEqual({
+      type: 'https://proxymanager.dev/errors/config-missing',
+      title: 'Configuration not found',
+      status: 404,
+      detail: 'The base configuration has not been initialized.',
+      resource: 'base',
     });
   });
 });

@@ -8,7 +8,7 @@
  * registered inverse. Auth is enforced by proxy.ts.
  */
 
-import { z } from 'zod';
+import { z } from '@/lib/openapi/zod';
 import { getAction } from '@/lib/ai/actions/registry';
 import { assertWriteAllowed } from '@/lib/ai/actions/neverList';
 import { consumeConfirmation } from '@/lib/ai/confirm';

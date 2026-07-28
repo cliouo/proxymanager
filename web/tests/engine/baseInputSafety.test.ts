@@ -263,14 +263,21 @@ describe('resolved-config legacy defense', () => {
     expect(parseYaml(result.content)).toMatchObject({ rules: ['MATCH,DIRECT'] });
   });
 
-  it('still rejects a marker-only final config when no active rule is materialised', async () => {
+  it('materialises an empty sequence for a marker-only final config with no active rules', async () => {
+    const result = await resolveConfig(MARKER_ONLY_RULES, [], [], [], [], {
+      persistSnapshot: false,
+    });
+
+    expect(parseYaml(result.content)).toMatchObject({ rules: [] });
+    expect(result.content).toContain('rules: []');
+  });
+
+  it('does not legitimise a bare null rules section without an injection marker', async () => {
     const error = await captureAsync(
-      resolveConfig(MARKER_ONLY_RULES, [], [], [], [], { persistSnapshot: false }),
+      resolveConfig('rules:\n', [], [], [], [], { persistSnapshot: false }),
     );
 
-    expect((error as Error).message).toBe(
-      'Full config render rejected: the final YAML document is invalid.',
-    );
+    expect((error as Error).message).toBe('Invalid base YAML: "rules" must be a sequence');
   });
 
   it.each([

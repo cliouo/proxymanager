@@ -105,6 +105,13 @@ code,
   color: var(--fg);
   box-shadow: var(--shadow-soft);
 }
+.nav-item.disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+.nav-item.disabled .nav-desc {
+  color: var(--warn);
+}
 .nav-item .ic {
   width: 32px;
   height: 32px;
@@ -144,7 +151,7 @@ code,
   text-overflow: ellipsis;
 }
 @media (hover: hover) {
-  .nav-item:hover {
+  .nav-item:not(.disabled):hover {
     background: color-mix(in srgb, var(--surface) 72%, transparent);
     color: var(--fg);
   }

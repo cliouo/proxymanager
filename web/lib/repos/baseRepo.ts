@@ -10,10 +10,15 @@ export interface BaseRecord extends BaseMeta {
 
 export interface SetBaseResult {
   ok: boolean;
-  conflict?: 'etag' | 'config-version';
+  conflict?: 'etag' | 'config-version' | 'exists';
   currentEtag?: string | null;
   currentConfigVersion?: number | null;
 }
+
+export type SetBasePrecondition =
+  | { type: 'none' }
+  | { type: 'etag'; etag: string }
+  | { type: 'must-not-exist' };
 
 export async function getBase(profileId: string): Promise<BaseRecord | null> {
   // P2-1: single MGET, not two independent GETs — two GETs can interleave with
@@ -34,7 +39,9 @@ export async function getBase(profileId: string): Promise<BaseRecord | null> {
  * Lua script reads the stored etag, compares it, and only then writes content +
  * meta + bumps config:version — all in one atomic server-side step.
  *
- * Returns `{1, ''}` on success or `{0, currentEtag}` when the etag didn't match.
+ * Returns `{1, ''}` on success, `{0, currentEtag}` for an etag mismatch,
+ * `{2, currentVersion}` for a stale preflight, or `{3, currentEtag}` when a
+ * create-only write finds either base key already present.
  * Storage stays identical to the client's own .set: meta is written as the same
  * JSON string, and content as the raw string (get()'s parse-with-fallback reads
  * either form back identically).
@@ -47,7 +54,17 @@ if ARGV[5] == '1' then
     return {2, tostring(currentVersion or '')}
   end
 end
-if ARGV[1] == '1' then
+if ARGV[1] == 'must-not-exist' then
+  if redis.call('EXISTS', KEYS[1], KEYS[2]) ~= 0 then
+    local cur = redis.call('GET', KEYS[1])
+    local curEtag = ''
+    if cur then
+      local ok, m = pcall(cjson.decode, cur)
+      if ok and type(m) == 'table' and m.etag ~= nil then curEtag = m.etag end
+    end
+    return {3, curEtag}
+  end
+elseif ARGV[1] == 'etag' then
   local cur = redis.call('GET', KEYS[1])
   local curEtag = ''
   if cur then
@@ -74,12 +91,13 @@ export async function setBase(
   profileId: string,
   content: string,
   meta: BaseMeta,
-  expectedEtag: string | null,
+  precondition: SetBasePrecondition,
   expectedConfigVersion?: number,
 ): Promise<SetBaseResult> {
   const redis = getRedis();
 
-  // Atomic CAS + write + version bump. INCR rides the same script so the render
+  // Atomic existence/etag + config-version CAS + write + version bump. INCR
+  // rides the same script so the render
   // cache can never see new content under the old version (漏 bump = 保存后仍
   // 读到旧渲染).
   const result = (await redis.eval(
@@ -91,8 +109,8 @@ export async function setBase(
       REDIS_KEYS.resolvedSnapshot,
     ],
     [
-      expectedEtag !== null ? '1' : '0',
-      expectedEtag ?? '',
+      precondition.type,
+      precondition.type === 'etag' ? precondition.etag : '',
       content,
       JSON.stringify(meta),
       expectedConfigVersion === undefined ? '0' : '1',
@@ -110,6 +128,13 @@ export async function setBase(
       ok: false,
       conflict: 'config-version',
       currentConfigVersion: Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null,
+    };
+  }
+  if (Array.isArray(result) && result[0] === 3) {
+    return {
+      ok: false,
+      conflict: 'exists',
+      currentEtag: result[1] || null,
     };
   }
   return {

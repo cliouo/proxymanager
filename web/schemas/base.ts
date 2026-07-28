@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from '@/lib/openapi/zod';
 
 /**
  * P3-17: cap request body sizes so an oversized payload fails as a clean 422

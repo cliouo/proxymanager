@@ -31,7 +31,7 @@
  * detection in the service refuses chains that would loop.
  */
 
-import { z } from 'zod';
+import { z } from '@/lib/openapi/zod';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import {
   createProxyGroup,

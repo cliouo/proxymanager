@@ -5,7 +5,7 @@
  * execute dispatches the `config-section` scenario (audit + undo).
  */
 
-import { z } from 'zod';
+import { z } from '@/lib/openapi/zod';
 import { dryRunDelete, dryRunSet } from '@/lib/ai/configEdit';
 import { assertEditablePath, parsePath } from '@/lib/ai/configPath';
 import { dispatch } from '@/lib/scenarios/_shared/dispatch';

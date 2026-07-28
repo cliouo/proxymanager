@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from '@/lib/openapi/zod';
 import { NAME_REGEX, NAME_HINT } from './profile';
 import { RuleCreateSchema } from './rule';
 

@@ -5,12 +5,20 @@ import { useEffect, useState } from 'react';
 import { AssistantProvider } from '@/components/assistant/AssistantContext';
 import { AssistantPanel } from '@/components/assistant/AssistantPanel';
 import { PageChromeProvider, usePageChrome } from '@/components/PageChrome';
-import { ProfilesProvider } from '@/components/profile/ProfileContext';
+import {
+  ProfileReadErrorBanner,
+  ProfileScopeBoundary,
+  ProfilesProvider,
+  useProfiles,
+} from '@/components/profile/ProfileContext';
 import { RouteProgress } from '@/components/RouteProgress';
+import { SetupGate } from '@/components/setup/SetupGate';
+import { SetupProvider } from '@/components/setup/SetupContext';
 import { Sidebar } from '@/components/Sidebar';
 import { Topbar } from '@/components/Topbar';
 import { ToastProvider } from '@/components/ui/Toast';
 import { getAdminKey } from '@/lib/client/auth-storage';
+import { isProfileScopedPath } from '@/components/nav';
 
 export default function AuthedLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -60,35 +68,73 @@ export default function AuthedLayout({ children }: { children: React.ReactNode }
 
   // 全屏工作台页（编辑器 / 渲染产物）自管高度，escape .content 的内边距与 max-width。
   const fill = ['/base', '/config'].some((p) => pathname === p || pathname.startsWith(`${p}/`));
+  const onSetupRoute = pathname === '/setup' || pathname.startsWith('/setup/');
 
   return (
-    <ProfilesProvider>
-      <PageChromeProvider>
-        <ToastProvider>
-          <AssistantProvider>
-            <a className="skip-link" href="#main-content">
-              跳到主要内容
-            </a>
-            <div className="app">
-              <RouteProgress />
-              <Sidebar open={navOpen} onClose={() => setNavOpen(false)} />
-              <div className="main">
-                <Topbar onMenu={() => setNavOpen((v) => !v)} />
-                <Content fill={fill} pathname={pathname}>
-                  {children}
-                </Content>
-              </div>
-              <div
-                className={`scrim${navOpen ? ' open' : ''}`}
-                onClick={() => setNavOpen(false)}
-                aria-hidden
-              />
-              <AssistantPanel />
-            </div>
-          </AssistantProvider>
-        </ToastProvider>
-      </PageChromeProvider>
-    </ProfilesProvider>
+    <SetupProvider>
+      <SetupGate>
+        {onSetupRoute ? (
+          children
+        ) : (
+          <ProfilesProvider>
+            <PageChromeProvider>
+              <ToastProvider>
+                <AssistantProvider>
+                  <Workspace
+                    fill={fill}
+                    pathname={pathname}
+                    navOpen={navOpen}
+                    setNavOpen={setNavOpen}
+                  >
+                    {children}
+                  </Workspace>
+                </AssistantProvider>
+              </ToastProvider>
+            </PageChromeProvider>
+          </ProfilesProvider>
+        )}
+      </SetupGate>
+    </SetupProvider>
+  );
+}
+
+function Workspace({
+  fill,
+  pathname,
+  navOpen,
+  setNavOpen,
+  children,
+}: {
+  fill: boolean;
+  pathname: string;
+  navOpen: boolean;
+  setNavOpen: React.Dispatch<React.SetStateAction<boolean>>;
+  children: React.ReactNode;
+}) {
+  const { scopeConfirmed } = useProfiles();
+  const profileScoped = isProfileScopedPath(pathname);
+  return (
+    <>
+      <a className="skip-link" href="#main-content">
+        跳到主要内容
+      </a>
+      <div className="app">
+        <RouteProgress />
+        <Sidebar open={navOpen} onClose={() => setNavOpen(false)} />
+        <div className="main">
+          <Topbar onMenu={() => setNavOpen((value) => !value)} />
+          <Content fill={fill} pathname={pathname} profileScoped={profileScoped}>
+            {children}
+          </Content>
+        </div>
+        <div
+          className={`scrim${navOpen ? ' open' : ''}`}
+          onClick={() => setNavOpen(false)}
+          aria-hidden
+        />
+        {scopeConfirmed && <AssistantPanel />}
+      </div>
+    </>
   );
 }
 
@@ -96,10 +142,12 @@ export default function AuthedLayout({ children }: { children: React.ReactNode }
 function Content({
   fill,
   pathname,
+  profileScoped,
   children,
 }: {
   fill: boolean;
   pathname: string;
+  profileScoped: boolean;
   children: React.ReactNode;
 }) {
   const chrome = usePageChrome();
@@ -111,10 +159,16 @@ function Content({
       style={maxWidth ? { maxWidth } : undefined}
       tabIndex={-1}
     >
-      {fill ? (
-        children
+      {profileScoped ? (
+        <ProfileScopeBoundary>{children}</ProfileScopeBoundary>
+      ) : fill ? (
+        <>
+          <ProfileReadErrorBanner />
+          {children}
+        </>
       ) : (
         <div key={pathname} className="pm-reveal">
+          <ProfileReadErrorBanner />
           {children}
         </div>
       )}

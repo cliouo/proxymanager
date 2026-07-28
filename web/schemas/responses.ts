@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from '@/lib/openapi/zod';
 import { BaseConfigSchema, BaseValidationResultSchema } from './base';
 import { RuleSetMetaSchema, RuleSetSchema } from './ruleSet';
 import { SubscriptionSchema } from './subscription';

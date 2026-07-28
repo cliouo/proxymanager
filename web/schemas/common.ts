@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from '@/lib/openapi/zod';
 
 export const RuleTypeSchema = z.enum([
   'DOMAIN',

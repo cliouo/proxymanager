@@ -6,7 +6,7 @@
  * happens after the user authorises it via /api/v1/assistant/confirm.
  */
 
-import { z } from 'zod';
+import { z } from '@/lib/openapi/zod';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { getRule } from '@/lib/repos/rulesRepo';
 import { dispatch } from '@/lib/scenarios/_shared/dispatch';

@@ -88,7 +88,7 @@ async function cloneProfileConfig(
         policies: srcBase.policies,
         updated_at: now,
       },
-      null,
+      { type: 'none' },
     );
   }
   if (!includeGroupsRules) return;

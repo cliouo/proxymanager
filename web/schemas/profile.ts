@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from '@/lib/openapi/zod';
 
 /**
  * A managed "配置文件 / profile". Today there's exactly one — `default` — and

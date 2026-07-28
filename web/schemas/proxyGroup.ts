@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from '@/lib/openapi/zod';
 
 /**
  * A managed mihomo `proxy-group`. Lifted out of the base.yaml `proxy-groups:`

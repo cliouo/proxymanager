@@ -14,7 +14,7 @@
  * platform is never blocked on DeepWiki being up.
  */
 
-import { z } from 'zod';
+import { z } from '@/lib/openapi/zod';
 import { defineAction } from './actions/types';
 
 const DEEPWIKI_MCP_URL = process.env.DEEPWIKI_MCP_URL ?? 'https://mcp.deepwiki.com/mcp';

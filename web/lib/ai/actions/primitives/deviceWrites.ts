@@ -21,7 +21,7 @@
  * `create_device`/`update_device` proposes it.
  */
 
-import { z } from 'zod';
+import { z } from '@/lib/openapi/zod';
 import { stringify } from 'yaml';
 import { fullRedactedYaml } from '@/lib/ai/configAccess';
 import { ConfigValidationError } from '@/lib/config/errors';

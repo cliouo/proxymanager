@@ -38,7 +38,7 @@ import {
   type YAMLMap,
   type YAMLSeq,
 } from 'yaml';
-import { ZodError } from 'zod';
+import { z } from '@/lib/openapi/zod';
 import { ConfigValidationError, type ConfigValidationIssue } from '@/lib/config/errors';
 import {
   assertMergedRuleRenderable,
@@ -366,7 +366,7 @@ async function resolveConfigInternal(
     try {
       assertMergedRuleRenderable(rule);
     } catch (error) {
-      if (!(error instanceof ZodError)) throw error;
+      if (!(error instanceof z.ZodError)) throw error;
       throw new ConfigValidationError({
         code: 'final_rule_invalid',
         message: 'Full config render rejected: a managed rule is invalid.',
@@ -1492,7 +1492,14 @@ export function validateFinalRenderedConfig(content: string): void {
     );
   }
   validateFinalSubRuleDag(subRuleEdges);
-  validateFinalRulePolicies(root.rules, rulePolicyTargets, ruleProviderNames, subRuleNames);
+  validateFinalRulePolicies(
+    root.rules,
+    rulePolicyTargets,
+    ruleProviderNames,
+    subRuleNames,
+    undefined,
+    true,
+  );
 }
 
 function canProveLiteralGroupFilterMiss(value: unknown, proxyName: string): boolean {
@@ -1911,14 +1918,17 @@ function validateFinalRulePolicies(
   providers: ReadonlySet<string>,
   subRules: ReadonlySet<string>,
   subRuleEdges?: string[],
+  requireTerminalMatch = false,
 ): void {
   if (value === undefined) return;
   if (!Array.isArray(value) || value.some((rule) => typeof rule !== 'string')) {
     throw new Error('Full config render rejected: final rules must be strings.');
   }
-  for (const raw of value as string[]) {
+  let firstMatchIndex = -1;
+  for (const [index, raw] of (value as string[]).entries()) {
     const ruleSetRefs = new Set<string>();
     const { type, target } = parseAndValidateFinalRule(raw, false, 0, ruleSetRefs);
+    if (type === 'MATCH' && firstMatchIndex === -1) firstMatchIndex = index;
     if (type === 'SUB-RULE') {
       if (!subRules.has(target)) {
         throw new Error('Full config render rejected: a final sub-rule target is missing.');
@@ -1930,6 +1940,15 @@ function validateFinalRulePolicies(
     if ([...ruleSetRefs].some((name) => !providers.has(name))) {
       throw new Error('Full config render rejected: a final rule-set reference is missing.');
     }
+  }
+  if (requireTerminalMatch && firstMatchIndex !== -1 && firstMatchIndex !== value.length - 1) {
+    throw new ConfigValidationError({
+      code: 'final_rule_after_match',
+      message: 'Full config render rejected: an active MATCH rule must be the final rule.',
+      section: 'rules',
+      path: `rules[${firstMatchIndex + 1}]`,
+      resource: 'rendered-config',
+    });
   }
 }
 

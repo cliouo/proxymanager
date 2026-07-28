@@ -1,7 +1,7 @@
 import { mergePolicyUniverse } from '@/lib/engine/parser';
 import { withProblemDetails } from '@/lib/http/handler';
 import { ProblemDetailsError } from '@/lib/http/problem';
-import { getBase, setBase, type BaseMeta } from '@/lib/repos/baseRepo';
+import { getBase, setBase, type BaseMeta, type SetBasePrecondition } from '@/lib/repos/baseRepo';
 import { listProxyGroups } from '@/lib/repos/proxyGroupsRepo';
 import { resolveScopeProfile } from '@/lib/profileScope';
 import { computeEtag, parseAndValidate } from '@/lib/services/baseService';
@@ -58,7 +58,9 @@ export const PUT = withProblemDetails(async (request: Request) => {
     );
   }
 
-  const checked = await preflightProfileConfig(profileId, () => ({ baseContent: content }));
+  const checked = await preflightProfileConfig(profileId, () => ({ baseContent: content }), {
+    initializeBaseContent: content,
+  });
 
   const meta: BaseMeta = {
     etag: computeEtag(content),
@@ -67,11 +69,22 @@ export const PUT = withProblemDetails(async (request: Request) => {
     updated_at: Math.floor(Date.now() / 1000),
   };
 
-  const result = await setBase(profileId, content, meta, expectedEtag, checked.configVersion);
+  const precondition: SetBasePrecondition =
+    expectedEtag !== null
+      ? { type: 'etag', etag: expectedEtag }
+      : checked.baseExisted
+        ? { type: 'none' }
+        : { type: 'must-not-exist' };
+  const result = await setBase(profileId, content, meta, precondition, checked.configVersion);
   if (!result.ok) {
     if (result.conflict === 'config-version') {
       throw ProblemDetailsError.preconditionFailed(
         '配置在保存前校验期间被其他写入修改,请刷新后重试。',
+      );
+    }
+    if (result.conflict === 'exists') {
+      throw ProblemDetailsError.preconditionFailed(
+        'Base config was initialized by another writer. Refresh before saving again.',
       );
     }
     throw ProblemDetailsError.preconditionFailed(

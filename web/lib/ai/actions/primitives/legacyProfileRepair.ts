@@ -1,7 +1,7 @@
 /** Confirmation-gated recovery for profiles blocked by two legacy error classes. */
 
 import { stringify } from 'yaml';
-import { z } from 'zod';
+import { z } from '@/lib/openapi/zod';
 import { BUILTIN_DIRECT, type DirectMigrationSummary } from '@/lib/services/directMigrationService';
 import {
   executeLegacyProfileRepair,

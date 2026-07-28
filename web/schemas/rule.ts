@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from '@/lib/openapi/zod';
 import { parse as parseYaml } from 'yaml';
 import { ipLiteralFamily } from '@/lib/net/ipLiteral';
 import { compileGoRegex } from '@/lib/proxies/filterMatch';
@@ -90,6 +90,21 @@ export const RuleSchema = z.object({
   // undefined/true = active (legacy rules have no field and render normally).
   enabled: z.boolean().optional(),
 });
+
+/**
+ * Canonical order for a rule sequence that will reach Mihomo. Rank orders
+ * ordinary rules, but an active MATCH is terminal and therefore sorts last.
+ * Disabled MATCH records are parked and retain ordinary rank semantics.
+ */
+export function compareRulesForEffectiveOrder(
+  a: Pick<Rule, 'type' | 'enabled' | 'rank'>,
+  b: Pick<Rule, 'type' | 'enabled' | 'rank'>,
+): number {
+  const aTerminal = a.type === 'MATCH' && a.enabled !== false;
+  const bTerminal = b.type === 'MATCH' && b.enabled !== false;
+  if (aTerminal !== bTerminal) return aTerminal ? 1 : -1;
+  return a.rank - b.rank;
+}
 
 /** A non-MATCH rule must carry a non-empty value; MATCH ignores value. */
 export function valueRequiredUnlessMatch(

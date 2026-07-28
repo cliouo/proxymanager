@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
 import { parse, stringify } from 'yaml';
-import type { Rule, RuleSet } from '@/schemas';
+import { compareRulesForEffectiveOrder, type Rule } from '@/schemas/rule';
+import type { RuleSet } from '@/schemas/ruleSet';
+import { parseBaseDocument } from './parser';
 import { collectRuleSetReferencesFromRuleLine } from './ruleSetReferences';
 
 export interface AnchorStats {
@@ -56,7 +58,7 @@ export function groupRulesByAnchor(rules: Rule[]): Map<string, Rule[]> {
     byAnchor.set(rule.anchor, list);
   }
   for (const list of byAnchor.values()) {
-    list.sort((a, b) => a.rank - b.rank);
+    list.sort(compareRulesForEffectiveOrder);
   }
   return byAnchor;
 }
@@ -265,6 +267,24 @@ export function renderBase(
     const rendered = matched.map((r) => `${indent}- ${renderRule(r)}`).join('\n');
     return `${line}\n${rendered}`;
   });
+  // A markers-only YAML block (`rules:` followed solely by comments) parses as
+  // null. The managed rule list is an array even when empty, so materialise the
+  // empty sequence in the final document whenever no rule was injected.
+  if (stats.every((entry) => entry.ruleCount === 0)) {
+    try {
+      // Reuse the parser's narrow placeholder recognition so a bare `rules:`
+      // or an anchor comment outside that section is not silently legitimised.
+      const root = parseBaseDocument(content, {
+        allowManagedRulesPlaceholder: true,
+      }).toJSON();
+      if (isRecord(root) && Object.hasOwn(root, 'rules') && root.rules === null) {
+        content = content.replace(/^rules:[ \t]*$/m, 'rules: []');
+      }
+    } catch {
+      // Final validation owns malformed YAML diagnostics. Do not rewrite an
+      // unparseable document into a different failure.
+    }
+  }
 
   // Inject the managed rule-providers block at its marker — every rule-set the
   // final config references must be declared here. That's both the enabled

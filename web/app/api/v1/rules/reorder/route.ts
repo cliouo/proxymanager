@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from '@/lib/openapi/zod';
 import { withProblemDetails } from '@/lib/http/handler';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { resolveScopeProfile } from '@/lib/profileScope';
@@ -6,7 +6,7 @@ import { getConfigVersion } from '@/lib/repos/configVersionRepo';
 import { listRules } from '@/lib/repos/rulesRepo';
 import { preflightAndCommitProfileChanges } from '@/lib/services/profileConfigMutationService';
 import { nowSeconds } from '@/lib/services/rulesService';
-import type { Rule } from '@/schemas';
+import { compareRulesForEffectiveOrder, type Rule } from '@/schemas/rule';
 
 export const dynamic = 'force-dynamic';
 
@@ -42,7 +42,9 @@ export const POST = withProblemDetails(async (request: Request) => {
   const reassigned: Record<string, { old: number; new: number }[]> = {};
 
   for (const [anchor, list] of byAnchor) {
-    list.sort((a, b) => a.rank - b.rank);
+    // Normalization must preserve the terminal invariant represented by the
+    // actual renderer, including legacy records whose MATCH rank is too low.
+    list.sort(compareRulesForEffectiveOrder);
     const changes: { old: number; new: number }[] = [];
     list.forEach((rule, idx) => {
       const newRank = (idx + 1) * step;

@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from '@/lib/openapi/zod';
 import { RuleCreateSchema, RulePatchSchema } from './rule';
 
 export const BatchOpSchema = z.discriminatedUnion('op', [

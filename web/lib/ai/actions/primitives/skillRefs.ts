@@ -9,7 +9,7 @@
  * at `references/<file>.md`.
  */
 
-import { z } from 'zod';
+import { z } from '@/lib/openapi/zod';
 import { SKILL_REFERENCES } from '../../skills.generated';
 import { defineAction } from '../types';
 

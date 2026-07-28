@@ -4,7 +4,7 @@
  * function `parameters` JSON Schema via zod v4's `z.toJSONSchema`.
  */
 
-import { z } from 'zod';
+import { z } from '@/lib/openapi/zod';
 import type { ActionDef } from './actions/types';
 
 export interface DeepSeekTool {
