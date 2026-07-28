@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { parse } from 'yaml';
 import { renderBase, renderRule } from '@/lib/engine/renderer';
 import type { Rule } from '@/schemas';
 
@@ -80,6 +81,61 @@ describe('renderBase', () => {
     expect(lines[idx + 3].trim()).toBe('- DOMAIN,c.com,香港');
   });
 
+  it('keeps an active MATCH terminal when a normal late rule is appended with a higher rank', () => {
+    const base = [
+      'mode: rule',
+      'rules:',
+      '  # === ANCHOR: late ===',
+    ].join('\n');
+    const result = renderBase(base, [
+      makeRule({
+        id: 'starter-match',
+        anchor: 'late',
+        type: 'MATCH',
+        value: '',
+        policy: 'DIRECT',
+        rank: 100,
+      }),
+      makeRule({
+        id: 'later-create',
+        anchor: 'late',
+        type: 'DOMAIN-SUFFIX',
+        value: 'example.com',
+        policy: 'DIRECT',
+        rank: 110,
+      }),
+    ]);
+
+    expect(parse(result.content)).toMatchObject({
+      rules: ['DOMAIN-SUFFIX,example.com,DIRECT', 'MATCH,DIRECT'],
+    });
+  });
+
+  it('does not treat a parked MATCH as terminal', () => {
+    const base = ['mode: rule', 'rules:', '  # === ANCHOR: late ==='].join('\n');
+    const result = renderBase(base, [
+      makeRule({
+        id: 'parked-match',
+        anchor: 'late',
+        type: 'MATCH',
+        value: '',
+        policy: 'DIRECT',
+        rank: 10,
+        enabled: false,
+      }),
+      makeRule({
+        id: 'active-domain',
+        anchor: 'late',
+        type: 'DOMAIN',
+        value: 'example.com',
+        policy: 'DIRECT',
+        rank: 20,
+      }),
+    ]);
+
+    expect(parse(result.content)).toMatchObject({ rules: ['DOMAIN,example.com,DIRECT'] });
+  });
+
   it('preserves anchor marker line and original indentation', () => {
     const rules: Rule[] = [makeRule({ value: 'preserve.com' })];
     const result = renderBase(FIXTURE, rules);
@@ -93,6 +149,23 @@ describe('renderBase', () => {
     expect(result.content).toContain('# === ANCHOR: manual ===');
     expect(result.content).toContain('# === ANCHOR: late ===');
     expect(result.anchorsApplied.every((s) => s.ruleCount === 0)).toBe(true);
+  });
+
+  it('materialises a markers-only rules block as an empty array, not null', () => {
+    const result = renderBase(
+      [
+        'mode: rule',
+        'rules:',
+        '  # === ANCHOR: prelude ===',
+        '  # === ANCHOR: manual ===',
+        '  # === ANCHOR: late ===',
+      ].join('\n'),
+      [],
+    );
+
+    expect(parse(result.content)).toMatchObject({ rules: [] });
+    expect(result.content).toContain('rules: []');
+    expect(result.content).toContain('# === ANCHOR: manual ===');
   });
 
   it('reports rules whose anchor is not present in base as unmatched', () => {

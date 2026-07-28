@@ -68,8 +68,20 @@ export const ALL_NAV: NavItem[] = [
   ...SYSTEM_NAV,
 ];
 
+/** Routes whose page-level controls mutate or derive from the active profile scope. */
+export function isProfileScopedPath(pathname: string): boolean {
+  if (
+    PROFILE_NAV.some((item) => pathname === item.href || pathname.startsWith(`${item.href}/`)) ||
+    ADVANCED_NAV.some((item) => pathname === item.href || pathname.startsWith(`${item.href}/`))
+  ) {
+    return true;
+  }
+  return pathname.startsWith('/profiles/');
+}
+
 /** topbar 标题：精确命中优先，否则取最长前缀，再退到分类兜底。 */
 export function titleForPath(pathname: string): string {
+  if (pathname === '/setup' || pathname.startsWith('/setup/')) return '首次设置';
   const exact = ALL_NAV.find((n) => n.href === pathname);
   if (exact) return exact.label;
 

@@ -69,7 +69,13 @@ export function ensureValidRuleSetRef(
 
 export async function computeNextRank(profileId: string, anchor: string): Promise<number> {
   const all = await listRules(profileId);
-  const inAnchor = all.filter((r) => r.anchor === anchor);
+  // MATCH has terminal render semantics, not an appendable rank position.
+  // Ignore only active MATCH records here so the ordinary create path starts
+  // before an existing terminal rule. The renderer/final validator remain the
+  // authoritative guards when ranks are dense, explicit, or legacy.
+  const inAnchor = all.filter(
+    (r) => r.anchor === anchor && !(r.type === 'MATCH' && r.enabled !== false),
+  );
   if (inAnchor.length === 0) return 10;
   const max = Math.max(...inAnchor.map((r) => r.rank));
   return max + 10;

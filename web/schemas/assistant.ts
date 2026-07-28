@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from '@/lib/openapi/zod';
 
 /**
  * Assistant runtime config — the user's own DeepSeek (or OpenAI-compatible)

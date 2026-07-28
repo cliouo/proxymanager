@@ -1,5 +1,3 @@
-import '@/lib/openapi/setup';
-
 export * from './common';
 export * from './rule';
 export * from './operator';
@@ -16,3 +14,4 @@ export * from './proxyGroup';
 export * from './profile';
 export * from './device';
 export * from './assistant';
+export * from './setup';

@@ -231,7 +231,7 @@ async function main(): Promise<void> {
     profile.id,
     srcBase.content,
     { etag: srcBase.etag, anchors: srcBase.anchors, policies: srcBase.policies, updated_at: now },
-    null,
+    { type: 'none' },
   );
   await upsertProxyGroups(profile.id, groups);
   await upsertRules(profile.id, rules);

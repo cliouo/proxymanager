@@ -9,7 +9,7 @@
  * directly, so large content never round-trips through the model.
  */
 
-import { z } from 'zod';
+import { z } from '@/lib/openapi/zod';
 import { safeFetchText } from '@/lib/net/safeFetch';
 import { defineAction } from '../types';
 

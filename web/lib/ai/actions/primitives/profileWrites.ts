@@ -18,7 +18,7 @@
  * registered by accident.
  */
 
-import { z } from 'zod';
+import { z } from '@/lib/openapi/zod';
 import { stringify } from 'yaml';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { listCollections } from '@/lib/repos/collectionsRepo';

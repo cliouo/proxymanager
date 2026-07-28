@@ -12,7 +12,7 @@
  * stored content to a Clash `proxies:` YAML block (fields preserved).
  */
 
-import { z } from 'zod';
+import { z } from '@/lib/openapi/zod';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { findNodeReferences } from '@/lib/services/nodeReferenceService';
 import {

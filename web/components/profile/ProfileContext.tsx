@@ -2,6 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { api } from '@/lib/client/api';
+import { clearAdminKey } from '@/lib/client/auth-storage';
 
 /**
  * 配置文件（profile）上下文 —— 侧边栏切换器与 topbar scope 标签共享同一份数据，
@@ -61,7 +62,11 @@ interface ProfilesValue {
   setActiveProfile: (name: string, redirectTo?: string) => void;
   /** 清除 active cookie 并回退到 current(无重载)—— 删除当前活动配置文件后调用。 */
   clearActiveProfile: () => void;
+  loading: boolean;
   loaded: boolean;
+  error: string | null;
+  /** True only after the current profile list has been read successfully. */
+  scopeConfirmed: boolean;
   reload: () => Promise<void>;
 }
 
@@ -91,15 +96,22 @@ export function profileMark(name: string): string {
 
 export function ProfilesProvider({ children }: { children: React.ReactNode }) {
   const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [loading, setLoading] = useState(true);
   const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
+    setLoading(true);
+    setError(null);
     try {
       const r = await api<{ data: Profile[] }>('/api/v1/profiles');
       setProfiles(r.data);
-    } catch {
-      // 切换器是辅助导航,拉取失败时静默降级为「仅 default」。
+    } catch (caught) {
+      // Keep the last successful list, but never present a first-load failure
+      // as an empty instance or manufacture a default profile.
+      setError(caught instanceof Error ? caught.message : '无法读取配置文件列表');
     } finally {
+      setLoading(false);
       setLoaded(true);
     }
   }, []);
@@ -124,6 +136,7 @@ export function ProfilesProvider({ children }: { children: React.ReactNode }) {
     () => (activeName ? (profiles.find((p) => p.name === activeName) ?? current) : current),
     [activeName, profiles, current],
   );
+  const scopeConfirmed = loaded && !loading && !error && activeProfile !== null;
 
   const setActiveProfile = useCallback((name: string, redirectTo?: string) => {
     // Persist for the server (resolveScopeProfile) and reload so every
@@ -145,8 +158,30 @@ export function ProfilesProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const value = useMemo<ProfilesValue>(
-    () => ({ profiles, current, activeProfile, setActiveProfile, clearActiveProfile, loaded, reload }),
-    [profiles, current, activeProfile, setActiveProfile, clearActiveProfile, loaded, reload],
+    () => ({
+      profiles,
+      current,
+      activeProfile,
+      setActiveProfile,
+      clearActiveProfile,
+      loading,
+      loaded,
+      error,
+      scopeConfirmed,
+      reload,
+    }),
+    [
+      profiles,
+      current,
+      activeProfile,
+      setActiveProfile,
+      clearActiveProfile,
+      loading,
+      loaded,
+      error,
+      scopeConfirmed,
+      reload,
+    ],
   );
 
   return <ProfilesContext.Provider value={value}>{children}</ProfilesContext.Provider>;
@@ -156,4 +191,154 @@ export function useProfiles(): ProfilesValue {
   const ctx = useContext(ProfilesContext);
   if (!ctx) throw new Error('useProfiles must be used within ProfilesProvider');
   return ctx;
+}
+
+export type ProfileScopeAccess = 'loading' | 'error' | 'empty' | 'ready';
+
+export function deriveProfileScopeAccess(input: {
+  loading: boolean;
+  loaded: boolean;
+  error: string | null;
+  hasActiveProfile: boolean;
+}): ProfileScopeAccess {
+  if (input.loading || !input.loaded) return 'loading';
+  if (input.error) return 'error';
+  return input.hasActiveProfile ? 'ready' : 'empty';
+}
+
+export function ProfileReadErrorBanner() {
+  const { error, loading, reload } = useProfiles();
+  if (!error) return null;
+  return (
+    <div
+      role="alert"
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 12,
+        flexWrap: 'wrap',
+        marginBottom: 18,
+        padding: '12px 14px',
+        borderRadius: 'var(--r-md)',
+        color: 'var(--danger)',
+        background: 'var(--danger-dim)',
+      }}
+    >
+      <div style={{ flex: '1 1 280px' }}>
+        <strong style={{ display: 'block' }}>无法读取配置文件列表</strong>
+        <span style={{ display: 'block', marginTop: 2, color: 'var(--fg-2)', fontSize: 12.5 }}>
+          当前未确认编辑作用域。依赖配置文件的入口已暂停，现有数据没有被修改。
+        </span>
+      </div>
+      <button
+        type="button"
+        className="btn sm"
+        disabled={loading}
+        aria-busy={loading}
+        onClick={() => void reload()}
+      >
+        {loading ? '正在重试' : '重试'}
+      </button>
+    </div>
+  );
+}
+
+export function ProfileScopeBoundary({ children }: { children: React.ReactNode }) {
+  const { activeProfile, loading, loaded, error, reload } = useProfiles();
+  const access = deriveProfileScopeAccess({
+    loading,
+    loaded,
+    error,
+    hasActiveProfile: activeProfile !== null,
+  });
+
+  if (access === 'loading') {
+    return (
+      <ProfileScopeState
+        title="正在确认编辑作用域"
+        detail="配置文件列表读取完成前，当前页面及其保存快捷键保持暂停。"
+        busy
+      />
+    );
+  }
+
+  if (access === 'error') {
+    return (
+      <ProfileScopeState
+        title="配置编辑已暂停"
+        detail={
+          activeProfile
+            ? '上次读取的配置文件仍显示在导航中，但当前结果未经重新确认，因此页面保持只读阻断，保存按钮和快捷键不会挂载。'
+            : '当前无法确认要编辑的配置文件，因此页面、保存按钮和快捷键均未挂载。'
+        }
+        error={error ?? '无法读取配置文件列表'}
+        onRetry={() => void reload()}
+      />
+    );
+  }
+
+  if (access === 'empty') {
+    return (
+      <ProfileScopeState
+        title="没有可编辑的配置文件"
+        detail="当前没有已确认的配置文件作用域。请返回首次设置或配置文件管理页检查状态。"
+      />
+    );
+  }
+
+  return children;
+}
+
+function ProfileScopeState({
+  title,
+  detail,
+  error,
+  busy,
+  onRetry,
+}: {
+  title: string;
+  detail: string;
+  error?: string;
+  busy?: boolean;
+  onRetry?: () => void;
+}) {
+  function signOut() {
+    clearAdminKey();
+    window.location.href = '/login';
+  }
+
+  return (
+    <section
+      className="panel"
+      style={{ width: 'min(620px, 100%)', margin: 'clamp(24px, 8vh, 80px) auto' }}
+      role={error ? 'alert' : 'status'}
+      aria-live={error ? 'assertive' : 'polite'}
+      aria-busy={busy || undefined}
+    >
+      <div className="panel-body">
+        <span className={`pill ${error ? 'err' : busy ? 'idle' : 'warn'}`}>
+          {error ? '读取失败' : busy ? '确认中' : '未确认'}
+        </span>
+        <h1 style={{ margin: '16px 0 8px', fontSize: 24 }}>{title}</h1>
+        <p style={{ margin: 0, color: 'var(--muted)', lineHeight: 1.7 }}>{detail}</p>
+        {error && (
+          <p style={{ margin: '14px 0 0', color: 'var(--danger)', overflowWrap: 'anywhere' }}>
+            {error}
+          </p>
+        )}
+        <div style={{ display: 'flex', gap: 10, marginTop: 20, flexWrap: 'wrap' }}>
+          {onRetry && (
+            <button type="button" className="btn primary" onClick={onRetry}>
+              重新读取
+            </button>
+          )}
+          {error && (
+            <button type="button" className="btn" onClick={signOut}>
+              退出登录
+            </button>
+          )}
+        </div>
+      </div>
+    </section>
+  );
 }

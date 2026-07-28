@@ -1171,6 +1171,38 @@ describe('resolveConfig — render must always be mihomo-loadable', () => {
     });
   });
 
+  it('rejects a final top-level rule after MATCH', async () => {
+    const error = await resolveConfig(
+      withLiteralRules(['MATCH,DIRECT', 'DOMAIN,example.com,DIRECT']),
+      [],
+      [],
+      [],
+      [],
+      {},
+    ).catch((cause: unknown) => cause);
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error).toMatchObject({
+      issue: {
+        code: 'final_rule_after_match',
+        section: 'rules',
+        path: 'rules[1]',
+        resource: 'rendered-config',
+      },
+    });
+  });
+
+  it('rejects multiple active MATCH rules because the first one is not final', async () => {
+    await expect(
+      resolveConfig(withLiteralRules(['MATCH,DIRECT', 'MATCH,REJECT']), [], [], [], [], {}),
+    ).rejects.toMatchObject({
+      issue: {
+        code: 'final_rule_after_match',
+        path: 'rules[1]',
+      },
+    });
+  });
+
   it.each([
     'IP-CIDR,not-a-cidr,DIRECT',
     'IP-CIDR,192.0.2.0/024,DIRECT',

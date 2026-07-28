@@ -18,7 +18,7 @@
  * preview_proxy_group_members + update_proxy_group discipline.
  */
 
-import { z } from 'zod';
+import { z } from '@/lib/openapi/zod';
 import { stringify } from 'yaml';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { applyOperators, type ClashProxy } from '@/lib/proxies/operators';

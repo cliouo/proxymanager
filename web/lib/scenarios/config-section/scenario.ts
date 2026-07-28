@@ -11,7 +11,7 @@
  * exists purely as the audited/undoable execution target.
  */
 
-import { z } from 'zod';
+import { z } from '@/lib/openapi/zod';
 import { deleteValueAt, parseYamlValue, setValueAt, validateReferences } from '@/lib/ai/configEdit';
 import { assertEditablePath, parsePath } from '@/lib/ai/configPath';
 import { ProblemDetailsError } from '@/lib/http/problem';

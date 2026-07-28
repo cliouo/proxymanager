@@ -5,9 +5,11 @@ import { useEffect, useRef, useState } from 'react';
 import QRCode from 'qrcode';
 import { ApiError, api } from '@/lib/client/api';
 import { copyText } from '@/lib/client/clipboard';
+import { deriveDashboardReadiness } from '@/lib/client/readiness';
 import { PageTopbar } from '@/components/PageChrome';
 import { ScopePill } from '@/components/Topbar';
 import { useProfiles } from '@/components/profile/ProfileContext';
+import { useSetup } from '@/components/setup/SetupContext';
 import { Placeholder, SkeletonStat } from '@/components/ui/Reveal';
 import {
   TEMPLATE_NOT_DISTRIBUTABLE,
@@ -129,6 +131,7 @@ export default function DashboardPage() {
   // 正在编辑的配置文件可能是模版 —— 模版可编辑、可预览,但不对外分发,
   // 所以这页顶部的订阅地址卡对它是误导,必须先亮明身份(Phase T)。
   const { activeProfile } = useProfiles();
+  const { status: setupStatus } = useSetup();
   const editingTemplate = isTemplateProfile(activeProfile);
   const [meta, setMeta] = useState<Meta | null>(null);
   const [counts, setCounts] = useState<Counts | null>(null);
@@ -241,9 +244,25 @@ export default function DashboardPage() {
   const rulesDesc =
     counts && anchorsApplied > 0 ? `分布于 ${anchorsApplied} 个锚点` : 'base 锚点注入位';
   const subsInjected = snapshot?.subscriptions?.reduce((s, x) => s + (x.injectedCount ?? 0), 0);
+  const snapshotWarningCount =
+    (snapshot?.warnings?.length ?? 0) +
+    (snapshot?.unmatchedAnchors?.length ?? 0) +
+    (snapshot?.subscriptions?.filter((item) => item.error || item.stale).length ?? 0);
+  const readiness = meta
+    ? deriveDashboardReadiness({
+        hasBase: meta.hasBase,
+        sourceType: activeProfile?.source.type ?? null,
+        hasSnapshot: snapshot !== null,
+        snapshotError,
+        warningCount: snapshotWarningCount,
+        starterProvenance:
+          setupStatus?.state === 'configured' &&
+          setupStatus.provenance?.profile_id === activeProfile?.id,
+      })
+    : null;
 
   /* ---------- alerts (computed from real conditions) ---------- */
-  const alerts = buildAlerts(meta, snapshot, snapshotError);
+  const alerts = buildAlerts(meta, snapshot, snapshotError, activeProfile?.source.type ?? null);
 
   return (
     <>
@@ -305,12 +324,13 @@ export default function DashboardPage() {
           <div className={styles.subStatus}>
             {editingTemplate ? (
               <span className="pill warn">{TEMPLATE_NOT_DISTRIBUTABLE}</span>
-            ) : meta ? (
-              meta.hasBase ? (
-                <span className="pill ok">渲染正常</span>
-              ) : (
-                <span className="pill warn">base 未初始化</span>
-              )
+            ) : readiness ? (
+              <>
+                <span className={`pill ${readiness.tone}`}>{readiness.label}</span>
+                {readiness.supportingLabel && (
+                  <span className="pill idle">{readiness.supportingLabel}</span>
+                )}
+              </>
             ) : (
               <span className="pill idle">加载中</span>
             )}
@@ -331,8 +351,17 @@ export default function DashboardPage() {
           </div>
 
           <div className={styles.quick}>
+            {!editingTemplate && readiness?.actionHref === '/subscriptions' && (
+              <Link className="btn primary" href={R.subscriptions}>
+                {readiness.actionLabel}
+              </Link>
+            )}
             {/* 模版的这条 URL 一定 404(route 层拦截)—— 不给一个注定失败的复制动作。 */}
-            <button className="btn primary" onClick={copy} disabled={!meta || editingTemplate}>
+            <button
+              className={`btn${readiness?.actionHref === '/subscriptions' ? '' : ' primary'}`}
+              onClick={copy}
+              disabled={!meta || editingTemplate}
+            >
               {copyFailed ? '复制失败' : copied ? '已复制 ✓' : '复制 URL'}
             </button>
             <button
@@ -355,8 +384,8 @@ export default function DashboardPage() {
               </>
             ) : (
               <>
-                把这条 URL 粘贴进客户端作订阅地址即可；内容随 base / 规则 / 策略组实时渲染。
-                {!meta?.hasBase && meta && ' 当前 base 尚未初始化，下发的是空骨架。'}
+                {readiness?.detail ??
+                  '把这条 URL 粘贴进客户端作订阅地址即可；内容随 base、规则与策略组实时渲染。'}
               </>
             )}
           </div>
@@ -542,7 +571,12 @@ interface Alert {
   cta?: string;
 }
 
-function buildAlerts(meta: Meta | null, snapshot: Snapshot | null, snapshotError = false): Alert[] {
+function buildAlerts(
+  meta: Meta | null,
+  snapshot: Snapshot | null,
+  snapshotError = false,
+  sourceType: 'none' | 'subscription' | 'collection' | null = null,
+): Alert[] {
   const out: Alert[] = [];
 
   // 1) base 未初始化 — highest priority, blocks render.
@@ -551,8 +585,8 @@ function buildAlerts(meta: Meta | null, snapshot: Snapshot | null, snapshotError
       tone: 'err',
       tag: '未初始化',
       body: <>base 结构尚未初始化，下发的订阅是空骨架。先建立 base 才能渲染出可用配置。</>,
-      href: '/base',
-      cta: '去初始化 →',
+      href: '/setup',
+      cta: '开始首次设置 →',
     });
   }
 
@@ -576,6 +610,16 @@ function buildAlerts(meta: Meta | null, snapshot: Snapshot | null, snapshotError
             cta: '去渲染 →',
           },
     );
+  }
+
+  if (meta?.hasBase && sourceType === 'none') {
+    out.push({
+      tone: 'warn',
+      tag: '未绑定节点来源',
+      body: <>基础配置存在，但当前没有绑定节点来源。此状态本身不能证明配置来自 starter。</>,
+      href: '/subscriptions',
+      cta: '添加节点订阅 →',
+    });
   }
 
   // 2) 订阅源拉取失败 / 沿用缓存 — 来自上次渲染快照。

@@ -61,7 +61,7 @@ export function createBaseStore(profileId: string): BaseStore {
           etag: newEtag,
           updated_at: nowSeconds(),
         },
-        expectedEtag,
+        { type: 'etag', etag: expectedEtag },
         checked.configVersion,
       );
 

@@ -33,13 +33,25 @@ const fakeRedis = {
   // profile's resolved snapshot field, and bump the generation atomically.
   eval: async (_script: string, keys: string[], args: (string | number)[]) => {
     const [metaKey, contentKey, versionKey, snapshotKey] = keys;
-    const [check, expectedEtag, content, metaJson, checkVersion, expectedVersion, profileId] =
-      args.map(String);
+    const [
+      precondition,
+      expectedEtag,
+      content,
+      metaJson,
+      checkVersion,
+      expectedVersion,
+      profileId,
+    ] = args.map(String);
     if (checkVersion === '1') {
       const currentVersion = counters.get(versionKey) ?? 0;
       if (currentVersion !== Number(expectedVersion)) return [2, String(currentVersion)];
     }
-    if (check === '1') {
+    if (precondition === 'must-not-exist') {
+      if (kv.has(metaKey) || kv.has(contentKey)) {
+        const cur = kv.get(metaKey) as { etag?: string } | undefined;
+        return [3, cur?.etag ?? ''];
+      }
+    } else if (precondition === 'etag') {
       const cur = kv.get(metaKey) as { etag?: string } | undefined;
       const curEtag = cur?.etag ?? '';
       if (curEtag !== expectedEtag) return [0, curEtag];
@@ -188,7 +200,7 @@ describe('baseRepo bumps config:version', () => {
     const meta = { anchors: [], policies: [], etag: 'v1', updated_at: 1 };
     bucket(REDIS_KEYS.resolvedSnapshot).set(PID, { buildId: 'old' });
     bucket(REDIS_KEYS.resolvedSnapshot).set('other-profile', { buildId: 'keep' });
-    expect((await baseRepo.setBase(PID, 'proxies: []', meta, null)).ok).toBe(true);
+    expect((await baseRepo.setBase(PID, 'proxies: []', meta, { type: 'none' })).ok).toBe(true);
     expect(version()).toBe(1);
     expect(bucket(REDIS_KEYS.resolvedSnapshot).has(PID)).toBe(false);
     expect(bucket(REDIS_KEYS.resolvedSnapshot).has('other-profile')).toBe(true);
@@ -199,7 +211,7 @@ describe('baseRepo bumps config:version', () => {
       PID,
       'proxies: []',
       { ...meta, etag: 'v2' },
-      'wrong-etag',
+      { type: 'etag', etag: 'wrong-etag' },
     );
     expect(conflict.ok).toBe(false);
     expect(version()).toBe(1);
@@ -208,14 +220,14 @@ describe('baseRepo bumps config:version', () => {
 
   it('rejects a stale preflight generation without writing or invalidating the snapshot', async () => {
     const meta = { anchors: [], policies: [], etag: 'v1', updated_at: 1 };
-    expect((await baseRepo.setBase(PID, 'proxies: []', meta, null)).ok).toBe(true);
+    expect((await baseRepo.setBase(PID, 'proxies: []', meta, { type: 'none' })).ok).toBe(true);
     bucket(REDIS_KEYS.resolvedSnapshot).set(PID, { buildId: 'current' });
 
     const conflict = await baseRepo.setBase(
       PID,
       'proxies: [changed]',
       { ...meta, etag: 'v2' },
-      'v1',
+      { type: 'etag', etag: 'v1' },
       0,
     );
 
@@ -227,6 +239,60 @@ describe('baseRepo bumps config:version', () => {
     expect(version()).toBe(1);
     expect(bucket(REDIS_KEYS.resolvedSnapshot).get(PID)).toEqual({ buildId: 'current' });
     expect(kv.get(REDIS_KEYS.base.content(PID))).toBe('proxies: []');
+  });
+
+  it('enforces an explicit must-not-exist precondition', async () => {
+    const meta = { anchors: [], policies: [], etag: 'first', updated_at: 1 };
+    expect(
+      (
+        await baseRepo.setBase(PID, 'proxies: []', meta, {
+          type: 'must-not-exist',
+        })
+      ).ok,
+    ).toBe(true);
+
+    const conflict = await baseRepo.setBase(
+      PID,
+      'proxies: [replacement]',
+      { ...meta, etag: 'second' },
+      { type: 'must-not-exist' },
+    );
+
+    expect(conflict).toEqual({
+      ok: false,
+      conflict: 'exists',
+      currentEtag: 'first',
+    });
+    expect(version()).toBe(1);
+    expect(kv.get(REDIS_KEYS.base.content(PID))).toBe('proxies: []');
+  });
+
+  it('allows only one first writer to commit against the same planning version', async () => {
+    const [a, b] = await Promise.all([
+      baseRepo.setBase(
+        PID,
+        'proxies: [a]',
+        { anchors: [], policies: [], etag: 'a', updated_at: 1 },
+        { type: 'must-not-exist' },
+        0,
+      ),
+      baseRepo.setBase(
+        PID,
+        'proxies: [b]',
+        { anchors: [], policies: [], etag: 'b', updated_at: 1 },
+        { type: 'must-not-exist' },
+        0,
+      ),
+    ]);
+
+    expect([a, b].filter((result) => result.ok)).toHaveLength(1);
+    expect([a, b].find((result) => !result.ok)).toEqual({
+      ok: false,
+      conflict: 'config-version',
+      currentConfigVersion: 1,
+    });
+    expect(version()).toBe(1);
+    expect(kv.get(REDIS_KEYS.base.content(PID))).toMatch(/^proxies: \[(a|b)\]$/);
   });
 });
 

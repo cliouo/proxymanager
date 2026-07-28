@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from '@/lib/openapi/zod';
 import { OperatorSchema, StoredOperatorSchema } from './operator';
 
 /**

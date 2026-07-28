@@ -41,7 +41,11 @@ vi.mock('@/lib/repos/subscriptionsRepo', () => ({
 }));
 vi.mock('@/lib/repos/devicesRepo', () => ({ listDevices: mocks.listDevices }));
 
-import { ConfigPreflightUnavailableError, ConfigValidationError } from '@/lib/config/errors';
+import {
+  ConfigMissingError,
+  ConfigPreflightUnavailableError,
+  ConfigValidationError,
+} from '@/lib/config/errors';
 import {
   MihomoProxyValidationError,
   validateMihomoProxyList,
@@ -112,7 +116,7 @@ describe('preflightProfileConfig', () => {
     mocks.listRuleSets.mockResolvedValue([]);
     mocks.listCollections.mockResolvedValue([]);
     mocks.listDevices.mockResolvedValue([]);
-    mocks.resolveConfig.mockResolvedValue({ content: 'ok' });
+    mocks.resolveConfig.mockResolvedValue({ content: 'ok', buildId: 'abcdef12' });
     mocks.resolveSubscriptionProxies.mockResolvedValue({ proxies: [], proxyCount: 0 });
   });
 
@@ -126,12 +130,14 @@ describe('preflightProfileConfig', () => {
       expect(options.persistSnapshot).toBe(false);
       expect(options.snapshotProfileId).toBeUndefined();
       await options.subscriptionResolver(REMOTE_SUB);
-      return { content: 'ok' };
+      return { content: 'ok', buildId: 'abcdef12' };
     });
 
     const checked = await preflightProfileConfig(PROFILE_ID, () => ({ rules: [RULE] }));
 
     expect(checked.configVersion).toBe(7);
+    expect(checked.buildId).toBe('abcdef12');
+    expect(checked.baseExisted).toBe(true);
     expect(checked.candidate.rules).toEqual([RULE]);
     expect(mocks.resolveConfig).toHaveBeenCalledWith(
       'proxies: []\nrules: []\n',
@@ -149,6 +155,76 @@ describe('preflightProfileConfig', () => {
       writeCache: false,
       allowStale: false,
     });
+  });
+
+  it('preflights the first base candidate without requiring a stored base first', async () => {
+    const firstBase = 'proxies: []\nrules: []\n';
+    mocks.getBase.mockResolvedValue(null);
+
+    const checked = await preflightProfileConfig(PROFILE_ID, () => ({ baseContent: firstBase }), {
+      initializeBaseContent: firstBase,
+    });
+
+    expect(checked.configVersion).toBe(7);
+    expect(checked.baseExisted).toBe(false);
+    expect(checked.candidate.baseContent).toBe(firstBase);
+    expect(mocks.resolveConfig).toHaveBeenCalledWith(
+      firstBase,
+      [],
+      [REMOTE_SUB],
+      [],
+      [],
+      expect.objectContaining({ persistSnapshot: false }),
+    );
+  });
+
+  it('preflights an exact bootstrap candidate when both profile and base are absent', async () => {
+    const firstBase = 'proxies: []\nrules: []\n';
+    mocks.getProfile.mockResolvedValue(null);
+    mocks.getBase.mockResolvedValue(null);
+
+    const checked = await preflightProfileConfig(
+      PROFILE_ID,
+      () => ({ baseContent: firstBase, rules: [RULE] }),
+      {
+        initializeProfile: PROFILE,
+        initializeBaseContent: firstBase,
+      },
+    );
+
+    expect(checked).toMatchObject({
+      configVersion: 7,
+      profileExisted: false,
+      baseExisted: false,
+      candidate: {
+        profile: PROFILE,
+        baseContent: firstBase,
+        rules: [RULE],
+      },
+    });
+    expect(mocks.resolveConfig).toHaveBeenCalledWith(
+      firstBase,
+      [RULE],
+      [REMOTE_SUB],
+      [],
+      [],
+      expect.objectContaining({
+        boundSource: PROFILE.source,
+        persistSnapshot: false,
+      }),
+    );
+  });
+
+  it('reports an absent stored base as missing configuration for ordinary mutations', async () => {
+    mocks.getBase.mockResolvedValue(null);
+
+    await expect(preflightProfileConfig(PROFILE_ID, () => ({}))).rejects.toEqual(
+      expect.objectContaining<Partial<ConfigMissingError>>({
+        name: 'ConfigMissingError',
+        resource: 'base',
+      }),
+    );
+    expect(mocks.resolveConfig).not.toHaveBeenCalled();
   });
 
   it('classifies a remote-source failure as temporarily unavailable without echoing it', async () => {

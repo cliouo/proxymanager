@@ -36,7 +36,7 @@
  */
 
 import { isMap, isSeq, parseDocument, type Document, type YAMLMap, type YAMLSeq } from 'yaml';
-import { z } from 'zod';
+import { z } from '@/lib/openapi/zod';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { getBase } from '@/lib/repos/baseRepo';
 import { invalidateResolvedSnapshot } from '@/lib/repos/resolvedRepo';

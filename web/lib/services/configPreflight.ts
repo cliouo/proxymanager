@@ -1,4 +1,8 @@
-import { ConfigPreflightUnavailableError, ConfigValidationError } from '@/lib/config/errors';
+import {
+  ConfigMissingError,
+  ConfigPreflightUnavailableError,
+  ConfigValidationError,
+} from '@/lib/config/errors';
 import { buildDeviceConfig } from '@/lib/engine/devicePatch';
 import { resolveConfig } from '@/lib/engine/resolve';
 import { getBase } from '@/lib/repos/baseRepo';
@@ -56,8 +60,31 @@ export type ProfileConfigCandidate = Partial<Omit<ProfileConfigState, 'profile'>
 export interface ConfigPreflightResult {
   /** Global generation that the returned candidate was built from. */
   configVersion: number;
+  /** Whether this stable snapshot contained the profile record. */
+  profileExisted: boolean;
+  /** Whether this stable snapshot contained a complete stored base record. */
+  baseExisted: boolean;
   /** Exact in-memory state that passed the final render validator. */
   candidate: ProfileConfigState;
+  /** Content-addressed id of that exact final rendered candidate. */
+  buildId: string;
+}
+
+export interface ConfigPreflightOptions {
+  /**
+   * Candidate profile to use only when the stable storage snapshot has no
+   * profile record. Atomic bootstrap is the sole intended caller.
+   */
+  initializeProfile?: Profile;
+  /**
+   * Candidate base to use only when the stable storage snapshot has no base.
+   *
+   * This is the first-PUT path: callers still supply the exact candidate via
+   * buildCandidate, while this seed lets preflight construct the current state
+   * without first demanding an old base that cannot exist yet. All other
+   * mutation paths omit it and continue to fail on an uninitialised base.
+   */
+  initializeBaseContent?: string;
 }
 
 export type ConfigCandidateBuilder = (
@@ -146,10 +173,16 @@ export async function resolveSubscriptionForPreflight(
 export async function preflightProfileConfig(
   profileId: string,
   buildCandidate: ConfigCandidateBuilder,
+  options: ConfigPreflightOptions = {},
 ): Promise<ConfigPreflightResult> {
-  const { version, state } = await loadStableProfileState(profileId);
+  const { version, state, profileExisted, baseExisted } = await loadStableProfileState(
+    profileId,
+    options.initializeProfile,
+    options.initializeBaseContent,
+  );
   const patch = await buildCandidate(state);
   const candidate: ProfileConfigState = { ...state, ...patch };
+  let buildId: string;
 
   try {
     const resolved = await resolveConfig(
@@ -169,6 +202,7 @@ export async function preflightProfileConfig(
         subscriptionResolver: resolveSubscriptionForPreflight,
       },
     );
+    buildId = resolved.buildId;
     // The single device gate. Every write path in the app already funnels
     // through this function, so extending it here — and ONLY here — means no
     // entry point can mutate the shared layer into a state that breaks a
@@ -189,7 +223,7 @@ export async function preflightProfileConfig(
     throw error;
   }
 
-  return { configVersion: version, candidate };
+  return { configVersion: version, profileExisted, baseExisted, candidate, buildId };
 }
 
 /**
@@ -258,7 +292,17 @@ export function applyConfigEntityChanges<T extends { id: string }>(
 
 async function loadStableProfileState(
   profileId: string,
-): Promise<{ version: number; state: ProfileConfigState }> {
+  initializeProfile?: Profile,
+  initializeBaseContent?: string,
+): Promise<{
+  version: number;
+  state: ProfileConfigState;
+  profileExisted: boolean;
+  baseExisted: boolean;
+}> {
+  if (initializeProfile && initializeProfile.id !== profileId) {
+    throw new Error('Initial profile id must match the preflight profile id.');
+  }
   for (let attempt = 0; attempt < SNAPSHOT_READ_ATTEMPTS; attempt += 1) {
     const version = await getConfigVersion();
     const [
@@ -284,20 +328,15 @@ async function loadStableProfileState(
     ]);
     const after = await getConfigVersion();
     if (version !== after) continue;
-    if (!profile || !base) {
-      throw new ConfigValidationError({
-        code: 'profile_config_uninitialized',
-        message: 'Configuration validation failed: the profile or base config is missing.',
-        section: 'config',
-        path: '$',
-        resource: 'profile-config',
-      });
-    }
+    if (!profile && !initializeProfile) throw new ConfigMissingError('profile');
+    if (!base && initializeBaseContent === undefined) throw new ConfigMissingError('base');
     return {
       version,
+      profileExisted: profile !== null,
+      baseExisted: base !== null,
       state: {
-        profile,
-        baseContent: base.content,
+        profile: profile ?? initializeProfile!,
+        baseContent: base?.content ?? initializeBaseContent!,
         rules,
         subscriptions,
         proxyGroups,

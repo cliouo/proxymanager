@@ -1,7 +1,7 @@
 /** Confirmation-gated, profile-scoped migration of a redundant direct alias. */
 
 import { stringify } from 'yaml';
-import { z } from 'zod';
+import { z } from '@/lib/openapi/zod';
 import {
   BUILTIN_DIRECT,
   executeDirectAliasMigration,

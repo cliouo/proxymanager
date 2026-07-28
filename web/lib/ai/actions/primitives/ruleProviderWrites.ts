@@ -9,7 +9,7 @@
  * wiring it up is a separate RULE-SET rule via add_rule.
  */
 
-import { z } from 'zod';
+import { z } from '@/lib/openapi/zod';
 import { stringify } from 'yaml';
 import { REDACTED } from '@/lib/ai/configAccess';
 import { ProblemDetailsError } from '@/lib/http/problem';

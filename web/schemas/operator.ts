@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from '@/lib/openapi/zod';
 import { isSafeRuntimeRegex, MAX_RUNTIME_REGEX_PATTERN_LENGTH } from '@/lib/proxies/regexSafety';
 
 /**

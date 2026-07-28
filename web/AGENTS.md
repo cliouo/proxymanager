@@ -23,6 +23,13 @@ upstream data, then commit against the same planning/config version. New
 mutation paths that can change rendered output must preserve this invariant and
 return structured, credential-free validation issues.
 
+In the final active top-level rule sequence, `MATCH` is terminal and must be the
+global last rule. Same-anchor rendering and rank normalization keep ordinary
+rules before active `MATCH`; the final rendered-config validator remains the
+single fail-closed gate for cross-anchor, batch, update, explicit-rank, and
+legacy candidates. Disabled `MATCH` records are parked and do not terminate the
+active sequence.
+
 Device patches and device-scoped feature mutations must derive their complete
 candidate and write set from the same version-bracketed device snapshot, pass
 the shared preflight gate, and commit with config-version CAS. Feature secrets
