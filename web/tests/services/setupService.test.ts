@@ -305,6 +305,33 @@ describe('setupService status classification', () => {
     });
   });
 
+  it('does not treat reordered profile hash fields as a storage type failure', async () => {
+    const other = {
+      ...PROFILE,
+      id: '35000000-0000-4000-8000-000000000097',
+      name: 'other',
+    };
+    mocks.inspectSetupRoot
+      .mockResolvedValueOnce(root([PROFILE, other], { revision: 8 }))
+      .mockResolvedValueOnce(root([other, PROFILE], { revision: 8 }));
+    mocks.inspectSetupStorage.mockResolvedValue(completeStorage());
+
+    const status = await getSetupStatus();
+
+    expect(status).toMatchObject({
+      state: 'configured',
+      can_bootstrap: false,
+      revision: 8,
+      reason_codes: ['already_configured'],
+      inventory: {
+        profiles_total: 2,
+        profiles_valid: 2,
+        default_profile_id: PROFILE.id,
+        has_base: true,
+      },
+    });
+  });
+
   it('keeps a complete default configured when a raw proxy-group is invalid', async () => {
     mocks.inspectSetupRoot.mockResolvedValue(
       root([PROFILE], { revision: 1, provenanceRaw: provenance() }),

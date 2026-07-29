@@ -67,6 +67,20 @@ function parseIdHash<T>(
   return { values, invalid };
 }
 
+function canonicalizeJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalizeJson);
+  if (value === null || typeof value !== 'object') return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => [key, canonicalizeJson(entry)]),
+  );
+}
+
+function jsonSnapshotsMatch(left: unknown, right: unknown): boolean {
+  return JSON.stringify(canonicalizeJson(left)) === JSON.stringify(canonicalizeJson(right));
+}
+
 async function loadSetupSnapshot(): Promise<SetupSnapshot> {
   for (let attempt = 0; attempt < SNAPSHOT_ATTEMPTS; attempt += 1) {
     try {
@@ -87,12 +101,13 @@ async function loadSetupSnapshot(): Promise<SetupSnapshot> {
         continue;
       }
       const rootSnapshotMatches =
-        JSON.stringify(root.profilesRaw) === JSON.stringify(after.profilesRaw) &&
-        JSON.stringify(root.provenanceRaw) === JSON.stringify(after.provenanceRaw);
+        jsonSnapshotsMatch(root.profilesRaw, after.profilesRaw) &&
+        jsonSnapshotsMatch(root.provenanceRaw, after.provenanceRaw);
+      if (!rootSnapshotMatches) continue;
       const stableRoot: SetupRootInspection = {
         ...root,
         revisionValid: root.revisionValid && after.revisionValid,
-        profilesTypeValid: root.profilesTypeValid && after.profilesTypeValid && rootSnapshotMatches,
+        profilesTypeValid: root.profilesTypeValid && after.profilesTypeValid,
         provenanceTypeValid: root.provenanceTypeValid && after.provenanceTypeValid,
         commitStorageTypesValid: root.commitStorageTypesValid && after.commitStorageTypesValid,
       };
