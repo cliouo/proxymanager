@@ -13,10 +13,10 @@ export const MAX_RUNTIME_REGEX_INPUT_LENGTH = 512;
 const DETECTOR_OPTIONS = {
   maxScore: 200,
   maxSteps: 2_000,
-  // A 25 ms wall-clock cutoff produced false rejects under ordinary parallel
-  // test/server load; 100 ms keeps adversarial analysis bounded while the
-  // deterministic maxSteps limit remains the primary work cap.
-  timeout: 100,
+  // Keep analysis deterministic. A wall-clock timeout turns scheduler stalls
+  // or ordinary server load into false "unsafe" results. redos-detector only
+  // requires one finite work bound; maxSteps supplies it, while the pattern
+  // and input length caps above bound the surrounding compile/match work.
 } as const;
 
 function detectorFlags(flags: string): {
