@@ -910,7 +910,13 @@ function parseVLESS(uri: string): ClashProxy {
     const packetEncoding = params[packetEncodingKeys[0]];
     if (packetEncoding === 'packet' || packetEncoding === 'packetaddr') {
       proxy['packet-encoding'] = 'packetaddr';
-    } else if (packetEncoding === 'xudp') {
+    } else if (packetEncoding === 'xudp' || packetEncoding === 'none') {
+      // Target-specific exporters omit packet encoding for their Clash and
+      // sing-box outputs (both select XUDP by default) while spelling the same
+      // node as `packetEncoding=none` in its generic VLESS URI. Mihomo's own
+      // share converter also accepts `none`, omits the field, and its outbound
+      // constructor then selects XUDP. Emit the effective Mihomo semantic
+      // explicitly instead of rejecting an otherwise valid subscription.
       proxy['packet-encoding'] = 'xudp';
     } else {
       throw new Error('unsupported vless packet encoding');
