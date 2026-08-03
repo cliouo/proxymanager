@@ -294,7 +294,7 @@ export function OperatorWorkbench(cfg: WorkbenchConfig) {
         </span>
         {dirty ? (
           <span className={styles.saveMark}>
-            <span className="dot" />
+            <span className={styles.saveDot} />
             未保存
           </span>
         ) : (
@@ -330,68 +330,75 @@ export function OperatorWorkbench(cfg: WorkbenchConfig) {
 
       {loadError && <div className={styles.loadErr}>{loadError}</div>}
 
-      <div className="md-grid" style={{ gridTemplateColumns: '1fr 320px' }}>
+      <div className={styles.workbenchGrid}>
         {/* ── left: pipeline ── */}
-        <div>
-          {operators.length === 0 ? (
-            <div className={styles.empty}>
-              <div className="t">还没有处理步骤</div>
-              <div className="d">
-                点下方「＋ 添加步骤」添加第一个处理步骤，节点会按从上到下的顺序流过。
+        <section className={styles.pipelinePane} aria-labelledby="pipeline-heading">
+          <header className={styles.pipelineHeader}>
+            <div>
+              <span className={styles.sectionLabel}>处理流程</span>
+              <div className={styles.pipelineHeadingRow}>
+                <h2 id="pipeline-heading">
+                  {operators.length === 0 ? '建立处理流程' : `已配置 ${operators.length} 个步骤`}
+                </h2>
+                <span>从上到下依次执行</span>
               </div>
             </div>
-          ) : (
-            operators.map((op, i) => (
-              <OperatorCard
-                key={op.id}
-                op={op}
-                index={i}
-                total={operators.length}
-                step={stepById.get(op.id)}
-                complete={isComplete(op)}
-                expanded={expandedId === op.id}
-                onToggleExpand={() => setExpandedId((cur) => (cur === op.id ? null : op.id))}
-                onChange={(next) => updateOp(i, next)}
-                onToggle={() => toggleOp(i)}
-                onRemove={() => removeOp(i)}
-                onMoveUp={() => moveOp(i, -1)}
-                onMoveDown={() => moveOp(i, 1)}
-              />
-            ))
-          )}
+            <span className={styles.stepCount}>{operators.length} 步</span>
+          </header>
 
-          <div className={styles.addWrap}>
-            <button type="button" className="btn" onClick={() => setAddOpen((v) => !v)}>
-              ＋ 添加步骤
-            </button>
-            {addOpen && (
+          <div className={styles.pipelineBody}>
+            {operators.length === 0 ? (
+              <div className={styles.empty}>
+                <div className={styles.emptyTrack} aria-hidden="true">
+                  <span className={styles.emptyNode}>＋</span>
+                  <span className={styles.emptyLine} />
+                </div>
+                <div className={styles.emptyContent}>
+                  <h3>从第一个处理步骤开始</h3>
+                  <p>
+                    添加过滤、重命名、排序等步骤。每一步都会使用上一阶段的结果，右侧预览会同步更新。
+                  </p>
+                  <AddOperatorControl
+                    open={addOpen}
+                    primary
+                    onToggle={() => setAddOpen((v) => !v)}
+                    onClose={() => setAddOpen(false)}
+                    onAdd={addOp}
+                  />
+                </div>
+              </div>
+            ) : (
               <>
-                <button
-                  type="button"
-                  aria-label="关闭菜单"
-                  className={styles.addScrim}
-                  onClick={() => setAddOpen(false)}
-                />
-                <div className={styles.addMenu}>
-                  {KIND_ORDER.map((kind, n) => (
-                    <button
-                      key={kind}
-                      type="button"
-                      className={styles.addItem}
-                      onClick={() => addOp(kind)}
-                    >
-                      <span className="n">{n + 1}</span>
-                      <span>
-                        <span className="t">{KIND_META[kind].title}</span>
-                        <span className="d">{KIND_META[kind].desc}</span>
-                      </span>
-                    </button>
+                <div className={styles.pipelineList}>
+                  {operators.map((op, i) => (
+                    <OperatorCard
+                      key={op.id}
+                      op={op}
+                      index={i}
+                      total={operators.length}
+                      step={stepById.get(op.id)}
+                      complete={isComplete(op)}
+                      expanded={expandedId === op.id}
+                      onToggleExpand={() => setExpandedId((cur) => (cur === op.id ? null : op.id))}
+                      onChange={(next) => updateOp(i, next)}
+                      onToggle={() => toggleOp(i)}
+                      onRemove={() => removeOp(i)}
+                      onMoveUp={() => moveOp(i, -1)}
+                      onMoveDown={() => moveOp(i, 1)}
+                    />
                   ))}
                 </div>
+                <AddOperatorControl
+                  open={addOpen}
+                  tail
+                  onToggle={() => setAddOpen((v) => !v)}
+                  onClose={() => setAddOpen(false)}
+                  onAdd={addOp}
+                />
               </>
             )}
           </div>
-        </div>
+        </section>
 
         {/* ── right: preview ── */}
         <PreviewPane
@@ -401,6 +408,71 @@ export function OperatorWorkbench(cfg: WorkbenchConfig) {
           loaded={loaded && !loadError}
         />
       </div>
+    </div>
+  );
+}
+
+function AddOperatorControl({
+  open,
+  primary = false,
+  tail = false,
+  onToggle,
+  onClose,
+  onAdd,
+}: {
+  open: boolean;
+  primary?: boolean;
+  tail?: boolean;
+  onToggle: () => void;
+  onClose: () => void;
+  onAdd: (kind: OperatorKind) => void;
+}) {
+  return (
+    <div
+      className={`${styles.addWrap} ${primary ? styles.addEmpty : ''} ${tail ? styles.addTail : ''}`}
+    >
+      <button
+        type="button"
+        className={primary ? styles.addPrimary : styles.addSecondary}
+        aria-expanded={open}
+        aria-controls="operator-kind-options"
+        onClick={onToggle}
+      >
+        <span aria-hidden="true">＋</span>
+        {primary ? '添加第一个步骤' : '继续添加步骤'}
+      </button>
+      {open && (
+        <>
+          <button
+            type="button"
+            aria-label="关闭添加步骤菜单"
+            tabIndex={-1}
+            className={styles.addScrim}
+            onClick={onClose}
+          />
+          <div
+            id="operator-kind-options"
+            className={styles.addMenu}
+            role="group"
+            aria-label="选择处理步骤"
+          >
+            {KIND_ORDER.map((kind, n) => (
+              <button
+                key={kind}
+                type="button"
+                className={styles.addItem}
+                onClick={() => onAdd(kind)}
+              >
+                <span className={styles.addItemNumber}>{String(n + 1).padStart(2, '0')}</span>
+                <span>
+                  <span className={styles.addItemTitle}>{KIND_META[kind].title}</span>
+                  <span className={styles.addItemDescription}>{KIND_META[kind].desc}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -915,36 +987,38 @@ function PreviewPane({
   const memberErrors = preview?.memberErrors ?? [];
 
   return (
-    <aside className="panel" style={{ position: 'sticky', top: 74 }}>
-      <div className="panel-head">
-        <h2>处理预览</h2>
-        {previewing && <span className="sub">运行中…</span>}
-        <div className="grow" />
-        <div className="seg">
+    <aside className={styles.previewPane} aria-labelledby="preview-heading">
+      <header className={styles.previewHeader}>
+        <div>
+          <span className={styles.sectionLabel}>实时结果</span>
+          <h2 id="preview-heading">处理预览</h2>
+        </div>
+        {previewing && <span className={styles.previewing}>运行中…</span>}
+        <div className={styles.previewTabs}>
           <button
             type="button"
-            className={`opt${side === 'after' ? ' on' : ''}`}
+            className={`${styles.previewTab} ${side === 'after' ? styles.active : ''}`}
             onClick={() => setSide('after')}
           >
             处理后
           </button>
           <button
             type="button"
-            className={`opt${side === 'before' ? ' on' : ''}`}
+            className={`${styles.previewTab} ${side === 'before' ? styles.active : ''}`}
             onClick={() => setSide('before')}
           >
             处理前
           </button>
         </div>
-      </div>
+      </header>
 
-      <div className="panel-body" style={{ padding: '14px 16px' }}>
+      <div className={styles.previewBody}>
         {preview && (
           <div className={styles.delta}>
-            <span className="from">{preview.before.count}</span>
-            <span className="arrow">→</span>
-            <span className="to">{preview.after.count}</span>
-            <span className="unit">节点</span>
+            <span className={styles.deltaFrom}>{preview.before.count}</span>
+            <span className={styles.deltaArrow}>→</span>
+            <span className={styles.deltaTo}>{preview.after.count}</span>
+            <span className={styles.deltaUnit}>节点</span>
             {delta !== 0 && (
               <span className={delta < 0 ? styles.minus : styles.plus}>
                 {delta > 0 ? `+${delta}` : delta}
@@ -955,7 +1029,9 @@ function PreviewPane({
 
         {memberErrors.length > 0 && (
           <div className={styles.memberWarn}>
-            <div className="t">{memberErrors.length} 个成员拉取失败，已跳过</div>
+            <div className={styles.memberWarnTitle}>
+              {memberErrors.length} 个成员拉取失败，已跳过
+            </div>
             <ul>
               {memberErrors.map((m, i) => (
                 <li key={`${i}-${m.name}`}>{m.name}</li>
@@ -978,8 +1054,8 @@ function PreviewPane({
               <div className={styles.nodeList}>
                 {list.names.map((name, i) => (
                   <div key={`${i}-${name}`} className={styles.nodeLi}>
-                    <span className="n">{i + 1}</span>
-                    <span className="name">{name}</span>
+                    <span className={styles.nodeIndex}>{i + 1}</span>
+                    <span className={styles.nodeName}>{name}</span>
                   </div>
                 ))}
               </div>
