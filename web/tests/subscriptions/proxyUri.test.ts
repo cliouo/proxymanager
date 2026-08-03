@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   looksLikeProxyUriList,
   MAX_PROXY_URI_LINES,
@@ -2577,6 +2577,23 @@ describe('P3-6 matchFilter fixed-regexp2 compatibility', () => {
 
   it('keeps uncased non-ASCII names usable under IgnoreCase', () => {
     expect(matchFilter(nodes, '(?i)🇺🇸|香港').error).toBeNull();
+  });
+
+  it('does not reject a safe filter when wall-clock time advances during analysis', () => {
+    const nowSpy = vi.spyOn(Date, 'now');
+    let calls = 0;
+    nowSpy.mockImplementation(() => (calls++ === 0 ? 0 : 1_000));
+
+    try {
+      expect(
+        matchFilter(['DMIT.USA-codex', '🇺🇸 US01'], '(?i)🇺🇸|美国|(?<![A-Za-z])USA?(?![A-Za-z])'),
+      ).toEqual({
+        matched: ['DMIT.USA-codex', '🇺🇸 US01'],
+        error: null,
+      });
+    } finally {
+      nowSpy.mockRestore();
+    }
   });
 
   it('uses Unicode code points for dot and supports backtick-separated OR filters', () => {
