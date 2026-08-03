@@ -172,17 +172,22 @@ Evidence:
 - The inspected Xray sharing proposal does not define a canonical
   `packet-encoding` URI query field. Spellings observed in clients must be
   classified as ecosystem extensions until a stronger source is found.
+- A 2026-08-03 credential-redacted target-differential export produced the same
+  VLESS node with packet encoding omitted for Clash and sing-box, but with
+  `packetEncoding=none` in both the decoded V2Ray export and the byte-identical
+  plain URI. Both omitted target configurations select XUDP by default.
 
 Audit rule:
 
-- For Mihomo output, emit only an explicit, validated `xudp` or `packetaddr`
-  when that semantic is requested. Reject unknown URI values instead of relying
-  on Mihomo's default-to-XUDP branch.
+- For Mihomo output, normalize omitted, explicit `xudp`, and the exact
+  target-compatibility spelling `packetEncoding=none` to explicit `xudp`;
+  normalize `packet`/`packetaddr` to explicit `packetaddr`. Reject empty and
+  unknown URI values instead of relying on Mihomo's default-to-XUDP branch.
 - Do not claim that empty produces raw on Mihomo `v1.19.28` until a checksum-
   pinned official binary test proves otherwise. The fixed source says it does
   not.
-- Keep raw, packetaddr, and XUDP as distinct canonical semantics. Do not treat
-  v2ray packetaddr as XUDP.
+- Keep raw configuration semantics, packetaddr, and XUDP distinct outside this
+  target-specific URI adapter. Do not treat v2ray packetaddr as XUDP.
 
 ### 3. Reality must fail closed; `security=reality` without `pbk` is not TLS
 

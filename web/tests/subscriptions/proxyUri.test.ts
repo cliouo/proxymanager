@@ -1074,6 +1074,23 @@ describe('normaliseToClashProviderYaml — URI fallback', () => {
     expect(result.yaml).toContain('B');
   });
 
+  it('normalizes plain and base64-wrapped VLESS packetEncoding=none to Mihomo default XUDP', () => {
+    const uri =
+      'vless://00000000-0000-4000-8000-000000000001@example.com:443' +
+      '?encryption=none&flow=xtls-rprx-vision&packetEncoding=none&type=tcp#VLESS';
+    for (const input of [uri, Buffer.from(uri, 'utf-8').toString('base64')]) {
+      const result = normaliseToClashProviderYaml(input);
+      const provider = parseYaml(result.yaml) as { proxies: Record<string, unknown>[] };
+
+      expect(result.proxyCount).toBe(1);
+      expect(provider.proxies[0]).toMatchObject({
+        type: 'vless',
+        flow: 'xtls-rprx-vision',
+        'packet-encoding': 'xudp',
+      });
+    }
+  });
+
   it('rejects a mixed URI list instead of silently dropping failed nodes', () => {
     const valid = 'vless://00000000-0000-0000-0000-000000000000@example.com:443?type=tcp#good';
     const invalid = 'trojan://FAKE_SECRET_DO_NOT_LOG@example.com:not-a-port#broken';
@@ -1447,9 +1464,9 @@ describe('vless:// transport + VLESS Encryption (mihomo mapping)', () => {
     const none = parseProxyUriList(
       `vless://${UUID}@h.example:443?encryption=none&type=tcp&packetEncoding=none#PE2`,
     );
-    expect(none.proxies).toHaveLength(0);
-    expect(none.errors).toHaveLength(1);
-    expect(none.errors[0].error).toMatch(/packet encoding/i);
+    expect(none.errors).toHaveLength(0);
+    expect(none.proxies).toHaveLength(1);
+    expect(none.proxies[0]['packet-encoding']).toBe('xudp');
 
     const explicitXudp = parseProxyUriList(
       `vless://${UUID}@h.example:443?encryption=none&type=tcp&packetEncoding=xudp#PE3`,

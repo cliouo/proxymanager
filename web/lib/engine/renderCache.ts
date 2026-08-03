@@ -105,8 +105,10 @@ return 1
  *  18 → typed device features inject device-scoped Tailscale nodes, groups and
  *       routes after the RFC 7386 patch and before final validation.
  *  19 → subscriptions may carry inert skip-cert-verify while tls is disabled.
+ *  20 → VLESS URI packetEncoding=none normalises to Mihomo's effective XUDP
+ *       default instead of rejecting the subscription.
  */
-const RENDER_CACHE_EPOCH = 19;
+const RENDER_CACHE_EPOCH = 20;
 
 export type RenderCacheStatus = 'hit' | 'miss' | 'bypass';
 

@@ -671,8 +671,10 @@ shared parser and its URI regression suite:
   and folded whitespace.
 - Adjacent XHTTP safety follow-ups accept nested Reality `pbk`/`sid` aliases and
   reject the Xray-invalid `stream-one` plus `downloadSettings` combination.
-- Explicit VLESS `packetEncoding=none` now rejects because the current emitter
-  cannot represent raw mode: omitting the target key would select XUDP instead.
+- Explicit VLESS URI `packetEncoding=none` now normalizes to canonical XUDP. A
+  2026-08-03 credential-redacted target-differential export showed the identical
+  node omitting the field for Clash and sing-box (both default XUDP) while its
+  V2Ray/plain URI spelling used `none`.
 
 Test-first record:
 
