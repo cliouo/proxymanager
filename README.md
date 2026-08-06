@@ -77,13 +77,19 @@ proxymanager/
 2. 项目 **Storage** 标签页 → Create Database → **Upstash Redis**（自动注入 `KV_REST_API_URL` / `KV_REST_API_TOKEN`）
 3. 添加环境变量：
 
-   | 变量 | 说明 |
-   | --- | --- |
-   | `ADMIN_KEY` | 管理 API 与 Web UI 登录用的 Bearer token，自己生成一个强随机串 |
-   | `SUB_TOKEN` | 订阅分发链接里的路径 token，同样生成一个强随机串 |
-   | `DEEPSEEK_API_KEY` | （可选）站内 AI 助手使用的模型 key |
+   | 变量                 | 说明                                                                                                                           |
+   | -------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+   | `ADMIN_KEY`          | 管理 API 与 Web UI 登录用的 Bearer token，自己生成一个强随机串                                                                 |
+   | `SUB_TOKEN`          | 订阅分发链接里的路径 token，同样生成一个强随机串                                                                               |
+   | `NODE_HANDLE_SECRET` | **必需** — 智能命名助手的 opaque 句柄 HMAC 密钥，必须 ≥ 32 字节强随机值（`openssl rand -hex 32`），且在所有实例/部署间保持稳定 |
+   | `DEEPSEEK_API_KEY`   | （可选）站内 AI 助手使用的模型 key                                                                                             |
 
 4. 部署完成后访问 `https://<你的域名>/`，用 `ADMIN_KEY` 登录即可开始添加订阅源。
+
+> **`NODE_HANDLE_SECRET` 必须在新代码上线前设置**：升级到包含智能命名的版本时，先在
+> Vercel / `.env.local` 里配好该变量再部署——缺失或弱密钥时命名工作台与分析入口会
+> 以通用错误失败关闭。密钥轮换会使在途会话里已下发的临时句柄失效（模型需重新
+> `list_naming_targets`），请在维护窗口内轮换。
 
 订阅交付地址形如：
 

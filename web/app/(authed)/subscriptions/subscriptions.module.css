@@ -65,7 +65,9 @@
 }
 .led.ok {
   background: var(--ok);
-  box-shadow: 0 0 8px var(--ok-dim), 0 0 0 3px var(--ok-dim);
+  box-shadow:
+    0 0 8px var(--ok-dim),
+    0 0 0 3px var(--ok-dim);
 }
 .led.err {
   background: var(--danger);
@@ -294,19 +296,24 @@
   border-radius: var(--r-sm);
   background: transparent;
   box-shadow: inset 0 0 0 1px transparent;
-  transition: box-shadow 0.15s ease, background 0.15s ease;
+  transition:
+    box-shadow 0.15s ease,
+    background 0.15s ease;
 }
 .ttlCustom:hover {
   background: color-mix(in srgb, var(--surface-3) 65%, transparent);
 }
 .ttlCustomOn {
   background: var(--surface);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08),
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.08),
     inset 0 0 0 1px color-mix(in srgb, var(--accent) 32%, transparent);
 }
 .ttlCustom:focus-within {
   background: var(--surface);
-  box-shadow: inset 0 0 0 1px var(--accent), 0 0 0 3px var(--accent-dim);
+  box-shadow:
+    inset 0 0 0 1px var(--accent),
+    0 0 0 3px var(--accent-dim);
 }
 .ttlInput {
   width: 52px;
@@ -482,4 +489,29 @@
   .mem {
     flex-wrap: wrap;
   }
+}
+
+/* ─── 智能命名（第三主区块） ─────────────────────────────────────────── */
+
+.namingRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border, #e2e5ea);
+}
+
+.namingRow:last-child {
+  border-bottom: none;
+}
+
+.namingLabel {
+  font-weight: 600;
+  min-width: 200px;
+}
+
+.namingState {
+  color: #667085;
+  font-size: 12px;
+  flex: 1;
 }

@@ -12,16 +12,45 @@ const SUB = { id: 's1', name: 'air-hk', display_name: '香港机场' };
 let profiles: Array<{ id: string; name: string; source: { type: string; id?: string } }>;
 let collections: Array<{ id: string; name: string; subscription_ids: string[] }>;
 const repoDeleteMock = vi.fn(async () => true);
+const commitDeleteMock = vi.fn(async (id: string, version: number, plan?: unknown) => {
+  void plan;
+  return {
+    ok: true,
+    currentVersion: id === 's1' ? version : 0,
+  };
+});
+const ordinalPlan = { expectedGeneration: 0, expectedGlobalSize: 0, sources: [] };
 
 vi.mock('@/lib/repos/subscriptionsRepo', () => ({
   getSubscription: async (id: string) => (id === SUB.id ? SUB : null),
   getSubscriptionByName: async () => null,
   listSubscriptions: async () => [SUB],
   upsertSubscription: async () => undefined,
+  commitSubscriptionRuntimePatch: async () => ({ ok: true, currentVersion: 1 }),
   deleteSubscription: () => repoDeleteMock(),
+  commitSubscriptionDelete: (id: string, version: number, plan: typeof ordinalPlan) =>
+    commitDeleteMock(id, version, plan),
 }));
 vi.mock('@/lib/repos/profilesRepo', () => ({ listProfiles: async () => profiles }));
 vi.mock('@/lib/repos/collectionsRepo', () => ({ listCollections: async () => collections }));
+vi.mock('@/lib/repos/configVersionRepo', () => ({ getConfigVersion: async () => 7 }));
+vi.mock('@/lib/repos/nodeOrdinalRepo', () => ({ getOrdinalGeneration: async () => 0 }));
+vi.mock('@/lib/services/nodeOrdinalService', () => ({
+  createOrdinalPlanningSession: vi.fn(async () => ({
+    registerSourceDomain: vi.fn(),
+    fingerprintsForSource: vi.fn(() => undefined),
+    resolverFor: vi.fn(() => () => undefined),
+    seal: vi.fn(() => ordinalPlan),
+  })),
+}));
+vi.mock('@/lib/services/configPreflight', () => ({
+  preflightProfileConfig: async (profileId: string) => ({
+    configVersion: 7,
+    ordinalGeneration: 0,
+    ordinalPlan,
+    candidate: { profileId },
+  }),
+}));
 vi.mock('@/lib/repos/resolvedRepo', () => ({
   invalidateResolvedSnapshot: async () => undefined,
 }));
@@ -58,9 +87,10 @@ describe('deleteSubscription reference warnings (P0-2)', () => {
     expect(warnings).toEqual([]);
   });
 
-  it('still deletes (delete-but-warn, never blocks)', async () => {
+  it('still deletes (delete-but-warn, never blocks) — via the CAS delete gate', async () => {
     profiles = [{ id: 'p1', name: 'work', source: { type: 'subscription', id: 's1' } }];
     await svc.deleteSubscription('s1');
-    expect(repoDeleteMock).toHaveBeenCalledTimes(1);
+    expect(commitDeleteMock).toHaveBeenCalledTimes(1);
+    expect(commitDeleteMock).toHaveBeenCalledWith('s1', 7, ordinalPlan);
   });
 });

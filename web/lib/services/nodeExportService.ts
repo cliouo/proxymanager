@@ -1,8 +1,19 @@
 import { stringify } from 'yaml';
-import { resolveCollectionMemberSubs, settleWithConcurrencyInOrder } from '@/lib/engine/resolve';
+import { enabledCollectionMemberSubs, settleWithConcurrencyInOrder } from '@/lib/engine/resolve';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { MAX_PROXY_NODES, validateMihomoProxyList } from '@/lib/proxies/mihomoProxyValidator';
 import { applyOperators, type ClashProxy } from '@/lib/proxies/operators';
+import { fingerprintOf, sourceOf, stripSource, withSource } from '@/lib/proxies/provenance';
+import { dedupByNameAndIdentity } from '@/lib/proxies/nodeDedup';
+import { nodeFingerprint } from '@/lib/proxies/naming';
+import {
+  createOrdinalDomainRegistry,
+  createOrdinalPlanningSession,
+  resolveOrdinalsFor,
+  type OrdinalDomainRegistry,
+  type OrdinalPlanningSession,
+} from '@/lib/services/nodeOrdinalService';
+import { isActiveCurrentRenameTemplateOperator, isExecutableOperator } from '@/schemas/operator';
 import { resolveSubscriptionProxies } from '@/lib/services/subscriptionFetcher';
 import {
   SubscriptionResolutionValidationError,
@@ -31,10 +42,25 @@ export interface NodeExportResult {
   traffic?: SubscriptionTraffic;
   /** 聚合导出时,拉取失败被跳过的成员(全员失败则直接抛错,不会走到这)。 */
   memberErrors: { name: string; error: string }[];
+  /** TRUE duplicates removed by raw identity (source-priority diagnostics). */
+  deduped?: Array<{ kept: string; dropped: string }>;
+  /** Managed-path same-name distinct identities kept under a meaningful suffix. */
+  resolvedNames?: Array<{ from: string; to: string }>;
 }
 
 interface ExportOptions {
   noCache?: boolean;
+  /**
+   * Persist fresh upstream fetches into the fetch cache. Preview / dry-run
+   * callers pass false — a keystroke-driven preview must never mutate shared
+   * cache state. Export / render keep the default (warm the cache).
+   */
+  writeCache?: boolean;
+  /** Config generation captured before the caller loaded the source record. */
+  ordinalConfigVersion?: number;
+  /** One read-only plan shared by member and collection stages. */
+  ordinalPlanningSession?: OrdinalPlanningSession;
+  ordinalDomainRegistry?: OrdinalDomainRegistry;
 }
 
 /** 同时在途的成员订阅 fetch 上限,与渲染管线保持一致。 */
@@ -59,20 +85,66 @@ function nameOf(item: Record<string, unknown>): string | null {
 }
 
 /** First-writer-wins 同名去重 —— 与 resolveConfig 注入链路同序同语义。 */
-function dedupByName(proxies: Record<string, unknown>[]): Record<string, unknown>[] {
-  const seen = new Set<string>();
-  const survivors: Record<string, unknown>[] = [];
-  for (const item of proxies) {
+export interface ExportDedupDiagnostics {
+  /** TRUE duplicates removed by raw identity (source-priority = input order). */
+  deduped: Array<{ kept: string; dropped: string }>;
+  /** Managed-path same-name distinct identities kept under a meaningful suffix. */
+  resolved: Array<{ from: string; to: string }>;
+}
+
+/**
+ * Identity-aware export dedup — the export twin of the resolve-level rule:
+ * NAME equality never drops distinct nodes on the managed path. True
+ * duplicates (same immutable raw fingerprint) dedup by explicit source
+ * priority (input order) with diagnostics; distinct identities that share a
+ * display name BOTH survive, the later one deterministically suffixed with
+ * its source label. Non-managed raw-name collisions keep the documented
+ * first-writer-wins contract.
+ */
+/** Run the SHARED dedup state machine (lib/proxies/nodeDedup) over export
+ * proxies. `isManaged` carries PER-NODE managed provenance (the node's own
+ * source's active rename-template) — never a collection-wide boolean
+ * (pass-3 finding). Every keeper — including a suffix-renamed keeper —
+ * registers its fingerprint inside the machine, so true duplicates are
+ * deduped globally everywhere. EXPORTED so the public preview routes run the
+ * exact same machine after their operator pipelines (pass-1 finding): the
+ * preview's final identity/name set must equal render/single-export/
+ * collection-export, never the raw pipeline output. */
+export function dedupExportProxies(
+  proxies: Record<string, unknown>[],
+  isManaged: (item: Record<string, unknown>) => boolean,
+): {
+  proxies: Record<string, unknown>[];
+  deduped: ExportDedupDiagnostics['deduped'];
+  resolved: ExportDedupDiagnostics['resolved'];
+} {
+  const nodes = proxies.map((item) => {
     const name = nameOf(item);
-    if (name === null) {
-      survivors.push(item);
-      continue;
-    }
-    if (seen.has(name)) continue;
-    seen.add(name);
-    survivors.push(item);
-  }
-  return survivors;
+    return {
+      name: name ?? '',
+      fp: fingerprintOf(item) ?? nodeFingerprint(item),
+      sourceKey: sourceOf(item)?.key ?? '',
+      sourceLabel: sourceOf(item)?.label ?? 'node',
+      managed: isManaged(item),
+      original: item,
+    };
+  });
+  const result = dedupByNameAndIdentity(nodes);
+  const out: Record<string, unknown>[] = [];
+  result.kept.forEach(({ node, finalName }) => {
+    const original = node.original as Record<string, unknown> | undefined;
+    if (original === undefined) return;
+    out.push(finalName === node.name ? original : { ...original, name: finalName });
+  });
+  const deduped: ExportDedupDiagnostics['deduped'] = result.diagnostics.deduped.map((d) => ({
+    kept: d.kept,
+    dropped: d.dropped,
+  }));
+  const resolved: ExportDedupDiagnostics['resolved'] = result.diagnostics.resolved.map((r) => ({
+    from: r.from,
+    to: r.to,
+  }));
+  return { proxies: out, deduped, resolved };
 }
 
 /** 单订阅源的节点导出。停用的源由路由层拦下(404),这里不重复判断。 */
@@ -80,10 +152,20 @@ export async function exportSubscriptionNodes(
   sub: Subscription,
   options: ExportOptions = {},
 ): Promise<NodeExportResult> {
-  const result = await resolveSubscriptionProxies(sub, { noCache: options.noCache });
-  const proxies = validateMihomoProxyList(dedupByName(result.proxies), {
-    allowExternalDialerProxy: true,
+  const result = await resolveSubscriptionProxies(sub, {
+    noCache: options.noCache,
+    writeCache: options.writeCache,
+    ordinalConfigVersion: options.ordinalConfigVersion,
+    ordinalPlanningSession: options.ordinalPlanningSession,
+    ordinalDomainRegistry: options.ordinalPlanningSession ?? options.ordinalDomainRegistry,
   });
+  const managed = (sub.operators ?? []).some(isActiveCurrentRenameTemplateOperator);
+  const {
+    proxies: deduped,
+    deduped: dropped,
+    resolved: renamed,
+  } = dedupExportProxies(result.proxies, () => managed);
+  const proxies = validateMihomoProxyList(deduped, { allowExternalDialerProxy: true });
   return {
     yaml: stringify({ proxies }, { lineWidth: 0 }),
     proxies,
@@ -91,6 +173,8 @@ export async function exportSubscriptionNodes(
     stale: result.stale === true,
     traffic: result.traffic,
     memberErrors: [],
+    ...(dropped.length > 0 ? { deduped: dropped } : {}),
+    ...(renamed.length > 0 ? { resolvedNames: renamed } : {}),
   };
 }
 
@@ -101,6 +185,8 @@ export interface MergedMembers {
   memberErrors: { name: string; error: string }[];
   /** True if any member served a stale-on-error cache. */
   stale: boolean;
+  ordinalPlanningSession?: OrdinalPlanningSession;
+  ordinalDomainRegistry: OrdinalDomainRegistry;
 }
 
 /**
@@ -113,9 +199,16 @@ export async function mergeCollectionMemberProxies(
   allSubscriptions: Subscription[],
   options: ExportOptions = {},
 ): Promise<MergedMembers> {
-  const members = resolveCollectionMemberSubs(collection, allSubscriptions).filter(
-    (s) => s.enabled,
-  );
+  const ordinalPlanningSession =
+    options.writeCache === false
+      ? (options.ordinalPlanningSession ??
+        (await createOrdinalPlanningSession(allSubscriptions.map((sub) => sub.name))))
+      : options.ordinalPlanningSession;
+  const ordinalDomainRegistry =
+    ordinalPlanningSession ?? options.ordinalDomainRegistry ?? createOrdinalDomainRegistry();
+  // pass-10 blocker 1: export promises VISIBLE membership — the single
+  // authoritative enabled set, no duplicate inline filter
+  const members = enabledCollectionMemberSubs(collection, allSubscriptions);
   if (members.length === 0) {
     throw ProblemDetailsError.unprocessable(
       `聚合订阅 "${collection.name}" 没有启用中的成员订阅,无节点可下发。`,
@@ -129,7 +222,14 @@ export async function mergeCollectionMemberProxies(
   for await (const outcome of settleWithConcurrencyInOrder(
     members,
     MEMBER_FETCH_CONCURRENCY,
-    (sub) => resolveSubscriptionProxies(sub, { noCache: options.noCache }),
+    (sub) =>
+      resolveSubscriptionProxies(sub, {
+        noCache: options.noCache,
+        writeCache: options.writeCache,
+        ordinalConfigVersion: options.ordinalConfigVersion,
+        ordinalPlanningSession,
+        ordinalDomainRegistry,
+      }),
   )) {
     const member = members[i];
     i += 1;
@@ -146,7 +246,11 @@ export async function mergeCollectionMemberProxies(
         `聚合订阅候选节点超过 ${MAX_PROXY_NODES} 个,已拒绝生成。`,
       );
     }
-    merged.push(...outcome.value.proxies);
+    // Per-member provenance (enumerable Symbol — never serialised): the
+    // collection's own rename-template operator reads source alias + index
+    // from it, with the same semantics as the render pipeline.
+    const identity = { key: member.name, label: member.display_name?.trim() || member.name };
+    for (const item of outcome.value.proxies) merged.push(withSource(item, identity));
   }
 
   if (memberErrors.length === members.length) {
@@ -157,7 +261,7 @@ export async function mergeCollectionMemberProxies(
     );
   }
 
-  return { merged, memberErrors, stale };
+  return { merged, memberErrors, stale, ordinalPlanningSession, ordinalDomainRegistry };
 }
 
 /**
@@ -169,23 +273,68 @@ export async function exportCollectionNodes(
   allSubscriptions: Subscription[],
   options: ExportOptions = {},
 ): Promise<NodeExportResult> {
+  const ordinalPlanningSession =
+    options.writeCache === false
+      ? (options.ordinalPlanningSession ??
+        (await createOrdinalPlanningSession(allSubscriptions.map((sub) => sub.name))))
+      : options.ordinalPlanningSession;
+  const ordinalDomainRegistry =
+    ordinalPlanningSession ?? options.ordinalDomainRegistry ?? createOrdinalDomainRegistry();
   const { merged, memberErrors, stale } = await mergeCollectionMemberProxies(
     collection,
     allSubscriptions,
-    options,
+    { ...options, ordinalPlanningSession, ordinalDomainRegistry },
   );
 
+  const executable = collection.operators.filter(isExecutableOperator);
+  const managedOp = executable.find(isActiveCurrentRenameTemplateOperator);
+  const ordinals = managedOp
+    ? await resolveOrdinalsFor(merged, sourceOf, {
+        persist: options.writeCache !== false,
+        template: managedOp.template,
+        recognitionRules: managedOp.recognitionRules ?? [],
+        configVersion: options.ordinalConfigVersion,
+        planningSession: ordinalPlanningSession,
+        domainRegistry: ordinalDomainRegistry,
+      })
+    : undefined;
   const processed =
-    collection.operators.length > 0
-      ? applyOperators(merged as ClashProxy[], collection.operators).proxies
+    executable.length > 0
+      ? applyOperators(merged as ClashProxy[], executable, ordinals).proxies
       : merged;
-  const proxies = validateMihomoProxyList(dedupByName(processed), {
+  // PER-NODE managed-status propagation (pass-3 finding): each node's own
+  // MEMBER subscription's active rename-template decides its managed
+  // provenance — an unrelated managed third member can never promote a
+  // plain/plain collision. The collection's own managed op promotes every
+  // node (the collection stage ran managed naming over the merged set).
+  // only ENABLED members contribute nodes to the export — their managed
+  // provenance is the only one that can promote
+  const memberManagedByKey = new Map(
+    enabledCollectionMemberSubs(collection, allSubscriptions).map((m) => [
+      m.name,
+      (m.operators ?? []).some(isActiveCurrentRenameTemplateOperator),
+    ]),
+  );
+  const {
+    proxies: deduped,
+    deduped: dropped,
+    resolved: renamed,
+  } = dedupExportProxies(processed, (item) => {
+    if (managedOp !== undefined) return true;
+    const key = sourceOf(item)?.key;
+    return key !== undefined && memberManagedByKey.get(key) === true;
+  });
+  // Provenance must never reach the serialised provider YAML / public API.
+  const stripped = deduped.map((p) => stripSource(p));
+  const proxies = validateMihomoProxyList(stripped, {
     allowExternalDialerProxy: true,
   });
   return {
     yaml: stringify({ proxies }, { lineWidth: 0 }),
     proxies,
     proxyCount: proxies.length,
+    ...(dropped.length > 0 ? { deduped: dropped } : {}),
+    ...(renamed.length > 0 ? { resolvedNames: renamed } : {}),
     stale,
     memberErrors,
   };

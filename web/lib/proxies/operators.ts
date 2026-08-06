@@ -11,6 +11,9 @@
 
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import type { Operator } from '@/schemas/operator';
+import { applyRenameTemplate, type OrdinalResolver } from './naming';
+import { redactSensitiveText } from './namingSanitize';
+import { sourceOf } from './provenance';
 import { detectRegion, flagFromCode, regionByCode, stripFlags } from './regions';
 import { assertSafeRuntimeRegexInput, compileSafeRuntimeRegex } from './regexSafety';
 
@@ -37,6 +40,60 @@ export interface OperatorStep {
   dropped: number;
   /** Nodes whose name or props changed (rename / flag / set-prop / dedup-rename). */
   changed: number;
+  /**
+   * rename-template only: formatted names that collided and were
+   * disambiguated with a deterministic meaningful suffix (pre-treatment
+   * duplicates).
+   */
+  collisions?: string[];
+  /**
+   * rename-template only: TRUE duplicates removed by node identity (canonical
+   * config fingerprint) — same node with different display names dedups once
+   * per the source-priority policy. Diagnostic provenance for the preview.
+   */
+  deduped?: Array<{ kept: string; dropped: string; sourceKey?: string }>;
+  /**
+   * Bounded representative name samples: up to {@link STEP_SAMPLE_CAP} names
+   * from the step's input head and its output head (deterministic, privacy-
+   * safe — display names only). The workbench shows these per step so users
+   * see what each operator actually produced, not just counts.
+   */
+  samples?: { before: string; after: string }[];
+}
+
+/** Cap on per-step name samples. */
+export const STEP_SAMPLE_CAP = 3;
+
+/**
+ * Node names can embed credential-like text, and step traces flow into AI
+ * action results — samples are therefore REDACTED (same sanitizer as the AI
+ * payload) and bounded at creation, never raw display names.
+ */
+function safeSampleName(name: string): string {
+  const redacted = redactSensitiveText(name).replace(/\s+/g, ' ').trim();
+  return (redacted === '' ? '(已脱敏)' : redacted).slice(0, 64);
+}
+
+/** Bounded, redacted source-key projection for trace diagnostics. */
+function safeLabel(text: string): string {
+  const redacted = redactSensitiveText(text).replace(/\s+/g, ' ').trim();
+  return (redacted === '' ? '(未命名)' : redacted).slice(0, 48);
+}
+
+/** Bounded representative before/after pairs from a step's input/output heads. */
+function stepSamples(
+  before: ClashProxy[],
+  after: ClashProxy[],
+): { before: string; after: string }[] {
+  const n = Math.min(STEP_SAMPLE_CAP, before.length, after.length);
+  const out: { before: string; after: string }[] = [];
+  for (let i = 0; i < n; i += 1) {
+    const b = typeof before[i].name === 'string' ? (before[i].name as string) : '';
+    const a = typeof after[i].name === 'string' ? (after[i].name as string) : '';
+    if (b === '' && a === '') continue;
+    out.push({ before: safeSampleName(b), after: safeSampleName(a) });
+  }
+  return out;
 }
 
 export interface ApplyResult {
@@ -118,7 +175,14 @@ function compileTest(pattern: string, flags?: string): RegExp {
 function runOne(
   proxies: ClashProxy[],
   op: Operator,
-): { proxies: ClashProxy[]; dropped: number; changed: number } {
+  ordinalResolver?: OrdinalResolver,
+): {
+  proxies: ClashProxy[];
+  dropped: number;
+  changed: number;
+  collisions?: string[];
+  deduped?: Array<{ kept: string; dropped: string; sourceKey?: string }>;
+} {
   const before = proxies.length;
 
   switch (op.kind) {
@@ -250,6 +314,31 @@ function runOne(
       return { proxies: out, dropped, changed };
     }
 
+    case 'rename-template': {
+      // Deterministic structured naming; per-node source identity (when
+      // attached by the collection/single-sub caller) feeds the source +
+      // per-source index placeholders. Never depends on a live AI call.
+      const res = applyRenameTemplate(proxies, op, sourceOf, ordinalResolver);
+      return {
+        proxies: res.proxies,
+        // True duplicates are REMOVED nodes — the trace must report them.
+        dropped: proxies.length - res.proxies.length,
+        changed: res.changed,
+        // Collision names can embed raw residual text — bounded + redacted
+        // at creation so every consumer (workbench, AI, preview) sees the
+        // same projected shape (C10).
+        collisions: res.collisions.map((c) => safeSampleName(c)),
+        // Diagnostic provenance, projected through the same bounded
+        // redaction as step samples (these entries flow into preview
+        // responses and AI action results).
+        deduped: res.deduped.map((d) => ({
+          kept: safeSampleName(d.kept),
+          dropped: safeSampleName(d.dropped),
+          ...(d.sourceKey !== undefined ? { sourceKey: safeLabel(d.sourceKey) } : {}),
+        })),
+      };
+    }
+
     case 'sort': {
       const dir = op.order === 'desc' ? -1 : 1;
       const keyed = proxies.map((p, i) => ({ p, i, k: sortKey(p, op.by) }));
@@ -290,8 +379,17 @@ function sortKey(p: ClashProxy, by: 'name' | 'type' | 'server' | 'region'): stri
 
 /* ─── public API ───────────────────────────────────────────────────── */
 
-/** Run the full pipeline; returns transformed proxies + per-step trace. */
-export function applyOperators(input: ClashProxy[], operators: Operator[]): ApplyResult {
+/**
+ * Run the full pipeline; returns transformed proxies + per-step trace.
+ * `ordinalResolver` feeds the rename-template's persisted stable numbering
+ * (serving paths inject it; pure/test callers omit it and fall back to
+ * upstream ordinals / input order).
+ */
+export function applyOperators(
+  input: ClashProxy[],
+  operators: Operator[],
+  ordinalResolver?: OrdinalResolver,
+): ApplyResult {
   let proxies = input;
   const steps: OperatorStep[] = [];
   for (const op of operators) {
@@ -308,17 +406,20 @@ export function applyOperators(input: ClashProxy[], operators: Operator[]): Appl
       });
       continue;
     }
-    const res = runOne(proxies, op);
-    proxies = res.proxies;
+    const res = runOne(proxies, op, ordinalResolver);
     steps.push({
       id: op.id,
       kind: op.kind,
       applied: true,
       before,
-      after: proxies.length,
+      after: res.proxies.length,
       dropped: res.dropped,
       changed: res.changed,
+      ...(res.collisions && res.collisions.length > 0 ? { collisions: res.collisions } : {}),
+      ...(res.deduped && res.deduped.length > 0 ? { deduped: res.deduped } : {}),
+      samples: stepSamples(proxies, res.proxies),
     });
+    proxies = res.proxies;
   }
   return { proxies, steps };
 }

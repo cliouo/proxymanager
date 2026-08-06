@@ -109,6 +109,30 @@ export const REDIS_KEYS = {
    */
   assistantConfig: 'assistant:config',
   /**
+   * Persisted stable node-ordinal assignments for managed naming
+   * (rename-template ${index}). One global Hash; each field is
+   * `${sourceKey}:${nodeFingerprint}` → ordinal string. Assignments are
+   * MONOTONIC NON-REUSE: a fingerprint keeps its ordinal forever and a freed
+   * ordinal is never handed to a different node, so upstream reordering can
+   * never churn rendered names. The per-source next-ordinal counters live in
+   * `nodeOrdinalCounter` keys (INCR-based). Pure best-effort serving state —
+   * never consulted for identity or security, and never exposed to clients.
+   */
+  nodeOrdinals: 'node-ordinals',
+  /** Monotonic generation incremented once by each successful ordinal
+   * allocation eval. Save-time preflight binds this generation into the same
+   * config CAS so old renders cannot shift the candidate after validation. */
+  nodeOrdinalGeneration: 'node-ordinal-generation',
+  nodeOrdinalCounter: (sourceKey: string): string => `node-ordinal-counter:${sourceKey}`,
+  /**
+   * Persisted prior managed-naming plans for the 智能命名 workspace rollback.
+   * One Hash; each field is `${type}:${id}` → { template, tw2cn?,
+   * sourceAliases?, recognitionRules? } — the plan that was active BEFORE the
+   * latest apply. Rollback PATCHes it back through the normal save gate and
+   * clears the entry. Pure workspace state; never served to clients directly.
+   */
+  namingHistory: 'naming-history',
+  /**
    * Global config version — a monotonically increasing counter (INCR) bumped
    * by every repo write that can affect the rendered config (base / rules /
    * rule-sets / subscriptions / collections / profiles / proxy-groups /

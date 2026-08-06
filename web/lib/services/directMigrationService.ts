@@ -576,9 +576,14 @@ export async function validateDirectMigrationCandidate(
       providers: state.providers,
       ignoreFailedSubs: true,
       persistSnapshot: false,
-      subscriptionResolver: async (subscription) => {
+      persistOrdinals: false,
+      subscriptionResolver: async (subscription, resolverOptions) => {
         try {
-          return await resolveSubscriptionForPreflight(subscription);
+          return await resolveSubscriptionForPreflight(subscription, {
+            ...(resolverOptions?.ordinalPlanningSession
+              ? { ordinalPlanningSession: resolverOptions.ordinalPlanningSession }
+              : {}),
+          });
         } catch (error) {
           subscriptionFailures.set(subscription.id, error);
           throw error;

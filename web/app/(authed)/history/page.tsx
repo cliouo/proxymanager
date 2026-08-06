@@ -6,6 +6,7 @@ import { PageTopbar } from '@/components/PageChrome';
 import { ScopePill } from '@/components/Topbar';
 import { useToast } from '@/components/ui/Toast';
 import styles from './history.module.css';
+import { HistoryCrumb, NamingRollbackHint } from './namingHints';
 
 interface RuleSnapshot {
   id: string;
@@ -21,7 +22,8 @@ type AuditTarget =
   | { kind: 'proxy-group'; name: string }
   | { kind: 'base'; field?: string }
   | { kind: 'profile' }
-  | { kind: 'device'; id: string; name: string };
+  | { kind: 'device'; id: string; name: string }
+  | { kind: 'naming-source'; type: 'subscription' | 'collection'; id: string; name: string };
 
 interface AuditEvent {
   id: string;
@@ -166,6 +168,16 @@ function EventBody({ e, undone }: { e: AuditEvent; undone: boolean }) {
     return hint ? <span style={{ fontSize: 12, color: 'var(--muted)' }}>{hint}</span> : null;
   }
 
+  if (kind === 'naming-source' && e.target?.kind === 'naming-source') {
+    const hint = valueHint(e.after ?? e.before);
+    return (
+      <>
+        <span className="tag">命名 · {e.target.name}</span>
+        {hint && <span style={{ fontSize: 12, color: 'var(--muted)' }}>{hint}</span>}
+      </>
+    );
+  }
+
   if ((kind === 'proxy' || kind === 'proxy-group') && e.target && 'name' in e.target) {
     return (
       <code className="mono" style={{ fontSize: 12, color: 'var(--fg)' }}>
@@ -209,7 +221,6 @@ function eventHaystack(e: AuditEvent): string {
   if (t) {
     if ('name' in t) parts.push(t.name);
     if (t.kind === 'base' && t.field) parts.push(t.field);
-    if (t.kind === 'device') parts.push(t.name);
   }
   for (const v of [e.before, e.after]) {
     if (v && typeof v === 'object' && !Array.isArray(v)) {
@@ -311,7 +322,7 @@ export default function HistoryPage() {
         {/* P2-19: the audit log is account-wide (history/route.ts has no profile
             filter), so a per-profile pill was misleading — use the neutral one. */}
         <ScopePill neutral />
-        <span className="crumb">每次写操作都有快照 · 可撤销</span>
+        <HistoryCrumb />
         <div className="grow" />
         <div className={`search ${styles.search}`}>
           <input
@@ -401,6 +412,7 @@ export default function HistoryPage() {
                       {undoing.has(e.id) ? '…' : '撤销'}
                     </button>
                   )}
+                  <NamingRollbackHint e={e} undone={undone} isUndo={isUndo} />
                 </div>
               );
             })}

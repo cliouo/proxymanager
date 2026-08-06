@@ -1,5 +1,5 @@
 import { z } from '@/lib/openapi/zod';
-import { OperatorSchema, StoredOperatorSchema } from './operator';
+import { MutableOperatorListSchema, StoredOperatorListSchema } from './operator';
 
 /**
  * A node pool — an aggregate subscription that merges the nodes of several
@@ -46,7 +46,7 @@ export const CollectionSchema = z.object({
    * Ordered node-processing pipeline (界面「节点处理」). Applied to the merged
    * member nodes before dedup; same operator set as a single subscription.
    */
-  operators: z.array(StoredOperatorSchema).default([]),
+  operators: StoredOperatorListSchema.default([]),
   notes: z.string().optional(),
   created_at: z.number().int().optional(),
   updated_at: z.number().int().optional(),
@@ -59,7 +59,7 @@ export const CollectionCreateSchema = z.object({
   type: CollectionGroupTypeSchema.default('select'),
   subscription_ids: z.array(z.uuid()).default([]),
   subscription_tags: z.array(z.string()).default([]),
-  operators: z.array(OperatorSchema).default([]),
+  operators: MutableOperatorListSchema.default([]),
   notes: z.string().optional(),
 });
 
@@ -70,7 +70,7 @@ export const CollectionUpdateSchema = z.object({
   type: CollectionGroupTypeSchema.optional(),
   subscription_ids: z.array(z.uuid()).optional(),
   subscription_tags: z.array(z.string()).optional(),
-  operators: z.array(OperatorSchema).optional(),
+  operators: MutableOperatorListSchema.optional(),
   // P1-5: null clears the note (undefined = unchanged).
   notes: z.string().nullable().optional(),
 });

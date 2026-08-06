@@ -47,6 +47,10 @@ import {
   ListToolsRequestSchema,
   CallToolRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
+import {
+  RECEIPT_SUMMARY_RAW_MAX,
+  isCanonicalReceiptSummary,
+} from "./receipt-policy.generated.mjs";
 
 const BASE = (
   process.env.PROXYMANAGER_BASE_URL || "http://localhost:3000"
@@ -281,8 +285,64 @@ function confirmationDetail(pending) {
   return `操作：${action}\n变更：${rawDiff}`;
 }
 
+/**
+ * Receipt policy (round-6): the bridge imports the GENERATED canonical
+ * policy module (receipt-policy.generated.mjs — the single scanner shared
+ * with the Web producer, generated from web/scripts/receipt-policy-spec.mjs).
+ * There is no hand-mirrored classifier here: the verifier rejects exactly
+ * the summaries the Web producer would change or reject.
+ */
+const RECEIPT_SUMMARY_MAX = 512;
+
+/**
+ * Strict canonical model-content parse (round-3/4/6): the confirm response's
+ * modelContent must be bounded BEFORE parsing, then a NON-ARRAY JSON object
+ * with EXACTLY { status, action, summary } keys, fixed status 'success',
+ * action equal to BOTH the pending confirmation's action AND the originating
+ * MCP tool name, and a summary that is bounded, ALREADY canonical under the
+ * generated policy, and byte-identical to the exact canonical wire:
+ *   raw === JSON.stringify({ status: 'success', action, summary })
+ * The byte equality rejects whitespace, key reordering, duplicate keys,
+ * escapes, extras and every other noncanonical form. Any deviation → null;
+ * the caller returns only the fixed unknown-result instruction with no
+ * reflection.
+ */
+function parseCanonicalModelContent(raw, expectedAction) {
+  if (typeof raw !== "string" || raw === "") return null;
+  if (raw.length > RECEIPT_SUMMARY_RAW_MAX) return null; // bounds before parse
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed))
+    return null;
+  const keys = Object.keys(parsed);
+  if (keys.length !== 3) return null;
+  if (parsed.status !== "success") return null;
+  if (typeof parsed.action !== "string" || parsed.action !== expectedAction)
+    return null;
+  if (typeof parsed.summary !== "string") return null;
+  if (!isCanonicalReceiptSummary(parsed.summary)) return null;
+  if (parsed.summary.length > RECEIPT_SUMMARY_MAX) return null;
+  // reconstruct exactly once and require RAW BYTE EQUALITY — never reflect
+  // a noncanonical wire form
+  const canonical = JSON.stringify({
+    status: "success",
+    action: parsed.action,
+    summary: parsed.summary,
+  });
+  if (raw !== canonical) return null;
+  return canonical;
+}
+
 /** Confirm a hidden token without reflecting execution errors or claiming rollback. */
-export async function confirmHiddenWrite(token, fetchImpl = fetch) {
+export async function confirmHiddenWrite(
+  token,
+  fetchImpl = fetch,
+  expectedAction = "",
+) {
   try {
     const confirmResponse = await fetchImpl(
       BASE + "/api/v1/assistant/confirm",
@@ -302,10 +362,25 @@ export async function confirmHiddenWrite(token, fetchImpl = fetch) {
     } catch {
       return errResult(CONFIRM_RESULT_UNKNOWN);
     }
-    if (confirmed?.data?.kind !== "write-result") {
+    // round-2/3: the confirm response must be a write-result with a string
+    // modelContent; the bridge forwards ONLY the canonical model JSON and
+    // NEVER falls back to the confirmed data envelope (nested results, raw
+    // ids and audit storage keys must not cross the model boundary).
+    const data = confirmed?.data;
+    if (
+      data === null ||
+      typeof data !== "object" ||
+      data.kind !== "write-result" ||
+      typeof data.modelContent !== "string"
+    ) {
       return errResult(CONFIRM_RESULT_UNKNOWN);
     }
-    return okResult(confirmed.data);
+    const canonical = parseCanonicalModelContent(
+      data.modelContent,
+      expectedAction,
+    );
+    if (canonical === null) return errResult(CONFIRM_RESULT_UNKNOWN);
+    return { content: [{ type: "text", text: canonical }] };
   } catch {
     return errResult(CONFIRM_RESULT_UNKNOWN);
   }
@@ -320,13 +395,26 @@ export async function gatePendingWrite(
   envelope,
   profile,
   confirmPending,
+  originatingTool = "",
 ) {
   const pending = envelope?.data;
   const token = typeof pending?.token === "string" ? pending.token : "";
+  const pendingAction =
+    typeof pending?.action === "string" ? pending.action : "";
   const summary =
     typeof pending?.summary === "string"
       ? scrubConfirmationText(pending.summary.replace(/[\r\n]+/gu, " "), 300)
       : "修改 ProxyManager 配置";
+  // round-3: the confirmed model content must be bound to BOTH the pending
+  // confirmation action AND the originating MCP tool name — a mismatch is an
+  // unknown outcome, never a forwarded success.
+  const expectedAction =
+    pendingAction !== "" && pendingAction === originatingTool
+      ? pendingAction
+      : "";
+  if (expectedAction === "") {
+    return errResult(CONFIRM_RESULT_UNKNOWN);
+  }
   if (!/^[a-f0-9]{36}$/u.test(token)) {
     return errResult({
       error: "invalid confirmation envelope; no change was applied",
@@ -337,7 +425,7 @@ export async function gatePendingWrite(
       // No human-confirm UI exists in this session and the user opted into
       // trusting it (完全访问/full-access). The server-side audit trail and
       // neverList still apply; the display-only diff budget does not.
-      return confirmPending(token);
+      return confirmPending(token, expectedAction);
     }
     return errResult({
       error:
@@ -380,7 +468,7 @@ export async function gatePendingWrite(
       applied: false,
     });
   }
-  return confirmPending(token);
+  return confirmPending(token, expectedAction);
 }
 
 async function callTool(name, args, server) {
@@ -412,7 +500,13 @@ async function callTool(name, args, server) {
   if (!res.ok) return errResult(json);
   if (json.data?.kind !== "confirm-write") return okResult(json.data);
 
-  return gatePendingWrite(server, json.data, targetProfile, confirmHiddenWrite);
+  return gatePendingWrite(
+    server,
+    json.data,
+    targetProfile,
+    confirmHiddenWrite,
+    name,
+  );
 }
 
 let toolQueue = Promise.resolve();

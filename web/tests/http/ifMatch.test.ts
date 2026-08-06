@@ -1,9 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  CollectionCreateSchema,
-  RuleSetCreateSchema,
-  SubscriptionCreateSchema,
-} from '@/schemas';
+import { CollectionCreateSchema, RuleSetCreateSchema, SubscriptionCreateSchema } from '@/schemas';
 
 /**
  * P2-2: optimistic-concurrency (If-Match) protection on the rule-set,
@@ -61,27 +57,34 @@ const fakeRedis = {
     const h = hashOf(key);
     for (const [f, v] of Object.entries(payload)) h.set(f, clone(v));
   },
-  /** CAS_RULE_SET_CHANGE 的行为等价实现（规则集写入现在走闸口 + CAS）。 */
+  /** 等价实现两条 CAS 脚本：规则集（带 mode/content/级联规则）与
+   * 订阅/聚合（args = [expected, id, json]）。 */
   eval: async (_script: string, keys: string[], args: (string | number)[]) => {
-    const [versionKey, setsKey, contentKey, ...ruleKeys] = keys;
+    const [versionKey, hashKey, ...restKeys] = keys;
     const a = args.map(String);
     const current = counters.get(versionKey) ?? 0;
     if (current !== Number(a[0])) return [0, String(current)];
-    if (a[1] === 'write') {
-      hashOf(setsKey).set(a[2], JSON.parse(a[3]));
-      kv.set(contentKey, a[4]);
-    } else if (a[1] === 'delete') {
-      hashOf(setsKey).delete(a[2]);
-      kv.delete(contentKey);
-    }
-    let i = 6;
-    for (let g = 0; g < Number(a[5]); g += 1) {
-      const count = Number(a[i]);
-      i += 1;
-      for (let r = 0; r < count; r += 1) {
-        hashOf(ruleKeys[g]).set(a[i], JSON.parse(a[i + 1]));
-        i += 2;
+    if (a[1] === 'write' || a[1] === 'delete') {
+      const [contentKey, ...ruleKeys] = restKeys;
+      if (a[1] === 'write') {
+        hashOf(hashKey).set(a[2], JSON.parse(a[3]));
+        kv.set(contentKey, a[4]);
+      } else {
+        hashOf(hashKey).delete(a[2]);
+        kv.delete(contentKey);
       }
+      let i = 6;
+      for (let g = 0; g < Number(a[5]); g += 1) {
+        const count = Number(a[i]);
+        i += 1;
+        for (let r = 0; r < count; r += 1) {
+          hashOf(ruleKeys[g]).set(a[i], JSON.parse(a[i + 1]));
+          i += 2;
+        }
+      }
+    } else {
+      // 订阅 / 聚合 CAS：hset hashKey a[1] -> JSON.parse(a[2])
+      hashOf(hashKey).set(a[1], JSON.parse(a[2]));
     }
     const next = current + 1;
     counters.set(versionKey, next);
@@ -146,7 +149,12 @@ afterEach(() => {
 describe('patchRuleSet If-Match (P2-2)', () => {
   it('absent version writes (backward compatible) and matching version writes', async () => {
     const a = await ruleSetSvc.createRuleSet(
-      RuleSetCreateSchema.parse({ name: 'ads', format: 'yaml', behavior: 'classical', content: 'v1' }),
+      RuleSetCreateSchema.parse({
+        name: 'ads',
+        format: 'yaml',
+        behavior: 'classical',
+        content: 'v1',
+      }),
     );
     // (a) no expected version → last-write-wins, unchanged.
     const noVer = await ruleSetSvc.patchRuleSet(a.id, { content: 'v2' });
@@ -159,7 +167,12 @@ describe('patchRuleSet If-Match (P2-2)', () => {
 
   it('stale version → 412 and no write', async () => {
     const a = await ruleSetSvc.createRuleSet(
-      RuleSetCreateSchema.parse({ name: 'ads', format: 'yaml', behavior: 'classical', content: 'v1' }),
+      RuleSetCreateSchema.parse({
+        name: 'ads',
+        format: 'yaml',
+        behavior: 'classical',
+        content: 'v1',
+      }),
     );
     const live = await ruleSetSvc.getRuleSet(a.id);
     await expect(

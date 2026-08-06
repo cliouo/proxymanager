@@ -43,6 +43,10 @@ export const POST = withProblemDetails(async (request: Request, ctx: Ctx) => {
   if (target?.kind === 'profile') {
     throw ProblemDetailsError.unprocessable('组合 profile 操作没有安全的原子撤销路径。');
   }
+  if (target?.kind === 'naming-source') {
+    // 智能命名的撤销走工作台回滚(命名历史)，不注册场景逆操作。
+    throw ProblemDetailsError.unprocessable('命名算子变更请使用「智能命名」页面的回滚。');
+  }
   if (event.undone_by) {
     throw ProblemDetailsError.conflict(`Event ${id} was already undone by ${event.undone_by}.`);
   }

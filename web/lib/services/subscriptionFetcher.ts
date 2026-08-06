@@ -2,6 +2,14 @@ import { parse, stringify } from 'yaml';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { readCapped } from '@/lib/net/safeFetch';
 import { applyOperators, type ClashProxy } from '@/lib/proxies/operators';
+import { withRawIdentity, type OrdinalResolver, type RecognitionRule } from '@/lib/proxies/naming';
+import { isActiveCurrentRenameTemplateOperator, isExecutableOperator } from '@/schemas/operator';
+import { stripSource } from '@/lib/proxies/provenance';
+import {
+  resolveOrdinalsFor,
+  type OrdinalDomainRegistry,
+  type OrdinalPlanningSession,
+} from '@/lib/services/nodeOrdinalService';
 import { validateMihomoProxyList } from '@/lib/proxies/mihomoProxyValidator';
 import {
   MAX_PROXY_URI_LINES,
@@ -86,6 +94,8 @@ export interface SubscriptionResolveOptions {
    * Persist a successful remote response into the fetch cache. Preflight
    * callers set this to false so validating an in-memory candidate has no
    * storage side effects. Defaults to true for normal render/refresh paths.
+   * Also gates persisted node-ordinal assignments: side-effect-free callers
+   * never publish numbering state either.
    */
   writeCache?: boolean;
   /**
@@ -95,6 +105,20 @@ export interface SubscriptionResolveOptions {
    * candidate is valid against the current upstream state.
    */
   allowStale?: boolean;
+  /**
+   * Defer the pre-operator list-level name-uniqueness check to managed
+   * naming. Preview endpoints pass the CANDIDATE pipeline's state (an
+   * active rename-template in the draft being previewed); the default is
+   * the stored pipeline's state. Ambiguous raw references (dialer-proxy →
+   * duplicated name) always stay fail-closed.
+   */
+  deferUniqueNames?: boolean;
+  /** Config generation captured before the caller read render inputs. */
+  ordinalConfigVersion?: number;
+  /** Operation-local read-only ordinal plan shared across every pipeline stage. */
+  ordinalPlanningSession?: OrdinalPlanningSession;
+  /** Complete raw domains shared by serving collection stages. */
+  ordinalDomainRegistry?: OrdinalDomainRegistry;
 }
 
 /**
@@ -125,10 +149,34 @@ interface RawMeta {
   staleReason?: string;
 }
 
+/**
+ * Whether a pipeline contains an ACTIVE managed-naming step. Only then may
+ * the pre-operator validation defer the list-level name-uniqueness check —
+ * the rename-template deterministically repairs name collisions. Ambiguous
+ * raw references stay fail-closed regardless (validator).
+ */
+function hasActiveManagedNaming(operators: Subscription['operators'] | undefined): boolean {
+  return (operators ?? []).some(isActiveCurrentRenameTemplateOperator);
+}
+
+/** The active managed template (ordinal parity with the executor). */
+function activeManagedTemplate(operators: Subscription['operators'] | undefined): string | null {
+  const op = (operators ?? []).find(isActiveCurrentRenameTemplateOperator);
+  return op?.template ?? null;
+}
+
+/** The active managed recognition rules (ordinal parity with the executor). */
+function activeManagedRules(
+  operators: Subscription['operators'] | undefined,
+): RecognitionRule[] | undefined {
+  const op = (operators ?? []).find(isActiveCurrentRenameTemplateOperator);
+  return op?.recognitionRules ?? undefined;
+}
+
 /** Build a {@link RawResolved} whose source of truth is a parsed proxy list. */
-function rawFromProxies(list: unknown[], meta: RawMeta): RawResolved {
+function rawFromProxies(list: unknown[], meta: RawMeta, deferUniqueNames = false): RawResolved {
   let yaml: string | undefined;
-  const objects = validateProviderProxyList(list);
+  const objects = validateProviderProxyList(list, deferUniqueNames);
   return {
     // lineWidth: 0 keeps long vmess/ssr lines unwrapped — same bytes the old
     // normaliseToClashProviderYaml produced, so the cache entry format 不变。
@@ -139,11 +187,11 @@ function rawFromProxies(list: unknown[], meta: RawMeta): RawResolved {
 }
 
 /** Build a {@link RawResolved} whose source of truth is a provider-YAML string (cache entries). */
-function rawFromYaml(yamlText: string, meta: RawMeta): RawResolved {
+function rawFromYaml(yamlText: string, meta: RawMeta, deferUniqueNames = false): RawResolved {
   // Cache bytes are an optimisation, not a trust boundary. Validate eagerly so
   // the string endpoint cannot serve a corrupt entry that the object endpoint
   // would reject only later.
-  const objects = extractProxyObjects(yamlText);
+  const objects = extractProxyObjects(yamlText, deferUniqueNames);
   return {
     getYaml: () => yamlText,
     getProxies: () => objects,
@@ -154,7 +202,10 @@ function rawFromYaml(yamlText: string, meta: RawMeta): RawResolved {
   };
 }
 
-function extractProxyObjects(yamlText: string): Record<string, unknown>[] {
+function extractProxyObjects(
+  yamlText: string,
+  deferUniqueNames = false,
+): Record<string, unknown>[] {
   let parsed: unknown;
   try {
     parsed = parse(yamlText);
@@ -168,16 +219,43 @@ function extractProxyObjects(yamlText: string): Record<string, unknown>[] {
   if (!Array.isArray(proxies)) {
     throw ProblemDetailsError.badRequest('Cached proxy provider YAML has no proxies array');
   }
-  return validateProviderProxyList(proxies);
+  return validateProviderProxyList(proxies, deferUniqueNames);
 }
 
 function applySubscriptionOperators(
   input: Record<string, unknown>[],
   operators: Subscription['operators'],
+  identity?: { key: string; label: string },
+  options: { ordinals?: OrdinalResolver; keepEnvelope?: boolean } = {},
 ): Record<string, unknown>[] {
   try {
-    const { proxies: operated } = applyOperators(input as ClashProxy[], operators ?? []);
-    return validateProviderProxyList(operated);
+    const executable = (operators ?? []).filter(isExecutableOperator);
+    // Single-subscription provenance: the rename-template operator's
+    // source-alias + per-source index placeholders read it. Attached as an
+    // enumerable Symbol so it can never be serialised into a Clash/Mihomo
+    // document (see lib/proxies/provenance.ts). The envelope is attached ONLY
+    // when managed naming runs — it also carries the node's RAW identity
+    // fingerprint (computed HERE, at the fetch boundary, before any operator
+    // can change the config) and its raw name, the same immutable identity
+    // later stages reuse. Stripped again at the serialisation boundary (or
+    // kept for object consumers whose symbols can never leak into YAML/JSON).
+    // Single-subscription provenance: attached whenever an identity exists —
+    // ALWAYS for real sources, not just managed-naming pipelines. The
+    // envelope carries the node's RAW identity fingerprint, computed HERE at
+    // the fetch boundary BEFORE any operator (set-prop / flag / rename) can
+    // change the canonical config, plus the raw name. Every later stage
+    // (collection pipeline, preview, export, preflight, serving render) reads
+    // the SAME immutable fingerprint, so a node's identity can never depend on
+    // which stage or what order transforms ran. The enumerable Symbol is
+    // stripped at serialisation boundaries and never appears in YAML/JSON.
+    const inputWithEnvelope = identity ? input.map((p) => withRawIdentity(p, identity)) : input;
+    const { proxies: operated } = applyOperators(
+      inputWithEnvelope as ClashProxy[],
+      executable,
+      options.ordinals,
+    );
+    const processed = options.keepEnvelope ? operated : operated.map((p) => stripSource(p));
+    return validateProviderProxyList(processed);
   } catch (error) {
     throw asSubscriptionValidationError(
       error,
@@ -186,6 +264,11 @@ function applySubscriptionOperators(
       'Subscription operator pipeline is invalid.',
     );
   }
+}
+
+/** Source identity a single subscription's own pipeline sees. */
+function subscriptionIdentity(sub: Subscription): { key: string; label: string } {
+  return { key: sub.name, label: sub.display_name?.trim() || sub.name };
 }
 
 /**
@@ -202,7 +285,16 @@ export async function resolveSubscriptionContent(
   options: SubscriptionResolveOptions = {},
 ): Promise<FetchSubscriptionResult> {
   const raw = await resolveSubscriptionRaw(sub, options);
+  (options.ordinalPlanningSession ?? options.ordinalDomainRegistry)?.registerSourceDomain(
+    raw.getProxies(),
+    () => subscriptionIdentity(sub),
+  );
   if (!sub.operators || sub.operators.length === 0) {
+    // The envelope is attached at the raw boundary and stripped at the YAML
+    // serialisation boundary — the string output is byte-identical either way
+    // (symbols never serialise), while the object-level consumers of
+    // resolveSubscriptionProxies keep the immutable raw identity.
+    void raw.getProxies().map((p) => withRawIdentity(p, subscriptionIdentity(sub)));
     return {
       yaml: raw.getYaml(),
       traffic: raw.traffic,
@@ -214,7 +306,22 @@ export async function resolveSubscriptionContent(
   // Object-level pipeline, then one stringify at the boundary — the old
   // applyOperatorsToProviderYaml round-trip (parse→ops→stringify) parsed a
   // string we had just produced ourselves.
-  const proxies = applySubscriptionOperators(raw.getProxies(), sub.operators);
+  const ordinals = hasActiveManagedNaming(sub.operators)
+    ? await resolveOrdinalsFor(raw.getProxies(), () => subscriptionIdentity(sub), {
+        persist: options.writeCache !== false,
+        template: activeManagedTemplate(sub.operators) ?? undefined,
+        recognitionRules: activeManagedRules(sub.operators),
+        configVersion: options.ordinalConfigVersion,
+        planningSession: options.ordinalPlanningSession,
+        domainRegistry: options.ordinalPlanningSession ?? options.ordinalDomainRegistry,
+      })
+    : undefined;
+  const proxies = applySubscriptionOperators(
+    raw.getProxies(),
+    sub.operators,
+    subscriptionIdentity(sub),
+    { ordinals, keepEnvelope: false },
+  );
   return {
     yaml: stringify({ proxies }, { lineWidth: 0 }),
     traffic: raw.traffic,
@@ -237,16 +344,39 @@ export async function resolveSubscriptionProxies(
 ): Promise<FetchSubscriptionProxiesResult> {
   const raw = await resolveSubscriptionRaw(sub, options);
   const base = raw.getProxies();
+  const identity = subscriptionIdentity(sub);
+  (options.ordinalPlanningSession ?? options.ordinalDomainRegistry)?.registerSourceDomain(
+    base,
+    () => identity,
+  );
+  // Raw identity is attached at the ingestion boundary BEFORE any early
+  // return — even for sources with ZERO operators. Later stages (collection
+  // pipeline, preview, export, preflight, serving render) always read the
+  // SAME immutable fingerprint from the envelope, never a post-transform
+  // recomputation. The YAML boundary strips it; object consumers keep it.
   if (!sub.operators || sub.operators.length === 0) {
     return {
-      proxies: base,
+      proxies: base.map((p) => withRawIdentity(p, identity)),
       traffic: raw.traffic,
       proxyCount: base.length,
       stale: raw.stale,
       staleReason: raw.staleReason,
     };
   }
-  const proxies = applySubscriptionOperators(base, sub.operators);
+  const ordinals = hasActiveManagedNaming(sub.operators)
+    ? await resolveOrdinalsFor(base, () => subscriptionIdentity(sub), {
+        persist: options.writeCache !== false,
+        template: activeManagedTemplate(sub.operators) ?? undefined,
+        recognitionRules: activeManagedRules(sub.operators),
+        configVersion: options.ordinalConfigVersion,
+        planningSession: options.ordinalPlanningSession,
+        domainRegistry: options.ordinalPlanningSession ?? options.ordinalDomainRegistry,
+      })
+    : undefined;
+  const proxies = applySubscriptionOperators(base, sub.operators, subscriptionIdentity(sub), {
+    ordinals,
+    keepEnvelope: true,
+  });
   return {
     proxies: proxies as Record<string, unknown>[],
     traffic: raw.traffic,
@@ -334,7 +464,10 @@ async function resolveSubscriptionRaw(
     let proxies: Record<string, unknown>[];
     let proxyCount: number;
     try {
-      ({ proxies, proxyCount } = normaliseToClashProxies(sub.content));
+      ({ proxies, proxyCount } = normaliseToClashProxies(
+        sub.content,
+        options.deferUniqueNames ?? hasActiveManagedNaming(sub.operators),
+      ));
     } catch (error) {
       throw asSubscriptionValidationError(
         error,
@@ -343,7 +476,11 @@ async function resolveSubscriptionRaw(
         'Subscription content is invalid.',
       );
     }
-    return rawFromProxies(proxies, { proxyCount, traffic: undefined });
+    return rawFromProxies(
+      proxies,
+      { proxyCount, traffic: undefined },
+      options.deferUniqueNames ?? hasActiveManagedNaming(sub.operators),
+    );
   }
 
   if (!sub.url) {
@@ -363,6 +500,8 @@ async function resolveSubscriptionRaw(
     headers: sub.custom_headers,
   });
 
+  const deferUniqueNames = options.deferUniqueNames ?? hasActiveManagedNaming(sub.operators);
+
   // Read once up front — we may use it as fresh, or as the stale fallback.
   // Validate the payload before either decision: cache age/envelope validity
   // alone does not make the embedded provider YAML trustworthy.
@@ -370,10 +509,14 @@ async function resolveSubscriptionRaw(
   let cachedRaw: RawResolved | null = null;
   if (cached) {
     try {
-      cachedRaw = rawFromYaml(cached.content, {
-        traffic: cached.traffic,
-        proxyCount: cached.proxy_count,
-      });
+      cachedRaw = rawFromYaml(
+        cached.content,
+        {
+          traffic: cached.traffic,
+          proxyCount: cached.proxy_count,
+        },
+        deferUniqueNames,
+      );
     } catch (error) {
       if (!(error instanceof ProblemDetailsError)) throw error;
       // A corrupt payload is a cache miss. Continue to the network path and
@@ -390,6 +533,7 @@ async function resolveSubscriptionRaw(
       userAgent: subscriptionUserAgent(sub),
       timeoutMs: options.timeoutMs ?? FETCH_TIMEOUT_MS,
       customHeaders: sub.custom_headers,
+      deferUniqueNames,
     });
 
     const entry: FetchCacheEntry = {
@@ -434,7 +578,12 @@ export async function fetchSubscription(
 
 async function fetchSubscriptionInternal(
   url: string,
-  options: { userAgent?: string; timeoutMs?: number; customHeaders?: Record<string, string> } = {},
+  options: {
+    userAgent?: string;
+    timeoutMs?: number;
+    customHeaders?: Record<string, string>;
+    deferUniqueNames?: boolean;
+  } = {},
 ): Promise<RawResolved> {
   const upstreamUrl = parseSubscriptionUrl(url);
   const userAgent = options.userAgent ?? DEFAULT_UA;
@@ -549,7 +698,7 @@ async function fetchSubscriptionInternal(
   let proxies: Record<string, unknown>[];
   let proxyCount: number;
   try {
-    ({ proxies, proxyCount } = normaliseToClashProxies(text));
+    ({ proxies, proxyCount } = normaliseToClashProxies(text, options.deferUniqueNames ?? false));
   } catch (error) {
     throw asSubscriptionValidationError(
       error,
@@ -558,7 +707,7 @@ async function fetchSubscriptionInternal(
       'Subscription content is invalid.',
     );
   }
-  return rawFromProxies(proxies, { traffic, proxyCount });
+  return rawFromProxies(proxies, { traffic, proxyCount }, options.deferUniqueNames ?? false);
 }
 
 function parseSubscriptionUrl(raw: string): URL {
@@ -660,7 +809,10 @@ export function serialiseLocalProxies(proxies: Record<string, unknown>[]): strin
  * no stringify. The returned list is strict and complete: any malformed entry
  * rejects the whole input so string/object consumers cannot diverge.
  */
-function normaliseToClashProxies(text: string): {
+function normaliseToClashProxies(
+  text: string,
+  deferUniqueNames = false,
+): {
   proxies: Record<string, unknown>[];
   proxyCount: number;
 } {
@@ -672,7 +824,7 @@ function normaliseToClashProxies(text: string): {
   // 1) Clash YAML with a `proxies:` array
   const fromYaml = tryExtractProxiesFromYaml(cleaned);
   if (fromYaml) {
-    const proxies = validateProviderProxyList(fromYaml);
+    const proxies = validateProviderProxyList(fromYaml, deferUniqueNames);
     return { proxies, proxyCount: proxies.length };
   }
 
@@ -684,7 +836,7 @@ function normaliseToClashProxies(text: string): {
   if (decoded) {
     const fromDecodedYaml = tryExtractProxiesFromYaml(decoded);
     if (fromDecodedYaml) {
-      const proxies = validateProviderProxyList(fromDecodedYaml);
+      const proxies = validateProviderProxyList(fromDecodedYaml, deferUniqueNames);
       return { proxies, proxyCount: proxies.length };
     }
   }
@@ -711,7 +863,7 @@ function normaliseToClashProxies(text: string): {
       });
     }
     if (proxies.length > 0) {
-      const validated = validateProviderProxyList(proxies);
+      const validated = validateProviderProxyList(proxies, deferUniqueNames);
       return { proxies: validated, proxyCount: validated.length };
     }
   }
@@ -723,10 +875,16 @@ function normaliseToClashProxies(text: string): {
  * A provider is intentionally context-free: `dialer-proxy` may name a group
  * owned by the consuming full config. Validate all node-local structure and
  * in-provider cycles here, then resolve the external name at final render.
+ * `deferUniqueNames` defers ONLY the list-level name-uniqueness check to an
+ * active managed-naming stage; ambiguous raw references stay fail-closed.
  */
-function validateProviderProxyList(list: unknown[]): Record<string, unknown>[] {
+function validateProviderProxyList(
+  list: unknown[],
+  deferUniqueNames = false,
+): Record<string, unknown>[] {
   return validateMihomoProxyList(list.map(canonicalizeLegacyProviderProxy), {
     allowExternalDialerProxy: true,
+    deferUniqueNames,
   });
 }
 

@@ -15,3 +15,4 @@ export * from './profile';
 export * from './device';
 export * from './assistant';
 export * from './setup';
+export * from './namingAnalysis';

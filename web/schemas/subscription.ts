@@ -1,5 +1,5 @@
 import { z } from '@/lib/openapi/zod';
-import { OperatorSchema, StoredOperatorSchema } from './operator';
+import { MutableOperatorListSchema, StoredOperatorListSchema } from './operator';
 import { MAX_SUBSCRIPTION_CONTENT } from './base';
 
 /**
@@ -53,14 +53,21 @@ export const SubscriptionTrafficSchema = z.object({
 
 export const SubscriptionSchema = z.object({
   id: z.uuid(),
+  /**
+   * Distribution identifier: `name` is the slug used in public subscription
+   * links and group bindings. NOTE — rename is an ACCEPTED IDENTITY RESET:
+   * `SubscriptionUpdateSchema` permits changing it, and a rename breaks old
+   * distribution links and intentionally resets the naming aliases /
+   * ordinals bound to the OLD key (the renamed slug is a new source
+   * identity). Never treat it as a stable slug.
+   */
   name: z
     .string()
     .min(1, '标识不能为空')
     .regex(/^[a-z0-9-]+$/, '标识只能包含小写字母、数字和短横线（-）'),
   /**
    * Human-facing label shown in the UI (Chinese welcome). Purely cosmetic —
-   * `name` remains the stable slug identifier used in public links and group
-   * bindings. Falls back to `name` when empty.
+   * falls back to `name` when empty.
    */
   display_name: z.string().optional(),
   enabled: z.boolean(),
@@ -87,7 +94,7 @@ export const SubscriptionSchema = z.object({
    * Cross-source same-name collisions are handled by the dedup step here and
    * by global first-writer-wins dedup — there is no separate name prefix.
    */
-  operators: z.array(StoredOperatorSchema).default([]),
+  operators: StoredOperatorListSchema.default([]),
   /**
    * P2-2: optimistic-concurrency version (epoch seconds). Bumped on every
    * create/replace/patch edit so an If-Match PATCH can detect a concurrent
@@ -124,7 +131,7 @@ export const SubscriptionCreateSchema = z
     ttl_ms: z.number().int().positive().default(DEFAULT_SUBSCRIPTION_TTL_MS),
     content: z.string().max(MAX_SUBSCRIPTION_CONTENT, '订阅内容过大').optional(),
     tags: z.array(z.string()).default([]),
-    operators: z.array(OperatorSchema).default([]),
+    operators: MutableOperatorListSchema.default([]),
   })
   .refine(
     (s) => (s.kind === 'remote' ? !!s.url : !!s.content),
@@ -146,7 +153,7 @@ export const SubscriptionUpdateSchema = z.object({
   ttl_ms: z.number().int().positive().optional(),
   content: z.string().max(MAX_SUBSCRIPTION_CONTENT, '订阅内容过大').optional(),
   tags: z.array(z.string()).optional(),
-  operators: z.array(OperatorSchema).optional(),
+  operators: MutableOperatorListSchema.optional(),
 });
 
 export type Subscription = z.infer<typeof SubscriptionSchema>;

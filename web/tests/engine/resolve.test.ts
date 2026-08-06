@@ -23,6 +23,106 @@ vi.mock('@/lib/services/subscriptionFetcher', () => ({
   resolveSubscriptionProxies: vi.fn(),
 }));
 
+// In-memory Redis for the ordinal store (collection-stage managed naming
+// resolves ordinals against a live-looking client; the serving Lua is
+// reimplemented here with identical semantics so projections/renders share
+// one store in tests).
+const ordinalStore = new Map<string, Map<string, string>>();
+const ordinalCounters = new Map<string, number>();
+const ordinalTypeOf = (key: string): string =>
+  key.startsWith('node-ordinal-counter:') || key.includes('generation') ? 'string' : 'hash';
+vi.mock('@/lib/redis/client', () => ({
+  getRedis: () => ({
+    hgetall: async () => {
+      const out: Record<string, string> = {};
+      for (const [field, value] of ordinalStore.get('nodeOrdinals') ?? []) out[field] = value;
+      return out;
+    },
+    hlen: async (key: string) => ordinalStore.get(key)?.size ?? 0,
+    get: async (key: string) => ordinalCounters.get(key) ?? null,
+    hset: async (key: string, fields: Record<string, string>) => {
+      let bucket = ordinalStore.get(key);
+      if (!bucket) {
+        bucket = new Map();
+        ordinalStore.set(key, bucket);
+      }
+      for (const [f, v] of Object.entries(fields)) bucket.set(f, v);
+      return Object.keys(fields).length;
+    },
+    hdel: async (key: string, ...fields: string[]) => {
+      const bucket = ordinalStore.get(key);
+      if (!bucket) return 0;
+      let removed = 0;
+      for (const f of fields) removed += bucket.delete(f) ? 1 : 0;
+      return removed;
+    },
+    eval: async (_script: string, keys: string[], args: string[]) => {
+      if (_script.includes('local out = {0, h, size, generation}')) {
+        // ORDINAL_SNAPSHOT_LUA (atomic all-source read-only snapshot):
+        // KEYS[1] = hash, ARGV[2..] = counter keys
+        const hashKey = keys[0];
+        if (ordinalTypeOf(hashKey) !== 'hash') return [2, 'hash-wrongtype'];
+        const m = ordinalStore.get(hashKey);
+        const pairs: string[] = [];
+        if (m) for (const [field, value] of m) pairs.push(field, value);
+        const counters: unknown[] = [];
+        for (const counterKey of args) {
+          if (ordinalTypeOf(counterKey) !== 'string') counters.push([2, 'counter-wrongtype']);
+          else counters.push(ordinalCounters.get(counterKey) ?? null);
+        }
+        const generation = ordinalCounters.get(keys[1]) ?? null;
+        return [0, pairs, m?.size ?? 0, generation, ...counters];
+      }
+      // Mirror of the serving Lua / allocateOrdinal state machine (C6/C11):
+      // existing → hash cap → canonical counter parse (invalid → 0, negative
+      // stays negative) → value bounds; rejected nodes write NOTHING and
+      // accepted ones SET the exact computed value.
+      const hashKey = keys[0];
+      const counterKey = keys[1];
+      const hashCap = Number(args[0]);
+      const maxOrd = Number(args[1]);
+      const results: Array<number | string> = [];
+      let bucket = ordinalStore.get(hashKey);
+      let wrote = false;
+      for (let i = 4; i < args.length; i += 1) {
+        const field = args[i];
+        const existing = bucket?.get(field);
+        if (existing !== undefined) {
+          results.push(existing);
+          continue;
+        }
+        const raw = ordinalCounters.get(counterKey);
+        let base = 0;
+        if (typeof raw === 'number' && Number.isInteger(raw)) base = raw;
+        else if (typeof raw === 'string' && /^-?[0-9]+$/.test(raw)) {
+          const n = Number(raw);
+          if (Number.isSafeInteger(n) && n >= -9007199254740991 && n <= 9007199254740991) {
+            base = n;
+          }
+        }
+        const ordinal = base + 1;
+        if ((bucket?.size ?? 0) + 1 > hashCap || ordinal < 1 || ordinal > maxOrd) {
+          results.push('');
+          continue;
+        }
+        if (!bucket) {
+          bucket = new Map();
+          ordinalStore.set(hashKey, bucket);
+        }
+        ordinalCounters.set(counterKey, ordinal);
+        bucket.set(field, String(ordinal));
+        wrote = true;
+        results.push(ordinal);
+      }
+      if (wrote) {
+        const generationKey = keys[3];
+        ordinalCounters.set(generationKey, Number(ordinalCounters.get(generationKey) ?? 0) + 1);
+      }
+      return results;
+    },
+  }),
+}));
+
 import { resolveConfig } from '@/lib/engine/resolve';
 import { MAX_PROXY_NODES } from '@/lib/proxies/mihomoProxyValidator';
 import { resolveSubscriptionProxies } from '@/lib/services/subscriptionFetcher';
@@ -75,6 +175,8 @@ function providerProxies(
 beforeEach(() => {
   resolveSubMock.mockReset();
   snapshotMock.mockClear();
+  ordinalStore.clear();
+  ordinalCounters.clear();
 });
 
 describe('resolveConfig — subscription injection', () => {
@@ -151,7 +253,452 @@ describe('resolveConfig — subscription injection', () => {
     ]);
     // The first writer's server must be the one that lands in the final YAML.
     expect(result.content).toContain('a.example');
-    expect(result.content).not.toContain('b.example');
+  });
+
+  it('managed path: DISTINCT identities sharing a display name BOTH survive (no first-writer drop)', async () => {
+    const { withRawIdentity } = await import('@/lib/proxies/naming');
+    // Both subs run a rename-template; their nodes format to the SAME name but
+    // are DIFFERENT raw identities (different servers).
+    const managedOps = [
+      {
+        id: 'rt-1',
+        kind: 'rename-template',
+        template: '${emoji} ${region}${?index: · ${index}}',
+        recognitionRules: [],
+      } as never,
+    ];
+    resolveSubMock
+      .mockResolvedValueOnce({
+        proxies: [
+          withRawIdentity(
+            {
+              name: '香港 01',
+              type: 'ss',
+              server: 'a.example',
+              port: 8388,
+              cipher: 'aes-128-gcm',
+              password: 'p',
+            },
+            { key: 'first', label: '机场A' },
+          ),
+        ],
+        proxyCount: 1,
+      })
+      .mockResolvedValueOnce({
+        proxies: [
+          withRawIdentity(
+            {
+              name: '香港 01',
+              type: 'ss',
+              server: 'b.example',
+              port: 8388,
+              cipher: 'aes-128-gcm',
+              password: 'p',
+            },
+            { key: 'second', label: '机场B' },
+          ),
+        ],
+        proxyCount: 1,
+      });
+
+    const result = await resolveConfig(
+      BASE_WITH_LITERAL,
+      [],
+      [
+        makeSub({ name: 'first', display_name: '机场A', operators: managedOps }),
+        makeSub({ name: 'second', display_name: '机场B', operators: managedOps }),
+      ],
+      [],
+      [],
+      {},
+    );
+
+    // BOTH nodes survive; the later one gets a deterministic meaningful suffix.
+    expect(result.inlinedProxyCount).toBe(2);
+    expect(result.nodeNames).toContain('香港 01');
+    expect(result.nodeNames).toContain('香港 01 · 机场B');
+    expect(result.collisions[0]).toMatchObject({
+      name: '香港 01',
+      keptFrom: 'first',
+      droppedFrom: ['second'],
+      resolvedTo: '香港 01 · 机场B',
+    });
+    // the renamed node's YAML carries the RENAMED name, not the raw one
+    expect(result.content).toContain('name: 香港 01 · 机场B');
+  });
+
+  it('managed path: the SAME raw identity dedups by source priority with diagnostics', async () => {
+    const { withRawIdentity } = await import('@/lib/proxies/naming');
+    const managedOps = [
+      {
+        id: 'rt-1',
+        kind: 'rename-template',
+        template: '${emoji} ${region}${?index: · ${index}}',
+        recognitionRules: [],
+      } as never,
+    ];
+    // IDENTICAL raw config from both subs → same fingerprint → one survivor
+    resolveSubMock
+      .mockResolvedValueOnce({
+        proxies: [
+          withRawIdentity(
+            {
+              name: '香港 01',
+              type: 'ss',
+              server: 'a.example',
+              port: 8388,
+              cipher: 'aes-128-gcm',
+              password: 'p',
+            },
+            { key: 'first', label: '机场A' },
+          ),
+        ],
+        proxyCount: 1,
+      })
+      .mockResolvedValueOnce({
+        proxies: [
+          withRawIdentity(
+            {
+              name: '香港 01',
+              type: 'ss',
+              server: 'a.example',
+              port: 8388,
+              cipher: 'aes-128-gcm',
+              password: 'p',
+            },
+            { key: 'second', label: '机场B' },
+          ),
+        ],
+        proxyCount: 1,
+      });
+
+    const result = await resolveConfig(
+      BASE_WITH_LITERAL,
+      [],
+      [
+        makeSub({ name: 'first', display_name: '机场A', operators: managedOps }),
+        makeSub({ name: 'second', display_name: '机场B', operators: managedOps }),
+      ],
+      [],
+      [],
+      {},
+    );
+
+    expect(result.inlinedProxyCount).toBe(1);
+    expect(result.collisions).toEqual([
+      { name: '香港 01', keptFrom: 'first', droppedFrom: ['second'] },
+    ]);
+  });
+
+  it('GLOBAL raw-fingerprint true-dedup across subs (finding 5): same identity, DIFFERENT names → the later occurrence is dropped by source priority', async () => {
+    const { withRawIdentity } = await import('@/lib/proxies/naming');
+    // sub A and sub B both carry the SAME node (identical config → same raw
+    // fingerprint) under DIFFERENT display names — the resolve must dedup by
+    // identity GLOBALLY (like the exports), not only inside the same-name
+    // branch
+    const identity = {
+      name: '香港 01',
+      type: 'ss',
+      server: 'same-node.example',
+      port: 8388,
+      cipher: 'aes-128-gcm',
+      password: 'p',
+    };
+    resolveSubMock
+      .mockResolvedValueOnce({
+        proxies: [
+          withRawIdentity({ ...identity, name: '香港 01' }, { key: 'air-a', label: '机场A' }),
+        ],
+        proxyCount: 1,
+      })
+      .mockResolvedValueOnce({
+        proxies: [
+          withRawIdentity({ ...identity, name: '香港 备用' }, { key: 'air-b', label: '机场B' }),
+        ],
+        proxyCount: 1,
+      });
+    const subs = [makeSub({ name: 'air-a' }), makeSub({ name: 'air-b' })];
+    const result = await resolveConfig(BASE_WITH_LITERAL, [], subs, [], [], {});
+    // only ONE node survives (the first occurrence, source priority) — the
+    // base literal 直连 is untouched
+    expect(result.nodeNames).toEqual(['直连', '香港 01']);
+    expect(result.inlinedProxyCount).toBe(1);
+    // the drop is reported as a true-duplicate collision naming the keeper
+    expect(result.collisions[0]).toMatchObject({
+      name: '香港 备用',
+      keptFrom: 'air-a',
+    });
+  });
+
+  it('CROSS-PATH identity/name parity (pass-3 finding): fp1/N, fp2/N, fp2/M leaves only the first TWO identities — preview == render == collection export == member single exports', async () => {
+    const { withRawIdentity } = await import('@/lib/proxies/naming');
+    const { exportCollectionNodes, exportSubscriptionNodes } =
+      await import('@/lib/services/nodeExportService');
+    const managedMember = makeSub({
+      id: '66666666-6666-4666-8666-666666666666',
+      name: 'managed-member',
+      display_name: '成员甲',
+      operators: [
+        {
+          id: 'rt-m',
+          kind: 'rename-template',
+          template: '${emoji} ${region}',
+          recognitionRules: [],
+        },
+      ],
+    });
+    const plainMember = makeSub({
+      id: '77777777-7777-4777-8777-777777777777',
+      name: 'plain-member',
+      display_name: '成员乙',
+    });
+    const node = (name: string, server: string) => ({
+      name,
+      type: 'ss',
+      server,
+      port: 8388,
+      cipher: 'aes-128-gcm',
+      password: 'p',
+    });
+    const collection: Collection = {
+      id: '55555555-5555-4555-8555-555555555555',
+      name: '聚合甲',
+      slug: 'agg-a',
+      enabled: true,
+      type: 'select',
+      subscription_ids: [managedMember.id, plainMember.id],
+      subscription_tags: [],
+      operators: [],
+    };
+    resolveSubMock.mockImplementation(async (sub: Subscription) => {
+      if (sub.id === managedMember.id) {
+        return {
+          proxies: [
+            withRawIdentity(node('N', 'fp1.example'), { key: 'managed-member', label: '成员甲' }),
+          ],
+          proxyCount: 1,
+        };
+      }
+      return {
+        proxies: [
+          withRawIdentity(node('N', 'fp2.example'), { key: 'plain-member', label: '成员乙' }),
+          withRawIdentity(node('M', 'fp2.example'), { key: 'plain-member', label: '成员乙' }),
+        ],
+        proxyCount: 2,
+      };
+    });
+    try {
+      // PREVIEW (collection read path — the RAW merged union BEFORE the
+      // final dedup pass; the PUBLIC preview routes run the same dedup
+      // machine as render/exports after their pipelines, proven separately
+      // by the route-level parity suite in tests/http/namingPreviewParity)
+      const { mergeCollectionMemberProxies } = await import('@/lib/services/nodeExportService');
+      const { merged } = await mergeCollectionMemberProxies(
+        collection,
+        [managedMember, plainMember],
+        { writeCache: false },
+      );
+      const previewNames = merged.map((p) => p.name as string).sort();
+
+      // RENDER (collection-bound resolve)
+      const render = await resolveConfig(
+        'mixed-port: 7890\nproxies: []\nproxy-groups: []\nrules: []\n',
+        [],
+        [managedMember, plainMember],
+        [],
+        [],
+        { collections: [collection], boundSource: { type: 'collection', id: collection.id } },
+      );
+      const renderNames = [...render.nodeNames].sort();
+
+      // COLLECTION EXPORT
+      const exportResult = await exportCollectionNodes(collection, [managedMember, plainMember], {
+        writeCache: false,
+      });
+      const exportNames = exportResult.proxies.map((p) => p.name).sort();
+
+      // the merged preview (pre-dedup) has 3 identities; the deduped outputs
+      // keep only the first TWO (fp2/M is a true duplicate of the suffixed keeper)
+      expect(previewNames).toHaveLength(3);
+      expect(renderNames).toEqual(['N', 'N · 成员乙']);
+      expect(exportNames).toEqual(renderNames);
+      expect(exportResult.proxyCount).toBe(2);
+
+      // MEMBER single exports: each contributes exactly its own identities
+      const a = await exportSubscriptionNodes(managedMember, { writeCache: false });
+      expect(a.proxies.map((p) => p.name)).toEqual(['N']);
+      // the member's own export drops the true duplicate (fp2/M) too — the
+      // same global-identity policy everywhere
+      const b = await exportSubscriptionNodes(plainMember, { writeCache: false });
+      expect(b.proxies.map((p) => p.name).sort()).toEqual(['N']);
+    } finally {
+      resolveSubMock.mockReset();
+    }
+  });
+
+  it('an unrelated MANAGED third sub can NOT change a plain/plain resolve collision (per-node provenance)', async () => {
+    const { withRawIdentity } = await import('@/lib/proxies/naming');
+    const plainA = makeSub({ name: 'plain-a', display_name: '甲' });
+    const plainB = makeSub({ name: 'plain-b', display_name: '乙' });
+    const managedC = makeSub({
+      name: 'managed-c',
+      display_name: '丙',
+      operators: [
+        {
+          id: 'rt-c',
+          kind: 'rename-template',
+          template: '${emoji} ${region}',
+          recognitionRules: [],
+        },
+      ],
+    });
+    const node = (name: string, server: string) => ({
+      name,
+      type: 'ss',
+      server,
+      port: 8388,
+      cipher: 'aes-128-gcm',
+      password: 'p',
+    });
+    resolveSubMock.mockImplementation(async (sub: Subscription) => {
+      if (sub.id === plainA.id) {
+        return {
+          proxies: [withRawIdentity(node('X', 'x.example'), { key: 'plain-a', label: '甲' })],
+          proxyCount: 1,
+        };
+      }
+      if (sub.id === plainB.id) {
+        return {
+          proxies: [withRawIdentity(node('N', 'n.example'), { key: 'plain-b', label: '乙' })],
+          proxyCount: 1,
+        };
+      }
+      return {
+        proxies: [withRawIdentity(node('Y', 'y.example'), { key: 'managed-c', label: '丙' })],
+        proxyCount: 1,
+      };
+    });
+    try {
+      const result = await resolveConfig(
+        BASE_WITH_LITERAL,
+        [],
+        [plainA, plainB, managedC],
+        [],
+        [],
+        {},
+      );
+      // plain/plain pair: X and N both survive WITHOUT any suffix — the
+      // managed third sub must not promote unrelated collisions
+      expect(result.nodeNames).toContain('X');
+      expect(result.nodeNames).toContain('N');
+      expect(result.nodeNames).not.toContain('N · 乙');
+      expect(result.collisions.filter((c) => c.name === 'N')).toHaveLength(0);
+    } finally {
+      resolveSubMock.mockReset();
+    }
+  });
+
+  it('collection-managed node survives a literal BASE collision (C5)', async () => {
+    const { withRawIdentity } = await import('@/lib/proxies/naming');
+    // The profile binds to a COLLECTION whose own pipeline runs the managed
+    // naming; the member's node formats to the base literal name 直连 but is
+    // a DISTINCT identity — it must survive with a meaningful suffix even
+    // though no single SUBSCRIPTION has its own rename-template.
+    const memberSub = makeSub({
+      id: '66666666-6666-4666-8666-666666666666',
+      name: 'managed-sub',
+      display_name: '机场A',
+    });
+    const collection: Collection = {
+      id: '55555555-5555-4555-8555-555555555555',
+      name: '聚合甲',
+      slug: 'agg-a',
+      enabled: true,
+      type: 'select',
+      subscription_ids: [memberSub.id],
+      subscription_tags: [],
+      operators: [
+        {
+          id: 'rt-col',
+          kind: 'rename-template',
+          template: '${base}',
+          recognitionRules: [],
+        } as never,
+      ],
+    };
+    resolveSubMock.mockResolvedValueOnce({
+      proxies: [
+        withRawIdentity(
+          {
+            name: '直连',
+            type: 'ss',
+            server: 'sub.example',
+            port: 8388,
+            cipher: 'aes-128-gcm',
+            password: 'p',
+          },
+          { key: 'managed-sub', label: '机场A' },
+        ),
+      ],
+      proxyCount: 1,
+    });
+    const result = await resolveConfig(BASE_WITH_LITERAL, [], [memberSub], [], [], {
+      collections: [collection],
+      boundSource: { type: 'collection', id: collection.id },
+    });
+    expect(result.inlinedProxyCount).toBe(1);
+    expect(result.nodeNames).toEqual(['直连', '直连 · 机场A']);
+    expect(result.collisions[0]).toMatchObject({
+      name: '直连',
+      keptFrom: null,
+      resolvedTo: '直连 · 机场A',
+    });
+  });
+
+  it('managed path: a sub node colliding with a literal BASE name survives with a suffix', async () => {
+    const { withRawIdentity } = await import('@/lib/proxies/naming');
+    const managedOps = [
+      {
+        id: 'rt-1',
+        kind: 'rename-template',
+        template: '${emoji} ${region}${?index: · ${index}}',
+        recognitionRules: [],
+      } as never,
+    ];
+    // base.yaml literally names a proxy 直连; the managed sub formats a node
+    // to the same name — a DISTINCT identity that must not be name-dropped.
+    resolveSubMock.mockResolvedValueOnce({
+      proxies: [
+        withRawIdentity(
+          {
+            name: '直连',
+            type: 'ss',
+            server: 'sub.example',
+            port: 8388,
+            cipher: 'aes-128-gcm',
+            password: 'p',
+          },
+          { key: 'managed', label: '机场A' },
+        ),
+      ],
+      proxyCount: 1,
+    });
+    const result = await resolveConfig(
+      BASE_WITH_LITERAL,
+      [],
+      [makeSub({ name: 'managed', display_name: '机场A', operators: managedOps })],
+      [],
+      [],
+      {},
+    );
+    expect(result.inlinedProxyCount).toBe(1);
+    expect(result.nodeNames).toEqual(['直连', '直连 · 机场A']);
+    expect(result.collisions[0]).toMatchObject({
+      name: '直连',
+      keptFrom: null,
+      droppedFrom: ['managed'],
+      resolvedTo: '直连 · 机场A',
+    });
   });
 
   it('drops a sub node whose name collides with a literal base proxy (keptFrom null)', async () => {
@@ -1012,6 +1559,90 @@ describe('resolveConfig — profile binding (boundSource)', () => {
     expect(result.content).toContain('香港-A');
     expect(result.content).not.toContain('US-A');
     expect(result.content).not.toContain('US-C');
+  });
+
+  it('uses the active rename row after a parked historical row and reserves upstream-suffix ordinals', async () => {
+    resolveSubMock.mockResolvedValueOnce({
+      proxies: providerProxies([{ name: '香港 05' }]),
+      proxyCount: 1,
+    });
+    const sub = makeSub({ name: 'sub-a' });
+    const col: Collection = {
+      id: crypto.randomUUID(),
+      name: 'pool',
+      slug: 'pool',
+      enabled: true,
+      type: 'select',
+      subscription_ids: [sub.id],
+      subscription_tags: [],
+      operators: [
+        {
+          id: 'old-invalid',
+          kind: 'rename-template',
+          template: '${region}',
+          sourceAliases: { a: 'x'.repeat(100) },
+          disabled: true,
+          compatibility_issue: 'runtime-validation-required',
+        } as never,
+        {
+          id: 'active',
+          kind: 'rename-template',
+          template: '${region} ${index}',
+          recognitionRules: [],
+        },
+      ],
+    };
+
+    const result = await resolveConfig(BASE_WITH_LITERAL, [], [sub], [], [], {
+      collections: [col],
+      boundSource: { type: 'collection', id: col.id },
+    });
+
+    expect(result.nodeNames).toContain('香港 05');
+    expect(result.nodeNames).not.toContain('香港 01');
+    expect([...ordinalStore.values()][0]?.size).toBe(1);
+    expect([...ordinalCounters.values()]).toContain(1);
+  });
+
+  it('keeps disabled-only collection render un-managed and allocation-free', async () => {
+    resolveSubMock
+      .mockResolvedValueOnce({
+        proxies: providerProxies([{ name: '同名节点', server: 'first.example' }]),
+        proxyCount: 1,
+      })
+      .mockResolvedValueOnce({
+        proxies: providerProxies([{ name: '同名节点', server: 'second.example' }]),
+        proxyCount: 1,
+      });
+    const a = makeSub({ name: 'sub-a' });
+    const b = makeSub({ name: 'sub-b' });
+    const col: Collection = {
+      id: crypto.randomUUID(),
+      name: 'pool',
+      slug: 'pool',
+      enabled: true,
+      type: 'select',
+      subscription_ids: [a.id, b.id],
+      subscription_tags: [],
+      operators: [
+        {
+          id: 'disabled',
+          kind: 'rename-template',
+          template: '${region} ${index}',
+          recognitionRules: [],
+          disabled: true,
+        },
+      ],
+    };
+
+    const result = await resolveConfig(BASE_WITH_LITERAL, [], [a, b], [], [], {
+      collections: [col],
+      boundSource: { type: 'collection', id: col.id },
+    });
+
+    expect(result.nodeNames.filter((name) => name === '同名节点')).toHaveLength(1);
+    expect(ordinalStore.size).toBe(0);
+    expect(ordinalCounters.size).toBe(0);
   });
 
   it('fails closed when a collection operator creates an invalid node', async () => {

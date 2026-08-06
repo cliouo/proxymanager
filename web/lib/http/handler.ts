@@ -1,4 +1,5 @@
 import { z } from '@/lib/openapi/zod';
+import { HandleSecretError } from '@/lib/proxies/handles';
 import {
   ConfigMissingError,
   ConfigPreflightUnavailableError,
@@ -28,6 +29,19 @@ export function withProblemDetails<TArgs extends unknown[]>(
 function toProblemResponse(err: unknown): Response {
   if (err instanceof ProblemDetailsError) {
     return problemResponse(err.problem);
+  }
+
+  // pass-6 blocker 3: a typed handle-secret configuration failure is caught
+  // BEFORE the generic handler logs the raw error object — the log carries
+  // at most the stable safe code, and the response is a generic 5xx with no
+  // env name, key material, raw message or stack.
+  if (err instanceof HandleSecretError) {
+    console.error('[handle-secret-config]', err.code);
+    return problemResponse({
+      type: `${PROBLEM_BASE_URL}/internal`,
+      title: 'Internal Server Error',
+      status: 500,
+    });
   }
 
   if (err instanceof ConfigValidationError) {

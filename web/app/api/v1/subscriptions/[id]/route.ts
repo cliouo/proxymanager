@@ -1,4 +1,5 @@
 import { withProblemDetails } from '@/lib/http/handler';
+import { projectAliasKeysToHandles } from '@/lib/services/sourceAliasResolver';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import {
   deleteSubscription,
@@ -16,7 +17,18 @@ export const GET = withProblemDetails(async (_request: Request, ctx: Ctx) => {
   const { id } = await ctx.params;
   const sub = await getSubscription(id);
   if (!sub) throw ProblemDetailsError.notFound(`Subscription ${id} not found.`);
-  return Response.json({ data: sub });
+  // pass-6 blocker 2: the external entity payload carries ONLY opaque src-*
+  // alias handles — stored stable keys are projected at this boundary.
+  const data = {
+    ...sub,
+    operators: (sub.operators ?? []).map((op) => {
+      if ((op as { kind?: string }).kind !== 'rename-template') return op;
+      const aliases = (op as { sourceAliases?: Record<string, string> }).sourceAliases;
+      if (aliases === undefined) return op;
+      return { ...op, sourceAliases: projectAliasKeysToHandles(aliases, [sub.name]) };
+    }),
+  };
+  return Response.json({ data });
 });
 
 export const PUT = withProblemDetails(async (request: Request, ctx: Ctx) => {

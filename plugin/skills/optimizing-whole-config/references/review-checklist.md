@@ -43,7 +43,7 @@
 | `list_rule_providers`         | `id/name/source/format/behavior/url/interval/note` + `referenced`（被几条 RULE-SET 规则引用）                               | `referenced=0` = 没有任何规则引用它                            |
 | `preview_proxy_group_members` | 给定 `filter`(+`exclude_filter`) 对真实节点名试算的命中名 + 数量；可传组 `id` 或候选正则                                    | 只读、不改配置                                                 |
 | `preview_node_operators`      | 算子管线 before/after + 每步增删改 + `orphanedReferences` / `orphanWarning`                                                 | 改正则 / 算子前必跑                                            |
-| `list_local_nodes`            | 本地源节点 `name + type + referencedBy`（凭证已脱敏）                                                                       | 仅 `kind=local` 源，远程源调用报错                             |
+| `list_local_nodes`            | 本地源节点 `node`（nd- 不透明句柄）+ `display`（有界脱敏）+ `type`（白名单/unknown）+ `referencedBy`（凭证与原始名已脱敏）  | 仅 `kind=local` 源，远程源调用报错                             |
 
 ## 审查项
 

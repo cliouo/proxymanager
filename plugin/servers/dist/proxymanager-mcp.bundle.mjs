@@ -15448,6 +15448,144 @@ var StdioServerTransport = class {
 
 // proxymanager-mcp.mjs
 import { pathToFileURL } from "node:url";
+
+// receipt-policy.generated.mjs
+var RECEIPT_SUMMARY_RAW_MAX = 2048;
+var RECEIPT_SUMMARY_MAX = 512;
+var RESIDUE_VOCABULARY = /* @__PURE__ */ new Set([
+  "bearer",
+  "basic",
+  "token",
+  "authorization",
+  "api",
+  "key",
+  "sk",
+  "uuid",
+  "http",
+  "https",
+  "url",
+  "redacted",
+  "masked",
+  "removed",
+  "secret",
+  "credential"
+]);
+var RECEIPT_SPANS = [
+  /\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>]+/giu,
+  /\[(?=[0-9a-f:.]*:)[0-9a-f:.]{1,64}(?:%[A-Za-z0-9._-]{1,32})?\](?::\d{1,5})?/giu,
+  /\[[a-z0-9_-]{1,63}(?:\.[a-z0-9_-]{1,63})*\]:\d{1,5}/giu,
+  /\b(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,6})?::(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,6})?(?:%[A-Za-z0-9._-]{1,32})?:\d{1,5}(?!\.\d)\b/giu,
+  /\b[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){1,7}:\d{1,5}(?!\.\d)\b/giu,
+  /\b[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,6}::(?:\d{1,3}(?:\.\d{1,3}){3}|[0-9a-f]{1,4}:\d{1,3}(?:\.\d{1,3}){3})(?::\d{1,5}(?!\.\d))?\b/giu,
+  /(?<=^|[^0-9A-Za-z:])::(?:\d{1,3}(?:\.\d{1,3}){3}|[0-9a-f]{1,4}:\d{1,3}(?:\.\d{1,3}){3})(?::\d{1,5}(?!\.\d))?(?![0-9A-Za-z])/giu,
+  /\b[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,6}::(?![0-9A-Za-z])/giu,
+  /\b[0-9a-f]{1,4}(?::[0-9a-f]{1,4}(?!\.\d)){0,6}::(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}(?!\.\d)){0,6})\b/giu,
+  /(?<=^|[^0-9A-Za-z:])(?:::[0-9a-f]{1,4}(?::[0-9a-f]{1,4}(?!\.\d)){0,6})(?::\d{1,3}(?:\.\d{1,3}){3})?(?![0-9A-Za-z])/giu,
+  /\b(?:\d{1,3}\.){3}\d{1,3}:\d{1,5}(?!\.\d)\b/giu,
+  /\b(?=[0-9a-f:]*[a-f])(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}(?!\.\d)){1,7})\b/giu,
+  /\b(?:[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?\.)+(?:xn--[a-z0-9-]{2,20}|[a-z]{2,}):\d{1,5}(?!\.\d)\b/giu,
+  /(?<![\p{L}\p{N}_])(?:[\p{L}\p{N}_]{1,63}\.)+(?:中国|香港|台湾|台灣|公司|网络|網絡|在线|在線|商城|网址|網址|商店|政务|政務|公益|集团|集團|游戏|遊戲|商标|商標|移动|移動|联通|聯通|中信|みんな|コム|世界|企业|企業|娱乐|娛樂|新闻|新聞|购物|購物):\d{1,5}(?!\.\d)(?![\p{L}\p{N}_])/giu,
+  /\b[a-z][a-z0-9-]{0,31}:\d{1,5}(?!\.\d)\b/giu,
+  /\b(?:\d{1,3}\.){3}\d{1,3}\b/giu,
+  /%[A-Za-z][A-Za-z0-9._-]{0,31}/giu,
+  /\b[A-Za-z0-9._%+-]{1,64}@(?:[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?\.)+(?:xn--[a-z0-9-]{2,20}|[a-z]{2,})\b/giu,
+  /(?<![\p{L}\p{N}_])[\p{L}\p{N}._%+-]{1,64}@(?:[\p{L}\p{N}_]{1,63}\.)+(?:中国|香港|台湾|台灣|公司|网络|網絡|在线|在線|商城|网址|網址|商店|政务|政務|公益|集团|集團|游戏|遊戲|商标|商標|移动|移動|联通|聯通|中信|みんな|コム|世界|企业|企業|娱乐|娛樂|新闻|新聞|购物|購物)(?![\p{L}\p{N}_])/giu,
+  /\b(?:[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?\.)+(?:xn--[a-z0-9-]{2,20}|[a-z]{2,})\b/giu,
+  /(?<![\p{L}\p{N}_])(?:[\p{L}\p{N}_]{1,63}\.)+(?:中国|香港|台湾|台灣|公司|网络|網絡|在线|在線|商城|网址|網址|商店|政务|政務|公益|集团|集團|游戏|遊戲|商标|商標|移动|移動|联通|聯通|中信|みんな|コム|世界|企业|企業|娱乐|娛樂|新闻|新聞|购物|購物)(?![\p{L}\p{N}_])/giu,
+  /(?:^|[^\p{L}\p{N}_-])(?:authorization\s*[:=]\s*)?(?:Bearer|Basic|Token)\s*[:=,;|(){}<>\[\]]\s*[^\s"'<>]*/gu,
+  /(?:^|[^\p{L}\p{N}_-])(?:authorization\s*[:=]\s*)?(?:Bearer|Basic|Token)\s+[^\s"'<>]+(?=[\s,;(){}[\]]*(?:(?:(?:[bB][eE][aA][rR][eE][rR]|[bB][aA][sS][iI][cC]|[tT][oO][kK][eE][nN]|[pP][aA][sS][sS][wW][oO][rR][dD]|[pP][aA][sS][sS][wW][dD]|[pP][wW][dD]|[sS][eE][cC][rR][eE][tT]|[tT][oO][kK][eE][nN]|[aA][pP][iI]_[kK][eE][yY]|[aA][pP][iI]-[kK][eE][yY]|[aA][pP][iI][kK][eE][yY]|[aA][cC][cC][eE][sS][sS]_[kK][eE][yY]|[aA][cC][cC][eE][sS][sS]-[kK][eE][yY]|[aA][cC][cC][eE][sS][sS][kK][eE][yY]|[aA][uU][tT][hH]|[aA][uU][tT][hH][oO][rR][iI][zZ][aA][tT][iI][oO][nN]|[cC][rR][eE][dD][eE][nN][tT][iI][aA][lL]|[uU][uU][iI][dD]|[sS][nN][iI]|[hH][oO][sS][tT]|[kK][eE][yY]|[pP][sS][kK]|[cC][oO][dD][eE]|[sS][iI][gG][nN][aA][tT][uU][rR][eE]|[sS][iI][gG]|[oO][pP]|[cC][oO][oO][kK][iI][eE]|[cC][oO][oO][kK][iI][eE][sS]|[hH][eE][aA][dD][eE][rR]|[hH][eE][aA][dD][eE][rR][sS]|[pP][rR][iI][vV][aA][tT][eE]_[kK][eE][yY]|[pP][rR][iI][vV][aA][tT][eE]-[kK][eE][yY]|[pP][rR][iI][vV][aA][tT][eE][kK][eE][yY]|[sS][eE][sS][sS][iI][oO][nN]|[cC][sS][rR][fF]|[eE][nN][dD][pP][oO][iI][nN][tT]|[uU][rR][lL])\b|[sS][kK]-))|[\s,;(){}[\]]*$)/gu,
+  /(?:^|[^\p{L}\p{N}_-])(?:authorization\s*[:=]\s*)?(?:Bearer|Basic|Token)(?=\s+(?:[bB][eE][aA][rR][eE][rR]|[bB][aA][sS][iI][cC]|[tT][oO][kK][eE][nN])\b|\s*$)/gu,
+  /(?:^|[^\p{L}\p{N}_-])(?:authorization\s*[:=]\s*)?(?:BEARER|BASIC|TOKEN)\s*[:=,;|(){}<>\[\]]\s*[^\s"'<>]*/gu,
+  /(?:^|[^\p{L}\p{N}_-])(?:authorization\s*[:=]\s*)?(?:BEARER|BASIC|TOKEN)\s+[^\s"'<>]+(?=[\s,;(){}[\]]*(?:(?:(?:[bB][eE][aA][rR][eE][rR]|[bB][aA][sS][iI][cC]|[tT][oO][kK][eE][nN]|[pP][aA][sS][sS][wW][oO][rR][dD]|[pP][aA][sS][sS][wW][dD]|[pP][wW][dD]|[sS][eE][cC][rR][eE][tT]|[tT][oO][kK][eE][nN]|[aA][pP][iI]_[kK][eE][yY]|[aA][pP][iI]-[kK][eE][yY]|[aA][pP][iI][kK][eE][yY]|[aA][cC][cC][eE][sS][sS]_[kK][eE][yY]|[aA][cC][cC][eE][sS][sS]-[kK][eE][yY]|[aA][cC][cC][eE][sS][sS][kK][eE][yY]|[aA][uU][tT][hH]|[aA][uU][tT][hH][oO][rR][iI][zZ][aA][tT][iI][oO][nN]|[cC][rR][eE][dD][eE][nN][tT][iI][aA][lL]|[uU][uU][iI][dD]|[sS][nN][iI]|[hH][oO][sS][tT]|[kK][eE][yY]|[pP][sS][kK]|[cC][oO][dD][eE]|[sS][iI][gG][nN][aA][tT][uU][rR][eE]|[sS][iI][gG]|[oO][pP]|[cC][oO][oO][kK][iI][eE]|[cC][oO][oO][kK][iI][eE][sS]|[hH][eE][aA][dD][eE][rR]|[hH][eE][aA][dD][eE][rR][sS]|[pP][rR][iI][vV][aA][tT][eE]_[kK][eE][yY]|[pP][rR][iI][vV][aA][tT][eE]-[kK][eE][yY]|[pP][rR][iI][vV][aA][tT][eE][kK][eE][yY]|[sS][eE][sS][sS][iI][oO][nN]|[cC][sS][rR][fF]|[eE][nN][dD][pP][oO][iI][nN][tT]|[uU][rR][lL])\b|[sS][kK]-))|[\s,;(){}[\]]*$)/gu,
+  /(?:^|[^\p{L}\p{N}_-])(?:BEARER|BASIC|TOKEN)(?=\s+(?:[bB][eE][aA][rR][eE][rR]|[bB][aA][sS][iI][cC]|[tT][oO][kK][eE][nN])\b|\s*$)/gu,
+  /(?:^|[^\p{L}\p{N}_-])sk-[A-Za-z0-9_-]*/giu,
+  /\b[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}/giu,
+  /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/giu,
+  /\b[0-9a-f]{16}\b/giu,
+  /\b[0-9a-f]{32}\b/giu,
+  /\b[A-Za-z0-9+/_-]{24,}\b/giu,
+  /(?:^|[^\p{L}\p{N}_-])(?:password|passwd|pwd|secret|token|api_key|api-key|apikey|access_key|access-key|accesskey|auth|authorization|credential|uuid|sni|host|key|psk|code|signature|sig|op|cookie|cookies|header|headers|private_key|private-key|privatekey|session|csrf|endpoint|url)\s*[:=]\s*[^\s"'<>]*/giu,
+  /(?:^|[^\p{L}\p{N}_-])(?:[pP][aA][sS][sS][wW][oO][rR][dD]|[pP][aA][sS][sS][wW][dD]|[pP][wW][dD]|[sS][eE][cC][rR][eE][tT]|[tT][oO][kK][eE][nN]|[aA][pP][iI]_[kK][eE][yY]|[aA][pP][iI]-[kK][eE][yY]|[aA][pP][iI][kK][eE][yY]|[aA][cC][cC][eE][sS][sS]_[kK][eE][yY]|[aA][cC][cC][eE][sS][sS]-[kK][eE][yY]|[aA][cC][cC][eE][sS][sS][kK][eE][yY]|[aA][uU][tT][hH]|[aA][uU][tT][hH][oO][rR][iI][zZ][aA][tT][iI][oO][nN]|[cC][rR][eE][dD][eE][nN][tT][iI][aA][lL]|[uU][uU][iI][dD]|[sS][nN][iI]|[hH][oO][sS][tT]|[kK][eE][yY]|[pP][sS][kK]|[cC][oO][dD][eE]|[sS][iI][gG][nN][aA][tT][uU][rR][eE]|[sS][iI][gG]|[oO][pP]|[cC][oO][oO][kK][iI][eE]|[cC][oO][oO][kK][iI][eE][sS]|[hH][eE][aA][dD][eE][rR]|[hH][eE][aA][dD][eE][rR][sS]|[pP][rR][iI][vV][aA][tT][eE]_[kK][eE][yY]|[pP][rR][iI][vV][aA][tT][eE]-[kK][eE][yY]|[pP][rR][iI][vV][aA][tT][eE][kK][eE][yY]|[sS][eE][sS][sS][iI][oO][nN]|[cC][sS][rR][fF]|[eE][nN][dD][pP][oO][iI][nN][tT]|[uU][rR][lL])\s+(?=[^\s"'<>]*[^a-z\s])[^\s"'<>]+(?=[\s,;(){}[\]]*(?:(?:(?:[bB][eE][aA][rR][eE][rR]|[bB][aA][sS][iI][cC]|[tT][oO][kK][eE][nN]|[pP][aA][sS][sS][wW][oO][rR][dD]|[pP][aA][sS][sS][wW][dD]|[pP][wW][dD]|[sS][eE][cC][rR][eE][tT]|[tT][oO][kK][eE][nN]|[aA][pP][iI]_[kK][eE][yY]|[aA][pP][iI]-[kK][eE][yY]|[aA][pP][iI][kK][eE][yY]|[aA][cC][cC][eE][sS][sS]_[kK][eE][yY]|[aA][cC][cC][eE][sS][sS]-[kK][eE][yY]|[aA][cC][cC][eE][sS][sS][kK][eE][yY]|[aA][uU][tT][hH]|[aA][uU][tT][hH][oO][rR][iI][zZ][aA][tT][iI][oO][nN]|[cC][rR][eE][dD][eE][nN][tT][iI][aA][lL]|[uU][uU][iI][dD]|[sS][nN][iI]|[hH][oO][sS][tT]|[kK][eE][yY]|[pP][sS][kK]|[cC][oO][dD][eE]|[sS][iI][gG][nN][aA][tT][uU][rR][eE]|[sS][iI][gG]|[oO][pP]|[cC][oO][oO][kK][iI][eE]|[cC][oO][oO][kK][iI][eE][sS]|[hH][eE][aA][dD][eE][rR]|[hH][eE][aA][dD][eE][rR][sS]|[pP][rR][iI][vV][aA][tT][eE]_[kK][eE][yY]|[pP][rR][iI][vV][aA][tT][eE]-[kK][eE][yY]|[pP][rR][iI][vV][aA][tT][eE][kK][eE][yY]|[sS][eE][sS][sS][iI][oO][nN]|[cC][sS][rR][fF]|[eE][nN][dD][pP][oO][iI][nN][tT]|[uU][rR][lL])\b|[sS][kK]-))|[\s,;(){}[\]]*$)/gu,
+  /(?:^|[^\p{L}\p{N}_-])(?:password|passwd|pwd|secret|token|api_key|api-key|apikey|access_key|access-key|accesskey|auth|authorization|credential|uuid|sni|host|key|psk|code|signature|sig|op|cookie|cookies|header|headers|private_key|private-key|privatekey|session|csrf|endpoint|url)(?=\s*$)/giu,
+  /\b(?:redacted|masked|removed)\b|\[(?:redacted|masked|removed)\]/giu,
+  /[?&][A-Za-z0-9._-]{1,64}=[^&\s"'<>]{0,128}/giu,
+  /(?:^|\s)[A-Za-z0-9._-]{1,64}=[^&\s"'<>]{0,128}/giu
+];
+var RECEIPT_SPAN_NAMES = [
+  "url",
+  "endpoint-bracketed-ipv6",
+  "endpoint-bracketed-host-port",
+  "endpoint-ipv6-compressed-port",
+  "endpoint-ipv6-full-port",
+  "endpoint-ipv6-mapped",
+  "endpoint-ipv6-mapped-leading",
+  "endpoint-ipv6-trailing-cc",
+  "endpoint-ipv6-compressed-tail",
+  "endpoint-ipv6-omitted",
+  "endpoint-ipv4-port",
+  "endpoint-ipv6-full-hextet",
+  "endpoint-hostname-port",
+  "endpoint-hostname-port-cjk",
+  "endpoint-single-label-port",
+  "endpoint-ipv4",
+  "endpoint-zone",
+  "email",
+  "email-cjk",
+  "hostname",
+  "hostname-cjk",
+  "scheme-attached",
+  "scheme-payload",
+  "scheme-bare",
+  "scheme-attached-caps",
+  "scheme-payload-caps",
+  "scheme-bare-caps",
+  "sk-prefix",
+  "jwt",
+  "uuid",
+  "hex16",
+  "hex32",
+  "opaque24",
+  "key-delim",
+  "key-payload",
+  "key-bare",
+  "placeholder",
+  "query",
+  "query-generic"
+];
+var OP_CONTEXT_SKIP = /* @__PURE__ */ new Set(["opaque24"]);
+function replaceReceiptControls(value) {
+  return value.replace(/\p{Cc}|\p{Cf}/gu, " ");
+}
+function removeReceiptSpans(value, opContext) {
+  let out = value;
+  for (let i = 0; i < RECEIPT_SPANS.length; i += 1) {
+    if (opContext && OP_CONTEXT_SKIP.has(RECEIPT_SPAN_NAMES[i])) continue;
+    out = out.replace(RECEIPT_SPANS[i], " ");
+  }
+  return out;
+}
+function hasMeaningfulResidue(value) {
+  const tokens = value.split(/[^\p{L}\p{N}]+/u).filter((token) => token !== "");
+  return tokens.some((token) => {
+    if (!/[\p{L}\p{N}]/u.test(token)) return false;
+    return !RESIDUE_VOCABULARY.has(token.toLocaleLowerCase("en"));
+  });
+}
+function isCanonicalReceiptSummary(summary) {
+  if (typeof summary !== "string" || summary === "") return false;
+  if (summary.length > RECEIPT_SUMMARY_RAW_MAX) return false;
+  if (summary.length > RECEIPT_SUMMARY_MAX) return false;
+  if (summary.normalize("NFKC") !== summary) return false;
+  const withSeparators = replaceReceiptControls(summary);
+  if (withSeparators !== summary) return false;
+  const afterSpans = removeReceiptSpans(withSeparators, false);
+  if (afterSpans !== summary) return false;
+  const collapsed = afterSpans.replace(/\s+/g, " ").trim();
+  if (collapsed !== afterSpans) return false;
+  return hasMeaningfulResidue(collapsed);
+}
+
+// proxymanager-mcp.mjs
 var BASE = (process.env.PROXYMANAGER_BASE_URL || "http://localhost:3000").replace(/\/+$/, "");
 var ADMIN_KEY = process.env.PROXYMANAGER_ADMIN_KEY || "";
 var activeProfile = process.env.PROXYMANAGER_PROFILE || "default";
@@ -15620,7 +15758,35 @@ function confirmationDetail(pending) {
   return `\u64CD\u4F5C\uFF1A${action}
 \u53D8\u66F4\uFF1A${rawDiff}`;
 }
-async function confirmHiddenWrite(token, fetchImpl = fetch) {
+var RECEIPT_SUMMARY_MAX2 = 512;
+function parseCanonicalModelContent(raw, expectedAction) {
+  if (typeof raw !== "string" || raw === "") return null;
+  if (raw.length > RECEIPT_SUMMARY_RAW_MAX) return null;
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed))
+    return null;
+  const keys = Object.keys(parsed);
+  if (keys.length !== 3) return null;
+  if (parsed.status !== "success") return null;
+  if (typeof parsed.action !== "string" || parsed.action !== expectedAction)
+    return null;
+  if (typeof parsed.summary !== "string") return null;
+  if (!isCanonicalReceiptSummary(parsed.summary)) return null;
+  if (parsed.summary.length > RECEIPT_SUMMARY_MAX2) return null;
+  const canonical = JSON.stringify({
+    status: "success",
+    action: parsed.action,
+    summary: parsed.summary
+  });
+  if (raw !== canonical) return null;
+  return canonical;
+}
+async function confirmHiddenWrite(token, fetchImpl = fetch, expectedAction = "") {
   try {
     const confirmResponse = await fetchImpl(
       BASE + "/api/v1/assistant/confirm",
@@ -15640,18 +15806,29 @@ async function confirmHiddenWrite(token, fetchImpl = fetch) {
     } catch {
       return errResult(CONFIRM_RESULT_UNKNOWN);
     }
-    if (confirmed?.data?.kind !== "write-result") {
+    const data = confirmed?.data;
+    if (data === null || typeof data !== "object" || data.kind !== "write-result" || typeof data.modelContent !== "string") {
       return errResult(CONFIRM_RESULT_UNKNOWN);
     }
-    return okResult(confirmed.data);
+    const canonical = parseCanonicalModelContent(
+      data.modelContent,
+      expectedAction
+    );
+    if (canonical === null) return errResult(CONFIRM_RESULT_UNKNOWN);
+    return { content: [{ type: "text", text: canonical }] };
   } catch {
     return errResult(CONFIRM_RESULT_UNKNOWN);
   }
 }
-async function gatePendingWrite(server, envelope, profile, confirmPending) {
+async function gatePendingWrite(server, envelope, profile, confirmPending, originatingTool = "") {
   const pending = envelope?.data;
   const token = typeof pending?.token === "string" ? pending.token : "";
+  const pendingAction = typeof pending?.action === "string" ? pending.action : "";
   const summary = typeof pending?.summary === "string" ? scrubConfirmationText(pending.summary.replace(/[\r\n]+/gu, " "), 300) : "\u4FEE\u6539 ProxyManager \u914D\u7F6E";
+  const expectedAction = pendingAction !== "" && pendingAction === originatingTool ? pendingAction : "";
+  if (expectedAction === "") {
+    return errResult(CONFIRM_RESULT_UNKNOWN);
+  }
   if (!/^[a-f0-9]{36}$/u.test(token)) {
     return errResult({
       error: "invalid confirmation envelope; no change was applied"
@@ -15659,7 +15836,7 @@ async function gatePendingWrite(server, envelope, profile, confirmPending) {
   }
   if (!server.getClientCapabilities()?.elicitation?.form) {
     if (trustFullAccess()) {
-      return confirmPending(token);
+      return confirmPending(token, expectedAction);
     }
     return errResult({
       error: "MCP client does not support confirmation forms; no change was applied",
@@ -15699,7 +15876,7 @@ ${detail}`,
       applied: false
     });
   }
-  return confirmPending(token);
+  return confirmPending(token, expectedAction);
 }
 async function callTool(name, args, server) {
   if (name === "list_profiles") {
@@ -15728,7 +15905,13 @@ async function callTool(name, args, server) {
   const json = await res.json().catch(() => ({}));
   if (!res.ok) return errResult(json);
   if (json.data?.kind !== "confirm-write") return okResult(json.data);
-  return gatePendingWrite(server, json.data, targetProfile, confirmHiddenWrite);
+  return gatePendingWrite(
+    server,
+    json.data,
+    targetProfile,
+    confirmHiddenWrite,
+    name
+  );
 }
 var toolQueue = Promise.resolve();
 function enqueueToolCall(name, args, server) {

@@ -109,11 +109,16 @@ const evalMock = vi.fn(async (_script: string, _keys: string[], args: string[]) 
 const resolveMock = vi.fn(async (baseContent: string, ...args: unknown[]) => {
   const options = args[4] as {
     ignoreFailedSubs?: boolean;
-    subscriptionResolver?: (subscription: Subscription) => Promise<unknown>;
+    subscriptionResolver?: (
+      subscription: Subscription,
+      resolverOptions?: { ordinalPlanningSession?: unknown },
+    ) => Promise<unknown>;
   };
   if (sourceFailure && options.subscriptionResolver) {
     try {
-      await options.subscriptionResolver(invalidSubscription);
+      await options.subscriptionResolver(invalidSubscription, {
+        ordinalPlanningSession: { marker: 'resolve-owned-session' },
+      });
     } catch (error) {
       if (options.ignoreFailedSubs === false) throw error;
     }
@@ -189,6 +194,9 @@ describe('executeDirectAliasMigration', () => {
     expect(plan.summary.isolatedSubscriptionFailures).toBe(1);
     expect(plan.subscriptionFailureSignature).toMatch(/^[a-f0-9]{64}$/u);
     expect(resolveMock.mock.calls[0]?.[5]).toMatchObject({ ignoreFailedSubs: true });
+    expect(preflightResolverMock).toHaveBeenCalledWith(invalidSubscription, {
+      ordinalPlanningSession: { marker: 'resolve-owned-session' },
+    });
   });
 
   it('keeps temporary subscription preflight failures blocking the migration', async () => {

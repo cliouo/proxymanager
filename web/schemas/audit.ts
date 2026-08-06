@@ -24,6 +24,13 @@ export const AuditTargetSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('profile') }),
   /** 设备层 (P1)。`name` 冗余存一份,历史页要显示「设备 · {name}」而设备可能已被删。 */
   z.object({ kind: z.literal('device'), id: z.string().min(1), name: z.string().min(1) }),
+  /** 智能命名:被命名算子写入的订阅源 / 聚合订阅。`name` 供历史页渲染。 */
+  z.object({
+    kind: z.literal('naming-source'),
+    type: z.enum(['subscription', 'collection']),
+    id: z.string().min(1),
+    name: z.string().min(1),
+  }),
 ]);
 
 export const AuditOpSchema = z
@@ -65,6 +72,61 @@ export const RuleAuditEventSchema = AuditEventSchema.extend({
   before: RuleSchema.optional(),
   after: RuleSchema.optional(),
 });
+
+/**
+ * THE strict specialized naming-audit projection — the ONLY payload shape
+ * the naming repository boundary (commitEntityWithNamingHistory) accepts
+ * (pass-2 findings). Built exactly by buildNamingAudit; `.strict()` rejects
+ * every unknown key, every string is bounded, `op` is the naming enum, ids
+ * are canonical UUIDs, `undoable` can never be true for a naming event, and
+ * `profileId` is REQUIRED — no naming write may be audited without its
+ * authorized profile binding. The RAW placeholder DSL template is never
+ * persisted: `after` carries only a bounded structural summary (placeholder
+ * count + length). The repository re-validates every persisted string
+ * recursively AFTER this schema (sanitization stability + credential-shaped
+ * material + raw-DSL fail-closed), so a payload can only reach storage when
+ * the schema AND the deep walk agree.
+ */
+export const NamingAuditEventSchema = z
+  .object({
+    id: z.uuid(),
+    ts: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER, 'ts 超出安全整数范围'),
+    op: z.enum(['naming.apply', 'naming.rollback']),
+    actor: z.string().min(1).max(64),
+    target: z
+      .object({
+        kind: z.literal('naming-source'),
+        type: z.enum(['subscription', 'collection']),
+        id: z.uuid(),
+        name: z.string().min(1).max(64),
+      })
+      .strict(),
+    /** Pre-mutation naming state: absent managed stage, or `hadManaged`. */
+    before: z.union([z.null(), z.object({ hadManaged: z.literal(true) }).strict()]),
+    /** Post-mutation naming state: bounded structural template summary +
+     * mode. The raw DSL string itself is never persisted (pass-2 finding). */
+    after: z
+      .object({
+        templateSummary: z
+          .object({
+            /** Number of placeholder tokens in the template (closed DSL). */
+            placeholderCount: z.number().int().min(0).max(32),
+            /** Template string length (structural, not the string itself). */
+            length: z.number().int().min(0).max(512),
+          })
+          .strict(),
+        mode: z.enum(['added', 'replaced', 'removed']),
+      })
+      .strict(),
+    /** Naming writes have no registered inverse — never true. */
+    undoable: z.literal(false),
+    /** REQUIRED session profile the write happened in — canonical UUID,
+     * bound to the caller's expected profile by the repository. */
+    profileId: z.uuid(),
+  })
+  .strict();
+
+export type NamingAuditEvent = z.infer<typeof NamingAuditEventSchema>;
 
 export type AuditOp = z.infer<typeof AuditOpSchema>;
 export type AuditTarget = z.infer<typeof AuditTargetSchema>;

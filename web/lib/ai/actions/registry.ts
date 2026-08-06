@@ -26,6 +26,7 @@ import {
   LEGACY_CHAIN_PROFILE_REPAIR_WRITE_ACTIONS,
 } from './primitives/legacyChainProfileRepair';
 import { OPERATOR_READ_ACTIONS, OPERATOR_WRITE_ACTIONS } from './primitives/operatorWrites';
+import { NAMING_READ_ACTIONS, NAMING_WRITE_ACTIONS } from './primitives/namingActions';
 import { PROFILE_READ_ACTIONS, PROFILE_WRITE_ACTIONS } from './primitives/profileWrites';
 import { PROXY_GROUP_READ_ACTIONS, PROXY_GROUP_WRITE_ACTIONS } from './primitives/proxyGroupWrites';
 import { READ_ACTIONS } from './primitives/reads';
@@ -44,6 +45,7 @@ const ALL_ACTIONS: ActionDef[] = [
   ...RULE_PROVIDER_READ_ACTIONS,
   ...PROXY_GROUP_READ_ACTIONS,
   ...OPERATOR_READ_ACTIONS,
+  ...NAMING_READ_ACTIONS,
   ...LOCAL_NODE_READ_ACTIONS,
   ...DEVICE_READ_ACTIONS,
   ...DIRECT_MIGRATION_READ_ACTIONS,
@@ -57,6 +59,7 @@ const ALL_ACTIONS: ActionDef[] = [
   ...RULE_PROVIDER_WRITE_ACTIONS,
   ...PROXY_GROUP_WRITE_ACTIONS,
   ...OPERATOR_WRITE_ACTIONS,
+  ...NAMING_WRITE_ACTIONS,
   ...LOCAL_NODE_WRITE_ACTIONS,
   ...DEVICE_WRITE_ACTIONS,
   ...CONFIG_WRITE_ACTIONS,

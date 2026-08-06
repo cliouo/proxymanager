@@ -28,6 +28,13 @@ export interface SnapshotCollision {
   keptFrom: string | null;
   /** Names of subscriptions whose nodes were dropped. */
   droppedFrom: string[];
+  /**
+   * Managed-path collision that was RESOLVED instead of dropped: distinct raw
+   * identities shared a display name, so the later node survived under this
+   * deterministic meaningful name (` · sourceLabel`). Present only on the
+   * resolved entry; `droppedFrom` stays empty for it.
+   */
+  resolvedTo?: string;
 }
 
 export interface SnapshotSubStatus {
