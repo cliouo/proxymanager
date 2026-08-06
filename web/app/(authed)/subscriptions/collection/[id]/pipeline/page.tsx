@@ -15,6 +15,7 @@ export default function CollectionPipelinePage() {
       backHref="/subscriptions"
       crumbPrefix="订阅源 / 聚合订阅"
       introNoun="聚合订阅"
+      aggregate
       pickLabel={(d) => d.name ?? ''}
     />
   );

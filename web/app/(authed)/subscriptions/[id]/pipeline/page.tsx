@@ -15,6 +15,7 @@ export default function PipelinePage() {
       backHref="/subscriptions"
       crumbPrefix="订阅源"
       introNoun="订阅源"
+      aggregate={false}
       pickLabel={(d) => d.display_name || d.name || ''}
     />
   );

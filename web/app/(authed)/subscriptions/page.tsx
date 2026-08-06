@@ -36,7 +36,10 @@ interface Subscription {
   operators?: Operator[];
 }
 
-type Tab = 'subs' | 'collections';
+type Tab = 'subs' | 'collections' | 'naming';
+
+/** 智能命名：第一个主区块「节点订阅」的第三主入口。 */
+const NAMING_TABS: Tab[] = ['subs', 'collections', 'naming'];
 
 /** 抽屉只存引用,渲染时从最新列表派生展示数据 —— 抽屉里翻开关立即反映。 */
 interface DistRef {
@@ -71,24 +74,28 @@ export default function SubscriptionsPage() {
   const tabsId = useId();
   const subsTabRef = useRef<HTMLButtonElement>(null);
   const collectionsTabRef = useRef<HTMLButtonElement>(null);
+  const namingTabRef = useRef<HTMLButtonElement>(null);
+
+  const tabRef = (t: Tab): RefObject<HTMLButtonElement | null> =>
+    t === 'subs' ? subsTabRef : t === 'collections' ? collectionsTabRef : namingTabRef;
 
   const handleTablistKey = useCallback(
     (e: React.KeyboardEvent<HTMLDivElement>) => {
       if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
         e.preventDefault();
-        const next: Tab = tab === 'subs' ? 'collections' : 'subs';
+        const dir = e.key === 'ArrowRight' ? 1 : -1;
+        const idx = NAMING_TABS.indexOf(tab);
+        const next = NAMING_TABS[(idx + dir + NAMING_TABS.length) % NAMING_TABS.length];
         setTab(next);
-        requestAnimationFrame(() => {
-          (next === 'subs' ? subsTabRef : collectionsTabRef).current?.focus();
-        });
+        requestAnimationFrame(() => tabRef(next).current?.focus());
       } else if (e.key === 'Home') {
         e.preventDefault();
         setTab('subs');
         requestAnimationFrame(() => subsTabRef.current?.focus());
       } else if (e.key === 'End') {
         e.preventDefault();
-        setTab('collections');
-        requestAnimationFrame(() => collectionsTabRef.current?.focus());
+        setTab('naming');
+        requestAnimationFrame(() => namingTabRef.current?.focus());
       }
     },
     [tab],
@@ -389,6 +396,16 @@ export default function SubscriptionsPage() {
           >
             聚合订阅
           </TabButton>
+          <TabButton
+            ref={namingTabRef}
+            active={tab === 'naming'}
+            onClick={() => setTab('naming')}
+            count={subs.length + collections.length}
+            controlsId={`${tabsId}-panel-naming`}
+            tabId={`${tabsId}-tab-naming`}
+          >
+            智能命名
+          </TabButton>
         </div>
         <div className={styles.grow} />
         <div className="search" style={{ width: 220 }}>
@@ -405,13 +422,13 @@ export default function SubscriptionsPage() {
 
       {tab === 'subs' ? (
         <section id={`${tabsId}-panel-subs`} role="tabpanel" aria-labelledby={`${tabsId}-tab-subs`}>
+          {' '}
           <div className={styles.lead}>
             节点订阅是平台从上游获取节点的<b>来源</b>；启用后处理并加入配置。 处理后由平台中转下发的
             <b>公开节点链接</b>
             带令牌、属秘钥——点每行的「分发」按需查看与复制，不在列表明文展示。 源站地址、UA
             与节点处理都在「编辑」里维护。
           </div>
-
           {adding && (
             <AddForm
               onAdded={() => {
@@ -421,7 +438,6 @@ export default function SubscriptionsPage() {
               onCancel={() => setAdding(false)}
             />
           )}
-
           {!loaded ? (
             <div className="panel">
               <SubSkeleton />
@@ -456,7 +472,7 @@ export default function SubscriptionsPage() {
             </div>
           )}
         </section>
-      ) : (
+      ) : tab === 'collections' ? (
         <section
           id={`${tabsId}-panel-collections`}
           role="tabpanel"
@@ -516,6 +532,53 @@ export default function SubscriptionsPage() {
                   onDelete={() => onCollectionDelete(c.id)}
                   onToggle={() => onCollectionToggle(c)}
                   onDistribute={() => setDist({ kind: 'collection', id: c.id })}
+                />
+              ))}
+            </div>
+          )}
+        </section>
+      ) : (
+        <section
+          id={`${tabsId}-panel-naming`}
+          role="tabpanel"
+          aria-labelledby={`${tabsId}-tab-naming`}
+        >
+          <div className={styles.lead}>
+            <b>智能命名</b>：以模板占位符 DSL 统一管理节点名称——国旗 + 地区一个视觉块、
+            可选片段按字段缺失整段消失、序号优先复用上游编号并由服务端持久化（上游重排不翻动）。
+            同配置节点按来源优先级只保留一次；格式化重名用「来源-序号」有意义地消歧。每个目标都有
+            独立的命名健康（字段覆盖率矩阵）与 原始 → 事实 → 最终名称 预览。
+          </div>
+
+          {!loaded ? (
+            <div className="panel">
+              <SubSkeleton />
+              <SubSkeleton />
+            </div>
+          ) : subs.length + collections.length === 0 ? (
+            <div className="panel">
+              <div className={styles.empty}>
+                <div className={styles.d}>还没有任何订阅源或聚合订阅。</div>
+              </div>
+            </div>
+          ) : (
+            <div className="panel">
+              {subs.map((sub) => (
+                <NamingTargetRow
+                  key={sub.id}
+                  label={sub.display_name?.trim() || sub.name}
+                  sublabel="订阅源"
+                  href={`/subscriptions/${sub.id}/naming`}
+                  managed={hasManagedNaming(sub.operators)}
+                />
+              ))}
+              {collections.map((c) => (
+                <NamingTargetRow
+                  key={c.id}
+                  label={c.name}
+                  sublabel="聚合订阅"
+                  href={`/subscriptions/collection/${c.id}/naming`}
+                  managed={hasManagedNaming(c.operators)}
                 />
               ))}
             </div>
@@ -710,6 +773,12 @@ function CollectionCard({
               count={c.operators?.length ?? 0}
             />
           </span>
+          <span>
+            <NamingLink
+              href={`/subscriptions/collection/${c.id}/naming`}
+              managed={hasManagedNaming(c.operators)}
+            />
+          </span>
         </div>
         {c.notes && (
           <div className={styles.meta} title={c.notes}>
@@ -759,6 +828,55 @@ function PipelineLink({ href, count }: { href: string; count: number }) {
     >
       节点处理{count > 0 ? ` · ${count} 步` : ''} →
     </a>
+  );
+}
+
+/** Whether a pipeline carries an ACTIVE 名称统一 (managed naming) step. */
+function hasManagedNaming(
+  operators: Array<{ kind: string; disabled?: boolean }> | undefined,
+): boolean {
+  return (operators ?? []).some((op) => op.kind === 'rename-template' && op.disabled !== true);
+}
+
+/** 上下文链接：单订阅 / 聚合卡片上的「智能命名」入口。 */
+function NamingLink({ href, managed }: { href: string; managed: boolean }) {
+  const router = useRouter();
+  return (
+    <a
+      href={href}
+      onClick={(e) => {
+        if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+        e.preventDefault();
+        router.push(href);
+      }}
+    >
+      智能命名{managed ? '' : '（未启用）'} →
+    </a>
+  );
+}
+
+/** 智能命名面板里的一行目标。 */
+function NamingTargetRow({
+  label,
+  sublabel,
+  href,
+  managed,
+}: {
+  label: string;
+  sublabel: string;
+  href: string;
+  managed: boolean;
+}) {
+  return (
+    <div className={styles.namingRow}>
+      <span className={styles.namingLabel}>
+        {label} <span className={styles.k}>{sublabel}</span>
+      </span>
+      <span className={styles.namingState}>
+        {managed ? '已启用模板命名' : '未启用 · 有确定性推荐模板'}
+      </span>
+      <NamingLink href={href} managed={managed} />
+    </div>
   );
 }
 
@@ -1158,6 +1276,12 @@ function Dossier({
           </span>
           <span>
             <PipelineLink href={`/subscriptions/${sub.id}/pipeline`} count={opCount} />
+          </span>
+          <span>
+            <NamingLink
+              href={`/subscriptions/${sub.id}/naming`}
+              managed={hasManagedNaming(sub.operators)}
+            />
           </span>
         </div>
       </div>
@@ -1568,7 +1692,9 @@ function EditForm({
         <div className={styles.frmRow}>
           <label>
             标识
-            <span className="h">slug · 创建后不可改</span>
+            <span className="h">
+              slug · 改名（API）会断开旧分发链接，并重置旧标识上的命名别名 / 序号
+            </span>
           </label>
           <div className={styles.ctl}>
             <input className="input mono" value={sub.name} disabled readOnly />

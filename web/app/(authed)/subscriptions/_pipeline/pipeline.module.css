@@ -45,6 +45,17 @@
   flex: none;
 }
 
+.saveErr {
+  margin-bottom: 18px;
+  border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent);
+  background: var(--danger-dim);
+  color: var(--danger);
+  border-radius: var(--r-md);
+  padding: 10px 14px;
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
 .loadErr {
   margin-bottom: 18px;
   border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
@@ -812,4 +823,494 @@
   .addSecondary {
     transition: none;
   }
+}
+
+/* ============================================================
+   名称统一 / 其他处理 — two work areas over ONE ordered pipeline
+   ============================================================ */
+
+.areaTabs {
+  display: inline-flex;
+  flex: none;
+  padding: 3px;
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+}
+
+.areaTab {
+  min-height: 30px;
+  padding: 0 12px;
+  border-radius: 7px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.areaTab.active {
+  background: var(--surface);
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 34%, transparent);
+}
+
+.areaTab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* per-card work-area chip */
+.areaChip {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  color: var(--muted);
+  font: 10px var(--font-mono);
+  letter-spacing: 0.04em;
+}
+
+.areaChip.areaNaming {
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+/* subtle emphasis for the selected work area — never hides steps */
+.card.areaFocus {
+  border-color: color-mix(in srgb, var(--accent) 22%, var(--border));
+}
+
+/* filter-regex position indicator */
+.renamePos {
+  flex: none;
+  font: 10px var(--font-mono);
+  color: var(--muted);
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: var(--surface-3);
+  white-space: nowrap;
+}
+
+.renamePosAfter {
+  color: var(--accent);
+  background: var(--accent-dim);
+}
+
+/* flag redundancy warning */
+.saveState {
+  margin: 0 0 12px;
+  border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
+  background: var(--warn-dim);
+  color: var(--fg-2);
+  border-radius: var(--r-md);
+  padding: 9px 12px;
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.flagWarn {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 12px;
+  border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent);
+  background: var(--warn-dim);
+  color: var(--fg-2);
+  border-radius: var(--r-md);
+  padding: 9px 12px;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.flagWarn > span:first-child {
+  flex: none;
+  color: var(--warn);
+  font-weight: 700;
+}
+
+/* grouped add menu */
+.addMenu {
+  width: 300px;
+  max-height: min(70vh, 560px);
+  overflow-y: auto;
+}
+
+.limitNote {
+  margin: 8px 0 0;
+  font-size: 11.5px;
+  color: var(--warn);
+  line-height: 1.5;
+}
+
+.addGroupLabel {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 9px 4px;
+  color: var(--faint);
+  font: 10px var(--font-mono);
+  letter-spacing: 0.08em;
+}
+
+.addGroupLabel + .addItem {
+  margin-top: 2px;
+}
+
+.addGroupHint {
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0;
+}
+
+.addItem:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.addItem:disabled .addItemTitle {
+  color: var(--muted);
+}
+
+/* rename-template editor */
+.rtFields {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.rtGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+/* source alias editor */
+.aliasBox {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.aliasList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.aliasRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font: 11.5px var(--font-mono);
+  padding: 4px 8px;
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+.aliasKey {
+  color: var(--fg-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.aliasArrow {
+  color: var(--faint);
+}
+
+.aliasValue {
+  color: var(--accent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.aliasAdd {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 8px;
+}
+
+/* AI analysis block */
+.aiBox {
+  border-top: 1px dashed var(--border-2);
+  padding-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.aiRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.aiError {
+  margin: 0;
+  border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
+  background: var(--danger-dim);
+  color: var(--danger);
+  border-radius: var(--r-md);
+  padding: 9px 12px;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.aiResult {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  background: var(--accent-dim);
+  border-radius: var(--r-md);
+  padding: 10px 12px;
+}
+
+.aiReason {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--fg-2);
+  line-height: 1.55;
+}
+
+.aiDetails {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.aiDetails summary {
+  cursor: pointer;
+  color: var(--fg-2);
+}
+
+.aiPayloadList {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  line-height: 1.7;
+}
+
+/* preview issues */
+.issueList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.issueRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent);
+  background: var(--warn-dim);
+  border-radius: var(--r-md);
+  padding: 8px 10px;
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.issueRow.issueDanger {
+  border-color: color-mix(in srgb, var(--danger) 35%, transparent);
+  background: var(--danger-dim);
+}
+
+.issueTag {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--warn);
+  font: 10px var(--font-mono);
+}
+
+.issueRow.issueDanger .issueTag {
+  color: var(--danger);
+}
+
+.issueText {
+  color: var(--fg-2);
+  word-break: break-word;
+  min-width: 0;
+}
+
+/* per-step before/after counts */
+.stepTrace {
+  margin-top: 12px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.stepTrace summary {
+  cursor: pointer;
+  color: var(--fg-2);
+  font-size: 12px;
+}
+
+.stepTraceList {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.stepTraceRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font: 11px var(--font-mono);
+  padding: 4px 8px;
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+}
+
+.stepTraceIndex {
+  color: var(--faint);
+  flex: none;
+  width: 16px;
+  text-align: right;
+}
+
+.stepTraceName {
+  color: var(--fg-2);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stepTraceCounts {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.traceDrop {
+  color: var(--danger);
+  background: var(--danger-dim);
+  padding: 0 6px;
+  border-radius: 999px;
+}
+
+.traceChange {
+  color: var(--accent);
+  background: var(--accent-dim);
+  padding: 0 6px;
+  border-radius: 999px;
+}
+
+.stepTraceOff {
+  color: var(--faint);
+}
+
+.stepTraceSamples {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 4px;
+  width: 100%;
+}
+
+.stepTraceSample {
+  font: 10.5px var(--font-mono);
+  color: var(--fg-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 2px 6px;
+}
+
+/* ---------- responsive additions ---------- */
+@media (max-width: 960px) {
+  .rtGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 600px) {
+  .pipelineHeader {
+    flex-wrap: wrap;
+  }
+
+  .areaTabs {
+    order: 3;
+    width: 100%;
+  }
+
+  .areaTab {
+    flex: 1;
+    min-height: 40px;
+  }
+
+  .renamePos {
+    font-size: 9.5px;
+    padding: 1px 5px;
+    max-width: 72px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .addMenu {
+    width: 100%;
+  }
+
+  .aliasAdd {
+    grid-template-columns: 1fr;
+  }
+
+  .stepTraceRow {
+    flex-wrap: wrap;
+  }
+
+  .aiRow {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+/* ── managed rename-template row (immutable summary in the workbench) ── */
+
+.managedSummary {
+  border: 1px dashed var(--border, #e2e5ea);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #f8fafc;
+  margin-top: 6px;
+}
+
+.managedTemplate {
+  font-size: 13px;
+  line-height: 1.7;
+  margin: 0 0 6px;
+}
+
+.managedFacts {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  font-size: 12px;
+  color: #475467;
+  line-height: 1.7;
+}
+
+.managedLink {
+  color: #175cd3;
+  text-decoration: underline;
+  font-size: 12px;
 }
