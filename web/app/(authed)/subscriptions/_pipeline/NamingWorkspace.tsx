@@ -50,6 +50,7 @@ interface NamingPolicyFields {
 }
 
 interface WorkspaceData {
+  configVersion: number;
   entity: { type: 'subscription' | 'collection'; ref: string; label: string };
   aggregate: boolean;
   managed: { present: boolean; disabled?: boolean } & Partial<NamingPolicyFields>;
@@ -403,6 +404,7 @@ export function NamingWorkspace({
       const res = await api<{ data: WorkspaceData }>(workspacePath, {
         method: 'POST',
         body: {
+          expectedVersion: data.configVersion,
           apply: {
             template: draft,
             ...policyBody(policyDraft),
@@ -428,7 +430,7 @@ export function NamingWorkspace({
     try {
       const res = await api<{ data: WorkspaceData }>(workspacePath, {
         method: 'POST',
-        body: { rollback: true },
+        body: { rollback: true, expectedVersion: data.configVersion },
       });
       setData(res.data);
       setDraft(res.data.managed.present ? (res.data.managed.template ?? '') : res.data.recommended);

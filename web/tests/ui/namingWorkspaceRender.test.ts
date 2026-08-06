@@ -20,6 +20,7 @@ import { createElement } from 'react';
 import { NamingWorkspace } from '@/app/(authed)/subscriptions/_pipeline/NamingWorkspace';
 
 const BASE = {
+  configVersion: 7,
   entity: { type: 'subscription' as const, ref: 'ref-1111111111111111', label: '机场A' },
   aggregate: false,
   managed: { present: false },

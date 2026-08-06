@@ -9,7 +9,7 @@ import { CodeEditor } from '@/components/ui/CodeEditor';
 import { ApiError, api } from '@/lib/client/api';
 import { useToast } from '@/components/ui/Toast';
 import { type Collection } from '@/lib/types/collection';
-import type { Operator } from '@/schemas/operator';
+import { isActiveCurrentRenameTemplateOperator, type StoredOperator } from '@/schemas/operator';
 import styles from './subscriptions.module.css';
 
 const DEFAULT_TTL_MS = 10 * 60 * 1000;
@@ -33,7 +33,7 @@ interface Subscription {
     expire: number;
   };
   last_error?: string;
-  operators?: Operator[];
+  operators?: StoredOperator[];
 }
 
 type Tab = 'subs' | 'collections' | 'naming';
@@ -832,10 +832,8 @@ function PipelineLink({ href, count }: { href: string; count: number }) {
 }
 
 /** Whether a pipeline carries an ACTIVE 名称统一 (managed naming) step. */
-function hasManagedNaming(
-  operators: Array<{ kind: string; disabled?: boolean }> | undefined,
-): boolean {
-  return (operators ?? []).some((op) => op.kind === 'rename-template' && op.disabled !== true);
+function hasManagedNaming(operators: StoredOperator[] | undefined): boolean {
+  return (operators ?? []).some(isActiveCurrentRenameTemplateOperator);
 }
 
 /** 上下文链接：单订阅 / 聚合卡片上的「智能命名」入口。 */
