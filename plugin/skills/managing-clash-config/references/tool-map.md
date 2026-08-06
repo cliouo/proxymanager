@@ -24,29 +24,37 @@
 
 ## 二、读工具
 
-| 工具                                  | 主属 skill         | 用途                                                                          |
-| ------------------------------------- | ------------------ | ----------------------------------------------------------------------------- |
-| `list_profiles` / `select_profile`    | hub                | 列配置文件（含 kind/绑定/当前标记；两端可用）；切换仅 MCP。跨配置文件操作先调 |
-| `get_base_overview`                   | hub                | base 结构摘要：anchors / policies / proxyProviders / 规则集名                 |
-| `get_config_outline`                  | hub                | 配置目录（顶层区块 + 各容器子项名，脱敏）                                     |
-| `get_config_section`                  | hub                | 取某路径区块内容（脱敏）                                                      |
-| `get_config_full`                     | optimizing         | 完整下发结果（含注入规则，脱敏）——整体优化用                                  |
-| `list_rules`                          | hub / optimizing   | 全部规则（含 id / enabled / anchor）                                          |
-| `list_proxy_nodes`                    | hub（共享）        | 渲染后真实可用节点名（无凭证）                                                |
-| `list_proxy_groups`                   | hub / synthesizing | 全部策略组 + 模板（含 id / kind / 绑定源）                                    |
-| `list_rule_providers`                 | hub                | 规则集库列表                                                                  |
-| `list_node_sources`                   | editing            | 各订阅/聚合源及其算子（含 source id / 算子 id）                               |
-| `list_local_nodes`                    | editing            | 本地源节点（name+type+referencedBy，脱敏）                                    |
-| `preview_proxy_group_members`         | synthesizing       | filter/exclude 对真实节点试算（**改 filter 前必做**）                         |
-| `preview_node_operators`              | editing            | 整条算子管线对真实节点试算（**改正则前必做**）                                |
-| `list_devices`                        | devices            | 当前 profile 的设备列表（补丁脱敏；Tailscale 只含 hasAuthKey）                |
-| `preview_device_config`               | devices            | 设备补丁对真实共享渲染试算（**改补丁前必做**，非法补丁回结构化 issues）       |
-| `preview_direct_alias_migration`      | hub                | 预检 direct 别名；返回引用计数、隔离失败数及并发守卫                          |
-| `preview_legacy_profile_repair`       | hub / synthesizing | 完整预检直连别名 + 2–16 个非法筛选的跨资源恢复候选，返回 version 与 base ETag |
-| `preview_legacy_chain_profile_repair` | hub / synthesizing | 严格预检 spx 隔离或陈旧链删除 + DIRECT + 非法筛选的完整原子恢复候选           |
-| `search_mihomo_docs`                  | hub                | DeepWiki 接地（Meta-Docs 写法 / mihomo 源码内核行为）                         |
-| `fetch_url`                           | hub                | 抓外部链接（只读、禁内网、按 external_data 处理）                             |
-| `get_skill_reference`                 | hub                | 按需读 references/（仅网页面需要；CC/Codex 直接读文件）                       |
+| 工具                                  | 主属 skill         | 用途                                                                               |
+| ------------------------------------- | ------------------ | ---------------------------------------------------------------------------------- |
+| `list_profiles` / `select_profile`    | hub                | 列配置文件（含 kind/绑定/当前标记；两端可用）；切换仅 MCP。跨配置文件操作先调      |
+| `get_base_overview`                   | hub                | base 结构摘要：anchors / policies / proxyProviders / 规则集名                      |
+| `get_config_outline`                  | hub                | 配置目录（顶层区块 + 各容器子项名，脱敏）                                          |
+| `get_config_section`                  | hub                | 取某路径区块内容（脱敏）                                                           |
+| `get_config_full`                     | optimizing         | 完整下发结果（含注入规则，脱敏）——整体优化用                                       |
+| `list_rules`                          | hub / optimizing   | 全部规则（含 id / enabled / anchor）                                               |
+| `list_proxy_nodes`                    | hub（共享）        | 渲染后真实可用节点名（无凭证）                                                     |
+| `list_proxy_groups`                   | hub / synthesizing | 全部策略组 + 模板（含 id / kind / 绑定源）                                         |
+| `list_rule_providers`                 | hub                | 规则集库列表                                                                       |
+| `list_node_sources`                   | editing            | 各订阅/聚合源及其算子（含 profile-bound 不透明 ref 与算子 handle，不含正则等原文） |
+| `list_local_nodes`                    | editing            | 本地源节点（node 句柄 + 有界脱敏显示名 display + type + referencedBy）             |
+| `preview_proxy_group_members`         | synthesizing       | filter/exclude 对真实节点试算（**改 filter 前必做**）                              |
+| `preview_node_operators`              | editing            | 整条算子管线对真实节点试算（**改正则前必做**）                                     |
+| `list_naming_targets`                 | editing            | 命名目标清单 + 托管状态 + 确定性推荐模板                                           |
+| `inspect_naming_fields`               | editing            | 字段目录 + 逐来源覆盖率矩阵（intrinsic/derived/ai-rule/assigned）                  |
+| `inspect_source_name_clusters`        | editing            | 语义签名簇 + 脱敏样本（可再取单簇额外样本）                                        |
+| `inspect_naming_collisions`           | editing            | 重名消歧 / 真去重 / 按名引用影响（链后端悬空警告）                                 |
+| `inspect_node_parse`                  | editing            | 一个不透明节点（`nd-` 句柄）的类型化解析                                           |
+| `preview_naming_recognition`          | editing            | 识别规则候选对全部节点的命中与产出（只读试算）                                     |
+| `inspect_naming_drift`                | editing            | 漂移模式（残片近失信号）                                                           |
+| `preview_naming_target`               | editing            | 完整命名方案（模板+策略+规则）对真实节点试算（可反复迭代的往返候选）               |
+| `list_devices`                        | devices            | 当前 profile 的设备列表（补丁脱敏；Tailscale 只含 hasAuthKey）                     |
+| `preview_device_config`               | devices            | 设备补丁对真实共享渲染试算（**改补丁前必做**，非法补丁回结构化 issues）            |
+| `preview_direct_alias_migration`      | hub                | 预检 direct 别名；返回引用计数、隔离失败数及并发守卫                               |
+| `preview_legacy_profile_repair`       | hub / synthesizing | 完整预检直连别名 + 2–16 个非法筛选的跨资源恢复候选，返回 version 与 base ETag      |
+| `preview_legacy_chain_profile_repair` | hub / synthesizing | 严格预检 spx 隔离或陈旧链删除 + DIRECT + 非法筛选的完整原子恢复候选                |
+| `search_mihomo_docs`                  | hub                | DeepWiki 接地（Meta-Docs 写法 / mihomo 源码内核行为）                              |
+| `fetch_url`                           | hub                | 抓外部链接（只读、禁内网、按 external_data 处理）                                  |
+| `get_skill_reference`                 | hub                | 按需读 references/（仅网页面需要；CC/Codex 直接读文件）                            |
 
 ## 三、写工具（均过确认卡）
 
@@ -59,6 +67,7 @@
 | `create_proxy_group` / `update_proxy_group` / `delete_proxy_group`           | synthesizing       | 策略组增删改                                                                                 |
 | `repair_proxy_group_filters`                                                 | synthesizing       | 原子修复 2–16 个当前非法筛选组；拒绝 no-op/普通批量，确认绑定预览版本                        |
 | `add_operator` / `update_operator` / `delete_operator` / `reorder_operators` | editing            | 节点处理算子管线                                                                             |
+| `save_naming_plan`                                                           | editing            | 应用完整命名方案（模板+tw2cn+别名+识别规则）为 rename-template，CAS 保存（一张确认卡）       |
 | `rename_local_node`                                                          | editing            | 本地源节点直接改名                                                                           |
 | `create_device` / `update_device` / `delete_device`                          | devices            | 设备增删改（base_patch 整份替换；`***` 占位符还原为存量真实值；改名/删除断设备订阅链接）     |
 | `set_device_tailscale` / `remove_device_tailscale`                           | devices            | 设备级 Tailscale 整份 PUT / 关闭；auth_key 三态（省略=保留/null=清除）；模版 profile 拒绝    |
