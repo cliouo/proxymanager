@@ -138,7 +138,7 @@ const fakeRedis = {
         // pass-7 blocker 4 / pass-8 blocker 6: the Lua re-validates the
         // caller profile's CURRENT source binding inside the same atomic
         // eval, and collection bindings re-validate the member-id list.
-        if (keys.length >= 6) {
+        if (keys.length >= 6 && args[11] !== 'global') {
           const raw = bucket(keys[5]).get(args[10]);
           if (raw === undefined) return [2, 'profile-missing'];
           const profile = JSON.parse(typeof raw === 'string' ? raw : JSON.stringify(raw)) as {
@@ -708,6 +708,8 @@ describe('namingCasRepo strict audit boundary (pass-3 finding) — every rejecti
       recordId?: string;
       expectedProfileId?: string;
       profileBindingProfileId?: string;
+      profileBindingType?: string;
+      profileBindingId?: string;
       history?: unknown;
     } = {},
   ): Promise<void> {
@@ -735,8 +737,8 @@ describe('namingCasRepo strict audit boundary (pass-3 finding) — every rejecti
           : 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
       profileBinding: {
         profileId: over.profileBindingProfileId ?? 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-        type: 'subscription',
-        id: SUB_ID,
+        type: over.profileBindingType ?? 'subscription',
+        id: over.profileBindingId ?? SUB_ID,
       },
     });
   }
@@ -922,7 +924,7 @@ describe('namingCasRepo strict audit boundary (pass-3 finding) — every rejecti
     assertZeroWrites(before);
     // the caller omits the expected profile → the repository rejects
     await expect(attempt(validAudit(), { expectedProfileId: undefined })).rejects.toThrow(
-      /expected profile binding/,
+      /global authority binding/,
     );
     assertZeroWrites(before);
     await expect(
@@ -931,6 +933,30 @@ describe('namingCasRepo strict audit boundary (pass-3 finding) — every rejecti
       }),
     ).rejects.toThrow(/expected profile and live binding profile must match/);
     assertZeroWrites(before);
+  });
+
+  it('accepts an explicit global audit only with the global repository authority binding', async () => {
+    const audit = validAudit();
+    const payload = JSON.parse(audit.payloadJson) as {
+      profileId?: string;
+      scope?: string;
+    };
+    delete payload.profileId;
+    payload.scope = 'global';
+
+    await expect(
+      attempt(
+        { ...audit, payloadJson: JSON.stringify(payload) },
+        {
+          expectedProfileId: undefined,
+          profileBindingProfileId: '',
+          profileBindingType: 'global',
+          profileBindingId: '',
+        },
+      ),
+    ).resolves.toBeUndefined();
+    expect(counters.get(REDIS_KEYS.configVersion)).toBe(1);
+    expect(bucket(REDIS_KEYS.audit.events).size).toBe(1);
   });
 
   it('history is bound to the exact entity and operation before any write', async () => {
@@ -1116,9 +1142,8 @@ describe('buildNamingAudit — sanitized + schema-valid before persistence (find
         hadManaged: false,
         template: '${region}',
         mode: 'added',
-        // @ts-expect-error profileId is REQUIRED (pass-2 finding)
         profileId: undefined,
-      }),
+      } as never),
     ).toThrow(/审计事件不合法/);
   });
 });

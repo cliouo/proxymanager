@@ -1,15 +1,14 @@
 import { buildRawScope } from '@/lib/proxies/handleScopes';
 import { NamingAuditEventSchema, type AuditEvent } from '@/schemas';
+import { GLOBAL_NAMING_SCOPE_ID } from '@/lib/services/namingTargetScope';
 
 /**
  * pass-8 blocker 7: EXTERNAL history surfaces must never carry raw
- * entity/profile UUIDs. Naming audit events persist `target.id` + `profileId`
- * (internal, required for the atomic binding + fail-closed repository
- * validation), but every response/API/model projection replaces them with
- * keyed profile-bound tokens:
- *   - target.id  → the SAME profile-bound `ref-` token the workspace/actions
- *                  mint for that profile+target (deterministic round-trip);
- *   - profileId  → a keyed `ref-` profile handle (never the raw UUID).
+ * entity/profile UUIDs. Profile-scoped naming audits persist `target.id` +
+ * `profileId`; global workspace audits persist `target.id` + scope=global.
+ * Every response/API/model projection replaces the target id with the same
+ * keyed ref used by its authority domain, and profile ids (when present) with
+ * keyed profile handles.
  * Non-naming events pass through untouched (their target shapes are owned by
  * their own surfaces).
  *
@@ -24,16 +23,25 @@ function projectNamingAuditForExternalWithScopes(
 ): AuditEvent {
   if (event.target?.kind !== 'naming-source') return event;
   const profileId = event.profileId;
-  if (!profileId) return event;
+  const global = event.scope === 'global';
+  if (!global && !profileId) return event;
   const target = event.target as {
     kind: 'naming-source';
     type: 'subscription' | 'collection';
     id: string;
     name: string;
   };
+  const salt = global ? GLOBAL_NAMING_SCOPE_ID : profileId!;
+  const projectedTarget = {
+    ...target,
+    id: targetScope.project(`${salt}\x00${target.type}:${target.id}`),
+  };
+  if (global) {
+    return { ...event, target: projectedTarget };
+  }
   return {
     ...event,
-    target: { ...target, id: targetScope.project(`${profileId}\x00${target.type}:${target.id}`) },
+    target: projectedTarget,
     profileId: profileScope.project(`${profileId}\x00profile:${profileId}`),
   };
 }
@@ -52,12 +60,14 @@ export function projectNamingAuditForExternal(event: AuditEvent): AuditEvent | n
   const parsed = NamingAuditEventSchema.safeParse(event);
   if (!parsed.success) return null;
   const safeEvent = parsed.data;
+  const salt = safeEvent.scope === 'global' ? GLOBAL_NAMING_SCOPE_ID : safeEvent.profileId!;
   const targetScope = buildRawScope('target-ref', [
-    `${safeEvent.profileId}\x00${safeEvent.target.type}:${safeEvent.target.id}`,
+    `${salt}\x00${safeEvent.target.type}:${safeEvent.target.id}`,
   ]);
-  const profileScope = buildRawScope('profile-ref', [
-    `${safeEvent.profileId}\x00profile:${safeEvent.profileId}`,
-  ]);
+  const profileScope = buildRawScope(
+    'profile-ref',
+    safeEvent.profileId ? [`${safeEvent.profileId}\x00profile:${safeEvent.profileId}`] : [],
+  );
   return projectNamingAuditForExternalWithScopes(safeEvent, targetScope, profileScope);
 }
 
@@ -84,12 +94,15 @@ export function projectNamingAuditsForExternal(events: AuditEvent[]): AuditEvent
     'target-ref',
     naming.map((e) => {
       const target = e.target as { type: 'subscription' | 'collection'; id: string };
-      return `${e.profileId}\x00${target.type}:${target.id}`;
+      const salt = e.scope === 'global' ? GLOBAL_NAMING_SCOPE_ID : e.profileId!;
+      return `${salt}\x00${target.type}:${target.id}`;
     }),
   );
   const profileScope = buildRawScope(
     'profile-ref',
-    naming.map((e) => `${e.profileId}\x00profile:${e.profileId}`),
+    naming
+      .filter((e) => e.scope !== 'global' && e.profileId !== undefined)
+      .map((e) => `${e.profileId}\x00profile:${e.profileId}`),
   );
   return safeEvents.map((event) =>
     projectNamingAuditForExternalWithScopes(event, targetScope, profileScope),

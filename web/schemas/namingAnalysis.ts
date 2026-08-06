@@ -21,11 +21,12 @@ import { z } from '@/lib/openapi/zod';
 import { RecognitionRuleSchema } from '@/schemas/operator';
 import { validateTemplate } from '@/lib/proxies/naming';
 
-/** Canonical opaque target-ref shape (mirrors namingTargetScope.NAMING_REF_RE
- * — the profile-bound keyed handle the model-facing surfaces accept). */
+/** Canonical opaque target-ref shape (mirrors namingTargetScope.NAMING_REF_RE).
+ * The salt binds it either to a profile-scoped tool domain or the global
+ * administrator workspace; neither form exposes the raw target identity. */
 export const NAMING_REF_RE = /^ref-[0-9a-f]{16}$/;
 
-/** ONE strict request schema: the profile-bound opaque ref only. A request
+/** ONE strict request schema: an authorized opaque ref only. A request
  * carrying ANY other key (raw `type`/`id` included) fails at parse. */
 export const NamingAnalysisRefSchema = z
   .object({
@@ -40,7 +41,7 @@ export type NamingAnalysisRef = z.infer<typeof NamingAnalysisRefSchema>;
 
 /**
  * The ONE way the UI builds an analysis request: from the workspace payload's
- * profile-bound opaque ref. Raw `{ type, id }` never enters this shape —
+ * global-workspace opaque ref. Raw `{ type, id }` never enters this shape —
  * both the subscription and collection workspaces call this builder.
  */
 export function namingAnalysisRequest(entityRef: string): NamingAnalysisRef {

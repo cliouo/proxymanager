@@ -482,6 +482,20 @@ describe('naming CAS executes entity + history + audit + ordinal reservation ato
     ]);
   });
 
+  it('global workspace authority commits without a profile row while keeping the version CAS', () => {
+    hash('profiles').delete(PROFILE_ID);
+    expect(
+      runNaming(plan(), (_keys, args) => {
+        args[10] = '';
+        args[11] = 'global';
+        args[12] = '';
+        args[13] = '0';
+      }),
+    ).toEqual([1, '8']);
+    expect(values.get('version')).toBe('8');
+    expect(hash('entities').get(RECORD_ID)).toBe(JSON.stringify({ id: RECORD_ID, operators: [] }));
+  });
+
   it('self-heals a leading-zero counter with the same ordinal 1 planned by JS', () => {
     values.set('node-ordinal-counter:airport-a', '01');
     const leadingZeroPlan = plan({

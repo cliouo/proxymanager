@@ -8,6 +8,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import { REDIS_KEYS } from '@/lib/redis/keys';
 import { installTestHandleSecret } from '../helpers/handleSecret';
 import { buildProfileScope, buildTargetRefScope } from '@/lib/proxies/handleScopes';
+import { GLOBAL_NAMING_SCOPE_ID } from '@/lib/services/namingTargetScope';
 import { GET } from '@/app/api/v1/history/route';
 
 const stores = new Map<string, Map<string, unknown>>();
@@ -122,6 +123,42 @@ describe('GET /api/v1/history — pass-8 blocker 7 external privacy', () => {
     const body = (await res.json()) as { data: Array<{ op: string; target?: { id: string } }> };
     const rule = body.data.find((e) => e.op === 'rule.create')!;
     expect(rule.target?.id).toBe('rule-1');
+  });
+
+  it('projects global workspace naming audits without inventing a profile binding', async () => {
+    const globalEvent = {
+      id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+      ts: 1001,
+      op: 'naming.apply',
+      actor: 'web-ui',
+      target: { kind: 'naming-source', type: 'subscription', id: SUB_ID, name: '机场A' },
+      before: null,
+      after: { templateSummary: { placeholderCount: 1, length: 8 }, mode: 'added' },
+      undoable: false,
+      scope: 'global',
+    };
+    bucket(REDIS_KEYS.audit.events).set(globalEvent.id, globalEvent.ts);
+    bucket(REDIS_KEYS.audit.byId).set(globalEvent.id, JSON.stringify(globalEvent));
+
+    const res = await GET(new Request('http://localhost/api/v1/history'));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      data: Array<{
+        id: string;
+        scope?: string;
+        profileId?: string;
+        target?: { id: string };
+      }>;
+    };
+    const projected = body.data.find((event) => event.id === globalEvent.id)!;
+    expect(projected.scope).toBe('global');
+    expect(projected.profileId).toBeUndefined();
+    expect(projected.target?.id).toBe(
+      buildTargetRefScope(GLOBAL_NAMING_SCOPE_ID, [{ type: 'subscription', id: SUB_ID }]).project(
+        `subscription:${SUB_ID}`,
+      ),
+    );
+    expect(JSON.stringify(projected)).not.toContain(SUB_ID);
   });
 
   it('drops malformed legacy naming events that cannot be projected without leaking raw ids', async () => {

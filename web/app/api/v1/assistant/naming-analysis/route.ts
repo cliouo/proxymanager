@@ -2,9 +2,9 @@
  * POST /api/v1/assistant/naming-analysis — explicit, user-triggered AI
  * analysis for the rename-template (名称统一) operator.
  *
- * Privacy: the client sends ONE opaque { ref } — never type/id — and the
- * server resolves it profile-bound (the caller's current profile source
- * binding authorizes the target). The configured model receives only the
+ * Privacy: the client sends ONE opaque { ref } — never type/id. The server
+ * resolves either a global administrator-workspace ref or a profile-scoped
+ * assistant ref. The configured model receives only the
  * bounded sanitized node-name features plus sanitized source labels / opaque
  * ids built by lib/ai/namingAnalysis — never credentials, endpoints,
  * subscription URLs, raw identity, or unsanitized source data. The response
@@ -19,11 +19,7 @@
 
 import { z } from '@/lib/openapi/zod';
 import { resolveScopeProfile } from '@/lib/profileScope';
-import {
-  NAMING_SCOPE_ERROR,
-  callerVisibleNamingTargets,
-  resolveRefInVisibleSet,
-} from '@/lib/services/namingTargetScope';
+import { NAMING_SCOPE_ERROR, resolveNamingAnalysisRef } from '@/lib/services/namingTargetScope';
 import { withProblemDetails } from '@/lib/http/handler';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { NamingAnalysisRefSchema, runNamingAnalysis } from '@/lib/ai/namingAnalysis';
@@ -40,9 +36,9 @@ export const dynamic = 'force-dynamic';
 // the preview routes.
 export const maxDuration = 60;
 
-/** Profile-bound opaque target ref — the ONE shared strict schema; raw
- * type/UUID (and any extra key) never crosses this surface (pass-7 blocker
- * 4); the caller's CURRENT profile source binding authorizes resolution. */
+/** Opaque target ref — the ONE shared strict schema; raw type/UUID (and any
+ * extra key) never crosses this surface. Refs may come from either the global
+ * administrator workspace or profile-scoped assistant tools. */
 const SourceRef = NamingAnalysisRefSchema;
 
 /**
@@ -60,10 +56,7 @@ async function resolveRawWithProvenance(
   request: Request,
 ): Promise<Array<Record<string, unknown>>> {
   const profile = await resolveScopeProfile(request);
-  const visible = await callerVisibleNamingTargets(profile);
-  // Match ANY visible target (type is part of the ref MAC) — wrong-kind and
-  // cross-profile refs fail the same bounded error as zero/multiple matches.
-  const { type, id } = resolveRefInVisibleSet(profile.id, ref.ref, visible);
+  const { type, id } = await resolveNamingAnalysisRef(profile, ref.ref);
   if (type === 'subscription') {
     const sub = await getSubscription(id);
     if (!sub) throw ProblemDetailsError.notFound(NAMING_SCOPE_ERROR);
@@ -79,7 +72,7 @@ async function resolveRawWithProvenance(
 }
 
 export const POST = withProblemDetails(async (request: Request) => {
-  // pass-8 blocker 5: parse + authorize the profile-bound ref BEFORE the
+  // Parse + authorize the opaque ref BEFORE the
   // assistant-config read — an unauthorized request fails identically with
   // or without an assistant configured (no information-bearing reads).
   const raw = await request.json().catch(() => {
