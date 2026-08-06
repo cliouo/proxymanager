@@ -1,10 +1,9 @@
 import { withProblemDetails } from '@/lib/http/handler';
+import { projectAliasKeysToHandles } from '@/lib/services/sourceAliasResolver';
+import { enabledCollectionMemberSubs } from '@/lib/engine/resolve';
+import { listSubscriptions } from '@/lib/services/subscriptionService';
 import { ProblemDetailsError } from '@/lib/http/problem';
-import {
-  deleteCollection,
-  getCollection,
-  patchCollection,
-} from '@/lib/services/collectionService';
+import { deleteCollection, getCollection, patchCollection } from '@/lib/services/collectionService';
 import { CollectionUpdateSchema } from '@/schemas';
 
 export const dynamic = 'force-dynamic';
@@ -15,7 +14,21 @@ export const GET = withProblemDetails(async (_request: Request, ctx: Ctx) => {
   const { id } = await ctx.params;
   const col = await getCollection(id);
   if (!col) throw ProblemDetailsError.notFound(`Collection ${id} not found.`);
-  return Response.json({ data: col });
+  // pass-6 blocker 2: external payloads carry ONLY opaque src-* handles
+  // pass-10 blocker 1: alias projection uses the ENABLED authoritative set
+  const members = await enabledCollectionMemberSubs(col, await listSubscriptions()).map(
+    (m) => m.name,
+  );
+  const data = {
+    ...col,
+    operators: (col.operators ?? []).map((op) => {
+      if ((op as { kind?: string }).kind !== 'rename-template') return op;
+      const aliases = (op as { sourceAliases?: Record<string, string> }).sourceAliases;
+      if (aliases === undefined) return op;
+      return { ...op, sourceAliases: projectAliasKeysToHandles(aliases, members) };
+    }),
+  };
+  return Response.json({ data });
 });
 
 export const PATCH = withProblemDetails(async (request: Request, ctx: Ctx) => {

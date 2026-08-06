@@ -1,5 +1,6 @@
 import { withProblemDetails } from '@/lib/http/handler';
 import { listEvents } from '@/lib/repos/auditRepo';
+import { projectNamingAuditsForExternal } from '@/lib/services/namingAuditProjection';
 
 export const dynamic = 'force-dynamic';
 
@@ -23,5 +24,11 @@ export const GET = withProblemDetails(async (request: Request) => {
     limit,
     beforeTs: Number.isFinite(beforeTs) ? beforeTs : undefined,
   });
-  return Response.json({ data, meta: { limit, count: data.length } });
+  // pass-8 blocker 7: raw entity/profile UUIDs never leave the history
+  // surface — naming events project to keyed profile-bound refs/handles,
+  // with the full-domain collision index over ALL events (pass-10 blocker 3)
+  return Response.json({
+    data: projectNamingAuditsForExternal(data),
+    meta: { limit, count: data.length },
+  });
 });

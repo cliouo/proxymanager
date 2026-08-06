@@ -197,6 +197,9 @@ export async function preflightProfileConfig(
         boundSource: candidate.profile.source,
         ignoreFailedSubs: false,
         persistSnapshot: false,
+        // Side-effect boundary: preflight never writes fetch/render caches,
+        // snapshots, OR persisted node-ordinal assignments.
+        persistOrdinals: false,
         // The injected resolver is the side-effect boundary: normal renders
         // retain cache writes and stale fallback, while preflight does neither.
         subscriptionResolver: resolveSubscriptionForPreflight,

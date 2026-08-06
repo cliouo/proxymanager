@@ -107,8 +107,12 @@ return 1
  *  19 → subscriptions may carry inert skip-cert-verify while tls is disabled.
  *  20 → VLESS URI packetEncoding=none normalises to Mihomo's effective XUDP
  *       default instead of rejecting the subscription.
+ *  21 → placeholder-template naming (rename-template DSL): composed node names
+ *       changed shape (flag+region visual block, optional segments, identity
+ *       dedup, persisted stable ordinals) — old cached renders must not be
+ *       served.
  */
-const RENDER_CACHE_EPOCH = 20;
+const RENDER_CACHE_EPOCH = 21;
 
 export type RenderCacheStatus = 'hit' | 'miss' | 'bypass';
 

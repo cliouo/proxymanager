@@ -90,7 +90,7 @@ describe('object pipeline ≡ string pipeline', () => {
     const obj = await resolveSubscriptionProxies(sub);
     const str = await resolveSubscriptionContentRaw(sub);
 
-    expect(obj.proxies).toEqual(parseProxies(str.yaml));
+    expect(JSON.parse(JSON.stringify(obj.proxies))).toEqual(parseProxies(str.yaml));
     expect(obj.proxies).toHaveLength(3);
     expect(obj.proxyCount).toBe(3);
   });
@@ -101,7 +101,10 @@ describe('object pipeline ≡ string pipeline', () => {
     const str = await resolveSubscriptionContent(sub);
 
     const fromYaml = parseProxies(str.yaml);
-    expect(obj.proxies).toEqual(fromYaml);
+    // The object path carries the internal provenance envelope on a symbol —
+    // JSON/YAML never see it, so the byte-identical comparison is on the
+    // serializable projection.
+    expect(JSON.parse(JSON.stringify(obj.proxies))).toEqual(fromYaml);
     expect(obj.proxyCount).toBe(str.proxyCount);
     // 管线真实生效:info 节点被滤掉、前缀被删、udp 被设上。
     expect(obj.proxies.map((p) => p.name)).toEqual(['HK-01', '日本 JP-02']);
@@ -140,7 +143,7 @@ describe('object pipeline ≡ string pipeline', () => {
     const obj = await resolveSubscriptionProxies(sub);
     const str = await resolveSubscriptionContent(sub);
 
-    expect(obj.proxies).toEqual(parseProxies(str.yaml));
+    expect(JSON.parse(JSON.stringify(obj.proxies))).toEqual(parseProxies(str.yaml));
     expect(str.yaml).toBe(cachedYaml); // 字符串路径仍原样返回缓存条目
     expect(obj.traffic).toEqual({ upload: 1, download: 2, total: 3, expire: 4 });
   });
@@ -228,7 +231,7 @@ describe('object pipeline ≡ string pipeline', () => {
       const [, entry] = setCacheMock.mock.calls[0];
       // 缓存条目仍是 provider-YAML 字符串,能被再 parse 回同一份 proxies。
       expect(typeof entry.content).toBe('string');
-      expect(parseProxies(entry.content)).toEqual(obj.proxies);
+      expect(parseProxies(entry.content)).toEqual(JSON.parse(JSON.stringify(obj.proxies)));
       expect(entry.proxy_count).toBe(1);
     } finally {
       globalThis.fetch = realFetch;
@@ -242,7 +245,7 @@ describe('object pipeline ≡ string pipeline', () => {
     const str = await resolveSubscriptionContentRaw(sub);
 
     // 等价性:对象路径 = parse(字符串路径)。这是 preview 路由砍掉那次 parse 的前提。
-    expect(obj.proxies).toEqual(parseProxies(str.yaml));
+    expect(JSON.parse(JSON.stringify(obj.proxies))).toEqual(parseProxies(str.yaml));
     expect(obj.proxyCount).toBe(str.proxyCount);
     // operators 未生效:info 节点还在、前缀未删。
     expect(obj.proxies.map((p) => p.name)).toEqual(['香港 HK-01', '日本 JP-02', '剩余流量：10GB']);
@@ -264,7 +267,7 @@ describe('object pipeline ≡ string pipeline', () => {
       operators: OPERATORS,
     });
     const obj = await resolveSubscriptionProxiesRaw(sub);
-    expect(obj.proxies).toEqual(parseProxies(cachedYaml));
+    expect(JSON.parse(JSON.stringify(obj.proxies))).toEqual(parseProxies(cachedYaml));
     expect(obj.proxyCount).toBe(1);
     expect(obj.traffic).toEqual({ upload: 1, download: 2, total: 3, expire: 4 });
 
@@ -278,7 +281,7 @@ describe('object pipeline ≡ string pipeline', () => {
       const stale = await resolveSubscriptionProxiesRaw(sub);
       expect(stale.stale).toBe(true);
       expect(stale.staleReason).toBe('Upstream fetch failed');
-      expect(stale.proxies).toEqual(parseProxies(cachedYaml));
+      expect(JSON.parse(JSON.stringify(stale.proxies))).toEqual(parseProxies(cachedYaml));
     } finally {
       globalThis.fetch = realFetch;
     }

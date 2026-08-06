@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { isExecutableOperator } from '@/schemas/operator';
 import {
   CollectionCreateSchema,
   CollectionSchema,
@@ -200,7 +201,7 @@ rules:
 
     const applied = applyOperators(
       [{ name: 'aaaaaaaaaaaaaaaa', type: 'ss', server: 'example.test', port: 443 }],
-      subscription.operators,
+      subscription.operators.filter(isExecutableOperator),
     );
     expect(applied.proxies).toHaveLength(1);
     expect(applied.steps[0]).toMatchObject({ applied: false, dropped: 0, changed: 0 });

@@ -19,6 +19,17 @@ const sample: ClashProxy[] = [
   { name: '官网 https://airport.com', type: 'ss', server: 'f.com', port: 2 },
 ];
 
+/** rename-template builder shared by every pipeline test. */
+function rt(over: Record<string, unknown> = {}): Operator {
+  return op({
+    kind: 'rename-template',
+    template:
+      '${emoji} ${region}${?route: · ${route}}${?vendor: · ${vendor}}${?rate: · ${rate}}${?note: · ${note}}${?source: · ${source}}${?index: · ${index}}',
+    recognitionRules: [],
+    ...over,
+  });
+}
+
 describe('applyOperators · filter-regex', () => {
   it('keeps matches', () => {
     const { proxies } = applyOperators(sample, [
@@ -315,5 +326,108 @@ describe('applyOperators · pipeline ordering + disabled', () => {
     ]);
     expect(proxies).toHaveLength(sample.length);
     expect(steps[0]).toMatchObject({ applied: false, dropped: 0 });
+  });
+});
+
+/* ─── rename-template (名称统一) through the shared pipeline ─────────── */
+
+describe('applyOperators · rename-template', () => {
+  it('composes deterministic names and reports changed + collisions', () => {
+    const input: ClashProxy[] = [
+      { name: '🇭🇰 香港 01', type: 'ss' },
+      { name: '日本 Tokyo 2x', type: 'ss' },
+    ];
+    const { proxies, steps } = applyOperators(input, [rt()]);
+    expect(proxies.map((p) => p.name)).toEqual(['🇭🇰 香港 · 01', '🇯🇵 日本 · 2x · Tokyo · 01']);
+    expect(steps[0]).toMatchObject({ applied: true, changed: 2, dropped: 0, before: 2, after: 2 });
+  });
+
+  it('filter-regex AFTER rename sees renamed names; BEFORE sees raw', () => {
+    const input: ClashProxy[] = [
+      { name: '🇭🇰 香港 01', type: 'ss' },
+      { name: '日本 Tokyo 01', type: 'ss' },
+    ];
+    // filter first (matches raw name '香港'), then rename-template
+    const filterFirst = applyOperators(input, [
+      op({ kind: 'filter-regex', mode: 'keep', pattern: '香港' }),
+      rt(),
+    ]);
+    expect(filterFirst.proxies.map((p) => p.name)).toEqual(['🇭🇰 香港 · 01']);
+    // rename first (matches renamed '🇭🇰 香港 · 01'), then filter
+    const renameFirst = applyOperators(input, [
+      rt(),
+      op({ kind: 'filter-regex', mode: 'keep', pattern: '🇭🇰' }),
+    ]);
+    expect(renameFirst.proxies.map((p) => p.name)).toEqual(['🇭🇰 香港 · 01']);
+  });
+
+  it('rename-template then rename-regex chains on the composed name', () => {
+    const input: ClashProxy[] = [{ name: '香港 01', type: 'ss' }];
+    const { proxies } = applyOperators(input, [
+      rt(),
+      op({ kind: 'rename-regex', pattern: '香港', replacement: 'HK' }),
+    ]);
+    expect(proxies[0].name).toBe('🇭🇰 HK · 01');
+  });
+
+  it('source alias + per-source numbering from provenance symbols', async () => {
+    const { withSource } = await import('@/lib/proxies/provenance');
+    const input = [
+      withSource({ name: '香港 01', type: 'ss' }, { key: 'a', label: '机场A' }),
+      withSource({ name: '日本 01', type: 'ss' }, { key: 'b', label: '机场B' }),
+    ];
+    const { proxies } = applyOperators(input, [
+      rt({
+        template:
+          '${emoji} ${region}${?rate: · ${rate}}${?note: · ${note}}${?source: · ${source}}${?index: · ${index}}',
+      }),
+    ]);
+    expect(proxies.map((p) => p.name)).toEqual(['🇭🇰 香港 · 机场A · 01', '🇯🇵 日本 · 机场B · 01']);
+    // The provenance symbol never serialises: JSON output is byte-identical
+    // to a plain node object — no internal source metadata leaks.
+    expect(JSON.stringify(proxies)).toBe(
+      JSON.stringify([
+        { name: '🇭🇰 香港 · 机场A · 01', type: 'ss' },
+        { name: '🇯🇵 日本 · 机场B · 01', type: 'ss' },
+      ]),
+    );
+  });
+});
+
+describe('applyOperators · per-step samples', () => {
+  it('captures bounded redacted before/after name samples per applied step', () => {
+    const input: ClashProxy[] = [
+      { name: '🇭🇰 香港 01', type: 'ss' },
+      { name: '日本 Tokyo 01', type: 'ss' },
+      { name: 'US 01', type: 'ss' },
+    ];
+    const { steps } = applyOperators(input, [
+      rt({
+        template: '${emoji} ${region}${?rate: · ${rate}}${?note: · ${note}}${?index: · ${index}}',
+      }),
+    ]);
+    const step = steps[0];
+    expect(step.samples).toBeDefined();
+    expect(step.samples!.length).toBeLessThanOrEqual(3);
+    expect(step.samples![0]).toMatchObject({
+      before: '🇭🇰 香港 01',
+      after: '🇭🇰 香港 · 01',
+    });
+  });
+
+  it('samples are REDACTED — credential-like names never reach the trace raw', () => {
+    const input: ClashProxy[] = [
+      { name: '香港 https://evil.example/sub?token=abc123', type: 'ss' },
+      { name: '日本 ::1', type: 'ss' },
+    ];
+    const { steps } = applyOperators(input, [
+      rt({
+        template: '${emoji} ${region}${?note: · ${note}}${?index: · ${index}}',
+      }),
+    ]);
+    const serialized = JSON.stringify(steps[0].samples ?? []);
+    expect(serialized).not.toContain('evil.example');
+    expect(serialized).not.toContain('token=abc123');
+    expect(serialized).not.toContain('::1');
   });
 });

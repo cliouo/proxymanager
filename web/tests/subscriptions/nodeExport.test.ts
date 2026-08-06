@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { parse } from 'yaml';
+import { applyOperators, type ClashProxy } from '@/lib/proxies/operators';
 import type { Collection, Subscription } from '@/schemas';
 
 /**
@@ -11,6 +12,15 @@ import type { Collection, Subscription } from '@/schemas';
 
 vi.mock('@/lib/services/subscriptionFetcher', () => ({
   resolveSubscriptionProxies: vi.fn(),
+}));
+
+// The export path resolves persisted stable-numbering assignments; the
+// assignment store is orthogonal to export semantics, so these tests stub it
+// empty (input-order ordinals, no Redis dependency).
+vi.mock('@/lib/repos/nodeOrdinalRepo', () => ({
+  loadOrdinalAssignments: async () => new Map(),
+  assignOrdinals: async () => new Map(),
+  clearOrdinalAssignments: async () => undefined,
 }));
 
 import { resolveSubscriptionProxies } from '@/lib/services/subscriptionFetcher';
@@ -137,6 +147,143 @@ describe('exportCollectionNodes', () => {
     );
   });
 
+  it('MEMBER-managed status propagates (finding 5): a member with an active rename-template makes same-name distinct-identity nodes survive with a suffix — not first-writer-wins', async () => {
+    const managedMember = makeSub({
+      name: 'managed-member',
+      operators: [
+        {
+          id: 'rt-m',
+          kind: 'rename-template',
+          template: '${emoji} ${region}',
+          recognitionRules: [],
+        },
+      ],
+    });
+    const plainMember = makeSub({ name: 'plain-member' });
+    // the collection itself has NO rename-template — the member's managed
+    // status alone must trigger the managed-path disambiguation
+    const col = makeCollection({ subscription_ids: [managedMember.id, plainMember.id] });
+
+    fetchMock.mockImplementation(async (sub: Subscription) => {
+      // same display name, DIFFERENT configs (distinct identities)
+      return sub.id === managedMember.id
+        ? { proxies: [proxy('香港 中转', 'm-a')], proxyCount: 1 }
+        : { proxies: [proxy('香港 中转', 'p-b')], proxyCount: 1 };
+    });
+
+    const result = await exportCollectionNodes(col, [managedMember, plainMember]);
+    const names = proxiesOf(result.yaml).map((p) => p.name);
+    // BOTH survive — the later one deterministically suffixed (managed path)
+    expect(names).toHaveLength(2);
+    expect(names[0]).toBe('香港 中转');
+    // the LATER node (plain-member, input order) is suffixed with ITS label
+    expect(names[1]).toBe('香港 中转 · plain-member');
+    expect(result.resolvedNames).toEqual([{ from: '香港 中转', to: '香港 中转 · plain-member' }]);
+    // source priority: the first member in input order keeps the plain name
+    expect((proxiesOf(result.yaml)[0] as { server?: string }).server).toBe('m-a');
+  });
+
+  it('EXACT pass-3 repro [fp1/N, fp2/N, fp2/M]: the suffix-renamed keeper registers its fingerprint — fp2/M is deduped', async () => {
+    const { withRawIdentity } = await import('@/lib/proxies/naming');
+    // member-a is MANAGED (its own rename op) with fp1/N; member-b is plain
+    // with fp2/N + fp2/M — the collection itself has NO operators, so the
+    // machine's managed path decides everything
+    const a = makeSub({
+      name: 'a',
+      operators: [
+        {
+          id: 'rt-a',
+          kind: 'rename-template',
+          template: '${emoji} ${region}',
+          recognitionRules: [],
+        },
+      ],
+    });
+    const b = makeSub({ name: 'b' });
+    fetchMock.mockImplementation(async (sub: Subscription) => {
+      if (sub.id === a.id) {
+        return {
+          proxies: [
+            withRawIdentity(
+              {
+                name: 'N',
+                type: 'ss',
+                server: 'fp1.example',
+                port: 443,
+                cipher: 'aes-128-gcm',
+                password: 'p',
+              },
+              { key: 'a', label: 'A' },
+            ),
+          ],
+          proxyCount: 1,
+        };
+      }
+      return {
+        proxies: [
+          withRawIdentity(
+            {
+              name: 'N',
+              type: 'ss',
+              server: 'fp2.example',
+              port: 443,
+              cipher: 'aes-128-gcm',
+              password: 'p',
+            },
+            { key: 'b', label: 'B' },
+          ),
+          withRawIdentity(
+            {
+              name: 'M',
+              type: 'ss',
+              server: 'fp2.example',
+              port: 443,
+              cipher: 'aes-128-gcm',
+              password: 'p',
+            },
+            { key: 'b', label: 'B' },
+          ),
+        ],
+        proxyCount: 2,
+      };
+    });
+    const col = makeCollection({ subscription_ids: [a.id, b.id] });
+    const result = await exportCollectionNodes(col, [a, b]);
+    const names = proxiesOf(result.yaml).map((p) => p.name);
+    // fp2/N kept under its suffix AND fp2/M dropped (the same identity) —
+    // only the first TWO identities survive
+    expect(names).toEqual(['N', 'N · b']);
+    expect(result.proxyCount).toBe(2);
+  });
+
+  it('an unrelated MANAGED third member can NOT change a plain/plain pair (per-node provenance)', async () => {
+    const plainA = makeSub({ name: 'plain-a' });
+    const plainB = makeSub({ name: 'plain-b' });
+    const managedC = makeSub({
+      name: 'managed-c',
+      operators: [
+        {
+          id: 'rt-c',
+          kind: 'rename-template',
+          template: '${emoji} ${region}',
+          recognitionRules: [],
+        },
+      ],
+    });
+    const col = makeCollection({ subscription_ids: [plainA.id, plainB.id, managedC.id] });
+    fetchMock.mockImplementation(async (sub: Subscription) => {
+      if (sub.id === plainA.id) return { proxies: [proxy('X', 'x-a')], proxyCount: 1 };
+      if (sub.id === plainB.id) return { proxies: [proxy('N', 'n-b')], proxyCount: 1 };
+      return { proxies: [proxy('Y', 'y-c')], proxyCount: 1 };
+    });
+    const result = await exportCollectionNodes(col, [plainA, plainB, managedC]);
+    const names = proxiesOf(result.yaml).map((p) => p.name);
+    // plain/plain pair: X and N both survive with NO suffix — the managed
+    // third member's status does not promote them
+    expect(names).toEqual(['X', 'N', 'Y']);
+    expect(result.resolvedNames ?? []).toHaveLength(0);
+  });
+
   it('对合并后的成员并集应用 collection.operators(去重之前)', async () => {
     const a = makeSub({ name: 'a' });
     const b = makeSub({ name: 'b' });
@@ -239,5 +386,164 @@ describe('exportCollectionNodes', () => {
     await expect(exportCollectionNodes(col, [off])).rejects.toMatchObject({
       problem: { status: 422 },
     });
+  });
+});
+
+/* ─── rename-template + provenance through the export paths ─────────── */
+
+describe('collection export with rename-template (provenance semantics)', () => {
+  it('attaches per-member alias + per-source numbering, no metadata leak in YAML', async () => {
+    fetchMock.mockResolvedValueOnce({
+      proxies: [proxy('香港 01', 'a.com'), proxy('香港 02', 'b.com')],
+      proxyCount: 2,
+    });
+    fetchMock.mockResolvedValueOnce({
+      proxies: [proxy('日本 01', 'c.com')],
+      proxyCount: 1,
+    });
+    const collection = makeCollection({
+      subscription_ids: [
+        '11111111-1111-4111-8111-111111111111',
+        '22222222-2222-4222-8222-222222222222',
+      ],
+      operators: [
+        {
+          id: 'rt-1',
+          kind: 'rename-template',
+          template:
+            '${emoji} ${region}${?rate: · ${rate}}${?note: · ${note}}${?source: · ${source}}${?index: · ${index}}',
+          recognitionRules: [],
+        } as never,
+      ],
+    });
+    const subs = [
+      makeSub({ id: '11111111-1111-4111-8111-111111111111', name: 'sub-a', display_name: '机场A' }),
+      makeSub({ id: '22222222-2222-4222-8222-222222222222', name: 'sub-b', display_name: '机场B' }),
+    ];
+    const result = await exportCollectionNodes(collection, subs);
+    const proxies = proxiesOf(result.yaml);
+    expect(proxies.map((p) => p.name)).toEqual([
+      '🇭🇰 香港 · 机场A · 01',
+      '🇭🇰 香港 · 机场A · 02',
+      '🇯🇵 日本 · 机场B · 01',
+    ]);
+    // internal provenance must never reach the public provider YAML
+    expect(result.yaml).not.toContain('collection-provenance');
+    expect(result.yaml).not.toContain('proxy-source-alias');
+  });
+
+  it('manual sourceAliases override member display names in the export', async () => {
+    fetchMock.mockResolvedValueOnce({ proxies: [proxy('香港 01')], proxyCount: 1 });
+    const collection = makeCollection({
+      subscription_ids: ['11111111-1111-4111-8111-111111111111'],
+      operators: [
+        {
+          id: 'rt-1',
+          kind: 'rename-template',
+          template:
+            '${emoji} ${region}${?rate: · ${rate}}${?note: · ${note}}${?source: · ${source}}${?index: · ${index}}',
+          recognitionRules: [],
+          sourceAliases: { 'sub-a': '改名机场' },
+        } as never,
+      ],
+    });
+    const subs = [
+      makeSub({ id: '11111111-1111-4111-8111-111111111111', name: 'sub-a', display_name: '机场A' }),
+    ];
+    const result = await exportCollectionNodes(collection, subs);
+    expect(proxiesOf(result.yaml).map((p) => p.name)).toEqual(['🇭🇰 香港 · 改名机场 · 01']);
+  });
+
+  it('single-sub export reads the sub alias when requested', async () => {
+    // Mirror the real fetcher: the sub's own pipeline (with provenance) runs
+    // inside resolveSubscriptionProxies before the export sees the nodes.
+    fetchMock.mockImplementationOnce(async (sub: Subscription) => {
+      const withSource = (await import('@/lib/proxies/provenance')).withSource;
+      const proxies = applyOperators(
+        [withSource(proxy('香港 01'), { key: sub.name, label: sub.display_name || sub.name })],
+        sub.operators as never,
+      ).proxies as ClashProxy[];
+      return { proxies, proxyCount: proxies.length };
+    });
+    const sub = makeSub({
+      name: 'sub-a',
+      display_name: '机场A',
+      operators: [
+        {
+          id: 'rt-1',
+          kind: 'rename-template',
+          template:
+            '${emoji} ${region}${?rate: · ${rate}}${?note: · ${note}}${?source: · ${source}}${?index: · ${index}}',
+          recognitionRules: [],
+        } as never,
+      ],
+    });
+    const result = await exportSubscriptionNodes(sub);
+    expect(proxiesOf(result.yaml).map((p) => p.name)).toEqual(['🇭🇰 香港 · 机场A · 01']);
+  });
+
+  it('preview-style callers can disable fetch-cache writes', async () => {
+    fetchMock.mockResolvedValueOnce({ proxies: [proxy('香港 01')], proxyCount: 1 });
+    await exportCollectionNodes(
+      makeCollection({
+        operators: [],
+        subscription_ids: ['11111111-1111-4111-8111-111111111111'],
+      }),
+      [makeSub({ id: '11111111-1111-4111-8111-111111111111' })],
+      { writeCache: false },
+    );
+    const call = fetchMock.mock.calls.at(-1) as [Subscription, { writeCache?: boolean }];
+    expect(call[1]).toMatchObject({ writeCache: false });
+  });
+
+  it('raw identities that CONVERGE after set-prop both survive the collection export', async () => {
+    // Member A node carries udp:false; member B node has NO udp field — RAW
+    // configs differ (same endpoint). The collection pipeline's set-prop makes
+    // them identical post-transform; the immutable raw fingerprint (attached
+    // by the fetcher contract, simulated here with withRawIdentity) must keep
+    // BOTH in the export — never a post-transform or name-based drop.
+    const { withRawIdentity } = await import('@/lib/proxies/naming');
+    fetchMock.mockImplementation(async (sub: Subscription) => ({
+      proxies: [
+        withRawIdentity(
+          // Member A carries udp:false; member B has NO udp field — RAW
+          // configs differ on the same endpoint.
+          {
+            name: '香港 01',
+            type: 'socks5',
+            server: 'same.example',
+            port: 1080,
+            ...(sub.name === 'sub-a' ? { udp: false } : {}),
+          },
+          { key: sub.name, label: sub.display_name || sub.name },
+        ),
+      ],
+      proxyCount: 1,
+    }));
+    const collection = makeCollection({
+      subscription_ids: [
+        '11111111-1111-4111-8111-111111111111',
+        '22222222-2222-4222-8222-222222222222',
+      ],
+      operators: [
+        { id: 'sp', kind: 'set-prop', udp: true },
+        {
+          id: 'rt-1',
+          kind: 'rename-template',
+          template: '${emoji} ${region}${?source: · ${source}}${?index: · ${index}}',
+          recognitionRules: [],
+        } as never,
+      ],
+    });
+    const subs = [
+      makeSub({ id: '11111111-1111-4111-8111-111111111111', name: 'sub-a', display_name: '机场A' }),
+      makeSub({ id: '22222222-2222-4222-8222-222222222222', name: 'sub-b', display_name: '机场B' }),
+    ];
+    const result = await exportCollectionNodes(collection, subs);
+    expect(proxiesOf(result.yaml).map((p) => p.name)).toEqual([
+      '🇭🇰 香港 · 机场A · 01',
+      '🇭🇰 香港 · 机场B · 01',
+    ]);
+    expect(result.deduped ?? []).toEqual([]);
   });
 });

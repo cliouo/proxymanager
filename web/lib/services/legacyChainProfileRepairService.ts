@@ -284,6 +284,9 @@ function profileUsesSubscription(
   if (profile.source.type !== 'collection') return false;
   const collectionId = profile.source.id;
   const collection = collections.find((item) => item.id === collectionId);
+  // pass-10 blocker 1: MEMBERSHIP (not visibility) is the genuine semantic
+  // here — a disabled member is still a member whose record the repair must
+  // consider; only alias/render/export consumers use the enabled set.
   return collection
     ? resolveCollectionMemberSubs(collection, [...subscriptions]).some(
         (subscription) => subscription.id === subscriptionId,

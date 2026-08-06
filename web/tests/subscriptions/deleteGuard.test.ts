@@ -12,6 +12,10 @@ const SUB = { id: 's1', name: 'air-hk', display_name: '香港机场' };
 let profiles: Array<{ id: string; name: string; source: { type: string; id?: string } }>;
 let collections: Array<{ id: string; name: string; subscription_ids: string[] }>;
 const repoDeleteMock = vi.fn(async () => true);
+const commitDeleteMock = vi.fn(async (id: string, version: number) => ({
+  ok: true,
+  currentVersion: id === 's1' ? version : 0,
+}));
 
 vi.mock('@/lib/repos/subscriptionsRepo', () => ({
   getSubscription: async (id: string) => (id === SUB.id ? SUB : null),
@@ -19,9 +23,17 @@ vi.mock('@/lib/repos/subscriptionsRepo', () => ({
   listSubscriptions: async () => [SUB],
   upsertSubscription: async () => undefined,
   deleteSubscription: () => repoDeleteMock(),
+  commitSubscriptionDelete: (id: string, version: number) => commitDeleteMock(id, version),
 }));
 vi.mock('@/lib/repos/profilesRepo', () => ({ listProfiles: async () => profiles }));
 vi.mock('@/lib/repos/collectionsRepo', () => ({ listCollections: async () => collections }));
+vi.mock('@/lib/repos/configVersionRepo', () => ({ getConfigVersion: async () => 7 }));
+vi.mock('@/lib/services/configPreflight', () => ({
+  preflightProfileConfig: async (profileId: string) => ({
+    configVersion: 7,
+    candidate: { profileId },
+  }),
+}));
 vi.mock('@/lib/repos/resolvedRepo', () => ({
   invalidateResolvedSnapshot: async () => undefined,
 }));
@@ -58,9 +70,10 @@ describe('deleteSubscription reference warnings (P0-2)', () => {
     expect(warnings).toEqual([]);
   });
 
-  it('still deletes (delete-but-warn, never blocks)', async () => {
+  it('still deletes (delete-but-warn, never blocks) — via the CAS delete gate', async () => {
     profiles = [{ id: 'p1', name: 'work', source: { type: 'subscription', id: 's1' } }];
     await svc.deleteSubscription('s1');
-    expect(repoDeleteMock).toHaveBeenCalledTimes(1);
+    expect(commitDeleteMock).toHaveBeenCalledTimes(1);
+    expect(commitDeleteMock).toHaveBeenCalledWith('s1', 7);
   });
 });

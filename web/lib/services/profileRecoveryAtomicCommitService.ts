@@ -1,6 +1,7 @@
 import { ClientSafeProblemDetailsError } from '@/lib/http/problem';
 import { getRedis } from '@/lib/redis/client';
 import { REDIS_KEYS } from '@/lib/redis/keys';
+import { restoreRawOperators } from '@/lib/repos/rawOperators';
 import type { BaseMeta } from '@/lib/repos/baseRepo';
 import type { AuditEvent, AuditTarget, ProxyGroup, Rule, Subscription } from '@/schemas';
 
@@ -146,7 +147,14 @@ export async function commitAtomicProfileRecovery(
   for (const rule of rules) args.push(rule.id, JSON.stringify(rule));
   args.push(String(subscriptions.length));
   for (const subscription of subscriptions) {
-    args.push(subscription.id, JSON.stringify(subscription));
+    // Round-1 fix: serialize repaired-source records through the raw-
+    // operators materializer — a recovery plan must never narrow an
+    // untouched source's raw operator bytes (unknown/malformed/parked rows
+    // and legacy preset/components fields survive the atomic commit). Only
+    // the newly quarantined source (a fresh record without a raw envelope)
+    // is written from its decoded shape — an empty operator list.
+    const toStore = restoreRawOperators(subscription);
+    args.push(subscription.id, JSON.stringify(toStore));
   }
   args.push(event.id, String(event.ts), JSON.stringify(event));
 
@@ -173,9 +181,7 @@ export async function commitAtomicProfileRecovery(
       );
     }
     if (Array.isArray(result) && result[0] === -2) {
-      throw ClientSafeProblemDetailsError.conflict(
-        '恢复所需的存储结构状态异常，未执行任何写入。',
-      );
+      throw ClientSafeProblemDetailsError.conflict('恢复所需的存储结构状态异常，未执行任何写入。');
     }
     const current = Number(Array.isArray(result) ? result[1] : NaN);
     throw ClientSafeProblemDetailsError.conflict(

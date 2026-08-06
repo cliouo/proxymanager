@@ -63,7 +63,12 @@ import {
   type FetchSubscriptionProxiesResult,
   type SubscriptionResolveOptions,
 } from '@/lib/services/subscriptionFetcher';
-import { applyOperators, type ClashProxy } from '@/lib/proxies/operators';
+import { applyOperators } from '@/lib/proxies/operators';
+import { type OrdinalResolver } from '@/lib/proxies/naming';
+import { fingerprintOf, sourceOf, withSource } from '@/lib/proxies/provenance';
+import { dedupByNameAndIdentity } from '@/lib/proxies/nodeDedup';
+import { resolveOrdinalsFor } from '@/lib/services/nodeOrdinalService';
+import { isExecutableOperator } from '@/schemas/operator';
 import { compileGoRegex } from '@/lib/proxies/filterMatch';
 import { ipLiteralFamily } from '@/lib/net/ipLiteral';
 import {
@@ -257,6 +262,13 @@ export interface ResolveOptions extends RenderOptions {
     subscription: Subscription,
     options?: SubscriptionResolveOptions,
   ) => Promise<FetchSubscriptionProxiesResult>;
+  /**
+   * Whether the collection stage may publish persisted node-ordinal
+   * assignments (stable numbering). True for serving renders; save-time
+   * preflight sets false so an abandoned candidate can never change what is
+   * served (AGENTS.md side-effect-free preflight invariant).
+   */
+  persistOrdinals?: boolean;
 }
 
 export interface ResolveResult extends RenderResult {
@@ -283,7 +295,10 @@ export interface ResolveResult extends RenderResult {
 interface InjectionCandidate {
   node: unknown;
   name: string;
+  /** Stable source key — the subscription slug (`name`). */
   fromSub: string;
+  /** Human-facing source label — display_name when set, else the slug. */
+  fromSubLabel: string;
 }
 
 /** 同时在途的上游订阅 fetch 上限。 */
@@ -412,9 +427,9 @@ async function resolveConfigInternal(
     if (!col) {
       throw new Error('Full config render rejected: the profile-bound collection is missing.');
     } else {
-      const memberIds = resolveCollectionMemberSubs(col, subscriptions)
-        .filter((sub) => sub.enabled)
-        .map((sub) => sub.id);
+      // pass-10 blocker 1: the render uses the SINGLE enabled authoritative
+      // set — no duplicate inline filter
+      const memberIds = enabledCollectionMemberSubs(col, subscriptions).map((sub) => sub.id);
       if (memberIds.length === 0) {
         throw new Error(
           'Full config render rejected: the profile-bound collection has no enabled members.',
@@ -456,10 +471,11 @@ async function resolveConfigInternal(
         `Full config render rejected: aggregate subscription candidates exceed ${MAX_PROXY_NODES}.`,
       );
     }
+    const fromSubLabel = sub.display_name?.trim() || sub.name;
     for (const item of result.proxies) {
       const name = (item as { name?: unknown }).name;
       if (typeof name !== 'string') continue;
-      candidates.push({ node: item, name, fromSub: sub.name });
+      candidates.push({ node: item, name, fromSub: sub.name, fromSubLabel });
     }
     subStatuses.push({
       name: sub.name,
@@ -475,9 +491,35 @@ async function resolveConfigInternal(
   // 只是作用在并集上)。renamed 节点的来源归属按处理前的名字尽力还原。
   if (boundSource?.type === 'collection') {
     const col = (opts.collections ?? []).find((c) => c.id === boundSource.id);
-    if (col && col.operators.length > 0 && candidates.length > 0) {
+    const executable = (col?.operators ?? []).filter(isExecutableOperator);
+    if (executable.length > 0 && candidates.length > 0) {
       try {
-        candidates = applyOperatorsToCandidates(candidates, col.operators);
+        // Persisted stable numbering: members already carry their immutable
+        // raw fingerprints (attached at the fetch boundary), so the same node
+        // gets the same assignment here as in its own sub's pipeline. Serving
+        // renders publish assignments; preflight passes persistOrdinals:false.
+        const identityByNode = new Map(
+          candidates.map((candidate) => [
+            candidate.node,
+            { key: candidate.fromSub, label: candidate.fromSubLabel },
+          ]),
+        );
+        const managedOp = executable.find(
+          (op): op is Extract<Operator, { kind: 'rename-template' }> =>
+            op.kind === 'rename-template',
+        );
+        const ordinals = managedOp
+          ? await resolveOrdinalsFor(
+              candidates.map((c) => c.node),
+              (node) => identityByNode.get(node),
+              {
+                persist: opts.persistOrdinals !== false,
+                template: managedOp.template,
+                recognitionRules: managedOp.recognitionRules ?? [],
+              },
+            )
+          : undefined;
+        candidates = applyOperatorsToCandidates(candidates, executable, ordinals);
       } catch (error) {
         const mapped = resolvedConfigValidationError(error);
         if (mapped) throw mapped;
@@ -495,8 +537,41 @@ async function resolveConfigInternal(
     }
   }
 
-  // Dedup across subs + base. First writer wins. Collisions never silent.
+  // Dedup across subs + base. NAME equality no longer dedups distinct nodes:
+  // the same raw identity (fingerprint) dedups by the explicit deterministic
+  // source-priority policy (first source in input order wins, diagnostics in
+  // the collision map); DISTINCT identities that converge on one display name
+  // BOTH survive on the managed path — the later node gets a deterministic
+  // meaningful ` · sourceLabel` suffix instead of a silent first-writer drop.
+  // Ambiguous raw references stay fail-closed (validator). Raw-name collisions
+  // on the NON-managed path keep the documented first-writer-wins contract.
+  const managedSubs = new Set(
+    subscriptions
+      .filter((s) =>
+        (s.operators ?? []).some((op) => op.kind === 'rename-template' && !op.disabled),
+      )
+      .map((s) => s.name),
+  );
+  // Collection-level managed naming: when the profile binds to a collection
+  // whose OWN pipeline contains an active rename-template, EVERY member's
+  // candidate is a managed-path node — the collection stage ran the managed
+  // naming over the merged set. Such nodes must survive base-name and
+  // cross-source collisions by identity, exactly like sub-managed nodes (C5).
+  const collectionManaged =
+    boundSource?.type === 'collection'
+      ? ((opts.collections ?? [])
+          .find((c) => c.id === boundSource.id)
+          ?.operators.some((op) => op.kind === 'rename-template' && !op.disabled) ?? false)
+      : false;
   const injectorByName = new Map<string, string>();
+  const identityByName = new Map<string, string | null>();
+  const takenNames = new Set<string>(baseProxyNames);
+  // GLOBAL raw-fingerprint true-dedup (finding 5): an identity already kept
+  // by an earlier candidate is dropped by explicit source priority (input
+  // order) REGARDLESS of its display name — the same rule the executor and
+  // both exports apply. Same-name collisions still keep the managed-path
+  // disambiguation below.
+  const keptFingerprints = new Map<string, string>();
   const collisionMap = new Map<string, SnapshotCollision>();
   const survivors: InjectionCandidate[] = [];
   const keptPerSub = new Map<string, number>();
@@ -512,22 +587,65 @@ async function resolveConfigInternal(
     if (!entry.droppedFrom.includes(droppedFrom)) entry.droppedFrom.push(droppedFrom);
   };
 
-  for (const cand of candidates) {
-    if (baseProxyNames.has(cand.name)) {
-      recordCollision(cand.name, null, cand.fromSub);
-      continue;
+  const recordResolved = (
+    name: string,
+    keptFrom: string | null,
+    droppedFrom: string,
+    resolvedTo: string,
+  ): void => {
+    let entry = collisionMap.get(name);
+    if (!entry) {
+      entry = { name, keptFrom, droppedFrom: [] };
+      collisionMap.set(name, entry);
     }
-    const firstSub = injectorByName.get(cand.name);
-    if (firstSub) {
-      recordCollision(cand.name, firstSub, cand.fromSub);
-      continue;
-    }
-    injectorByName.set(cand.name, cand.fromSub);
-    survivors.push(cand);
+    if (!entry.droppedFrom.includes(droppedFrom)) entry.droppedFrom.push(droppedFrom);
+    entry.resolvedTo = resolvedTo;
+  };
+
+  const keep = (cand: InjectionCandidate, finalName: string): void => {
+    const fp = fingerprintOf(cand.node);
+    if (fp !== null) keptFingerprints.set(fp, cand.fromSub);
+    const renamed: InjectionCandidate =
+      finalName === cand.name
+        ? cand
+        : {
+            ...cand,
+            name: finalName,
+            node: { ...(cand.node as Record<string, unknown>), name: finalName },
+          };
+    injectorByName.set(finalName, cand.fromSub);
+    identityByName.set(finalName, fp);
+    takenNames.add(finalName);
+    survivors.push(renamed);
     keptPerSub.set(cand.fromSub, (keptPerSub.get(cand.fromSub) ?? 0) + 1);
     const list = nodesBySub.get(cand.fromSub) ?? [];
-    list.push(cand.name);
+    list.push(finalName);
     nodesBySub.set(cand.fromSub, list);
+  };
+
+  // THE SHARED provenance-aware dedup state machine (lib/proxies/nodeDedup):
+  // the same global fingerprint/name policy resolve, single-subscription
+  // export and collection export all run, so preview/render/single-export/
+  // collection-export produce identical identity/name sets. Per-node managed
+  // provenance, every keeper (suffix-renamed included) registers its
+  // fingerprint, and the diagnostics map 1:1 onto the resolve collision map.
+  const dedupNodes = candidates.map((cand) => ({
+    name: cand.name,
+    fp: fingerprintOf(cand.node),
+    sourceKey: cand.fromSub,
+    sourceLabel: cand.fromSubLabel,
+    managed: managedSubs.has(cand.fromSub) || collectionManaged,
+    original: cand,
+  }));
+  const dedupResult = dedupByNameAndIdentity(dedupNodes, baseProxyNames);
+  for (const entry of dedupResult.diagnostics.deduped) {
+    recordCollision(entry.dropped, entry.keptFrom, entry.droppedFrom);
+  }
+  for (const entry of dedupResult.diagnostics.resolved) {
+    recordResolved(entry.from, entry.keptFrom, entry.droppedFrom, entry.to);
+  }
+  for (const { node, finalName } of dedupResult.kept) {
+    keep(node.original as InjectionCandidate, finalName);
   }
 
   // Cross-source duplicate names are resolved by the documented
@@ -830,7 +948,7 @@ function applyKindBindings(
           'Full config render rejected: a legacy collection proxy-group binding is missing.',
         );
       }
-      const members = resolveCollectionMemberSubs(col, subscriptions);
+      const members = enabledCollectionMemberSubs(col, subscriptions);
       const nodes: string[] = [];
       const seen = new Set<string>();
       for (const sub of members) {
@@ -855,40 +973,67 @@ function applyKindBindings(
 
 /**
  * Run a 聚合订阅's operator pipeline over its merged member candidates. The
- * pipeline may rename / drop / reorder nodes, so per-sub provenance (`fromSub`,
- * which feeds single-sub group bindings + the picker) is carried on an
- * enumerable Symbol. Object spread preserves enumerable symbols across every
- * name/attribute transform, while YAML/Object.entries never serialise it.
+ * pipeline may rename / drop / reorder nodes, so per-sub provenance (`fromSub`
+ * key + `fromSubLabel` display label, which feed single-sub group bindings,
+ * the picker, and the rename-template source alias) is carried on an
+ * enumerable Symbol (shared with the export/preview paths via
+ * lib/proxies/provenance.ts). Object spread preserves enumerable symbols
+ * across every name/attribute transform, while YAML/Object.entries never
+ * serialise it.
+ *
+ * Exported as a test seam: the normal-render provenance-parity evidence
+ * (display label, not slug, feeds rename-template) is asserted against this
+ * exact function.
  */
-const COLLECTION_PROVENANCE = Symbol('collection-provenance');
-
-function applyOperatorsToCandidates(
+export function applyOperatorsToCandidates(
   candidates: InjectionCandidate[],
   operators: Operator[],
+  ordinalResolver?: OrdinalResolver,
 ): InjectionCandidate[] {
   const { proxies } = applyOperators(
-    candidates.map((candidate) => ({
-      ...(candidate.node as ClashProxy),
-      [COLLECTION_PROVENANCE]: candidate.fromSub,
-    })),
+    candidates.map((candidate) =>
+      withSource(toProxyRecord(candidate.node), {
+        key: candidate.fromSub,
+        label: candidate.fromSubLabel,
+      }),
+    ),
     operators,
+    ordinalResolver,
   );
   const out: InjectionCandidate[] = [];
   for (const node of proxies) {
-    const name = (node as { name?: unknown }).name;
+    const name = node.name;
     if (typeof name !== 'string' || name.trim() === '') {
       throw new Error('Invalid collection operator output: field "name" must be non-empty');
     }
-    const fromSub = (node as ClashProxy & { [COLLECTION_PROVENANCE]?: unknown })[
-      COLLECTION_PROVENANCE
-    ];
-    if (typeof fromSub !== 'string' || fromSub === '') {
+    const identity = sourceOf(node);
+    if (!identity || identity.key === '') {
       throw new Error('Invalid collection operator output: node provenance was lost');
     }
-    delete (node as ClashProxy & { [COLLECTION_PROVENANCE]?: unknown })[COLLECTION_PROVENANCE];
-    out.push({ node, name, fromSub });
+    out.push({
+      // The envelope (immutable raw fingerprint + rawName + source) is KEPT
+      // through the collection stage: the global dedup and the final
+      // serialisation boundary both rely on the raw identity, and symbols
+      // never reach YAML/JSON output.
+      node: node as Record<string, unknown>,
+      name,
+      fromSub: identity.key,
+      fromSubLabel: identity.label || identity.key,
+    });
   }
   return out;
+}
+
+/**
+ * InjectionCandidate nodes are validated proxy objects by construction; this
+ * guard just recovers the compiler's lost type (and never silently passes a
+ * non-object through — a programming error upstream would throw here).
+ */
+function toProxyRecord(value: unknown): Record<string, unknown> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Invalid collection operator input: node is not an object');
+  }
+  return value as Record<string, unknown>;
 }
 
 export function resolveCollectionMemberSubs(
@@ -914,6 +1059,22 @@ export function resolveCollectionMemberSubs(
     }
   }
   return out;
+}
+
+/**
+ * pass-9 blocker 1: the SINGLE authoritative ENABLED collection-member set.
+ * Render and visible-target semantics already skip disabled members; every
+ * collection ALIAS projector/resolver/consumer (list/item routes, workspace
+ * managed/prior/history/health/diagnostics, generic/model previews, naming
+ * actions, workspace apply, one-shot analysis) MUST use this set — a
+ * disabled member's stored alias must never project and its src- handle
+ * must never resolve/write back. One definition, no divergent filters.
+ */
+export function enabledCollectionMemberSubs(
+  collection: Collection,
+  subscriptions: Subscription[],
+): Subscription[] {
+  return resolveCollectionMemberSubs(collection, subscriptions).filter((m) => m.enabled);
 }
 
 /* ─── chained-proxy realization ─────────────────────────────────────── */

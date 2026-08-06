@@ -1,9 +1,18 @@
 import { withProblemDetails } from '@/lib/http/handler';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { applyOperators, type ClashProxy } from '@/lib/proxies/operators';
+import { withRawIdentity } from '@/lib/proxies/naming';
+import {
+  buildPreviewIssues,
+  dedupMachineIssues,
+  namesPayload,
+  projectStepsSourceKeys,
+} from '@/lib/services/pipelinePreview';
+import { dedupExportProxies } from '@/lib/services/nodeExportService';
+import { resolveOrdinalsFor } from '@/lib/services/nodeOrdinalService';
 import { resolveSubscriptionProxiesRaw } from '@/lib/services/subscriptionFetcher';
 import { getSubscription } from '@/lib/services/subscriptionService';
-import { OperatorListSchema } from '@/schemas';
+import { OperatorListSchema, type Operator } from '@/schemas';
 
 export const dynamic = 'force-dynamic';
 // P3-18: fetches the upstream + runs the operator pipeline; explicit ceiling.
@@ -11,14 +20,21 @@ export const maxDuration = 60;
 
 type Ctx = RouteContext<'/api/v1/subscriptions/[id]/preview'>;
 
-/** Cap the node-name lists in the response so previewing a huge sub stays light. */
-const NAME_CAP = 300;
-
 /**
  * Dry-run a node-processing pipeline against a subscription's *raw* (pre-
  * operator) proxies, WITHOUT saving. The workbench posts the operators it's
  * currently editing; we fetch the sub's cached raw proxies, run the pipeline,
- * and return before/after node names plus a per-step trace.
+ * and return before/after node names, a per-step trace, and structured
+ * credential-free issues (duplicate final names, resolved rename-template
+ * collisions, true-duplicate drops, references a rename/filter would orphan).
+ *
+ * Preview is a read-only dry-run: fresh upstream fetches are NOT persisted
+ * into the fetch cache (`writeCache: false`) — a keystroke-driven preview
+ * must never mutate shared cache state — and persisted node-ordinal
+ * assignments are resolved read-only (never published by a candidate).
+ * Uniqueness deferral follows the CANDIDATE pipeline: a draft that adds
+ * managed naming may preview raw duplicate names that the managed stage
+ * would repair.
  */
 export const POST = withProblemDetails(async (request: Request, ctx: Ctx) => {
   const { id } = await ctx.params;
@@ -34,23 +50,48 @@ export const POST = withProblemDetails(async (request: Request, ctx: Ctx) => {
   // Raw proxies = upstream fetched + normalised, pipeline NOT yet applied.
   // Object-level entry point — no YAML stringify/parse round-trip just to
   // hand applyOperators the very objects the fetcher already had.
-  const { proxies } = await resolveSubscriptionProxiesRaw(sub, { noCache });
-  const before = proxies as ClashProxy[];
+  const { proxies } = await resolveSubscriptionProxiesRaw(sub, {
+    noCache,
+    writeCache: false,
+    deferUniqueNames: operators.some((op) => op.kind === 'rename-template' && op.disabled !== true),
+  });
+  // Single-subscription provenance: the rename-template operator reads the
+  // source alias + per-source index from it (enumerable Symbol, never
+  // serialised into the response). The raw identity fingerprint is computed
+  // here from the raw objects — byte-identical to the fetch-boundary value.
+  const identity = { key: sub.name, label: sub.display_name?.trim() || sub.name };
+  const before = (proxies as ClashProxy[]).map((p) => withRawIdentity(p, identity));
 
-  const { proxies: after, steps } = applyOperators(before, operators);
+  const managedOp = operators.find(
+    (op): op is Extract<Operator, { kind: 'rename-template' }> => op.kind === 'rename-template',
+  );
+  const ordinals = await resolveOrdinalsFor(before, () => identity, {
+    persist: false,
+    template: managedOp?.template,
+    recognitionRules: managedOp?.recognitionRules ?? [],
+  });
+  const { proxies: after, steps } = applyOperators(before, operators, ordinals);
+
+  // FINAL identity/name pass (pass-1 finding): the public preview runs the
+  // SAME provenance-aware global dedup state machine as render, single-
+  // subscription export and collection export — after the candidate pipeline,
+  // with the candidate's per-node managed provenance (a posted active
+  // rename-template manages the whole single source, exactly like the export
+  // path). The preview must never show N,N,M where every other path yields
+  // two identities.
+  const candidateManaged = operators.some(
+    (op): op is Extract<Operator, { kind: 'rename-template' }> =>
+      op.kind === 'rename-template' && op.disabled !== true,
+  );
+  const final = dedupExportProxies(after, () => candidateManaged);
+  const dedupIssues = dedupMachineIssues(final);
 
   return Response.json({
     data: {
       before: namesPayload(before),
-      after: namesPayload(after),
-      steps,
+      after: namesPayload(final.proxies),
+      steps: projectStepsSourceKeys(steps),
+      issues: [...(await buildPreviewIssues(before, final.proxies, steps)), ...dedupIssues],
     },
   });
 });
-
-function namesPayload(proxies: ClashProxy[]): { count: number; names: string[]; truncated: boolean } {
-  const names = proxies
-    .slice(0, NAME_CAP)
-    .map((p) => (typeof p.name === 'string' ? p.name : '(无名)'));
-  return { count: proxies.length, names, truncated: proxies.length > NAME_CAP };
-}

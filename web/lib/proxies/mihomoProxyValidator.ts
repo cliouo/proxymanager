@@ -5,7 +5,7 @@ import { isCanonicalUuid, normalizeMihomoUserId } from '@/lib/proxies/mihomoUser
 
 // MetaCubeX/mihomo v1.19.28, adapter/parser.go at
 // cbd11db1e13a75d8e680e0fe7742c95be4cba2be.
-const FIXED_MIHOMO_PROXY_TYPES = new Set([
+export const FIXED_MIHOMO_PROXY_TYPES = new Set([
   'ss',
   'ssr',
   'socks5',
@@ -1001,6 +1001,16 @@ const TOP_LEVEL_PRIVATE_KEY_TYPES = new Set(['wireguard', 'ssh', 'masque']);
 export interface MihomoProxyValidationOptions {
   allowExternalDialerProxy?: boolean;
   allowLocalFileReferences?: boolean;
+  /**
+   * Defer the LIST-LEVEL name-uniqueness check to a later managed-naming
+   * stage (an active rename-template that deterministically repairs
+   * collisions). Every node-local check stays strict, and ambiguous RAW
+   * name references fail closed: a `dialer-proxy` pointing at a name with
+   * two+ occurrences is rejected because it cannot be resolved
+   * deterministically. Callers MUST re-validate the managed output with
+   * uniqueness required (the post-operator validation always does).
+   */
+  deferUniqueNames?: boolean;
 }
 
 /**
@@ -1060,7 +1070,11 @@ export function validateMihomoProxyList(
   }
   const proxies = list.map((entry, index) => validateMihomoProxy(entry, index, options));
   validateHysteriaPortBudget(proxies);
-  validateUniqueNames(proxies);
+  if (options.deferUniqueNames === true) {
+    validateNoAmbiguousRawReferences(proxies);
+  } else {
+    validateUniqueNames(proxies);
+  }
   validateDialerProxyGraph(proxies, options.allowExternalDialerProxy === true);
   return proxies;
 }
@@ -3448,6 +3462,28 @@ function validateUniqueNames(proxies: Record<string, unknown>[]): void {
       invalidProxyEntry(index, 'name', 'duplicates another proxy entry');
     }
     names.add(name);
+  });
+}
+
+/**
+ * Deferred-uniqueness mode: duplicate display names are allowed to reach the
+ * managed-naming stage, but any DIRECT name reference to an ambiguous
+ * duplicate is fail-closed — `dialer-proxy` cannot be resolved when the
+ * target name occurs twice, so the source is rejected with an actionable
+ * entry error instead of silently binding to an arbitrary occurrence.
+ */
+function validateNoAmbiguousRawReferences(proxies: Record<string, unknown>[]): void {
+  const countByName = new Map<string, number>();
+  for (const proxy of proxies) {
+    const name = proxy.name as string;
+    countByName.set(name, (countByName.get(name) ?? 0) + 1);
+  }
+  proxies.forEach((proxy, index) => {
+    if (!hasOwn(proxy, 'dialer-proxy')) return;
+    const target = proxy['dialer-proxy'] as string;
+    if (target !== undefined && (countByName.get(target) ?? 0) > 1) {
+      invalidProxyEntry(index, 'dialer-proxy', 'references an ambiguous duplicate node name');
+    }
   });
 }
 
