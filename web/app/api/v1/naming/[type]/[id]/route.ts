@@ -72,7 +72,7 @@ import { resolveSubscriptionProxiesRaw } from '@/lib/services/subscriptionFetche
 import { getCollection } from '@/lib/services/collectionService';
 import { getSubscription, listSubscriptions } from '@/lib/services/subscriptionService';
 import { applyNamingPlan, rollbackNamingPlan } from '@/lib/services/namingApplyService';
-import { listProfiles } from '@/lib/repos/profilesRepo';
+import { getProfile, listProfiles } from '@/lib/repos/profilesRepo';
 import { getNamingHistory, type NamingHistoryPlan } from '@/lib/repos/namingHistoryRepo';
 import {
   consumingProfilesOfCollection,
@@ -82,7 +82,14 @@ import { orphanedReferenceIssues, safeIssueText } from '@/lib/services/pipelineP
 import { resolveActor } from '@/lib/services/rulesService';
 import { resolveScopeProfile } from '@/lib/profileScope';
 import { requireAuthorizedNamingTarget } from '@/lib/services/namingTargetScope';
-import { RecognitionRuleSchema, type Operator, type Profile } from '@/schemas';
+import {
+  isActiveCurrentRenameTemplateOperator,
+  isCurrentRenameTemplateOperator,
+  RecognitionRuleSchema,
+  type Operator,
+  type Profile,
+  type StoredOperator,
+} from '@/schemas';
 import { z } from '@/lib/openapi/zod';
 
 export const dynamic = 'force-dynamic';
@@ -94,25 +101,33 @@ const Params = z.object({
   id: z.uuid(),
 });
 
-const PlanBody = z.object({
-  template: z
-    .string()
-    .min(1, '模板不能为空')
-    .max(512, '模板过长')
-    .superRefine((template, ctx) => {
-      const validation = validateTemplate(template);
-      if (!validation.ok) {
-        ctx.addIssue({ code: 'custom', message: validation.message });
-      }
-    }),
-  tw2cn: z.boolean().optional(),
-  // pass-8 blocker 1: the UI round-trips PROJECTED src- handles — plain
-  // stable keys fail at parse with the bounded order-independent error.
-  sourceAliases: ExternalSourceAliasesSchema,
-  recognitionRules: z.array(RecognitionRuleSchema).max(32, '识别规则最多 32 条').optional(),
-});
+const PlanBody = z
+  .object({
+    template: z
+      .string()
+      .min(1, '模板不能为空')
+      .max(512, '模板过长')
+      .superRefine((template, ctx) => {
+        const validation = validateTemplate(template);
+        if (!validation.ok) {
+          ctx.addIssue({ code: 'custom', message: validation.message });
+        }
+      }),
+    tw2cn: z.boolean().optional(),
+    // pass-8 blocker 1: the UI round-trips PROJECTED src- handles — plain
+    // stable keys fail at parse with the bounded order-independent error.
+    sourceAliases: ExternalSourceAliasesSchema,
+    recognitionRules: z.array(RecognitionRuleSchema).max(32, '识别规则最多 32 条').optional(),
+  })
+  .strict();
 
-const ApplyBody = z.object({ apply: PlanBody });
+const ExpectedVersion = z
+  .number()
+  .int()
+  .min(0)
+  .max(Number.MAX_SAFE_INTEGER, '配置版本超出安全范围');
+
+const ApplyBody = z.object({ apply: PlanBody, expectedVersion: ExpectedVersion }).strict();
 
 /**
  * Read-only workspace preview variant: build the SAME managed candidate the
@@ -120,11 +135,14 @@ const ApplyBody = z.object({ apply: PlanBody });
  * pipeline with the shared zero-write preview functions — no save, no
  * cache write, no audit.
  */
-const PreviewBody = z.object({ preview: PlanBody });
+const PreviewBody = z.object({ preview: PlanBody }).strict();
 
-const RollbackBody = z.object({
-  rollback: z.literal(true),
-});
+const RollbackBody = z
+  .object({
+    rollback: z.literal(true),
+    expectedVersion: ExpectedVersion,
+  })
+  .strict();
 
 const PostBody = z.union([ApplyBody, PreviewBody, RollbackBody]);
 
@@ -173,12 +191,9 @@ function projectHistoryPlan(
 
 /** Active rename-template op, when one exists. */
 function activeRenameOp(
-  operators: Array<{ kind: string; disabled?: boolean }> | undefined,
+  operators: StoredOperator[] | undefined,
 ): (Operator & { kind: 'rename-template' }) | undefined {
-  return (operators ?? []).find(
-    (op): op is Operator & { kind: 'rename-template' } =>
-      op.kind === 'rename-template' && !op.disabled,
-  );
+  return (operators ?? []).find(isActiveCurrentRenameTemplateOperator);
 }
 
 /** Project a rename op to the workspace managed/prior plan shape. Alias
@@ -219,6 +234,9 @@ function planOf(
 }
 
 interface WorkspacePayload {
+  /** Version of the complete read snapshot. Apply/rollback must echo it so a
+   * lost success response cannot be replayed as a second write. */
+  configVersion: number;
   entity: { type: 'subscription' | 'collection'; ref: string; label: string };
   aggregate: boolean;
   managed: ReturnType<typeof planOf>;
@@ -240,21 +258,64 @@ interface WorkspacePayload {
   };
 }
 
+/** Close the read-only auth → snapshot race with the same config-version
+ * generation that protects writes. The final profile read is authoritative;
+ * a rebind fails the bounded scope error, while an ABA/change elsewhere is
+ * caught by the version bracket. */
+async function assertReadScopeSnapshot(
+  profileId: string,
+  type: 'subscription' | 'collection',
+  id: string,
+  expectedVersion: number,
+): Promise<void> {
+  const beforeAuth = await getConfigVersion();
+  if (beforeAuth !== expectedVersion) {
+    throw ProblemDetailsError.preconditionFailed('配置已发生变化，请重新加载命名工作台。');
+  }
+  const currentProfile = await getProfile(profileId);
+  if (!currentProfile) throw ProblemDetailsError.notFound(NAMING_SCOPE_ERROR);
+  await requireAuthorizedNamingTarget(currentProfile, type, id);
+  const afterAuth = await getConfigVersion();
+  if (afterAuth !== expectedVersion) {
+    throw ProblemDetailsError.preconditionFailed('配置已发生变化，请重新加载命名工作台。');
+  }
+}
+
 /** Load the source + compute the full workspace payload (shared by GET/POST). */
 async function loadWorkspace(
   profile: Profile,
   type: 'subscription' | 'collection',
   id: string,
 ): Promise<WorkspacePayload> {
+  // Bind the entire potentially slow workspace read (including upstream
+  // diagnostics) to one config generation. If anything moves while it is
+  // assembled, fail closed and let the client reload instead of returning a
+  // stale entity with a fresh version token.
+  const workspaceVersion = await getConfigVersion();
+  const finalize = async (
+    payload: Omit<WorkspacePayload, 'configVersion'>,
+  ): Promise<WorkspacePayload> => {
+    await assertReadScopeSnapshot(profile.id, type, id, workspaceVersion);
+    return { configVersion: workspaceVersion, ...payload };
+  };
   const [profiles] = await Promise.all([listProfiles()]);
   if (type === 'subscription') {
     const sub = await getSubscription(id);
     if (!sub) throw ProblemDetailsError.notFound(NAMING_SCOPE_ERROR);
     // activation authority: the ALIGNED snapshot's managed row — a disabled
     // current-valid rename-template is still managed (state 'disabled')
-    const managedOp = buildOperatorSnapshot(sub).managed?.decoded;
+    const managedDecoded = buildOperatorSnapshot(sub).managed?.decoded;
+    const managedOp =
+      managedDecoded && isCurrentRenameTemplateOperator(managedDecoded)
+        ? managedDecoded
+        : undefined;
     const renameOp = activeRenameOp(sub.operators);
     const recommended = defaultTemplateFor(false);
+    // A disabled managed row is still the editable workspace draft. When no
+    // row exists, diagnostics preview the deterministic recommendation. The
+    // ordinal resolver and the renderer must consume this exact same policy.
+    const previewOp = managedOp ?? renameOp;
+    const effectiveTemplate = previewOp?.template ?? recommended;
     const { proxies } = await resolveSubscriptionProxiesRaw(sub, { writeCache: false });
     const identity = { key: sub.name, label: sub.display_name?.trim() || sub.name };
     const withProvenance = proxies.map((p) => withRawIdentity(p, identity));
@@ -262,7 +323,7 @@ async function loadWorkspace(
     // go through ONE collision-checked node scope over the COMPLETE snapshot
     // and ONE source scope over the complete key set (handle minting lives in
     // handleScopes/namingContextProjection, never in the analysis).
-    const reports = analyzeSourceFacts(withProvenance, { rules: renameOp?.recognitionRules });
+    const reports = analyzeSourceFacts(withProvenance, { rules: previewOp?.recognitionRules });
     const { scope: nodeScope } = buildNodeSnapshotScope(withProvenance);
     const sourceScope = buildSourceAliasScope(reports.map((r) => r.sourceKey));
     const health = reports.map((report) => ({
@@ -272,16 +333,16 @@ async function loadWorkspace(
     }));
     const ordinals = await resolveOrdinalsFor(withProvenance, sourceOf, {
       persist: false,
-      template: renameOp?.template,
-      recognitionRules: renameOp?.recognitionRules ?? [],
+      template: effectiveTemplate,
+      recognitionRules: previewOp?.recognitionRules ?? [],
     });
     const result = applyRenameTemplate(
       withProvenance,
       {
-        template: renameOp?.template ?? recommended,
-        tw2cn: renameOp?.tw2cn,
-        sourceAliases: renameOp?.sourceAliases ?? {},
-        recognitionRules: renameOp?.recognitionRules ?? [],
+        template: effectiveTemplate,
+        tw2cn: previewOp?.tw2cn,
+        sourceAliases: previewOp?.sourceAliases ?? {},
+        recognitionRules: previewOp?.recognitionRules ?? [],
       },
       sourceOf,
       ordinals,
@@ -301,7 +362,7 @@ async function loadWorkspace(
     // COMPLETE caller-visible union (never a fresh single mint)
     const visible = await callerVisibleNamingTargets(profile);
     const targetScope = buildTargetRefScope(profile.id, visible);
-    return {
+    return finalize({
       entity: {
         type,
         ref: targetScope.project(`${type}:${id}`),
@@ -343,17 +404,22 @@ async function loadWorkspace(
         })(),
         orphaned: await orphanedReferenceIssues(before, after),
       },
-    };
+    });
   }
   const collection = await getCollection(id);
   if (!collection) throw ProblemDetailsError.notFound(NAMING_SCOPE_ERROR);
-  const managedOp = buildOperatorSnapshot(collection).managed?.decoded;
+  const managedDecoded = buildOperatorSnapshot(collection).managed?.decoded;
+  const managedOp =
+    managedDecoded && isCurrentRenameTemplateOperator(managedDecoded) ? managedDecoded : undefined;
   const renameOp = activeRenameOp(collection.operators);
   const recommended = defaultTemplateFor(true);
+  const previewOp = managedOp ?? renameOp;
+  const effectiveTemplate = previewOp?.template ?? recommended;
   const subs = await listSubscriptions();
-  const { merged } = await mergeCollectionMemberProxies(collection, subs, { writeCache: false });
+  const { merged, ordinalPlanningSession, ordinalDomainRegistry } =
+    await mergeCollectionMemberProxies(collection, subs, { writeCache: false });
   // round-1: same complete-domain projection as the subscription branch.
-  const reports = analyzeSourceFacts(merged, { rules: renameOp?.recognitionRules });
+  const reports = analyzeSourceFacts(merged, { rules: previewOp?.recognitionRules });
   const { scope: nodeScope } = buildNodeSnapshotScope(merged);
   const sourceScope = buildSourceAliasScope(reports.map((r) => r.sourceKey));
   const health = reports.map((report) => ({
@@ -363,16 +429,18 @@ async function loadWorkspace(
   }));
   const ordinals = await resolveOrdinalsFor(merged, sourceOf, {
     persist: false,
-    template: renameOp?.template,
-    recognitionRules: renameOp?.recognitionRules ?? [],
+    template: effectiveTemplate,
+    recognitionRules: previewOp?.recognitionRules ?? [],
+    planningSession: ordinalPlanningSession,
+    domainRegistry: ordinalDomainRegistry,
   });
   const result = applyRenameTemplate(
     merged,
     {
-      template: renameOp?.template ?? recommended,
-      tw2cn: renameOp?.tw2cn,
-      sourceAliases: renameOp?.sourceAliases ?? {},
-      recognitionRules: renameOp?.recognitionRules ?? [],
+      template: effectiveTemplate,
+      tw2cn: previewOp?.tw2cn,
+      sourceAliases: previewOp?.sourceAliases ?? {},
+      recognitionRules: previewOp?.recognitionRules ?? [],
     },
     sourceOf,
     ordinals,
@@ -386,7 +454,7 @@ async function loadWorkspace(
   // round-2: entity ref projected through the complete visible-union scope
   const visible = await callerVisibleNamingTargets(profile);
   const targetScope = buildTargetRefScope(profile.id, visible);
-  return {
+  return finalize({
     entity: {
       type,
       ref: targetScope.project(`${type}:${id}`),
@@ -423,7 +491,7 @@ async function loadWorkspace(
       })(),
       orphaned: await orphanedReferenceIssues(before, after),
     },
-  };
+  });
 }
 
 export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
@@ -455,6 +523,7 @@ export const POST = withProblemDetails(async (request: Request, ctx: Ctx) => {
   // apply, same zero-write pipeline preview functions as the generic
   // preview routes. No save, no cache write, no audit, no CAS.
   if ('preview' in body) {
+    const previewVersion = await getConfigVersion();
     const profile = await resolveScopeProfile(request);
     await requireAuthorizedNamingTarget(profile, type, id);
     const entity = type === 'subscription' ? await getSubscription(id) : await getCollection(id);
@@ -488,6 +557,7 @@ export const POST = withProblemDetails(async (request: Request, ctx: Ctx) => {
       type === 'subscription'
         ? await previewNamingSubscription(id, candidate.operators)
         : await previewNamingCollection(id, candidate.operators);
+    await assertReadScopeSnapshot(profile.id, type, id, previewVersion);
     return Response.json({
       data: {
         after: preview.after,
@@ -511,10 +581,7 @@ export const POST = withProblemDetails(async (request: Request, ctx: Ctx) => {
   // current state and commit ONLY under the gate-captured version. A
   // rebind A→B→A (ABA) or any intermediate membership change between gate
   // and commit moves the version and fails closed with zero writes/audit.
-  const [gateVersion, membership] = await Promise.all([
-    getConfigVersion(),
-    captureNamingMembership(profile),
-  ]);
+  const membership = await captureNamingMembership(profile);
   const audit = { actor, profileId: profile.id };
   if ('rollback' in body) {
     // Rollback restores the persisted prior plan, clears the history field
@@ -523,7 +590,7 @@ export const POST = withProblemDetails(async (request: Request, ctx: Ctx) => {
     await rollbackNamingPlan(type, id, {
       audit,
       expectedMembership: membership,
-      expectedVersion: gateVersion,
+      expectedVersion: body.expectedVersion,
     });
     return Response.json({ data: await loadWorkspace(profile, type, id) });
   }
@@ -534,7 +601,7 @@ export const POST = withProblemDetails(async (request: Request, ctx: Ctx) => {
   await applyNamingPlan(type, id, body.apply, {
     audit,
     expectedMembership: membership,
-    expectedVersion: gateVersion,
+    expectedVersion: body.expectedVersion,
   });
   return Response.json({ data: await loadWorkspace(profile, type, id) });
 });

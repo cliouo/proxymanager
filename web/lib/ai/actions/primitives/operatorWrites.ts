@@ -31,7 +31,11 @@ import { ProblemDetailsError } from '@/lib/http/problem';
 import { applyOperators, type ClashProxy } from '@/lib/proxies/operators';
 import { redactSensitiveText } from '@/lib/proxies/namingSanitize';
 import { mergeCollectionMemberProxies } from '@/lib/services/nodeExportService';
-import { resolveOrdinalsFor } from '@/lib/services/nodeOrdinalService';
+import {
+  createOrdinalPlanningSession,
+  resolveOrdinalsFor,
+  type OrdinalPlanningSession,
+} from '@/lib/services/nodeOrdinalService';
 import { sourceOf } from '@/lib/proxies/provenance';
 import { withRawIdentity } from '@/lib/proxies/naming';
 import { findNodeReferences } from '@/lib/services/nodeReferenceService';
@@ -49,6 +53,7 @@ import {
   FilterTypeOpSchema,
   FilterUselessOpSchema,
   FlagEmojiOpSchema,
+  isActiveCurrentRenameTemplateOperator,
   isExecutableOperator,
   isParkedOperator,
   OperatorListSchema,
@@ -260,7 +265,11 @@ async function sourceRawProxies(
   handle: SourceHandle,
   noCache: boolean,
   deferUniqueNames = false,
-): Promise<{ proxies: ClashProxy[]; memberErrors?: unknown[] }> {
+): Promise<{
+  proxies: ClashProxy[];
+  memberErrors?: unknown[];
+  ordinalPlanningSession?: OrdinalPlanningSession;
+}> {
   if (handle.type === 'subscription') {
     const sub = await getSubscription(handle.id);
     if (!sub) throw ProblemDetailsError.notFound(NAMING_SCOPE_ERROR);
@@ -276,16 +285,23 @@ async function sourceRawProxies(
     // labels + per-source numbering match workbench preview / normal render /
     // export. The symbol never serializes into action results.
     const identity = { key: sub.name, label: sub.display_name?.trim() || sub.name };
-    return { proxies: proxies.map((p) => withRawIdentity(p, identity)) as ClashProxy[] };
+    const withIdentity = proxies.map((p) => withRawIdentity(p, identity)) as ClashProxy[];
+    const ordinalPlanningSession = await createOrdinalPlanningSession([sub.name]);
+    ordinalPlanningSession.registerSourceDomain(withIdentity, () => identity);
+    return { proxies: withIdentity, ordinalPlanningSession };
   }
   const col = await getCollection(handle.id);
   if (!col) throw ProblemDetailsError.notFound(NAMING_SCOPE_ERROR);
   const subs = await listSubscriptions();
-  const { merged, memberErrors } = await mergeCollectionMemberProxies(col, subs, {
-    noCache,
-    writeCache: false,
-  });
-  return { proxies: merged as ClashProxy[], memberErrors };
+  const { merged, memberErrors, ordinalPlanningSession } = await mergeCollectionMemberProxies(
+    col,
+    subs,
+    {
+      noCache,
+      writeCache: false,
+    },
+  );
+  return { proxies: merged as ClashProxy[], memberErrors, ordinalPlanningSession };
 }
 
 /**
@@ -577,20 +593,20 @@ const previewOperators = defineAction({
       };
     });
     assertSharedListContract(ops);
-    const deferUniqueNames = ops.some((op) => op.kind === 'rename-template');
-    const { proxies: before, memberErrors } = await sourceRawProxies(
-      handle,
-      input.no_cache === true,
-      deferUniqueNames,
-    );
+    const deferUniqueNames = ops.some(isActiveCurrentRenameTemplateOperator);
+    const {
+      proxies: before,
+      memberErrors,
+      ordinalPlanningSession,
+    } = await sourceRawProxies(handle, input.no_cache === true, deferUniqueNames);
     // Read-only ordinal snapshot: previews never publish numbering state.
-    const managedOp = ops.find(
-      (op): op is Extract<Operator, { kind: 'rename-template' }> => op.kind === 'rename-template',
-    );
+    const managedOp = ops.find(isActiveCurrentRenameTemplateOperator);
     const ordinals = await resolveOrdinalsFor(before, sourceOf, {
       persist: false,
       template: managedOp?.template,
       recognitionRules: managedOp?.recognitionRules ?? [],
+      planningSession: ordinalPlanningSession,
+      domainRegistry: ordinalPlanningSession,
     });
     const { proxies: after, steps } = applyOperators(before, ops, ordinals);
 

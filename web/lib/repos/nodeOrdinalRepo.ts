@@ -13,13 +13,13 @@
  * fingerprint, and the persisted winner is always what was served — no
  * caller ever uses a local pre-write guess.
  *
- * Bounds (fail-open, never fail-closed):
- *   - an ordinal above {@link MAX_ORDINAL} is not assigned (the node falls
- *     back to input order);
+ * Bounds (fail-closed at the naming-service boundary):
+ *   - an ordinal above {@link MAX_ORDINAL} is not assigned;
  *   - when the Hash is at {@link MAX_TOTAL_ASSIGNMENTS} fields, new
- *     assignments are skipped (the node falls back to input order).
- * Both bounds keep a pathological upstream history from growing Redis
- * without bound; rendering never depends on this store succeeding.
+ *     assignments are skipped.
+ * The low-level repository reports either condition as an incomplete result;
+ * nodeOrdinalService treats that signal as a fatal planning error so a saved
+ * `${index}` policy never silently churns back to input-order numbering.
  *
  * The assignments are internal serving state: fingerprints are canonical
  * config hashes that never leave the server, and the repo is never part of
@@ -87,29 +87,32 @@ export async function loadOrdinalAssignments(sourceKeys: string[]): Promise<Ordi
 }
 
 /**
- * The shared fail-open STORE READ (C6/C11): one snapshot consumed by the
+ * The shared STORE READ (C6/C11): one snapshot consumed by the
  * read-only projection, mirroring exactly what the serving Lua observes.
  * WRONGTYPE state never throws and never synthesizes ordinals on one side
  * while the other falls back:
  *   - global hash WRONGTYPE (hgetall/hlen) → `hashBroken` — EVERY source
- *     falls back (serving: the eval aborts at the first HGET → fail-open
- *     empty map);
+ *     is marked broken (the naming service fails closed);
  *   - per-source counter WRONGTYPE → `counterBroken` — that source's whole
- *     allocation list falls back (serving: the eval aborts at the first
- *     missing canonical assignment's counter GET → empty map for the source;
- *     an all-canonical-existing source never touches the counter and keeps
- *     its existing values);
+ *     allocation list is marked broken;
  *   - present-but-non-canonical existing values → `invalidFields` (rejected
- *     slots: fall back, never re-allocated).
+ *     slots, never re-allocated). Every broken/incomplete state is rejected
+ *     by nodeOrdinalService before names are rendered.
  */
 export interface OrdinalStoreSnapshot {
   assignments: OrdinalAssignments;
   invalidFields: Map<string, Set<string>>;
+  /** A source contains two canonical fingerprints with the same ordinal. */
+  duplicateSources: Set<string>;
   counters: Map<string, string | null>;
   hashBroken: boolean;
   counterBroken: Set<string>;
   /** HLEN observed in the SAME atomic eval as the assignments + counter. */
   hlenBySource: Map<string, number>;
+  /** Global HLEN from the same snapshot (hard resource bound). */
+  globalSize: number;
+  /** Global allocation generation from the same atomic snapshot. */
+  generation: number | null;
 }
 
 /**
@@ -122,7 +125,7 @@ export interface OrdinalStoreSnapshot {
  * parsed exactly once by the caller. WRONGTYPE is prevalidated inside the
  * script with per-counter classification (a wrongtype counter yields a
  * per-source marker while the rest of the snapshot is still returned —
- * exactly the serving path's per-source fail-open).
+ * exactly the serving path's per-source classification).
  *
  * KEYS: [1] ordinal hash. ARGV: [2..] per-source counter keys.
  * Returns {0, hgetallPairs, hlen, counter1, ...} where a broken counter is
@@ -131,15 +134,20 @@ export interface OrdinalStoreSnapshot {
 export const ORDINAL_SNAPSHOT_LUA = `
 local hashType = redis.call('TYPE', KEYS[1]).ok
 if hashType ~= 'hash' and hashType ~= 'none' then return {2, 'hash-wrongtype'} end
+local generationType = redis.call('TYPE', KEYS[2]).ok
+if generationType ~= 'string' and generationType ~= 'none' then
+  return {2, 'generation-wrongtype'}
+end
 local h = redis.call('HGETALL', KEYS[1])
 local size = redis.call('HLEN', KEYS[1])
-local out = {0, h, size}
+local generation = redis.call('GET', KEYS[2])
+local out = {0, h, size, generation}
 for i = 1, #ARGV do
   local counterType = redis.call('TYPE', ARGV[i]).ok
   if counterType ~= 'string' and counterType ~= 'none' then
-    out[i + 3] = {2, 'counter-wrongtype'}
+    out[i + 4] = {2, 'counter-wrongtype'}
   else
-    out[i + 3] = redis.call('GET', ARGV[i])
+    out[i + 4] = redis.call('GET', ARGV[i])
   end
 end
 return out
@@ -149,26 +157,29 @@ export async function readOrdinalStore(sourceKeys: string[]): Promise<OrdinalSto
   const snapshot: OrdinalStoreSnapshot = {
     assignments: new Map(),
     invalidFields: new Map(),
+    duplicateSources: new Set(),
     counters: new Map(),
     hashBroken: false,
     counterBroken: new Set(),
     hlenBySource: new Map(),
+    globalSize: 0,
+    generation: null,
   };
   for (const key of sourceKeys) {
     snapshot.assignments.set(key, new Map());
     snapshot.invalidFields.set(key, new Set());
+    snapshot.hlenBySource.set(key, 0);
   }
-  if (sourceKeys.length === 0) return snapshot;
   let result: unknown;
   try {
     result = await getRedis().eval(
       ORDINAL_SNAPSHOT_LUA,
-      [REDIS_KEYS.nodeOrdinals],
+      [REDIS_KEYS.nodeOrdinals, REDIS_KEYS.nodeOrdinalGeneration],
       sourceKeys.map((key) => REDIS_KEYS.nodeOrdinalCounter(key)),
     );
   } catch {
     // a real eval error: treat the shared hash as broken (every source falls
-    // back — the serving path fail-opens the same way)
+    // back — the naming service rejects the broken snapshot)
     snapshot.hashBroken = true;
     return snapshot;
   }
@@ -182,6 +193,7 @@ export async function readOrdinalStore(sourceKeys: string[]): Promise<OrdinalSto
   }
   // parse the shared hash EXACTLY ONCE
   const pairs = (result[1] ?? []) as unknown[];
+  const seenOrdinals = new Map<string, Set<number>>();
   for (let i = 0; i + 1 < pairs.length; i += 2) {
     const field = String(pairs[i]);
     const value = String(pairs[i + 1]);
@@ -191,23 +203,52 @@ export async function readOrdinalStore(sourceKeys: string[]): Promise<OrdinalSto
     const fingerprint = field.slice(colon + 1);
     const bucket = snapshot.assignments.get(sourceKey);
     if (!bucket) continue;
+    snapshot.hlenBySource.set(sourceKey, (snapshot.hlenBySource.get(sourceKey) ?? 0) + 1);
     const ordinal = canonicalOrdinalValue(value);
-    if (ordinal !== null) bucket.set(fingerprint, ordinal);
-    else snapshot.invalidFields.get(sourceKey)?.add(fingerprint);
+    if (ordinal !== null) {
+      const seen = seenOrdinals.get(sourceKey) ?? new Set<number>();
+      if (seen.has(ordinal)) snapshot.duplicateSources.add(sourceKey);
+      seen.add(ordinal);
+      seenOrdinals.set(sourceKey, seen);
+      bucket.set(fingerprint, ordinal);
+    } else snapshot.invalidFields.get(sourceKey)?.add(fingerprint);
   }
-  const hlen = Number(result[2] ?? 0);
-  const safeHlen = Number.isSafeInteger(hlen) && hlen >= 0 ? hlen : 0;
+  snapshot.generation = canonicalGeneration(result[3]);
+  const globalSize = Number(result[2] ?? 0);
+  snapshot.globalSize = Number.isSafeInteger(globalSize) && globalSize >= 0 ? globalSize : 0;
   sourceKeys.forEach((key, i) => {
-    const entry = result[3 + i];
+    const entry = result[4 + i];
     if (Array.isArray(entry) && entry[0] === 2 && entry[1] === 'counter-wrongtype') {
       snapshot.counterBroken.add(key);
       snapshot.counters.set(key, null);
       return;
     }
-    snapshot.hlenBySource.set(key, safeHlen);
     snapshot.counters.set(key, entry === null || entry === undefined ? null : String(entry));
   });
   return snapshot;
+}
+
+/** Strict generation parse. Missing is the initial generation zero. */
+export function canonicalGeneration(raw: unknown): number | null {
+  if (raw === null || raw === undefined) return 0;
+  const text = typeof raw === 'number' ? String(raw) : typeof raw === 'string' ? raw : '';
+  if (!/^(0|[1-9][0-9]*)$/.test(text)) return null;
+  const value = Number(text);
+  // Every mutation of this generation increments it in the same atomic Lua
+  // transition. Reject MAX_SAFE_INTEGER at the read boundary as well, so a
+  // preview cannot approve a snapshot that serving/CAS/clear cannot advance.
+  return Number.isSafeInteger(value) && value >= 0 && value <= Number.MAX_SAFE_INTEGER - 1
+    ? value
+    : null;
+}
+
+/** Read the allocation generation for a save bracket. */
+export async function getOrdinalGeneration(): Promise<number | null> {
+  try {
+    return canonicalGeneration(await getRedis().get<unknown>(REDIS_KEYS.nodeOrdinalGeneration));
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -232,25 +273,24 @@ export async function readOrdinalStore(sourceKeys: string[]): Promise<OrdinalSto
  * (tests/services/namingParity.test.ts) proves it over the whole matrix.
  *
  * Counter semantics (identical on both sides):
- *   - absent / empty / malformed / non-integer / beyond the JS-safe range
+ *   - absent / empty / malformed / signed / leading-zero / beyond the
+ *     JS-safe range
  *     → base 0 (self-healing: the next accepted allocation canonicalizes the
  *       store);
- *   - negative → base stays negative → next ≤ 0 → REJECTED (fallback), no
- *     store write — the store never accumulates rejected values;
  *   - next > MAX_ORDINAL → REJECTED (fallback), no store write.
  * The hash cap is checked BEFORE the counter parse (same order as the Lua).
  */
 export function parseOrdinalCounter(raw: string | null | undefined): number | null {
   if (raw === null || raw === undefined || raw === '') return null;
-  if (!/^-?[0-9]+$/.test(raw)) return null;
+  if (!/^(0|[1-9][0-9]*)$/.test(raw)) return null;
   const value = Number(raw);
-  if (!Number.isSafeInteger(value)) return null;
+  if (!Number.isSafeInteger(value) || value < 0) return null;
   return value;
 }
 
 /** One allocation decision. `hashSize` must be the CURRENT hash size (for a
  * projection: initial HLEN + accepted assignments so far). Returns the
- * ordinal to persist, or null when the node falls back to input order. */
+ * ordinal to persist, or null as a fail-closed rejection signal. */
 export function allocateOrdinal(
   counterRaw: string | null | undefined,
   hashSize: number,
@@ -269,16 +309,74 @@ export function allocateOrdinal(
 export const ASSIGN_ORDINALS_LUA = `
 local hashKey = KEYS[1]
 local counterKey = KEYS[2]
+local configVersionKey = KEYS[3]
+local generationKey = KEYS[4]
 local hashCap = tonumber(ARGV[1])
 local maxOrd = tonumber(ARGV[2])
+local expectedVersion = ARGV[3]
+local sourcePrefix = ARGV[4]
 local function isCanonicalUnsigned(raw)
   if type(raw) ~= 'string' then return false end
   if not string.match(raw, '^[0-9]+$') then return false end
   if string.len(raw) > 1 and string.sub(raw, 1, 1) == '0' then return false end
   return true
 end
+local hashType = redis.call('TYPE', hashKey).ok
+local counterType = redis.call('TYPE', counterKey).ok
+local versionType = redis.call('TYPE', configVersionKey).ok
+local generationType = redis.call('TYPE', generationKey).ok
+if hashType ~= 'hash' and hashType ~= 'none' then return {'__error__', 'hash-wrongtype'} end
+if counterType ~= 'string' and counterType ~= 'none' then return {'__error__', 'counter-wrongtype'} end
+if versionType ~= 'string' and versionType ~= 'none' then return {'__error__', 'version-wrongtype'} end
+if generationType ~= 'string' and generationType ~= 'none' then
+  return {'__error__', 'generation-wrongtype'}
+end
+local currentVersion = redis.call('GET', configVersionKey)
+if not currentVersion then currentVersion = '0' end
+if not isCanonicalUnsigned(currentVersion) or currentVersion ~= expectedVersion then
+  return {'__error__', 'stale-config'}
+end
+local generationRaw = redis.call('GET', generationKey)
+if not generationRaw then generationRaw = '0' end
+if not isCanonicalUnsigned(generationRaw) then return {'__error__', 'generation-malformed'} end
+local generation = tonumber(generationRaw)
+if not generation or generation > 9007199254740990 then
+  return {'__error__', 'generation-overflow'}
+end
+-- Repair a missing/stale counter from the canonical maximum already assigned
+-- to THIS source. The global hash is bounded at 20k, so this migration-safe
+-- scan is deterministic and cannot reissue an existing ordinal.
+local maxExisting = 0
+local sourceSize = 0
+local seenExisting = {}
+local globalSize = redis.call('HLEN', hashKey)
+local all = redis.call('HGETALL', hashKey)
+local allIndex = 1
+while allIndex <= #all do
+  local field = all[allIndex]
+  local stored = all[allIndex + 1]
+  if string.sub(field, 1, string.len(sourcePrefix)) == sourcePrefix then
+    sourceSize = sourceSize + 1
+    if isCanonicalUnsigned(stored) then
+      local n = tonumber(stored)
+      if n and n >= 1 and n <= maxOrd then
+        if seenExisting[stored] then return {'__error__', 'ordinal-existing-duplicate'} end
+        seenExisting[stored] = true
+        if n > maxExisting then maxExisting = n end
+      end
+    end
+  end
+  allIndex = allIndex + 2
+end
+local counterRaw = redis.call('GET', counterKey)
+local base = maxExisting
+if counterRaw and isCanonicalUnsigned(counterRaw) then
+  local parsed = tonumber(counterRaw)
+  if parsed and parsed <= 9007199254740991 and parsed > base then base = parsed end
+end
 local results = {}
-for i = 3, #ARGV do
+local wrote = false
+for i = 5, #ARGV do
   local field = ARGV[i]
   local existing = redis.call('HGET', hashKey, field)
   local accepted = false
@@ -295,20 +393,14 @@ for i = 3, #ARGV do
       end
     end
   else
-    local hlen = redis.call('HLEN', hashKey)
-    local counterRaw = redis.call('GET', counterKey)
-    local base = 0
-    if counterRaw and string.match(counterRaw, '^-?[0-9]+$') then
-      base = tonumber(counterRaw)
-      if not base or base > 9007199254740991 or base < -9007199254740991 then base = 0 end
-    end
     local ordinal = base + 1
-    if hlen + 1 <= hashCap and ordinal >= 1 and ordinal <= maxOrd then
-      -- SET the exact computed value (never INCR: a counter INCR could raise
-      -- on overflow/non-integer AFTER an earlier HSET in the same eval).
-      redis.call('SET', counterKey, string.format('%.0f', ordinal))
+    if globalSize + 1 <= hashCap and sourceSize + 1 <= hashCap and ordinal >= 1 and ordinal <= maxOrd then
       redis.call('HSET', hashKey, field, string.format('%.0f', ordinal))
       results[#results + 1] = ordinal
+      base = ordinal
+      sourceSize = sourceSize + 1
+      globalSize = globalSize + 1
+      wrote = true
       accepted = true
     end
   end
@@ -316,12 +408,17 @@ for i = 3, #ARGV do
     results[#results + 1] = ''
   end
 end
+if wrote then
+  redis.call('SET', counterKey, string.format('%.0f', base))
+  redis.call('SET', generationKey, string.format('%.0f', generation + 1))
+end
 return results
 `.trim();
 
 export async function assignOrdinals(
   sourceKey: string,
   fingerprints: string[],
+  expectedConfigVersion: number,
 ): Promise<Map<string, number>> {
   const out = new Map<string, number>();
   if (fingerprints.length === 0) return out;
@@ -329,21 +426,29 @@ export async function assignOrdinals(
   const args: string[] = [
     String(MAX_TOTAL_ASSIGNMENTS),
     String(MAX_ORDINAL),
+    String(expectedConfigVersion),
+    `${sourceKey}:`,
     ...fingerprints.map((fp) => fieldKey(sourceKey, fp)),
   ];
-  // Fail-open by contract ("rendering never depends on this store"): a
-  // corrupt store (wrong-type hash/counter key) degrades to empty assignments
-  // (every node falls back to input order) instead of failing the render.
+  // The repository converts Redis/script failures to an incomplete result;
+  // nodeOrdinalService compares its size with the complete requested domain
+  // and fails closed before rendering a saved `${index}` policy.
   let results: unknown[];
   try {
     results = (await client.eval(
       ASSIGN_ORDINALS_LUA,
-      [REDIS_KEYS.nodeOrdinals, REDIS_KEYS.nodeOrdinalCounter(sourceKey)],
+      [
+        REDIS_KEYS.nodeOrdinals,
+        REDIS_KEYS.nodeOrdinalCounter(sourceKey),
+        REDIS_KEYS.configVersion,
+        REDIS_KEYS.nodeOrdinalGeneration,
+      ],
       args,
     )) as unknown[];
   } catch {
     return out;
   }
+  if (results[0] === '__error__') return out;
   fingerprints.forEach((fp, i) => {
     const value = results?.[i];
     // Newly allocated ordinals come back as Lua numbers; existing HGET
@@ -361,7 +466,29 @@ export async function assignOrdinals(
   return out;
 }
 
-/** Wipe the store (tests / explicit admin). Never called by render paths. */
+export const CLEAR_ORDINALS_LUA = `
+local hashType = redis.call('TYPE', KEYS[1]).ok
+local generationType = redis.call('TYPE', KEYS[2]).ok
+if hashType ~= 'hash' and hashType ~= 'none' then return {2, 'hash-wrongtype'} end
+if generationType ~= 'string' and generationType ~= 'none' then return {2, 'generation-wrongtype'} end
+local generationRaw = redis.call('GET', KEYS[2])
+if not generationRaw then generationRaw = '0' end
+if not string.match(generationRaw, '^[0-9]+$') or
+   (string.len(generationRaw) > 1 and string.sub(generationRaw, 1, 1) == '0') then
+  return {2, 'generation-malformed'}
+end
+local generation = tonumber(generationRaw)
+if not generation or generation > 9007199254740990 then return {2, 'generation-overflow'} end
+redis.call('DEL', KEYS[1])
+redis.call('SET', KEYS[2], string.format('%.0f', generation + 1))
+return {1, string.format('%.0f', generation + 1)}
+`.trim();
+
+/** Wipe assignments without resetting the monotonic generation (no ABA). */
 export async function clearOrdinalAssignments(): Promise<void> {
-  await getRedis().del(REDIS_KEYS.nodeOrdinals);
+  await getRedis().eval(
+    CLEAR_ORDINALS_LUA,
+    [REDIS_KEYS.nodeOrdinals, REDIS_KEYS.nodeOrdinalGeneration],
+    [],
+  );
 }

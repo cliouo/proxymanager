@@ -20,6 +20,7 @@
  */
 
 import { ProblemDetailsError } from '@/lib/http/problem';
+import { safeJsonClone } from '@/lib/security/safeJson';
 import {
   STORED_OPERATOR_DUPLICATE_ISSUE,
   hasOwnCompatibilityIssue,
@@ -55,15 +56,20 @@ export function attachRawOperators<T extends { operators?: unknown }>(
 export function restoreRawOperators<T extends { operators?: unknown }>(record: T): T {
   const raw = (record as WithRawOperators<T>)[RAW_OPERATORS];
   if (raw === undefined) return record;
+  // This is the persistence boundary: the enumerable attachment must travel
+  // through service spreads, but it must not reach the safe JSON serializer
+  // (symbols are rejected rather than silently ignored there).
+  const detached = { ...record } as WithRawOperators<T>;
+  Reflect.deleteProperty(detached, RAW_OPERATORS);
   let decoded: StoredOperator[];
   try {
     decoded = StoredOperatorListSchema.parse(raw);
   } catch {
-    return record;
+    return detached as T;
   }
   const current = (record.operators ?? []) as unknown;
-  if (JSON.stringify(decoded) !== JSON.stringify(current)) return record;
-  return { ...record, operators: raw } as T;
+  if (!deepEqualKeyOrderInsensitive(decoded, current)) return detached as T;
+  return { ...detached, operators: raw } as T;
 }
 
 /* ─── Explicit snapshot / materializer API (round-1 Architecture A; round-3
@@ -239,6 +245,19 @@ export function buildOperatorSnapshot<T extends { operators?: unknown }>(
  * semantically equal). Primitive values compare with ===.
  */
 export function deepEqualKeyOrderInsensitive(a: unknown, b: unknown): boolean {
+  let safeA: unknown;
+  let safeB: unknown;
+  try {
+    safeA = safeJsonClone(a);
+    safeB = safeJsonClone(b);
+  } catch {
+    return false;
+  }
+  return deepEqualSafeJson(safeA, safeB);
+}
+
+/** Compare values already cloned by safeJsonClone. */
+function deepEqualSafeJson(a: unknown, b: unknown): boolean {
   if (a === b) return true;
   if (typeof a !== typeof b) return false;
   if (a === null || b === null) return false;
@@ -249,7 +268,7 @@ export function deepEqualKeyOrderInsensitive(a: unknown, b: unknown): boolean {
     const bb = b as unknown[];
     if (aa.length !== bb.length) return false;
     for (let i = 0; i < aa.length; i += 1) {
-      if (!deepEqualKeyOrderInsensitive(aa[i], bb[i])) return false;
+      if (!deepEqualSafeJson(aa[i], bb[i])) return false;
     }
     return true;
   }
@@ -265,7 +284,7 @@ export function deepEqualKeyOrderInsensitive(a: unknown, b: unknown): boolean {
   if (ka.length !== kb.length) return false;
   for (const key of ka) {
     if (!Object.prototype.hasOwnProperty.call(rb, key) || rb[key] === undefined) return false;
-    if (!deepEqualKeyOrderInsensitive(ra[key], rb[key])) return false;
+    if (!deepEqualSafeJson(ra[key], rb[key])) return false;
   }
   return true;
 }

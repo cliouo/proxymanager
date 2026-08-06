@@ -6,7 +6,6 @@ import {
 import {
   commitCollectionChange,
   commitCollectionDelete,
-  deleteCollection as repoDelete,
   getCollection,
   getCollectionByName,
   getCollectionBySlug,
@@ -93,7 +92,7 @@ export async function createCollection(input: CollectionCreate): Promise<Collect
     planningVersion,
     affected: consumingProfilesOfCollection(col.id, profiles),
     candidateCollections: (cols) => [...cols, col],
-    commit: (version) => commitCollectionChange(col, version),
+    commit: (version, ordinalGeneration) => commitCollectionChange(col, version, ordinalGeneration),
   });
   invalidateSnapshot();
   return col;
@@ -160,7 +159,8 @@ export async function patchCollection(
       planningVersion,
       affected: consumingProfilesOfCollection(id, profiles),
       candidateCollections: (cols) => cols.map((c) => (c.id === id ? next : c)),
-      commit: (version) => commitCollectionChange(next, version),
+      commit: (version, ordinalGeneration) =>
+        commitCollectionChange(next, version, ordinalGeneration),
     });
   } else {
     await upsertCollection(next);
@@ -187,8 +187,13 @@ export async function deleteCollection(id: string): Promise<DeleteCollectionResu
   const col = await getCollection(id);
   const warnings: string[] = [];
   if (!col) {
-    const removed = await repoDelete(id);
-    return { removed, warnings };
+    await commitUnderPipelineGate({
+      planningVersion,
+      affected: [],
+      commit: (version, ordinalGeneration) =>
+        commitCollectionDelete(id, version, ordinalGeneration),
+    });
+    return { removed: false, warnings };
   }
   const profiles = await listProfiles();
   const boundProfiles = profiles.filter(
@@ -205,7 +210,7 @@ export async function deleteCollection(id: string): Promise<DeleteCollectionResu
     planningVersion,
     affected: consumingProfilesOfCollection(id, profiles),
     candidateCollections: (cols) => cols.filter((c) => c.id !== id),
-    commit: (version) => commitCollectionDelete(id, version),
+    commit: (version, ordinalGeneration) => commitCollectionDelete(id, version, ordinalGeneration),
   });
   invalidateSnapshot();
   return { removed: true, warnings };

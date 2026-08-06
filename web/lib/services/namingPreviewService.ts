@@ -11,10 +11,17 @@
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { applyOperators, type ClashProxy } from '@/lib/proxies/operators';
 import { withRawIdentity } from '@/lib/proxies/naming';
-import { resolveOrdinalsFor } from '@/lib/services/nodeOrdinalService';
+import {
+  createOrdinalPlanningSession,
+  resolveOrdinalsFor,
+  type OrdinalPlanningSession,
+} from '@/lib/services/nodeOrdinalService';
 import { sourceOf } from '@/lib/proxies/provenance';
 import { buildOperatorSnapshot } from '@/lib/repos/rawOperators';
-import { StoredOperatorListSchema } from '@/schemas/operator';
+import {
+  isActiveCurrentRenameTemplateOperator,
+  StoredOperatorListSchema,
+} from '@/schemas/operator';
 import {
   buildManagedCandidate,
   type NamingManagedPlan,
@@ -82,20 +89,21 @@ export async function previewNamingSubscription(
   // derive every runtime decision (deferUniqueNames + the managed predicate)
   // from the aligned stored decode, never from raw property access
   const decoded = decodeCandidate(candidateOperators);
-  const candidateManaged = decoded.some(
-    (op) => op.kind === 'rename-template' && op.disabled !== true,
-  );
+  const candidateManaged = decoded.some(isActiveCurrentRenameTemplateOperator);
   const { proxies } = await resolveSubscriptionProxiesRaw(sub, {
     writeCache: false,
     deferUniqueNames: candidateManaged,
   });
   const identity = { key: sub.name, label: sub.display_name?.trim() || sub.name };
   const before = (proxies as ClashProxy[]).map((p) => withRawIdentity(p, identity));
+  const planningSession = await createOrdinalPlanningSession([sub.name]);
+  planningSession.registerSourceDomain(before, () => identity);
   return runCandidatePreview(
     before,
     decoded,
     () => candidateManaged,
     () => identity,
+    planningSession,
   );
 }
 
@@ -107,18 +115,20 @@ export async function previewNamingCollection(
   const collection = await getCollection(id);
   if (!collection) throw ProblemDetailsError.notFound('目标不存在或不在当前配置文件的来源范围内。');
   const subs = await listSubscriptions();
-  const { merged } = await mergeCollectionMemberProxies(collection, subs, { writeCache: false });
+  const planningSession = await createOrdinalPlanningSession(subs.map((sub) => sub.name));
+  const { merged } = await mergeCollectionMemberProxies(collection, subs, {
+    writeCache: false,
+    ordinalPlanningSession: planningSession,
+  });
   const decoded = decodeCandidate(candidateOperators);
   // the SAME per-item dedup predicate the generic collection preview route
   // uses: a candidate active collection-level rename-template manages every
   // node; otherwise each member's own saved managed op decides its nodes
-  const collectionManagedOp = decoded.some(
-    (op) => op.kind === 'rename-template' && op.disabled !== true,
-  );
+  const collectionManagedOp = decoded.some(isActiveCurrentRenameTemplateOperator);
   const memberManagedByKey = new Map(
     enabledCollectionMemberSubs(collection, subs).map((m) => [
       m.name,
-      (m.operators ?? []).some((op) => op.kind === 'rename-template' && op.disabled !== true),
+      (m.operators ?? []).some(isActiveCurrentRenameTemplateOperator),
     ]),
   );
   const before = merged as ClashProxy[];
@@ -131,6 +141,7 @@ export async function previewNamingCollection(
       return key !== undefined && memberManagedByKey.get(key) === true;
     },
     (proxy) => sourceOf(proxy),
+    planningSession,
   );
 }
 
@@ -139,14 +150,14 @@ async function runCandidatePreview(
   decoded: StoredOperator[],
   managedPredicate: (item: unknown) => boolean,
   identityOf: (proxy: unknown) => { key: string; label: string } | undefined,
+  planningSession: OrdinalPlanningSession,
 ): Promise<{ before: NamesPayload; after: NamesPayload; issues: PreviewIssue[] }> {
-  const managedOp = decoded.find(
-    (op): op is Extract<Operator, { kind: 'rename-template' }> => op.kind === 'rename-template',
-  );
+  const managedOp = decoded.find(isActiveCurrentRenameTemplateOperator);
   const ordinals = await resolveOrdinalsFor(before, identityOf, {
     persist: false,
     template: managedOp?.template,
     recognitionRules: managedOp?.recognitionRules ?? [],
+    planningSession,
   });
   const { proxies: after, steps } = applyOperators(before, decoded as Operator[], ordinals);
   const final = dedupExportProxies(after, managedPredicate);

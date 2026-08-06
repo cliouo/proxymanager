@@ -9,6 +9,7 @@ import {
   getCollectionBySlug,
 } from '@/lib/services/collectionService';
 import { listSubscriptions } from '@/lib/services/subscriptionService';
+import { getConfigVersion } from '@/lib/repos/configVersionRepo';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -29,6 +30,7 @@ export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
   const { token, name } = await ctx.params;
   await guardSubToken(request, token, name);
   const format = parseNodeExportFormat(request);
+  const configVersion = await getConfigVersion();
 
   const collection =
     (await getCollectionBySlug(name)) ??
@@ -43,7 +45,13 @@ export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
 
   const noCache = new URL(request.url).searchParams.get('noCache') === '1';
   const subs = await listSubscriptions();
-  const result = await exportCollectionNodes(collection, subs, { noCache });
+  const result = await exportCollectionNodes(collection, subs, {
+    noCache,
+    ordinalConfigVersion: configVersion,
+  });
+  if ((await getConfigVersion()) !== configVersion) {
+    throw ProblemDetailsError.preconditionFailed('配置在生成订阅期间发生变化，请重试。');
+  }
   return nodeExportResponse(
     request,
     result,

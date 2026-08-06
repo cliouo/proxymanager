@@ -12,7 +12,7 @@ import { dedupExportProxies } from '@/lib/services/nodeExportService';
 import { resolveOrdinalsFor } from '@/lib/services/nodeOrdinalService';
 import { resolveSubscriptionProxiesRaw } from '@/lib/services/subscriptionFetcher';
 import { getSubscription } from '@/lib/services/subscriptionService';
-import { OperatorListSchema, type Operator } from '@/schemas';
+import { isActiveCurrentRenameTemplateOperator, OperatorListSchema } from '@/schemas';
 
 export const dynamic = 'force-dynamic';
 // P3-18: fetches the upstream + runs the operator pipeline; explicit ceiling.
@@ -53,7 +53,7 @@ export const POST = withProblemDetails(async (request: Request, ctx: Ctx) => {
   const { proxies } = await resolveSubscriptionProxiesRaw(sub, {
     noCache,
     writeCache: false,
-    deferUniqueNames: operators.some((op) => op.kind === 'rename-template' && op.disabled !== true),
+    deferUniqueNames: operators.some(isActiveCurrentRenameTemplateOperator),
   });
   // Single-subscription provenance: the rename-template operator reads the
   // source alias + per-source index from it (enumerable Symbol, never
@@ -62,9 +62,7 @@ export const POST = withProblemDetails(async (request: Request, ctx: Ctx) => {
   const identity = { key: sub.name, label: sub.display_name?.trim() || sub.name };
   const before = (proxies as ClashProxy[]).map((p) => withRawIdentity(p, identity));
 
-  const managedOp = operators.find(
-    (op): op is Extract<Operator, { kind: 'rename-template' }> => op.kind === 'rename-template',
-  );
+  const managedOp = operators.find(isActiveCurrentRenameTemplateOperator);
   const ordinals = await resolveOrdinalsFor(before, () => identity, {
     persist: false,
     template: managedOp?.template,
@@ -79,10 +77,7 @@ export const POST = withProblemDetails(async (request: Request, ctx: Ctx) => {
   // rename-template manages the whole single source, exactly like the export
   // path). The preview must never show N,N,M where every other path yields
   // two identities.
-  const candidateManaged = operators.some(
-    (op): op is Extract<Operator, { kind: 'rename-template' }> =>
-      op.kind === 'rename-template' && op.disabled !== true,
-  );
+  const candidateManaged = operators.some(isActiveCurrentRenameTemplateOperator);
   const final = dedupExportProxies(after, () => candidateManaged);
   const dedupIssues = dedupMachineIssues(final);
 

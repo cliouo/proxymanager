@@ -61,7 +61,11 @@ import { canonicalProxyType, redactSensitiveText } from '@/lib/proxies/namingSan
 import type { ClashProxy } from '@/lib/proxies/operators';
 import { sourceOf } from '@/lib/proxies/provenance';
 import { withRawIdentity } from '@/lib/proxies/naming';
-import { resolveOrdinalsFor } from '@/lib/services/nodeOrdinalService';
+import {
+  createOrdinalPlanningSession,
+  resolveOrdinalsFor,
+  type OrdinalPlanningSession,
+} from '@/lib/services/nodeOrdinalService';
 import { mergeCollectionMemberProxies } from '@/lib/services/nodeExportService';
 import { resolveSubscriptionProxiesRaw } from '@/lib/services/subscriptionFetcher';
 import { enabledCollectionMemberSubs } from '@/lib/engine/resolve';
@@ -75,7 +79,11 @@ import { getConfigVersion } from '@/lib/repos/configVersionRepo';
 import { findNodeReferences } from '@/lib/services/nodeReferenceService';
 import { listCollections } from '@/lib/repos/collectionsRepo';
 import { getProfile } from '@/lib/repos/profilesRepo';
-import { RecognitionRuleSchema, type Operator } from '@/schemas';
+import {
+  isActiveCurrentRenameTemplateOperator,
+  RecognitionRuleSchema,
+  type Operator,
+} from '@/schemas';
 import { defineAction, defineWriteAction, type ActionContext, type WritePreview } from '../types';
 
 /** Deterministic AI-output caps (pass-3 finding): a 50000-node source must
@@ -170,6 +178,7 @@ interface RawSource {
   /** pass-8 blocker 1: the entity's AUTHORITATIVE source-key set — the only
    * keys external src- handles may resolve to. */
   keys: string[];
+  ordinalPlanningSession: OrdinalPlanningSession;
 }
 
 async function loadRawSource(
@@ -184,28 +193,34 @@ async function loadRawSource(
     if (!sub) throw ProblemDetailsError.notFound(NAMING_SCOPE_ERROR);
     const { proxies } = await resolveSubscriptionProxiesRaw(sub, { writeCache: false });
     const identity = { key: sub.name, label: sub.display_name?.trim() || sub.name };
-    const renameOp = (sub.operators ?? []).find(
-      (op): op is Operator & { kind: 'rename-template' } =>
-        op.kind === 'rename-template' && !op.disabled,
-    );
+    const ordinalPlanningSession = await createOrdinalPlanningSession([sub.name]);
+    const withIdentity = proxies.map((p) => withRawIdentity(p, identity)) as ClashProxy[];
+    ordinalPlanningSession.registerSourceDomain(withIdentity, () => identity);
+    const renameOp = (sub.operators ?? []).find(isActiveCurrentRenameTemplateOperator);
     return {
       type: 'subscription',
       id,
       label: sub.display_name?.trim() || sub.name,
-      proxies: proxies.map((p) => withRawIdentity(p, identity)) as ClashProxy[],
+      proxies: withIdentity,
       renameOp,
       aggregate: false,
       keys: [sub.name],
+      ordinalPlanningSession,
     };
   }
   const col = await getCollection(id);
   if (!col) throw ProblemDetailsError.notFound(NAMING_SCOPE_ERROR);
   const subs = await listSubscriptions();
-  const { merged } = await mergeCollectionMemberProxies(col, subs, { writeCache: false });
-  const renameOp = (col.operators ?? []).find(
-    (op): op is Operator & { kind: 'rename-template' } =>
-      op.kind === 'rename-template' && !op.disabled,
-  );
+  const { merged, ordinalPlanningSession } = await mergeCollectionMemberProxies(col, subs, {
+    writeCache: false,
+  });
+  const planningSession =
+    ordinalPlanningSession ??
+    (await createOrdinalPlanningSession(
+      enabledCollectionMemberSubs(col, subs).map((member) => member.name),
+    ));
+  if (!ordinalPlanningSession) planningSession.registerSourceDomain(merged, sourceOf);
+  const renameOp = (col.operators ?? []).find(isActiveCurrentRenameTemplateOperator);
   return {
     type: 'collection',
     id,
@@ -214,6 +229,7 @@ async function loadRawSource(
     renameOp,
     aggregate: true,
     keys: enabledCollectionMemberSubs(col, subs).map((m) => m.name),
+    ordinalPlanningSession: planningSession,
   };
 }
 
@@ -230,6 +246,8 @@ async function readOnlyOrdinals(
     persist: false,
     template: template ?? source.renameOp?.template,
     recognitionRules: recognitionRules ?? source.renameOp?.recognitionRules ?? [],
+    planningSession: source.ordinalPlanningSession,
+    domainRegistry: source.ordinalPlanningSession,
   });
 }
 
@@ -391,10 +409,7 @@ const listNamingTargets = defineAction({
         .map((s) => ({
           id: s.id,
           label: s.display_name?.trim() || s.name,
-          renameOp: (s.operators ?? []).find(
-            (op): op is Operator & { kind: 'rename-template' } =>
-              op.kind === 'rename-template' && !op.disabled,
-          ),
+          renameOp: (s.operators ?? []).find(isActiveCurrentRenameTemplateOperator),
           aggregate: false,
         })),
     );
@@ -404,10 +419,7 @@ const listNamingTargets = defineAction({
         .map((c) => ({
           id: c.id,
           label: c.name,
-          renameOp: (c.operators ?? []).find(
-            (op): op is Operator & { kind: 'rename-template' } =>
-              op.kind === 'rename-template' && !op.disabled,
-          ),
+          renameOp: (c.operators ?? []).find(isActiveCurrentRenameTemplateOperator),
           aggregate: true,
         })),
     );
@@ -1265,7 +1277,10 @@ const saveNamingPlan = defineWriteAction({
       kind: 'write-result',
       data: {
         op: 'update',
-        summary: `已应用命名模板到 ${safeText(result.label, '(未命名)')}`,
+        // Keep the model-facing receipt useful without echoing the target
+        // label: when display_name is absent the service label can be the
+        // internal stable slug. The authorized opaque ref remains in result.
+        summary: '已应用命名模板',
         // round-2: echo the ALREADY-AUTHORIZED input ref — never mint a
         // fresh one. round-3: the enriched naming-plan event is INTERNAL
         // (moved under `result`) — the UI events array stays exact

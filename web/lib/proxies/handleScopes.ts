@@ -97,8 +97,13 @@ export function buildRawScope(
   signer?: HandleSigner,
   options: { skipEmpty?: boolean; rejectDuplicates?: boolean } = {},
 ): TypedHandleScope<string> {
-  const skipEmpty = options.skipEmpty ?? true;
-  const rejectDuplicates = options.rejectDuplicates ?? false;
+  // `options` is an ordinary internal object. Own-only reads prevent a
+  // polluted Object.prototype getter from changing scope policy or turning
+  // handle projection into a process-local denial of service.
+  const skipEmpty = Object.hasOwn(options, 'skipEmpty') ? options.skipEmpty === true : true;
+  const rejectDuplicates = Object.hasOwn(options, 'rejectDuplicates')
+    ? options.rejectDuplicates === true
+    : false;
   const handleByIdentity = new Map<string, string>();
   const identityByHandle = new Map<string, string>();
   for (const input of inputs) {

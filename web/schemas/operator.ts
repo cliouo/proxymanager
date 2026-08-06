@@ -848,6 +848,19 @@ export function isCurrentRenameTemplateOperator(
   return !hasOwnCompatibilityIssue(op);
 }
 
+/**
+ * True only for the current-valid managed naming row that will execute in
+ * this pipeline pass. A disabled current row still owns the naming authority
+ * anchor, but it must not drive ordinal allocation, uniqueness deferral,
+ * managed-dedup provenance, or runtime warnings. Historical/runtime-invalid
+ * rows are never active even when their raw shape says rename-template.
+ */
+export function isActiveCurrentRenameTemplateOperator(
+  op: StoredOperator,
+): op is Operator & { kind: 'rename-template' } {
+  return isCurrentRenameTemplateOperator(op) && op.disabled !== true;
+}
+
 /** True for steps that may reach the engine (parked placeholders never run). */
 export function isExecutableOperator(op: StoredOperator): op is Operator {
   return op.kind !== PARKED_OPERATOR_KIND;

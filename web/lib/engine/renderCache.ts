@@ -111,8 +111,11 @@ return 1
  *       changed shape (flag+region visual block, optional segments, identity
  *       dedup, persisted stable ordinals) — old cached renders must not be
  *       served.
+ *  22 → `${index}` now reserves the complete immutable raw-source domain
+ *       across source filters and collection stages, with stricter active-row
+ *       and failure semantics. Epoch-21 node names/collisions are stale.
  */
-const RENDER_CACHE_EPOCH = 21;
+const RENDER_CACHE_EPOCH = 22;
 
 export type RenderCacheStatus = 'hit' | 'miss' | 'bypass';
 
@@ -368,6 +371,9 @@ export async function renderProfileConfig(
     collections,
     // Profile binding — which subscription(s) this profile injects.
     boundSource: profileRecord.source,
+    // Bind serving ordinal writes to the generation captured before any
+    // config record was loaded. A superseded render then cannot publish.
+    ordinalConfigVersion: version,
     // Key the resolved-snapshot by this profile so concurrent renders of other
     // profiles don't overwrite its node list (P2-5).
     snapshotProfileId: profileRecord.id,

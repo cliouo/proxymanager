@@ -3,9 +3,13 @@ import { ProblemDetailsError } from '@/lib/http/problem';
 import { readCapped } from '@/lib/net/safeFetch';
 import { applyOperators, type ClashProxy } from '@/lib/proxies/operators';
 import { withRawIdentity, type OrdinalResolver, type RecognitionRule } from '@/lib/proxies/naming';
-import { isExecutableOperator } from '@/schemas/operator';
+import { isActiveCurrentRenameTemplateOperator, isExecutableOperator } from '@/schemas/operator';
 import { stripSource } from '@/lib/proxies/provenance';
-import { resolveOrdinalsFor } from '@/lib/services/nodeOrdinalService';
+import {
+  resolveOrdinalsFor,
+  type OrdinalDomainRegistry,
+  type OrdinalPlanningSession,
+} from '@/lib/services/nodeOrdinalService';
 import { validateMihomoProxyList } from '@/lib/proxies/mihomoProxyValidator';
 import {
   MAX_PROXY_URI_LINES,
@@ -109,6 +113,12 @@ export interface SubscriptionResolveOptions {
    * duplicated name) always stay fail-closed.
    */
   deferUniqueNames?: boolean;
+  /** Config generation captured before the caller read render inputs. */
+  ordinalConfigVersion?: number;
+  /** Operation-local read-only ordinal plan shared across every pipeline stage. */
+  ordinalPlanningSession?: OrdinalPlanningSession;
+  /** Complete raw domains shared by serving collection stages. */
+  ordinalDomainRegistry?: OrdinalDomainRegistry;
 }
 
 /**
@@ -146,21 +156,21 @@ interface RawMeta {
  * raw references stay fail-closed regardless (validator).
  */
 function hasActiveManagedNaming(operators: Subscription['operators'] | undefined): boolean {
-  return (operators ?? []).some((op) => op.kind === 'rename-template' && op.disabled !== true);
+  return (operators ?? []).some(isActiveCurrentRenameTemplateOperator);
 }
 
 /** The active managed template (ordinal parity with the executor). */
 function activeManagedTemplate(operators: Subscription['operators'] | undefined): string | null {
-  const op = (operators ?? []).find((o) => o.kind === 'rename-template' && o.disabled !== true);
-  return op && op.kind === 'rename-template' ? op.template : null;
+  const op = (operators ?? []).find(isActiveCurrentRenameTemplateOperator);
+  return op?.template ?? null;
 }
 
 /** The active managed recognition rules (ordinal parity with the executor). */
 function activeManagedRules(
   operators: Subscription['operators'] | undefined,
 ): RecognitionRule[] | undefined {
-  const op = (operators ?? []).find((o) => o.kind === 'rename-template' && o.disabled !== true);
-  return op && op.kind === 'rename-template' ? (op.recognitionRules ?? []) : undefined;
+  const op = (operators ?? []).find(isActiveCurrentRenameTemplateOperator);
+  return op?.recognitionRules ?? undefined;
 }
 
 /** Build a {@link RawResolved} whose source of truth is a parsed proxy list. */
@@ -275,6 +285,10 @@ export async function resolveSubscriptionContent(
   options: SubscriptionResolveOptions = {},
 ): Promise<FetchSubscriptionResult> {
   const raw = await resolveSubscriptionRaw(sub, options);
+  (options.ordinalPlanningSession ?? options.ordinalDomainRegistry)?.registerSourceDomain(
+    raw.getProxies(),
+    () => subscriptionIdentity(sub),
+  );
   if (!sub.operators || sub.operators.length === 0) {
     // The envelope is attached at the raw boundary and stripped at the YAML
     // serialisation boundary — the string output is byte-identical either way
@@ -297,6 +311,9 @@ export async function resolveSubscriptionContent(
         persist: options.writeCache !== false,
         template: activeManagedTemplate(sub.operators) ?? undefined,
         recognitionRules: activeManagedRules(sub.operators),
+        configVersion: options.ordinalConfigVersion,
+        planningSession: options.ordinalPlanningSession,
+        domainRegistry: options.ordinalPlanningSession ?? options.ordinalDomainRegistry,
       })
     : undefined;
   const proxies = applySubscriptionOperators(
@@ -328,6 +345,10 @@ export async function resolveSubscriptionProxies(
   const raw = await resolveSubscriptionRaw(sub, options);
   const base = raw.getProxies();
   const identity = subscriptionIdentity(sub);
+  (options.ordinalPlanningSession ?? options.ordinalDomainRegistry)?.registerSourceDomain(
+    base,
+    () => identity,
+  );
   // Raw identity is attached at the ingestion boundary BEFORE any early
   // return — even for sources with ZERO operators. Later stages (collection
   // pipeline, preview, export, preflight, serving render) always read the
@@ -347,6 +368,9 @@ export async function resolveSubscriptionProxies(
         persist: options.writeCache !== false,
         template: activeManagedTemplate(sub.operators) ?? undefined,
         recognitionRules: activeManagedRules(sub.operators),
+        configVersion: options.ordinalConfigVersion,
+        planningSession: options.ordinalPlanningSession,
+        domainRegistry: options.ordinalPlanningSession ?? options.ordinalDomainRegistry,
       })
     : undefined;
   const proxies = applySubscriptionOperators(base, sub.operators, subscriptionIdentity(sub), {

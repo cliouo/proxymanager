@@ -119,6 +119,10 @@ export const REDIS_KEYS = {
    * never consulted for identity or security, and never exposed to clients.
    */
   nodeOrdinals: 'node-ordinals',
+  /** Monotonic generation incremented once by each successful ordinal
+   * allocation eval. Save-time preflight binds this generation into the same
+   * config CAS so old renders cannot shift the candidate after validation. */
+  nodeOrdinalGeneration: 'node-ordinal-generation',
   nodeOrdinalCounter: (sourceKey: string): string => `node-ordinal-counter:${sourceKey}`,
   /**
    * Persisted prior managed-naming plans for the 智能命名 workspace rollback.

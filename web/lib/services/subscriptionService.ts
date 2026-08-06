@@ -6,11 +6,10 @@ import {
 import {
   commitSubscriptionChange,
   commitSubscriptionDelete,
-  deleteSubscription as repoDelete,
+  commitSubscriptionRuntimePatch,
   getSubscription,
   getSubscriptionByName,
   listSubscriptions,
-  upsertSubscription,
 } from '@/lib/repos/subscriptionsRepo';
 import { listProfiles } from '@/lib/repos/profilesRepo';
 import { listCollections } from '@/lib/repos/collectionsRepo';
@@ -111,7 +110,8 @@ export async function createSubscription(input: SubscriptionCreate): Promise<Sub
     planningVersion,
     affected,
     candidateSubscriptions: (subs) => [...subs, sub],
-    commit: (version) => commitSubscriptionChange(sub, version),
+    commit: (version, ordinalGeneration) =>
+      commitSubscriptionChange(sub, version, ordinalGeneration),
   });
   invalidateSnapshot();
   return sub;
@@ -171,7 +171,8 @@ export async function replaceSubscription(
     planningVersion,
     affected: [...byId.values()],
     candidateSubscriptions: (subs) => subs.map((sub) => (sub.id === id ? next : sub)),
-    commit: (version) => commitSubscriptionChange(next, version),
+    commit: (version, ordinalGeneration) =>
+      commitSubscriptionChange(next, version, ordinalGeneration),
   });
   invalidateSnapshot();
   return next;
@@ -270,10 +271,14 @@ export async function patchSubscription(
       planningVersion,
       affected: [...byId.values()],
       candidateSubscriptions: (subs) => subs.map((sub) => (sub.id === id ? next : sub)),
-      commit: (version) => commitSubscriptionChange(next, version),
+      commit: (version, ordinalGeneration) =>
+        commitSubscriptionChange(next, version, ordinalGeneration),
     });
   } else {
-    await upsertSubscription(next);
+    const committed = await commitSubscriptionRuntimePatch(next, planningVersion);
+    if (!committed.ok) {
+      throw ProblemDetailsError.preconditionFailed('该资源已被其他人修改,请刷新后重试。');
+    }
   }
   invalidateSnapshot();
   return next;
@@ -283,7 +288,9 @@ export async function recordSubscriptionSync(
   id: string,
   syncedAt: number,
   traffic?: SubscriptionTraffic,
+  expectedVersion?: number,
 ): Promise<Subscription> {
+  const planningVersion = expectedVersion ?? (await getConfigVersion());
   const current = await getSubscription(id);
   if (!current) {
     throw ProblemDetailsError.notFound(`Subscription ${id} not found.`);
@@ -295,7 +302,10 @@ export async function recordSubscriptionSync(
   };
   // P3-8: a successful sync clears any prior error so the status badge recovers.
   delete (next as { last_error?: string }).last_error;
-  await upsertSubscription(next);
+  const committed = await commitSubscriptionRuntimePatch(next, planningVersion);
+  if (!committed.ok) {
+    throw ProblemDetailsError.preconditionFailed('配置在刷新订阅期间发生变化，请重试。');
+  }
   invalidateSnapshot();
   return next;
 }
@@ -305,11 +315,18 @@ export async function recordSubscriptionSync(
  * (the `last_error` field existed but was never written). Best-effort — never
  * let recording the error mask the original failure.
  */
-export async function recordSubscriptionError(id: string, message: string): Promise<void> {
+export async function recordSubscriptionError(
+  id: string,
+  message: string,
+  expectedVersion?: number,
+): Promise<void> {
+  const planningVersion = expectedVersion ?? (await getConfigVersion());
   const current = await getSubscription(id);
   if (!current) return;
   const next: Subscription = { ...current, last_error: message.slice(0, 500) };
-  await upsertSubscription(next);
+  // Best-effort receipt: a concurrent config/naming write wins. Returning
+  // without a status update is safer than overwriting its newer full row.
+  await commitSubscriptionRuntimePatch(next, planningVersion);
 }
 
 export interface DeleteSubscriptionResult {
@@ -333,8 +350,13 @@ export async function deleteSubscription(id: string): Promise<DeleteSubscription
   const sub = await getSubscription(id);
   const warnings: string[] = [];
   if (!sub) {
-    const removed = await repoDelete(id);
-    return { removed, warnings };
+    await commitUnderPipelineGate({
+      planningVersion,
+      affected: [],
+      commit: (version, ordinalGeneration) =>
+        commitSubscriptionDelete(id, version, ordinalGeneration),
+    });
+    return { removed: false, warnings };
   }
   const [profiles, collections, allSubs] = await Promise.all([
     listProfiles(),
@@ -365,7 +387,8 @@ export async function deleteSubscription(id: string): Promise<DeleteSubscription
     planningVersion,
     affected,
     candidateSubscriptions: (subs) => subs.filter((s) => s.id !== id),
-    commit: (version) => commitSubscriptionDelete(id, version),
+    commit: (version, ordinalGeneration) =>
+      commitSubscriptionDelete(id, version, ordinalGeneration),
   });
   invalidateSnapshot();
   return { removed: true, warnings };

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import {
   ConfigMissingError,
   ConfigPreflightUnavailableError,
@@ -8,6 +9,11 @@ import { resolveConfig } from '@/lib/engine/resolve';
 import { getBase } from '@/lib/repos/baseRepo';
 import { listCollections } from '@/lib/repos/collectionsRepo';
 import { getConfigVersion } from '@/lib/repos/configVersionRepo';
+import { getOrdinalGeneration } from '@/lib/repos/nodeOrdinalRepo';
+import {
+  type OrdinalPlanningSession,
+  type OrdinalReservationPlan,
+} from '@/lib/services/nodeOrdinalService';
 import { listDevices } from '@/lib/repos/devicesRepo';
 import { getProfile } from '@/lib/repos/profilesRepo';
 import { listProxyGroups } from '@/lib/repos/proxyGroupsRepo';
@@ -22,6 +28,7 @@ import {
 } from '@/lib/services/subscriptionResolutionErrors';
 import { resolveSubscriptionProxies } from '@/lib/services/subscriptionFetcher';
 import type { FetchSubscriptionProxiesResult } from '@/lib/services/subscriptionFetcher';
+import { safeJsonStringify } from '@/lib/security/safeJson';
 import type {
   Collection,
   Device,
@@ -60,6 +67,10 @@ export type ProfileConfigCandidate = Partial<Omit<ProfileConfigState, 'profile'>
 export interface ConfigPreflightResult {
   /** Global generation that the returned candidate was built from. */
   configVersion: number;
+  /** Stable node-ordinal allocation generation bracketing this exact render. */
+  ordinalGeneration: number;
+  /** New stable ordinals that must commit atomically with the candidate. */
+  ordinalPlan: OrdinalReservationPlan;
   /** Whether this stable snapshot contained the profile record. */
   profileExisted: boolean;
   /** Whether this stable snapshot contained a complete stored base record. */
@@ -71,6 +82,15 @@ export interface ConfigPreflightResult {
 }
 
 export interface ConfigPreflightOptions {
+  /** Shared by every affected profile in one outer save. */
+  ordinalPlanningSession?: OrdinalPlanningSession;
+  /**
+   * One immutable source-resolution snapshot shared by every affected profile
+   * in the same outer save. Without it, an expired cache would re-fetch the
+   * same upstream once per profile; a harmless upstream reorder could then
+   * make those profiles plan against different raw domains.
+   */
+  subscriptionSnapshot?: SubscriptionPreflightSnapshot;
   /**
    * Candidate profile to use only when the stable storage snapshot has no
    * profile record. Atomic bootstrap is the sole intended caller.
@@ -93,15 +113,59 @@ export type ConfigCandidateBuilder = (
 
 const SNAPSHOT_READ_ATTEMPTS = 3;
 
+/** Operation-local, never persisted and never logged (keys are hashed). */
+export type SubscriptionPreflightSnapshot = Map<string, Promise<FetchSubscriptionProxiesResult>>;
+
+function subscriptionSnapshotKey(subscription: Subscription): string {
+  // Runtime sync/error fields do not affect a render. Keep the key bounded to
+  // the candidate definition and use a fixed property order; headers are the
+  // only record-shaped field and are sorted explicitly.
+  const definition = {
+    id: subscription.id,
+    name: subscription.name,
+    display_name: subscription.display_name,
+    enabled: subscription.enabled,
+    kind: subscription.kind,
+    url: subscription.url,
+    ua_override: subscription.ua_override,
+    custom_headers: subscription.custom_headers
+      ? Object.fromEntries(
+          Object.entries(subscription.custom_headers).sort(([a], [b]) => a.localeCompare(b)),
+        )
+      : undefined,
+    ttl_ms: subscription.ttl_ms,
+    content: subscription.content,
+    tags: subscription.tags,
+    operators: subscription.operators,
+  };
+  return createHash('sha256').update(safeJsonStringify(definition)).digest('base64url');
+}
+
 /** Side-effect-free, fresh-only subscription boundary shared by all preflights. */
 export async function resolveSubscriptionForPreflight(
   subscription: Subscription,
+  options?: {
+    ordinalPlanningSession?: OrdinalPlanningSession;
+    subscriptionSnapshot?: SubscriptionPreflightSnapshot;
+  },
 ): Promise<FetchSubscriptionProxiesResult> {
   try {
-    return await resolveSubscriptionProxies(subscription, {
-      writeCache: false,
-      allowStale: false,
-    });
+    const resolve = () =>
+      resolveSubscriptionProxies(subscription, {
+        writeCache: false,
+        allowStale: false,
+        ordinalPlanningSession: options?.ordinalPlanningSession,
+      });
+    const snapshot = options?.subscriptionSnapshot;
+    if (!snapshot) return await resolve();
+
+    const key = subscriptionSnapshotKey(subscription);
+    let pending = snapshot.get(key);
+    if (!pending) {
+      pending = resolve();
+      snapshot.set(key, pending);
+    }
+    return await pending;
   } catch (error) {
     if (error instanceof SubscriptionResolutionValidationError) {
       const rootPath = `subscriptions[${subscription.name}]`;
@@ -182,7 +246,23 @@ export async function preflightProfileConfig(
   );
   const patch = await buildCandidate(state);
   const candidate: ProfileConfigState = { ...state, ...patch };
+  // Only node-pipeline saves supply a shared session and consume its sealed
+  // reservation plan in the same CAS. Ordinary base/rule/device preflights
+  // validate names read-only but must not become dependent on ordinal-store
+  // availability when they cannot commit reservations themselves.
+  const ordinalPlanningSession = options.ordinalPlanningSession;
   let buildId: string;
+  let ordinalPlan: OrdinalReservationPlan = {
+    expectedGeneration: 0,
+    expectedGlobalSize: 0,
+    sources: [],
+  };
+  let ordinalBefore = 0;
+  if (ordinalPlanningSession) {
+    const observed = await getOrdinalGeneration();
+    if (observed === null) throw new ConfigPreflightUnavailableError();
+    ordinalBefore = observed;
+  }
 
   try {
     const resolved = await resolveConfig(
@@ -200,9 +280,21 @@ export async function preflightProfileConfig(
         // Side-effect boundary: preflight never writes fetch/render caches,
         // snapshots, OR persisted node-ordinal assignments.
         persistOrdinals: false,
+        ordinalPlanningSession,
         // The injected resolver is the side-effect boundary: normal renders
         // retain cache writes and stale fallback, while preflight does neither.
-        subscriptionResolver: resolveSubscriptionForPreflight,
+        subscriptionResolver: (subscription, resolverOptions) =>
+          resolveSubscriptionForPreflight(subscription, {
+            ...(resolverOptions?.ordinalPlanningSession || ordinalPlanningSession
+              ? {
+                  ordinalPlanningSession:
+                    resolverOptions?.ordinalPlanningSession ?? ordinalPlanningSession,
+                }
+              : {}),
+            ...(options.subscriptionSnapshot
+              ? { subscriptionSnapshot: options.subscriptionSnapshot }
+              : {}),
+          }),
       },
     );
     buildId = resolved.buildId;
@@ -213,6 +305,16 @@ export async function preflightProfileConfig(
     // the exact document it will be applied to. N ≤ 16 in-memory
     // patch+validate rounds over one already-computed render.
     assertDevicePatchesValid(resolved.content, candidate.devices);
+    if (ordinalPlanningSession) {
+      const ordinalAfter = await getOrdinalGeneration();
+      if (ordinalAfter === null || ordinalAfter !== ordinalBefore) {
+        throw new ConfigPreflightUnavailableError();
+      }
+      ordinalPlan = ordinalPlanningSession.seal();
+      if (ordinalPlan.expectedGeneration !== ordinalBefore) {
+        throw new ConfigPreflightUnavailableError();
+      }
+    }
   } catch (error) {
     if (
       error instanceof ConfigValidationError ||
@@ -226,7 +328,15 @@ export async function preflightProfileConfig(
     throw error;
   }
 
-  return { configVersion: version, profileExisted, baseExisted, candidate, buildId };
+  return {
+    configVersion: version,
+    ordinalGeneration: ordinalBefore,
+    ordinalPlan,
+    profileExisted,
+    baseExisted,
+    candidate,
+    buildId,
+  };
 }
 
 /**

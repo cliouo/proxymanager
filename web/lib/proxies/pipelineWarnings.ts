@@ -4,7 +4,7 @@
  */
 
 import { validateTemplate } from '@/lib/proxies/naming';
-import type { StoredOperator } from '@/schemas/operator';
+import { isActiveCurrentRenameTemplateOperator, type StoredOperator } from '@/schemas/operator';
 
 /**
  * Whether an enabled rename step (rename-regex with a pattern, or an enabled
@@ -20,7 +20,7 @@ export function matchesRenamedAt(operators: readonly StoredOperator[]): boolean[
     if (op.disabled) continue;
     if (op.kind === 'rename-regex') {
       if (op.pattern && op.pattern.trim() !== '') sawRename = true;
-    } else if (op.kind === 'rename-template') {
+    } else if (isActiveCurrentRenameTemplateOperator(op)) {
       sawRename = true;
     }
     out[i] = sawRename;
@@ -49,7 +49,7 @@ export function renamedAfterManaged(operators: readonly StoredOperator[]): numbe
   let managedSeen = false;
   operators.forEach((op, i) => {
     if (op.disabled) return;
-    if (op.kind === 'rename-template') {
+    if (isActiveCurrentRenameTemplateOperator(op)) {
       managedSeen = true;
       return;
     }
@@ -69,10 +69,7 @@ export function renamedAfterManaged(operators: readonly StoredOperator[]): numbe
  * the UI only warns, never removes either.
  */
 export function hasFlagRedundancy(operators: readonly StoredOperator[]): boolean {
-  const rt = operators.find(
-    (op): op is Extract<StoredOperator, { kind: 'rename-template' }> =>
-      op.kind === 'rename-template' && !op.disabled,
-  );
+  const rt = operators.find(isActiveCurrentRenameTemplateOperator);
   if (!rt) return false;
   return (
     templateUsesEmoji(rt.template) &&

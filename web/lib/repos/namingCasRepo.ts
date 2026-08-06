@@ -1,8 +1,8 @@
 /**
  * Atomic naming apply/rollback commit — ONE Redis CAS transaction.
  *
- * The config record, config:version AND the naming-history set/clear move in
- * a SINGLE eval (C8/C14): either all three change or none do. Redis does NOT
+ * The config record, config:version, naming-history, durable audit and sealed
+ * ordinal reservations move in a SINGLE eval (C8/C14): all change or none do. Redis does NOT
  * roll back earlier commands on a Lua runtime error, so the script
  * prevalidates EVERY failure surface before the first mutation — key types
  * (entity hash / history hash / version string), the canonical increment-safe
@@ -18,7 +18,11 @@
 
 import { getRedis } from '@/lib/redis/client';
 import { REDIS_KEYS } from '@/lib/redis/keys';
+import { encodeOrdinalReservationPlan } from '@/lib/repos/ordinalReservationCas';
+import { MAX_ORDINAL, MAX_TOTAL_ASSIGNMENTS } from '@/lib/repos/nodeOrdinalRepo';
+import { NamingHistoryPlanSchema } from '@/lib/repos/namingHistoryRepo';
 import { containsSensitivePattern, redactSensitiveText } from '@/lib/proxies/namingSanitize';
+import type { OrdinalReservationPlan } from '@/lib/services/nodeOrdinalService';
 import { NamingAuditEventSchema } from '@/schemas/audit';
 
 export interface NamingHistoryCommit {
@@ -47,15 +51,17 @@ export interface NamingCasResult {
 /**
  * KEYS: [1] config:version, [2] entity hash (subscriptions|collections),
  *       [3] naming-history hash, [4] audit-events zset, [5] audit-by-id hash,
- *       [6] profiles hash, [7] collections hash.
+ *       [6] profiles hash, [7] collections hash, [8] ordinal generation,
+ *       [9] ordinal hash, [10..] one counter key per planned source.
  * ARGV: [1] expected version, [2] record id, [3] record JSON,
  *       [4] history op ('' | 'set' | 'del'), [5] history field, [6] history value,
  *       [7] audit op ('' | 'set'), [8] audit event id, [9] audit ts (score),
  *       [10] audit event JSON, [11] caller profile id, [12] expected profile
  *       source type (`none` | `subscription` | `collection`), [13] expected
  *       source id ('' when type is 'none'), [14] expected collection member
- *       COUNT, [15..14+n] the gate-captured member ids in record order
- *       ('' count when the binding is not a collection). pass-8 blocker 6:
+ *       COUNT, [15] expected ordinal generation, [16] audit cap,
+ *       [17..16+n] the gate-captured member ids in record order, followed by
+ *       encodeOrdinalReservationPlan().args. pass-8 blocker 6:
  *       for collection bindings the CAS re-validates the collection's
  *       CURRENT subscription_ids positionally inside the same atomic eval —
  *       member add/delete/reorder between gate and commit fails with
@@ -99,6 +105,11 @@ if not isHashKey(KEYS[3]) then return {2, 'history-wrongtype'} end
 if not isStringKey(KEYS[1]) then return {2, 'version-wrongtype'} end
 if not isZsetKey(KEYS[4]) then return {2, 'audit-events-wrongtype'} end
 if not isHashKey(KEYS[5]) then return {2, 'audit-byid-wrongtype'} end
+if not isStringKey(KEYS[8]) then return {2, 'ordinal-generation-wrongtype'} end
+if not isHashKey(KEYS[9]) then return {2, 'ordinal-hash-wrongtype'} end
+if ARGV[4] ~= 'set' and ARGV[4] ~= 'del' then return {2, 'history-op-invalid'} end
+if ARGV[5] == '' then return {2, 'history-field-invalid'} end
+if ARGV[4] == 'set' and ARGV[6] == '' then return {2, 'history-value-invalid'} end
 -- pass-7 blocker 4: the CAS re-validates the caller profile's CURRENT
 -- source binding inside the SAME atomic eval (not merely version + audit
 -- profileId) — a rebind between the confirmation gate and this commit
@@ -151,11 +162,21 @@ if ARGV[12] == 'collection' then
     return {2, 'profile-binding-mismatch'}
   end
   for i = 1, expectedCount do
-    if col.subscription_ids[i] ~= ARGV[14 + i] then
+    if col.subscription_ids[i] ~= ARGV[16 + i] then
       return {2, 'profile-binding-mismatch'}
     end
   end
 end
+local ordinalRaw = redis.call('GET', KEYS[8])
+if not ordinalRaw then ordinalRaw = '0' end
+if not isCanonicalUnsigned(ordinalRaw) or ordinalRaw ~= ARGV[15] then
+  return {0, 'ordinal-generation-mismatch'}
+end
+local auditCap = tonumber(ARGV[16])
+if not auditCap or auditCap < 1 or auditCap > 100000 then
+  return {2, 'audit-cap-invalid'}
+end
+local auditEvicted = {}
 if ARGV[7] == 'set' then
   -- Lua-side audit defense (pass-3 finding): a fallible ZADD/HSET argument
   -- can never fail AFTER entity/history writes — the id charset and the
@@ -168,19 +189,167 @@ if ARGV[7] == 'set' then
     return {2, 'audit-score-invalid'}
   end
   if string.len(ARGV[10]) > 8192 then return {2, 'audit-payload-oversize'} end
-  -- Reuse check IN the same atomic eval (pass-1 finding): the id must not
-  -- already exist in the audit-by-id hash. The TypeScript side probes before
-  -- the eval, but a UUID could become occupied BETWEEN that probe and this
-  -- script — only this pre-write HEXISTS closes the race, and it runs before
-  -- the first mutation so a reused id writes NOTHING and never overwrites
-  -- the existing event.
-  if redis.call('HEXISTS', KEYS[5], ARGV[8]) == 1 then
+  -- Reuse check IN the same atomic eval: both audit indexes must be clear.
+  -- Checking only by-id permits a zset-only orphan to be overwritten, while
+  -- checking only the zset permits a payload-only orphan to be overwritten.
+  if redis.call('HEXISTS', KEYS[5], ARGV[8]) == 1 or
+     redis.call('ZSCORE', KEYS[4], ARGV[8]) then
     return {2, 'audit-id-exists'}
   end
+  -- Select existing victims BEFORE inserting the new event. A legitimate
+  -- late-arriving event may have an older score than the whole retained log;
+  -- post-insert rank trimming would immediately delete that just-committed
+  -- event and leave a naming transition without durable audit evidence.
+  local auditCard = redis.call('ZCARD', KEYS[4])
+  local auditOverflow = auditCard - auditCap + 1
+  if auditOverflow > 0 then
+    auditEvicted = redis.call('ZRANGE', KEYS[4], 0, auditOverflow - 1)
+  end
+end
+-- The sealed ordinal reservation follows the positional collection members.
+-- It is validated completely before entity/history/audit/ordinal mutations.
+local ordinalCursor = 17 + tonumber(ARGV[14])
+if ARGV[ordinalCursor] ~= ARGV[15] then return {2, 'ordinal-plan-generation'} end
+local expectedGlobalSize = tonumber(ARGV[ordinalCursor + 1])
+local sourceCount = tonumber(ARGV[ordinalCursor + 2])
+local assignmentCount = tonumber(ARGV[ordinalCursor + 3])
+if not expectedGlobalSize or not sourceCount or not assignmentCount or
+   sourceCount < 0 or assignmentCount < 0 or sourceCount > ${MAX_TOTAL_ASSIGNMENTS} or
+   assignmentCount > ${MAX_TOTAL_ASSIGNMENTS} then
+  return {2, 'ordinal-plan-bounds'}
+end
+if redis.call('HLEN', KEYS[9]) ~= expectedGlobalSize then
+  return {0, 'ordinal-size-mismatch'}
+end
+local generation = tonumber(ordinalRaw)
+if not generation or generation > 9007199254740990 then
+  return {2, 'ordinal-generation-overflow'}
+end
+local allOrdinals = redis.call('HGETALL', KEYS[9])
+local planCursor = ordinalCursor + 4
+local sources = {}
+local sourceLookup = {}
+local sourceSizes = {}
+local expectedSourceSizes = {}
+local maxExistingBySource = {}
+local seenExistingBySource = {}
+local bases = {}
+local nextCounters = {}
+local sourceIndex = 1
+while sourceIndex <= sourceCount do
+  if not isStringKey(KEYS[9 + sourceIndex]) then return {2, 'ordinal-counter-wrongtype'} end
+  local sourceKey = ARGV[planCursor]
+  local missingFlag = ARGV[planCursor + 1]
+  local expectedCounter = ARGV[planCursor + 2]
+  local expectedSourceSize = tonumber(ARGV[planCursor + 3])
+  local nextCounter = tonumber(ARGV[planCursor + 4])
+  if not sourceKey or sourceKey == '' or (missingFlag ~= '0' and missingFlag ~= '1') or
+     not expectedSourceSize or expectedSourceSize < 0 or not nextCounter or
+     nextCounter < 1 or nextCounter > ${MAX_ORDINAL} then
+    return {2, 'ordinal-plan-malformed'}
+  end
+  local actualCounter = redis.call('GET', KEYS[9 + sourceIndex])
+  if missingFlag == '1' then
+    if actualCounter then return {0, 'ordinal-counter-mismatch'} end
+  elseif not actualCounter or actualCounter ~= expectedCounter then
+    return {0, 'ordinal-counter-mismatch'}
+  end
+  if sourceLookup[sourceKey] then return {2, 'ordinal-source-duplicate'} end
+  local base = 0
+  if actualCounter and isCanonicalUnsigned(actualCounter) then
+    local parsedCounter = tonumber(actualCounter)
+    if parsedCounter and parsedCounter <= 9007199254740991 and parsedCounter > base then
+      base = parsedCounter
+    end
+  end
+  sources[sourceIndex] = sourceKey
+  sourceLookup[sourceKey] = sourceIndex
+  sourceSizes[sourceIndex] = 0
+  expectedSourceSizes[sourceIndex] = expectedSourceSize
+  maxExistingBySource[sourceIndex] = 0
+  seenExistingBySource[sourceIndex] = {}
+  bases[sourceIndex] = base
+  nextCounters[sourceIndex] = nextCounter
+  planCursor = planCursor + 5
+  sourceIndex = sourceIndex + 1
+end
+local pairIndex = 1
+while pairIndex <= #allOrdinals do
+  local field = allOrdinals[pairIndex]
+  local colon = string.find(field, ':', 1, true)
+  if colon then
+    local storedSource = string.sub(field, 1, colon - 1)
+    local storedSourceIndex = sourceLookup[storedSource]
+    if storedSourceIndex then
+      sourceSizes[storedSourceIndex] = sourceSizes[storedSourceIndex] + 1
+      local stored = allOrdinals[pairIndex + 1]
+      if isCanonicalUnsigned(stored) then
+        local storedNumber = tonumber(stored)
+        if storedNumber and storedNumber >= 1 and storedNumber <= ${MAX_ORDINAL} then
+          if seenExistingBySource[storedSourceIndex][stored] then
+            return {2, 'ordinal-existing-duplicate'}
+          end
+          seenExistingBySource[storedSourceIndex][stored] = true
+          if storedNumber > maxExistingBySource[storedSourceIndex] then
+            maxExistingBySource[storedSourceIndex] = storedNumber
+          end
+        end
+      end
+    end
+  end
+  pairIndex = pairIndex + 2
+end
+sourceIndex = 1
+while sourceIndex <= sourceCount do
+  if sourceSizes[sourceIndex] ~= expectedSourceSizes[sourceIndex] then
+    return {0, 'ordinal-source-size-mismatch'}
+  end
+  if maxExistingBySource[sourceIndex] > bases[sourceIndex] then
+    bases[sourceIndex] = maxExistingBySource[sourceIndex]
+  end
+  sourceIndex = sourceIndex + 1
+end
+local fields = {}
+local ordinals = {}
+local seenFields = {}
+local assignmentIndex = 1
+while assignmentIndex <= assignmentCount do
+  local plannedSource = tonumber(ARGV[planCursor])
+  local field = ARGV[planCursor + 1]
+  local plannedOrdinalRaw = ARGV[planCursor + 2]
+  local plannedOrdinal = tonumber(plannedOrdinalRaw)
+  local fieldColon = field and string.find(field, ':', 1, true)
+  if not plannedSource or plannedSource < 1 or plannedSource > sourceCount or
+     not fieldColon or string.sub(field, 1, fieldColon - 1) ~= sources[plannedSource] or
+     not isCanonicalUnsigned(plannedOrdinalRaw) or not plannedOrdinal or
+     plannedOrdinal ~= bases[plannedSource] + 1 or plannedOrdinal > ${MAX_ORDINAL} then
+    return {2, 'ordinal-plan-nonmonotonic'}
+  end
+  if seenFields[field] or redis.call('HGET', KEYS[9], field) then
+    return {0, 'ordinal-field-exists'}
+  end
+  seenFields[field] = true
+  bases[plannedSource] = plannedOrdinal
+  sourceSizes[plannedSource] = sourceSizes[plannedSource] + 1
+  if sourceSizes[plannedSource] > ${MAX_TOTAL_ASSIGNMENTS} or
+     expectedGlobalSize + assignmentIndex > ${MAX_TOTAL_ASSIGNMENTS} then
+    return {2, 'ordinal-plan-cap'}
+  end
+  fields[assignmentIndex] = field
+  ordinals[assignmentIndex] = plannedOrdinalRaw
+  planCursor = planCursor + 3
+  assignmentIndex = assignmentIndex + 1
+end
+sourceIndex = 1
+while sourceIndex <= sourceCount do
+  if bases[sourceIndex] ~= nextCounters[sourceIndex] then
+    return {2, 'ordinal-counter-rollback'}
+  end
+  sourceIndex = sourceIndex + 1
 end
 local currentRaw = redis.call('GET', KEYS[1])
 local current = 0
-if currentRaw and currentRaw ~= '' then
+if currentRaw then
   -- canonical: no leading zeros, decimal digits only (Redis int64 max and
   -- 2^53 both FAIL here — they are not canonical JS-safe integers)
   if not isCanonicalUnsigned(currentRaw) then return {2, 'version-malformed'} end
@@ -195,6 +364,19 @@ if not expected or current ~= expected then
   return {0, string.format('%.0f', current)}
 end
 local nextVersion = current + 1
+assignmentIndex = 1
+while assignmentIndex <= assignmentCount do
+  redis.call('HSET', KEYS[9], fields[assignmentIndex], ordinals[assignmentIndex])
+  assignmentIndex = assignmentIndex + 1
+end
+sourceIndex = 1
+while sourceIndex <= sourceCount do
+  redis.call('SET', KEYS[9 + sourceIndex], string.format('%.0f', nextCounters[sourceIndex]))
+  sourceIndex = sourceIndex + 1
+end
+if assignmentCount > 0 then
+  redis.call('SET', KEYS[8], string.format('%.0f', generation + 1))
+end
 redis.call('HSET', KEYS[2], ARGV[2], ARGV[3])
 if ARGV[4] == 'set' then
   redis.call('HSET', KEYS[3], ARGV[5], ARGV[6])
@@ -202,6 +384,10 @@ elseif ARGV[4] == 'del' then
   redis.call('HDEL', KEYS[3], ARGV[5])
 end
 if ARGV[7] == 'set' then
+  if #auditEvicted > 0 then
+    redis.call('ZREMRANGEBYRANK', KEYS[4], 0, #auditEvicted - 1)
+    for i = 1, #auditEvicted do redis.call('HDEL', KEYS[5], auditEvicted[i]) end
+  end
   redis.call('ZADD', KEYS[4], ARGV[9], ARGV[8])
   redis.call('HSET', KEYS[5], ARGV[8], ARGV[10])
 end
@@ -295,6 +481,47 @@ function entityTypeOf(entityKey: string): 'subscription' | 'collection' {
   if (entityKey === REDIS_KEYS.subscriptions) return 'subscription';
   if (entityKey === REDIS_KEYS.collections) return 'collection';
   throw new Error('namingCasRepo: unsupported entity key for a naming transition');
+}
+
+const MAX_NAMING_HISTORY_BYTES = 64 * 1024;
+
+/** Bind the undo receipt to this exact entity before any Redis call. */
+function validateNamingHistory(
+  history: NamingHistoryCommit,
+  binding: { entityKey: string; recordId: string },
+): void {
+  if (!history || typeof history !== 'object') {
+    throw new Error('namingCasRepo: naming history is REQUIRED');
+  }
+  if (history.op !== 'set' && history.op !== 'del') {
+    throw new Error('namingCasRepo: unsupported naming history operation');
+  }
+  const expectedField = `${entityTypeOf(binding.entityKey)}:${binding.recordId}`;
+  if (history.field !== expectedField) {
+    throw new Error('namingCasRepo: naming history target does not match the entity');
+  }
+  if (history.op === 'del') {
+    if (history.value !== undefined) {
+      throw new Error('namingCasRepo: naming history delete must not carry a value');
+    }
+    return;
+  }
+  if (
+    typeof history.value !== 'string' ||
+    history.value === '' ||
+    history.value.length > MAX_NAMING_HISTORY_BYTES
+  ) {
+    throw new Error('namingCasRepo: naming history value is missing or exceeds the size bound');
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(history.value);
+  } catch {
+    throw new Error('namingCasRepo: naming history value must be valid JSON');
+  }
+  if (!NamingHistoryPlanSchema.safeParse(parsed).success) {
+    throw new Error('namingCasRepo: naming history value must be a valid prior plan');
+  }
 }
 
 /**
@@ -397,6 +624,7 @@ export async function commitEntityWithNamingHistory(options: {
   /** The FULL entity record JSON (already passed through restoreRawOperators). */
   recordJson: string;
   expectedVersion: number;
+  ordinalPlan: OrdinalReservationPlan;
   history: NamingHistoryCommit;
   /** REQUIRED durable audit event written IN the same atomic transition
    * (finding 2): no naming write may succeed without its audit event. */
@@ -422,18 +650,29 @@ export async function commitEntityWithNamingHistory(options: {
     memberIds?: string[];
   };
 }): Promise<NamingCasResult> {
+  validateNamingHistory(options.history, {
+    entityKey: options.entityKey,
+    recordId: options.recordId,
+  });
+  if (
+    options.expectedProfileId !== undefined &&
+    options.expectedProfileId !== options.profileBinding.profileId
+  ) {
+    throw new Error('namingCasRepo: expected profile and live binding profile must match');
+  }
   await validateNamingAudit(options.audit, {
     entityKey: options.entityKey,
     recordId: options.recordId,
     expectedProfileId: options.expectedProfileId,
   });
-  const historyOp = options.history?.op ?? '';
-  const historyField = options.history?.field ?? '';
-  const historyValue = options.history?.op === 'set' ? (options.history.value ?? '') : '';
+  const historyOp = options.history.op;
+  const historyField = options.history.field;
+  const historyValue = options.history.op === 'set' ? options.history.value! : '';
   const auditOp = options.audit ? 'set' : '';
   const auditId = options.audit?.id ?? '';
   const auditTs = options.audit ? String(options.audit.ts) : '';
   const auditPayload = options.audit?.payloadJson ?? '';
+  const encodedOrdinals = encodeOrdinalReservationPlan(options.ordinalPlan);
   const result = (await getRedis().eval(
     CAS_ENTITY_WITH_HISTORY,
     [
@@ -444,6 +683,9 @@ export async function commitEntityWithNamingHistory(options: {
       REDIS_KEYS.audit.byId,
       REDIS_KEYS.profiles,
       REDIS_KEYS.collections,
+      REDIS_KEYS.nodeOrdinalGeneration,
+      REDIS_KEYS.nodeOrdinals,
+      ...encodedOrdinals.counterKeys,
     ],
     [
       String(options.expectedVersion),
@@ -460,7 +702,10 @@ export async function commitEntityWithNamingHistory(options: {
       options.profileBinding.type,
       options.profileBinding.id,
       String(options.profileBinding.memberIds?.length ?? 0),
+      String(options.ordinalPlan.expectedGeneration),
+      '1000',
       ...(options.profileBinding.memberIds ?? []),
+      ...encodedOrdinals.args,
     ],
   )) as [number, string];
   if (!Array.isArray(result)) {

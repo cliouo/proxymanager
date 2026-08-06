@@ -4,6 +4,7 @@ import { guardSubToken } from '@/lib/http/subGuard';
 import { nodeExportResponse, parseNodeExportFormat } from '@/lib/http/providerResponse';
 import { exportSubscriptionNodes } from '@/lib/services/nodeExportService';
 import { getSubscriptionByName } from '@/lib/services/subscriptionService';
+import { getConfigVersion } from '@/lib/repos/configVersionRepo';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -22,6 +23,7 @@ export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
   const { token, name } = await ctx.params;
   await guardSubToken(request, token, name);
   const format = parseNodeExportFormat(request);
+  const configVersion = await getConfigVersion();
 
   const sub = await getSubscriptionByName(name);
   if (!sub) {
@@ -32,6 +34,12 @@ export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
   }
 
   const noCache = new URL(request.url).searchParams.get('noCache') === '1';
-  const result = await exportSubscriptionNodes(sub, { noCache });
+  const result = await exportSubscriptionNodes(sub, {
+    noCache,
+    ordinalConfigVersion: configVersion,
+  });
+  if ((await getConfigVersion()) !== configVersion) {
+    throw ProblemDetailsError.preconditionFailed('配置在生成订阅期间发生变化，请重试。');
+  }
   return nodeExportResponse(request, result, `pm-source-${sub.name}`, format);
 });

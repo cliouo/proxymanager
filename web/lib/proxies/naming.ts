@@ -414,7 +414,9 @@ function applyFieldMod(token: { field: NamingField; mod?: string }, value: strin
     // can never allocate attacker-sized output.
     const width = Math.min(MAX_INDEX_WIDTH, Math.max(1, Number(mod)));
     const numeric = Number.parseInt(value, 10);
-    if (Number.isFinite(numeric) && String(numeric) === value.trim()) {
+    // The executor pre-pads source ordinals to at least two digits. Accept
+    // that canonical digit-only value here so `${index:N}` can widen it.
+    if (Number.isFinite(numeric) && /^[0-9]+$/.test(value.trim())) {
       return String(numeric).padStart(width, '0');
     }
     return value;

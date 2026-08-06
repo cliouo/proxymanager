@@ -7,6 +7,7 @@ import {
   recordSubscriptionError,
   recordSubscriptionSync,
 } from '@/lib/services/subscriptionService';
+import { getConfigVersion } from '@/lib/repos/configVersionRepo';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,6 +20,7 @@ type Ctx = RouteContext<'/api/v1/subscriptions/[id]/refresh'>;
  */
 export const POST = withProblemDetails(async (_request: Request, ctx: Ctx) => {
   const { id } = await ctx.params;
+  const configVersion = await getConfigVersion();
   const sub = await getSubscription(id);
   if (!sub) throw ProblemDetailsError.notFound(`Subscription ${id} not found.`);
   if (!sub.enabled) {
@@ -28,7 +30,10 @@ export const POST = withProblemDetails(async (_request: Request, ctx: Ctx) => {
   let traffic;
   let proxyCount;
   try {
-    ({ traffic, proxyCount } = await resolveSubscriptionContent(sub, { noCache: true }));
+    ({ traffic, proxyCount } = await resolveSubscriptionContent(sub, {
+      noCache: true,
+      ordinalConfigVersion: configVersion,
+    }));
   } catch (err) {
     // P3-8: record why the refresh failed so the status badge can surface it.
     const msg =
@@ -37,10 +42,10 @@ export const POST = withProblemDetails(async (_request: Request, ctx: Ctx) => {
         : err instanceof Error
           ? err.message
           : String(err);
-    await recordSubscriptionError(id, msg).catch(() => undefined);
+    await recordSubscriptionError(id, msg, configVersion).catch(() => undefined);
     throw err;
   }
-  const updated = await recordSubscriptionSync(id, nowSeconds(), traffic);
+  const updated = await recordSubscriptionSync(id, nowSeconds(), traffic, configVersion);
 
   return Response.json({ data: updated, meta: { proxyCount } });
 });

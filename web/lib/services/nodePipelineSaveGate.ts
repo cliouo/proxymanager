@@ -13,7 +13,16 @@
 import { enabledCollectionMemberSubs } from '@/lib/engine/resolve';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { getConfigVersion } from '@/lib/repos/configVersionRepo';
-import { preflightProfileConfig } from '@/lib/services/configPreflight';
+import { getOrdinalGeneration } from '@/lib/repos/nodeOrdinalRepo';
+import { listSubscriptions } from '@/lib/repos/subscriptionsRepo';
+import {
+  preflightProfileConfig,
+  type SubscriptionPreflightSnapshot,
+} from '@/lib/services/configPreflight';
+import {
+  createOrdinalPlanningSession,
+  type OrdinalReservationPlan,
+} from '@/lib/services/nodeOrdinalService';
 import type { Collection, Profile, Subscription } from '@/schemas';
 
 /**
@@ -94,26 +103,59 @@ function assertSameGeneration(observed: number, expected: number | undefined): v
  * all preflight generations must agree with each other. A 422 naming the
  * broken profile is thrown when a candidate fails validation.
  */
-export async function preflightPipelineSave(plan: PipelineSavePlan): Promise<number> {
+export interface PipelineSaveBracket {
+  configVersion: number;
+  ordinalGeneration: number;
+  ordinalPlan: OrdinalReservationPlan;
+}
+
+export async function preflightPipelineSave(plan: PipelineSavePlan): Promise<PipelineSaveBracket> {
+  const currentSubscriptions = await listSubscriptions();
+  const candidateSubscriptions = plan.candidateSubscriptions
+    ? plan.candidateSubscriptions(currentSubscriptions)
+    : currentSubscriptions;
+  const ordinalPlanningSession = await createOrdinalPlanningSession(
+    candidateSubscriptions.map((subscription) => subscription.name),
+  );
+  // A single upstream snapshot brackets the WHOLE save, not one profile.
+  // Candidate definitions are memoized by a hashed render-affecting identity
+  // inside configPreflight, so source and collection consumers cannot observe
+  // different reorderings of the same expired remote subscription.
+  const subscriptionSnapshot: SubscriptionPreflightSnapshot = new Map();
   if (plan.affected.length === 0) {
     // No consumers → the edit changes no rendered output, but the discovery
     // (empty) is only valid at the captured generation: an empty-to-nonempty
     // race must 412, not silently commit a consumer nobody preflighted.
     const version = await getConfigVersion();
+    const ordinalGeneration = await getOrdinalGeneration();
     assertSameGeneration(version, plan.expectedVersion);
-    return version;
+    if (ordinalGeneration === null) {
+      throw ProblemDetailsError.preconditionFailed('节点编号状态无法安全读取，请稍后重试。');
+    }
+    const ordinalPlan = ordinalPlanningSession.seal();
+    if (ordinalPlan.expectedGeneration !== ordinalGeneration) {
+      throw ProblemDetailsError.preconditionFailed(
+        '节点编号在保存前校验期间发生变化，请刷新后重试。',
+      );
+    }
+    return { configVersion: version, ordinalGeneration, ordinalPlan };
   }
 
   let version: number | null = null;
-  for (const profile of plan.affected) {
-    const checked = await preflightProfileConfig(profile.id, (state) => ({
-      ...(plan.candidateSubscriptions
-        ? { subscriptions: plan.candidateSubscriptions(state.subscriptions) }
-        : {}),
-      ...(plan.candidateCollections
-        ? { collections: plan.candidateCollections(state.collections) }
-        : {}),
-    })).catch((error: unknown) => {
+  let ordinalGeneration: number | null = null;
+  for (const profile of [...plan.affected].sort((a, b) => a.id.localeCompare(b.id))) {
+    const checked = await preflightProfileConfig(
+      profile.id,
+      (state) => ({
+        ...(plan.candidateSubscriptions
+          ? { subscriptions: plan.candidateSubscriptions(state.subscriptions) }
+          : {}),
+        ...(plan.candidateCollections
+          ? { collections: plan.candidateCollections(state.collections) }
+          : {}),
+      }),
+      { ordinalPlanningSession, subscriptionSnapshot },
+    ).catch((error: unknown) => {
       if (error instanceof Error && !(error instanceof ProblemDetailsError)) {
         error.message = `配置文件「${profile.name}」会被这次节点处理改动破坏：${error.message}`;
       }
@@ -127,8 +169,30 @@ export async function preflightPipelineSave(plan: PipelineSavePlan): Promise<num
         '配置在保存前校验期间被其他写入修改,请刷新后重试。',
       );
     }
+    if (ordinalGeneration === null) ordinalGeneration = checked.ordinalGeneration;
+    else if (ordinalGeneration !== checked.ordinalGeneration) {
+      throw ProblemDetailsError.preconditionFailed(
+        '节点编号在保存前校验期间发生变化，请刷新后重试。',
+      );
+    }
   }
-  return version ?? (await getConfigVersion());
+  const finalOrdinalGeneration =
+    ordinalGeneration ??
+    (await getOrdinalGeneration()) ??
+    (() => {
+      throw ProblemDetailsError.preconditionFailed('节点编号状态无法安全读取，请稍后重试。');
+    })();
+  const ordinalPlan = ordinalPlanningSession.seal();
+  if (ordinalPlan.expectedGeneration !== finalOrdinalGeneration) {
+    throw ProblemDetailsError.preconditionFailed(
+      '节点编号在保存前校验期间发生变化，请刷新后重试。',
+    );
+  }
+  return {
+    configVersion: version ?? (await getConfigVersion()),
+    ordinalGeneration: finalOrdinalGeneration,
+    ordinalPlan,
+  };
 }
 
 /**
@@ -144,15 +208,15 @@ export async function commitUnderPipelineGate(options: {
   affected: readonly Profile[];
   candidateSubscriptions?: (current: Subscription[]) => Subscription[];
   candidateCollections?: (current: Collection[]) => Collection[];
-  commit: (version: number) => Promise<{ ok: boolean }>;
+  commit: (version: number, ordinalPlan: OrdinalReservationPlan) => Promise<{ ok: boolean }>;
 }): Promise<void> {
-  const version = await preflightPipelineSave({
+  const bracket = await preflightPipelineSave({
     expectedVersion: options.planningVersion,
     affected: options.affected,
     candidateSubscriptions: options.candidateSubscriptions,
     candidateCollections: options.candidateCollections,
   });
-  const committed = await options.commit(version);
+  const committed = await options.commit(bracket.configVersion, bracket.ordinalPlan);
   if (!committed.ok) {
     throw ProblemDetailsError.preconditionFailed(
       '配置在保存前校验期间被其他写入修改,请刷新后重试。',

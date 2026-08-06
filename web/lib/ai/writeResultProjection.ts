@@ -50,9 +50,12 @@ function nullProtoDescriptor(
 ): PropertyDescriptor {
   const desc = Object.create(null);
   desc.value = value;
-  desc.writable = opts.writable ?? true;
-  desc.enumerable = opts.enumerable ?? true;
-  desc.configurable = opts.configurable ?? true;
+  // `opts` is an ordinary internal object. Read only own options so a polluted
+  // Object.prototype.{writable,enumerable,configurable} getter is never
+  // observed while constructing a supposedly hardened descriptor.
+  desc.writable = Object.hasOwn(opts, 'writable') ? opts.writable : true;
+  desc.enumerable = Object.hasOwn(opts, 'enumerable') ? opts.enumerable : true;
+  desc.configurable = Object.hasOwn(opts, 'configurable') ? opts.configurable : true;
   return desc;
 }
 

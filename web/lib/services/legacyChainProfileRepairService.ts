@@ -325,6 +325,7 @@ async function validateRecoveryCandidate(input: {
     boundSource: state.profile.source,
     ignoreFailedSubs: false,
     persistSnapshot: false,
+    persistOrdinals: false,
     subscriptionResolver: resolveSubscriptionForPreflight,
   });
 }

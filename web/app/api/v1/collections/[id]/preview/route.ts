@@ -14,7 +14,7 @@ import {
 } from '@/lib/services/pipelinePreview';
 import { getCollection } from '@/lib/services/collectionService';
 import { listSubscriptions } from '@/lib/services/subscriptionService';
-import { OperatorListSchema, type Operator } from '@/schemas';
+import { isActiveCurrentRenameTemplateOperator, OperatorListSchema } from '@/schemas';
 
 export const dynamic = 'force-dynamic';
 
@@ -47,19 +47,20 @@ export const POST = withProblemDetails(async (request: Request, ctx: Ctx) => {
   const noCache = raw?.noCache === true;
 
   const subs = await listSubscriptions();
-  const { merged, memberErrors } = await mergeCollectionMemberProxies(collection, subs, {
-    noCache,
-    writeCache: false,
-  });
+  const { merged, memberErrors, ordinalPlanningSession, ordinalDomainRegistry } =
+    await mergeCollectionMemberProxies(collection, subs, {
+      noCache,
+      writeCache: false,
+    });
   const before = merged as ClashProxy[];
 
-  const managedOp = operators.find(
-    (op): op is Extract<Operator, { kind: 'rename-template' }> => op.kind === 'rename-template',
-  );
+  const managedOp = operators.find(isActiveCurrentRenameTemplateOperator);
   const ordinals = await resolveOrdinalsFor(before, sourceOf, {
     persist: false,
     template: managedOp?.template,
     recognitionRules: managedOp?.recognitionRules ?? [],
+    planningSession: ordinalPlanningSession,
+    domainRegistry: ordinalDomainRegistry,
   });
   const { proxies: after, steps } = applyOperators(before, operators, ordinals);
 
@@ -71,14 +72,11 @@ export const POST = withProblemDetails(async (request: Request, ctx: Ctx) => {
   // naming over the merged set); otherwise only nodes whose own MEMBER
   // subscription has an active rename-template are managed — an unrelated
   // managed third member can never promote a plain/plain collision.
-  const collectionManagedOp = operators.some(
-    (op): op is Extract<Operator, { kind: 'rename-template' }> =>
-      op.kind === 'rename-template' && op.disabled !== true,
-  );
+  const collectionManagedOp = operators.some(isActiveCurrentRenameTemplateOperator);
   const memberManagedByKey = new Map(
     enabledCollectionMemberSubs(collection, subs).map((m) => [
       m.name,
-      (m.operators ?? []).some((op) => op.kind === 'rename-template' && op.disabled !== true),
+      (m.operators ?? []).some(isActiveCurrentRenameTemplateOperator),
     ]),
   );
   const final = dedupExportProxies(after, (item) => {

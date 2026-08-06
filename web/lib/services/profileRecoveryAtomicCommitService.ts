@@ -2,6 +2,7 @@ import { ClientSafeProblemDetailsError } from '@/lib/http/problem';
 import { getRedis } from '@/lib/redis/client';
 import { REDIS_KEYS } from '@/lib/redis/keys';
 import { restoreRawOperators } from '@/lib/repos/rawOperators';
+import { safeJsonStringify } from '@/lib/security/safeJson';
 import type { BaseMeta } from '@/lib/repos/baseRepo';
 import type { AuditEvent, AuditTarget, ProxyGroup, Rule, Subscription } from '@/schemas';
 
@@ -138,13 +139,13 @@ export async function commitAtomicProfileRecovery(
     String(plan.expectedVersion),
     plan.expectedBaseEtag,
     plan.baseContent,
-    JSON.stringify(plan.baseMeta),
+    safeJsonStringify(plan.baseMeta),
     profileId,
     String(groups.length),
   ];
-  for (const group of groups) args.push(group.id, JSON.stringify(group));
+  for (const group of groups) args.push(group.id, safeJsonStringify(group));
   args.push(String(groupDeletes.length), ...groupDeletes, String(rules.length));
-  for (const rule of rules) args.push(rule.id, JSON.stringify(rule));
+  for (const rule of rules) args.push(rule.id, safeJsonStringify(rule));
   args.push(String(subscriptions.length));
   for (const subscription of subscriptions) {
     // Round-1 fix: serialize repaired-source records through the raw-
@@ -154,9 +155,9 @@ export async function commitAtomicProfileRecovery(
     // the newly quarantined source (a fresh record without a raw envelope)
     // is written from its decoded shape — an empty operator list.
     const toStore = restoreRawOperators(subscription);
-    args.push(subscription.id, JSON.stringify(toStore));
+    args.push(subscription.id, safeJsonStringify(toStore));
   }
-  args.push(event.id, String(event.ts), JSON.stringify(event));
+  args.push(event.id, String(event.ts), safeJsonStringify(event));
 
   const result = (await getRedis().eval(
     COMMIT_ATOMIC_PROFILE_RECOVERY,

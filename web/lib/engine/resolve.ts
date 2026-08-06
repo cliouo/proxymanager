@@ -64,11 +64,18 @@ import {
   type SubscriptionResolveOptions,
 } from '@/lib/services/subscriptionFetcher';
 import { applyOperators } from '@/lib/proxies/operators';
-import { type OrdinalResolver } from '@/lib/proxies/naming';
+import { templateUsesIndexField, type OrdinalResolver } from '@/lib/proxies/naming';
 import { fingerprintOf, sourceOf, withSource } from '@/lib/proxies/provenance';
 import { dedupByNameAndIdentity } from '@/lib/proxies/nodeDedup';
-import { resolveOrdinalsFor } from '@/lib/services/nodeOrdinalService';
-import { isExecutableOperator } from '@/schemas/operator';
+import {
+  createOrdinalDomainRegistry,
+  createOrdinalPlanningSession,
+  resolveOrdinalsFor,
+  type OrdinalDomainRegistry,
+  type OrdinalPlanningSession,
+} from '@/lib/services/nodeOrdinalService';
+import { getConfigVersion } from '@/lib/repos/configVersionRepo';
+import { isActiveCurrentRenameTemplateOperator, isExecutableOperator } from '@/schemas/operator';
 import { compileGoRegex } from '@/lib/proxies/filterMatch';
 import { ipLiteralFamily } from '@/lib/net/ipLiteral';
 import {
@@ -269,6 +276,11 @@ export interface ResolveOptions extends RenderOptions {
    * served (AGENTS.md side-effect-free preflight invariant).
    */
   persistOrdinals?: boolean;
+  /** Generation captured before the render cache loaded config records. */
+  ordinalConfigVersion?: number;
+  /** One read-only ordinal plan shared by every source and collection stage. */
+  ordinalPlanningSession?: OrdinalPlanningSession;
+  ordinalDomainRegistry?: OrdinalDomainRegistry;
 }
 
 export interface ResolveResult extends RenderResult {
@@ -347,15 +359,39 @@ export async function resolveConfig(
   templates: ProxyGroupTemplate[],
   opts: ResolveOptions = {},
 ): Promise<ResolveResult> {
-  try {
-    return await resolveConfigInternal(
-      baseContent,
-      rules,
-      subscriptions,
-      proxyGroups,
-      templates,
-      opts,
+  const needsOrdinalResolution =
+    subscriptions.some((subscription) =>
+      (subscription.operators ?? []).some(
+        (operator) =>
+          isActiveCurrentRenameTemplateOperator(operator) &&
+          templateUsesIndexField(operator.template),
+      ),
+    ) ||
+    (opts.collections ?? []).some((collection) =>
+      (collection.operators ?? []).some(
+        (operator) =>
+          isActiveCurrentRenameTemplateOperator(operator) &&
+          templateUsesIndexField(operator.template),
+      ),
     );
+  const ordinalConfigVersion =
+    opts.persistOrdinals === false || !needsOrdinalResolution
+      ? undefined
+      : (opts.ordinalConfigVersion ?? (await getConfigVersion()));
+  const needsReadOnlyOrdinalSession = opts.persistOrdinals === false && needsOrdinalResolution;
+  const ordinalPlanningSession = needsReadOnlyOrdinalSession
+    ? (opts.ordinalPlanningSession ??
+      (await createOrdinalPlanningSession(subscriptions.map((subscription) => subscription.name))))
+    : opts.ordinalPlanningSession;
+  const ordinalDomainRegistry =
+    ordinalPlanningSession ?? opts.ordinalDomainRegistry ?? createOrdinalDomainRegistry();
+  try {
+    return await resolveConfigInternal(baseContent, rules, subscriptions, proxyGroups, templates, {
+      ...opts,
+      ordinalConfigVersion,
+      ordinalPlanningSession,
+      ordinalDomainRegistry,
+    });
   } catch (error) {
     if (error instanceof ConfigValidationError) throw error;
     const mapped = resolvedConfigValidationError(error);
@@ -372,6 +408,7 @@ async function resolveConfigInternal(
   templates: ProxyGroupTemplate[],
   opts: ResolveOptions = {},
 ): Promise<ResolveResult> {
+  const ordinalConfigVersion = opts.ordinalConfigVersion;
   // Stored/imported rules can predate the current write schema. Validate the
   // structured fields before rendering them into an ambiguous comma-delimited
   // line; once rendered, a regex payload and a policy/option reorder can be
@@ -452,7 +489,13 @@ async function resolveConfigInternal(
   for await (const outcome of settleWithConcurrencyInOrder(
     eligibleSubs,
     SUB_FETCH_CONCURRENCY,
-    (sub) => subscriptionResolver(sub, { noCache: opts.noCache }),
+    (sub) =>
+      subscriptionResolver(sub, {
+        noCache: opts.noCache,
+        ordinalConfigVersion,
+        ordinalPlanningSession: opts.ordinalPlanningSession,
+        ordinalDomainRegistry: opts.ordinalDomainRegistry,
+      }),
   )) {
     const sub = eligibleSubs[i];
     i += 1;
@@ -504,10 +547,7 @@ async function resolveConfigInternal(
             { key: candidate.fromSub, label: candidate.fromSubLabel },
           ]),
         );
-        const managedOp = executable.find(
-          (op): op is Extract<Operator, { kind: 'rename-template' }> =>
-            op.kind === 'rename-template',
-        );
+        const managedOp = executable.find(isActiveCurrentRenameTemplateOperator);
         const ordinals = managedOp
           ? await resolveOrdinalsFor(
               candidates.map((c) => c.node),
@@ -516,6 +556,9 @@ async function resolveConfigInternal(
                 persist: opts.persistOrdinals !== false,
                 template: managedOp.template,
                 recognitionRules: managedOp.recognitionRules ?? [],
+                configVersion: ordinalConfigVersion,
+                planningSession: opts.ordinalPlanningSession,
+                domainRegistry: opts.ordinalDomainRegistry,
               },
             )
           : undefined;
@@ -547,9 +590,7 @@ async function resolveConfigInternal(
   // on the NON-managed path keep the documented first-writer-wins contract.
   const managedSubs = new Set(
     subscriptions
-      .filter((s) =>
-        (s.operators ?? []).some((op) => op.kind === 'rename-template' && !op.disabled),
-      )
+      .filter((s) => (s.operators ?? []).some(isActiveCurrentRenameTemplateOperator))
       .map((s) => s.name),
   );
   // Collection-level managed naming: when the profile binds to a collection
@@ -561,7 +602,7 @@ async function resolveConfigInternal(
     boundSource?.type === 'collection'
       ? ((opts.collections ?? [])
           .find((c) => c.id === boundSource.id)
-          ?.operators.some((op) => op.kind === 'rename-template' && !op.disabled) ?? false)
+          ?.operators.some(isActiveCurrentRenameTemplateOperator) ?? false)
       : false;
   const injectorByName = new Map<string, string>();
   const identityByName = new Map<string, string | null>();

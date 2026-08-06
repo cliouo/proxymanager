@@ -27,8 +27,9 @@ export const GET = withProblemDetails(async (request: Request) => {
   // pass-8 blocker 7: raw entity/profile UUIDs never leave the history
   // surface — naming events project to keyed profile-bound refs/handles,
   // with the full-domain collision index over ALL events (pass-10 blocker 3)
+  const projected = projectNamingAuditsForExternal(data);
   return Response.json({
-    data: projectNamingAuditsForExternal(data),
-    meta: { limit, count: data.length },
+    data: projected,
+    meta: { limit, count: projected.length },
   });
 });

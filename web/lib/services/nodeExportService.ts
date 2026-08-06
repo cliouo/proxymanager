@@ -6,8 +6,14 @@ import { applyOperators, type ClashProxy } from '@/lib/proxies/operators';
 import { fingerprintOf, sourceOf, stripSource, withSource } from '@/lib/proxies/provenance';
 import { dedupByNameAndIdentity } from '@/lib/proxies/nodeDedup';
 import { nodeFingerprint } from '@/lib/proxies/naming';
-import { resolveOrdinalsFor } from '@/lib/services/nodeOrdinalService';
-import { isExecutableOperator, type Operator } from '@/schemas/operator';
+import {
+  createOrdinalDomainRegistry,
+  createOrdinalPlanningSession,
+  resolveOrdinalsFor,
+  type OrdinalDomainRegistry,
+  type OrdinalPlanningSession,
+} from '@/lib/services/nodeOrdinalService';
+import { isActiveCurrentRenameTemplateOperator, isExecutableOperator } from '@/schemas/operator';
 import { resolveSubscriptionProxies } from '@/lib/services/subscriptionFetcher';
 import {
   SubscriptionResolutionValidationError,
@@ -50,6 +56,11 @@ interface ExportOptions {
    * cache state. Export / render keep the default (warm the cache).
    */
   writeCache?: boolean;
+  /** Config generation captured before the caller loaded the source record. */
+  ordinalConfigVersion?: number;
+  /** One read-only plan shared by member and collection stages. */
+  ordinalPlanningSession?: OrdinalPlanningSession;
+  ordinalDomainRegistry?: OrdinalDomainRegistry;
 }
 
 /** 同时在途的成员订阅 fetch 上限,与渲染管线保持一致。 */
@@ -144,8 +155,11 @@ export async function exportSubscriptionNodes(
   const result = await resolveSubscriptionProxies(sub, {
     noCache: options.noCache,
     writeCache: options.writeCache,
+    ordinalConfigVersion: options.ordinalConfigVersion,
+    ordinalPlanningSession: options.ordinalPlanningSession,
+    ordinalDomainRegistry: options.ordinalPlanningSession ?? options.ordinalDomainRegistry,
   });
-  const managed = (sub.operators ?? []).some((op) => op.kind === 'rename-template' && !op.disabled);
+  const managed = (sub.operators ?? []).some(isActiveCurrentRenameTemplateOperator);
   const {
     proxies: deduped,
     deduped: dropped,
@@ -171,6 +185,8 @@ export interface MergedMembers {
   memberErrors: { name: string; error: string }[];
   /** True if any member served a stale-on-error cache. */
   stale: boolean;
+  ordinalPlanningSession?: OrdinalPlanningSession;
+  ordinalDomainRegistry: OrdinalDomainRegistry;
 }
 
 /**
@@ -183,6 +199,13 @@ export async function mergeCollectionMemberProxies(
   allSubscriptions: Subscription[],
   options: ExportOptions = {},
 ): Promise<MergedMembers> {
+  const ordinalPlanningSession =
+    options.writeCache === false
+      ? (options.ordinalPlanningSession ??
+        (await createOrdinalPlanningSession(allSubscriptions.map((sub) => sub.name))))
+      : options.ordinalPlanningSession;
+  const ordinalDomainRegistry =
+    ordinalPlanningSession ?? options.ordinalDomainRegistry ?? createOrdinalDomainRegistry();
   // pass-10 blocker 1: export promises VISIBLE membership — the single
   // authoritative enabled set, no duplicate inline filter
   const members = enabledCollectionMemberSubs(collection, allSubscriptions);
@@ -203,6 +226,9 @@ export async function mergeCollectionMemberProxies(
       resolveSubscriptionProxies(sub, {
         noCache: options.noCache,
         writeCache: options.writeCache,
+        ordinalConfigVersion: options.ordinalConfigVersion,
+        ordinalPlanningSession,
+        ordinalDomainRegistry,
       }),
   )) {
     const member = members[i];
@@ -235,7 +261,7 @@ export async function mergeCollectionMemberProxies(
     );
   }
 
-  return { merged, memberErrors, stale };
+  return { merged, memberErrors, stale, ordinalPlanningSession, ordinalDomainRegistry };
 }
 
 /**
@@ -247,21 +273,29 @@ export async function exportCollectionNodes(
   allSubscriptions: Subscription[],
   options: ExportOptions = {},
 ): Promise<NodeExportResult> {
+  const ordinalPlanningSession =
+    options.writeCache === false
+      ? (options.ordinalPlanningSession ??
+        (await createOrdinalPlanningSession(allSubscriptions.map((sub) => sub.name))))
+      : options.ordinalPlanningSession;
+  const ordinalDomainRegistry =
+    ordinalPlanningSession ?? options.ordinalDomainRegistry ?? createOrdinalDomainRegistry();
   const { merged, memberErrors, stale } = await mergeCollectionMemberProxies(
     collection,
     allSubscriptions,
-    options,
+    { ...options, ordinalPlanningSession, ordinalDomainRegistry },
   );
 
   const executable = collection.operators.filter(isExecutableOperator);
-  const managedOp = executable.find(
-    (op): op is Extract<Operator, { kind: 'rename-template' }> => op.kind === 'rename-template',
-  );
+  const managedOp = executable.find(isActiveCurrentRenameTemplateOperator);
   const ordinals = managedOp
     ? await resolveOrdinalsFor(merged, sourceOf, {
         persist: options.writeCache !== false,
         template: managedOp.template,
         recognitionRules: managedOp.recognitionRules ?? [],
+        configVersion: options.ordinalConfigVersion,
+        planningSession: ordinalPlanningSession,
+        domainRegistry: ordinalDomainRegistry,
       })
     : undefined;
   const processed =
@@ -278,7 +312,7 @@ export async function exportCollectionNodes(
   const memberManagedByKey = new Map(
     enabledCollectionMemberSubs(collection, allSubscriptions).map((m) => [
       m.name,
-      (m.operators ?? []).some((op) => op.kind === 'rename-template' && !op.disabled),
+      (m.operators ?? []).some(isActiveCurrentRenameTemplateOperator),
     ]),
   );
   const {

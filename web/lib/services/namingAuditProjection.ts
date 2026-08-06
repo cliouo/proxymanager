@@ -1,5 +1,5 @@
 import { buildRawScope } from '@/lib/proxies/handleScopes';
-import type { AuditEvent } from '@/schemas';
+import { NamingAuditEventSchema, type AuditEvent } from '@/schemas';
 
 /**
  * pass-8 blocker 7: EXTERNAL history surfaces must never carry raw
@@ -40,15 +40,25 @@ function projectNamingAuditForExternalWithScopes(
 
 /** Single-event projection (test seam + single-event callers): the complete
  * domain for one event IS the event itself — one raw scope per purpose. */
-export function projectNamingAuditForExternal(event: AuditEvent): AuditEvent {
-  if (event.target?.kind !== 'naming-source' || event.profileId === undefined) return event;
+export function projectNamingAuditForExternal(event: AuditEvent): AuditEvent | null {
+  const isNamingCandidate =
+    event.target?.kind === 'naming-source' ||
+    event.op === 'naming.apply' ||
+    event.op === 'naming.rollback';
+  if (!isNamingCandidate) return event;
+  // Redis may contain legacy/corrupt rows that bypassed today's strict write
+  // schema. A naming event without its bound profile cannot be projected to
+  // an opaque target ref, so drop it instead of returning the raw target id.
+  const parsed = NamingAuditEventSchema.safeParse(event);
+  if (!parsed.success) return null;
+  const safeEvent = parsed.data;
   const targetScope = buildRawScope('target-ref', [
-    `${event.profileId}\x00${(event.target as { type: string; id: string }).type}:${(event.target as { id: string }).id}`,
+    `${safeEvent.profileId}\x00${safeEvent.target.type}:${safeEvent.target.id}`,
   ]);
   const profileScope = buildRawScope('profile-ref', [
-    `${event.profileId}\x00profile:${event.profileId}`,
+    `${safeEvent.profileId}\x00profile:${safeEvent.profileId}`,
   ]);
-  return projectNamingAuditForExternalWithScopes(event, targetScope, profileScope);
+  return projectNamingAuditForExternalWithScopes(safeEvent, targetScope, profileScope);
 }
 
 /**
@@ -62,9 +72,14 @@ export function projectNamingAuditForExternal(event: AuditEvent): AuditEvent {
  * profile salts; every projection goes through them.
  */
 export function projectNamingAuditsForExternal(events: AuditEvent[]): AuditEvent[] {
-  const naming = events.filter(
-    (e) => e.target?.kind === 'naming-source' && e.profileId !== undefined,
+  const safeEvents = events.filter(
+    (event) =>
+      (event.target?.kind !== 'naming-source' &&
+        event.op !== 'naming.apply' &&
+        event.op !== 'naming.rollback') ||
+      NamingAuditEventSchema.safeParse(event).success,
   );
+  const naming = safeEvents.filter((e) => e.target?.kind === 'naming-source');
   const targetScope = buildRawScope(
     'target-ref',
     naming.map((e) => {
@@ -76,7 +91,7 @@ export function projectNamingAuditsForExternal(events: AuditEvent[]): AuditEvent
     'profile-ref',
     naming.map((e) => `${e.profileId}\x00profile:${e.profileId}`),
   );
-  return events.map((event) =>
+  return safeEvents.map((event) =>
     projectNamingAuditForExternalWithScopes(event, targetScope, profileScope),
   );
 }

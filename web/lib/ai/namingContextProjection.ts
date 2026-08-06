@@ -63,12 +63,13 @@ export function sanitizeDisplayText(text: string, bound: number = DISPLAY_TEXT_M
   return cleaned.slice(0, bound);
 }
 
-/** Sanitized display label for a source identity (label or key fallback). */
+/** Sanitized user-facing display label for a source identity. The stable key
+ * is never a model-facing fallback: internal provenance commonly stores the
+ * slug as `label` when display_name is absent, so equality means there is no
+ * independent display label to disclose. */
 export function safeSourceLabel(identity: SourceIdentity | undefined, key: string): string | null {
-  if (identity !== undefined && identity.label !== '') {
-    return sanitizeDisplayText(identity.label);
-  }
-  return sanitizeDisplayText(key);
+  if (identity === undefined || identity.label === '' || identity.label === key) return null;
+  return sanitizeDisplayText(identity.label);
 }
 
 export interface ProjectedNode {

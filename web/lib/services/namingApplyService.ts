@@ -47,6 +47,7 @@ import {
   type OperatorSnapshot,
   type WithRawOperators,
 } from '@/lib/repos/rawOperators';
+import { safeJsonClone, safeJsonStringify } from '@/lib/security/safeJson';
 import { applyOperatorMutation } from '@/lib/services/operatorMutationPolicy';
 import { buildManagedCandidate, completeNamingPlan } from '@/lib/services/namingManagedCandidate';
 import {
@@ -174,7 +175,13 @@ export function buildNamingAudit(options: {
       `审计事件不合法：${parsed.error.issues[0]?.message ?? '未知错误'}`,
     );
   }
-  return { id, ts, op: options.op, actor: payload.actor, payloadJson: JSON.stringify(parsed.data) };
+  return {
+    id,
+    ts,
+    op: options.op,
+    actor: payload.actor,
+    payloadJson: safeJsonStringify(parsed.data),
+  };
 }
 
 /** The RAW persisted operator array (byte-exact) when the parsed record
@@ -306,7 +313,7 @@ function replaceRenameOp(
   // history entries written before rawOp existed.
   const rt: Operator =
     plan.rawOp !== undefined && isRecord(plan.rawOp)
-      ? (JSON.parse(JSON.stringify(plan.rawOp)) as Operator)
+      ? (safeJsonClone(plan.rawOp) as Operator)
       : ({
           // Restore-only fields (rollback) win; apply keeps the CURRENT op's id.
           id: plan.opId ?? 'naming-plan',
@@ -438,16 +445,17 @@ async function commitUnderBracket(options: {
     affected,
     candidateSubscriptions,
     candidateCollections,
-    commit: (version) =>
+    commit: (version, ordinalPlan) =>
       commitEntityWithNamingHistory({
         entityKey:
           options.type === 'subscription' ? REDIS_KEYS.subscriptions : REDIS_KEYS.collections,
         recordId: options.id,
         // restoreRawOperators: unrelated raw operator bytes stay byte-for-byte.
-        recordJson: JSON.stringify(
+        recordJson: safeJsonStringify(
           restoreRawOperators(options.nextEntity as Subscription & Collection),
         ),
         expectedVersion: version,
+        ordinalPlan,
         history: options.history,
         audit: options.audit,
         expectedProfileId: options.expectedProfileId,
@@ -580,7 +588,7 @@ export async function applyNamingPlan(
         disabled: priorOp.disabled === true,
         // byte-exact raw row: deep-cloned so later mutation of `next` can
         // never alias into the persisted history payload
-        rawOp: JSON.parse(JSON.stringify(storedRaw[priorIdx])),
+        rawOp: safeJsonClone(storedRaw[priorIdx]),
       }
     : {
         hadManaged: false,
@@ -626,7 +634,7 @@ export async function applyNamingPlan(
     id,
     nextEntity,
     membership,
-    history: { op: 'set', field: historyField, value: JSON.stringify(priorState) },
+    history: { op: 'set', field: historyField, value: safeJsonStringify(priorState) },
     audit,
     expectedProfileId: options.audit.profileId,
   });
@@ -709,7 +717,7 @@ export async function rollbackNamingPlan(
   } else if (prior.rawOp !== undefined) {
     // byte-exact restore: splice the raw prior row at its RECORDED position —
     // never replace a surviving duplicate/parked rename-template row
-    const restored = JSON.parse(JSON.stringify(prior.rawOp)) as unknown;
+    const restored = safeJsonClone(prior.rawOp) as unknown;
     next = [...withoutManagedRow];
     next.splice(Math.min(prior.position ?? targetIdx, next.length), 0, restored);
   } else {
