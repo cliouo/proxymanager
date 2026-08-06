@@ -59,6 +59,9 @@ export const AuditEventSchema = z.object({
   undoes: z.uuid().optional(),
   /** False when the operation deliberately has no safe registered inverse. */
   undoable: z.boolean().optional(),
+  /** Global shared-source authority marker used by administrator naming
+   * events. Other event kinds omit it. */
+  scope: z.literal('global').optional(),
   /**
    * The profile this mutation targeted (Phase 2: base/rules/proxy-groups are
    * per-profile). Optional for back-compat with pre-Phase-2 events; undo falls
@@ -79,8 +82,10 @@ export const RuleAuditEventSchema = AuditEventSchema.extend({
  * (pass-2 findings). Built exactly by buildNamingAudit; `.strict()` rejects
  * every unknown key, every string is bounded, `op` is the naming enum, ids
  * are canonical UUIDs, `undoable` can never be true for a naming event, and
- * `profileId` is REQUIRED — no naming write may be audited without its
- * authorized profile binding. The RAW placeholder DSL template is never
+ * profile-scoped assistant writes require `profileId`; the authenticated
+ * global web workspace instead records `scope: global` without pretending
+ * one consuming profile authorized a shared-source mutation. The RAW
+ * placeholder DSL template is never
  * persisted: `after` carries only a bounded structural summary (placeholder
  * count + length). The repository re-validates every persisted string
  * recursively AFTER this schema (sanitization stability + credential-shaped
@@ -120,11 +125,33 @@ export const NamingAuditEventSchema = z
       .strict(),
     /** Naming writes have no registered inverse — never true. */
     undoable: z.literal(false),
-    /** REQUIRED session profile the write happened in — canonical UUID,
-     * bound to the caller's expected profile by the repository. */
-    profileId: z.uuid(),
+    /** Present only for the administrator workspace's global-source write. */
+    scope: z.literal('global').optional(),
+    /** Required for profile-scoped assistant writes; forbidden for a global
+     * workspace write so the audit never attributes it to an unrelated
+     * active profile. */
+    profileId: z.uuid().optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((event, ctx) => {
+    if (event.scope === 'global') {
+      if (event.profileId !== undefined) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['profileId'],
+          message: '全局命名审计不能绑定配置文件',
+        });
+      }
+      return;
+    }
+    if (event.profileId === undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['profileId'],
+        message: '配置文件作用域命名审计必须绑定配置文件',
+      });
+    }
+  });
 
 export type NamingAuditEvent = z.infer<typeof NamingAuditEventSchema>;
 

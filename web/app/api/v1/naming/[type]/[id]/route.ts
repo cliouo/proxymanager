@@ -51,9 +51,10 @@ import {
 } from '@/lib/proxies/handleScopes';
 import { buildNodeSnapshotScope } from '@/lib/ai/namingContextProjection';
 import {
+  GLOBAL_NAMING_SCOPE_ID,
   NAMING_SCOPE_ERROR,
-  callerVisibleNamingTargets,
-  captureNamingMembership,
+  globalNamingTargets,
+  requireGlobalNamingTarget,
 } from '@/lib/services/namingTargetScope';
 import { getConfigVersion } from '@/lib/repos/configVersionRepo';
 import { ProblemDetailsError } from '@/lib/http/problem';
@@ -72,7 +73,7 @@ import { resolveSubscriptionProxiesRaw } from '@/lib/services/subscriptionFetche
 import { getCollection } from '@/lib/services/collectionService';
 import { getSubscription, listSubscriptions } from '@/lib/services/subscriptionService';
 import { applyNamingPlan, rollbackNamingPlan } from '@/lib/services/namingApplyService';
-import { getProfile, listProfiles } from '@/lib/repos/profilesRepo';
+import { listProfiles } from '@/lib/repos/profilesRepo';
 import { getNamingHistory, type NamingHistoryPlan } from '@/lib/repos/namingHistoryRepo';
 import {
   consumingProfilesOfCollection,
@@ -80,14 +81,11 @@ import {
 } from '@/lib/services/nodePipelineSaveGate';
 import { orphanedReferenceIssues, safeIssueText } from '@/lib/services/pipelinePreview';
 import { resolveActor } from '@/lib/services/rulesService';
-import { resolveScopeProfile } from '@/lib/profileScope';
-import { requireAuthorizedNamingTarget } from '@/lib/services/namingTargetScope';
 import {
   isActiveCurrentRenameTemplateOperator,
   isCurrentRenameTemplateOperator,
   RecognitionRuleSchema,
   type Operator,
-  type Profile,
   type StoredOperator,
 } from '@/schemas';
 import { z } from '@/lib/openapi/zod';
@@ -258,12 +256,10 @@ interface WorkspacePayload {
   };
 }
 
-/** Close the read-only auth → snapshot race with the same config-version
- * generation that protects writes. The final profile read is authoritative;
- * a rebind fails the bounded scope error, while an ABA/change elsewhere is
- * caught by the version bracket. */
+/** Close the read-only target → snapshot race with the same config-version
+ * generation that protects writes. Entity deletion or any intervening config
+ * change fails closed instead of returning a stale workspace payload. */
 async function assertReadScopeSnapshot(
-  profileId: string,
   type: 'subscription' | 'collection',
   id: string,
   expectedVersion: number,
@@ -272,9 +268,7 @@ async function assertReadScopeSnapshot(
   if (beforeAuth !== expectedVersion) {
     throw ProblemDetailsError.preconditionFailed('配置已发生变化，请重新加载命名工作台。');
   }
-  const currentProfile = await getProfile(profileId);
-  if (!currentProfile) throw ProblemDetailsError.notFound(NAMING_SCOPE_ERROR);
-  await requireAuthorizedNamingTarget(currentProfile, type, id);
+  await requireGlobalNamingTarget(type, id);
   const afterAuth = await getConfigVersion();
   if (afterAuth !== expectedVersion) {
     throw ProblemDetailsError.preconditionFailed('配置已发生变化，请重新加载命名工作台。');
@@ -283,7 +277,6 @@ async function assertReadScopeSnapshot(
 
 /** Load the source + compute the full workspace payload (shared by GET/POST). */
 async function loadWorkspace(
-  profile: Profile,
   type: 'subscription' | 'collection',
   id: string,
 ): Promise<WorkspacePayload> {
@@ -295,7 +288,7 @@ async function loadWorkspace(
   const finalize = async (
     payload: Omit<WorkspacePayload, 'configVersion'>,
   ): Promise<WorkspacePayload> => {
-    await assertReadScopeSnapshot(profile.id, type, id, workspaceVersion);
+    await assertReadScopeSnapshot(type, id, workspaceVersion);
     return { configVersion: workspaceVersion, ...payload };
   };
   const [profiles] = await Promise.all([listProfiles()]);
@@ -360,8 +353,8 @@ async function loadWorkspace(
       projectAliasKeysToHandles(a, sourceKeys) ?? {};
     // round-2: the entity ref is projected through ONE target scope over the
     // COMPLETE caller-visible union (never a fresh single mint)
-    const visible = await callerVisibleNamingTargets(profile);
-    const targetScope = buildTargetRefScope(profile.id, visible);
+    const visible = await globalNamingTargets();
+    const targetScope = buildTargetRefScope(GLOBAL_NAMING_SCOPE_ID, visible);
     return finalize({
       entity: {
         type,
@@ -394,7 +387,7 @@ async function loadWorkspace(
         // COMPLETE consuming-profile set (round-1 typed HandleScopes).
         consumingProfiles: (() => {
           const scope = buildProfileScope(
-            profile.id,
+            GLOBAL_NAMING_SCOPE_ID,
             consuming.map((p) => p.id),
           );
           return consuming.map((p) => ({
@@ -452,8 +445,8 @@ async function loadWorkspace(
   const projectAliases = (a: Record<string, string>): Record<string, string> =>
     projectAliasKeysToHandles(a, sourceKeys) ?? {};
   // round-2: entity ref projected through the complete visible-union scope
-  const visible = await callerVisibleNamingTargets(profile);
-  const targetScope = buildTargetRefScope(profile.id, visible);
+  const visible = await globalNamingTargets();
+  const targetScope = buildTargetRefScope(GLOBAL_NAMING_SCOPE_ID, visible);
   return finalize({
     entity: {
       type,
@@ -481,7 +474,7 @@ async function loadWorkspace(
     references: {
       consumingProfiles: (() => {
         const scope = buildProfileScope(
-          profile.id,
+          GLOBAL_NAMING_SCOPE_ID,
           consumingProfilesOfCollection(collection.id, profiles).map((p) => p.id),
         );
         return consumingProfilesOfCollection(collection.id, profiles).map((p) => ({
@@ -494,13 +487,10 @@ async function loadWorkspace(
   });
 }
 
-export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
+export const GET = withProblemDetails(async (_request: Request, ctx: Ctx) => {
   const { type, id } = Params.parse(await ctx.params);
-  // pass-6 blocker 1: the workspace READ is gated by the caller's profile
-  // source binding — an unbound/foreign target fails the bounded error.
-  const profile = await resolveScopeProfile(request);
-  await requireAuthorizedNamingTarget(profile, type, id);
-  return Response.json({ data: await loadWorkspace(profile, type, id) });
+  await requireGlobalNamingTarget(type, id);
+  return Response.json({ data: await loadWorkspace(type, id) });
 });
 
 /**
@@ -524,8 +514,7 @@ export const POST = withProblemDetails(async (request: Request, ctx: Ctx) => {
   // preview routes. No save, no cache write, no audit, no CAS.
   if ('preview' in body) {
     const previewVersion = await getConfigVersion();
-    const profile = await resolveScopeProfile(request);
-    await requireAuthorizedNamingTarget(profile, type, id);
+    await requireGlobalNamingTarget(type, id);
     const entity = type === 'subscription' ? await getSubscription(id) : await getCollection(id);
     if (!entity) throw ProblemDetailsError.notFound(NAMING_SCOPE_ERROR);
     const sourceKeys =
@@ -557,7 +546,7 @@ export const POST = withProblemDetails(async (request: Request, ctx: Ctx) => {
       type === 'subscription'
         ? await previewNamingSubscription(id, candidate.operators)
         : await previewNamingCollection(id, candidate.operators);
-    await assertReadScopeSnapshot(profile.id, type, id, previewVersion);
+    await assertReadScopeSnapshot(type, id, previewVersion);
     return Response.json({
       data: {
         after: preview.after,
@@ -568,31 +557,20 @@ export const POST = withProblemDetails(async (request: Request, ctx: Ctx) => {
   }
 
   const actor = resolveActor(request);
-  // REQUIRED profile binding (pass-2 finding): the durable naming audit
-  // carries the authorized editing profile the write happened in — the
-  // repository rejects a missing/mismatched profileId fail-closed.
-  const profile = await resolveScopeProfile(request);
-  // pass-6 blocker 1: apply AND rollback are gated by the same authoritative
-  // visible set — unauthorized targets fail before any read/preflight/write.
-  await requireAuthorizedNamingTarget(profile, type, id);
-  // pass-7 blocker 4 / pass-8 blocker 6: the UI gate captures the FULL
-  // bracket — config VERSION plus membership (binding + visible-set
-  // fingerprint) — HERE; apply/rollback re-check the membership from
-  // current state and commit ONLY under the gate-captured version. A
-  // rebind A→B→A (ABA) or any intermediate membership change between gate
-  // and commit moves the version and fails closed with zero writes/audit.
-  const membership = await captureNamingMembership(profile);
-  const audit = { actor, profileId: profile.id };
+  // The administrator workspace edits globally shared subscription entities.
+  // Config-version CAS plus all-consumer preflight protects the write; the
+  // profile-scoped authority remains exclusive to assistant actions.
+  await requireGlobalNamingTarget(type, id);
+  const audit = { actor, scope: 'global' as const };
   if ('rollback' in body) {
     // Rollback restores the persisted prior plan, clears the history field
     // AND persists a durable naming-source audit event in ONE atomic
     // transition (config + version + history HDEL + audit).
     await rollbackNamingPlan(type, id, {
       audit,
-      expectedMembership: membership,
       expectedVersion: body.expectedVersion,
     });
-    return Response.json({ data: await loadWorkspace(profile, type, id) });
+    return Response.json({ data: await loadWorkspace(type, id) });
   }
 
   // Apply persists the COMPLETE prior state as the rollback target and
@@ -600,8 +578,7 @@ export const POST = withProblemDetails(async (request: Request, ctx: Ctx) => {
   // transition.
   await applyNamingPlan(type, id, body.apply, {
     audit,
-    expectedMembership: membership,
     expectedVersion: body.expectedVersion,
   });
-  return Response.json({ data: await loadWorkspace(profile, type, id) });
+  return Response.json({ data: await loadWorkspace(type, id) });
 });

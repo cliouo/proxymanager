@@ -456,7 +456,7 @@ export function NamingWorkspace({
     if (!data) return;
     setAi({ running: true, error: null, suggestion: null, payload: null });
     try {
-      // The ONE shared strict request contract: the profile-bound opaque
+      // The ONE shared strict request contract: the workspace-scoped opaque
       // { ref } — raw type/id never leaves this surface.
       const res = await runNamingAnalysisRequest(api, data.entity.ref);
       setAi({

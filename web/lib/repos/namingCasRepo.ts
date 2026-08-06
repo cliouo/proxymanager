@@ -56,8 +56,9 @@ export interface NamingCasResult {
  * ARGV: [1] expected version, [2] record id, [3] record JSON,
  *       [4] history op ('' | 'set' | 'del'), [5] history field, [6] history value,
  *       [7] audit op ('' | 'set'), [8] audit event id, [9] audit ts (score),
- *       [10] audit event JSON, [11] caller profile id, [12] expected profile
- *       source type (`none` | `subscription` | `collection`), [13] expected
+ *       [10] audit event JSON, [11] caller profile id (empty for global),
+ *       [12] authority/source type (`global` | `none` | `subscription` |
+ *       `collection`), [13] expected
  *       source id ('' when type is 'none'), [14] expected collection member
  *       COUNT, [15] expected ordinal generation, [16] audit cap,
  *       [17..16+n] the gate-captured member ids in record order, followed by
@@ -110,10 +111,11 @@ if not isHashKey(KEYS[9]) then return {2, 'ordinal-hash-wrongtype'} end
 if ARGV[4] ~= 'set' and ARGV[4] ~= 'del' then return {2, 'history-op-invalid'} end
 if ARGV[5] == '' then return {2, 'history-field-invalid'} end
 if ARGV[4] == 'set' and ARGV[6] == '' then return {2, 'history-value-invalid'} end
--- pass-7 blocker 4: the CAS re-validates the caller profile's CURRENT
--- source binding inside the SAME atomic eval (not merely version + audit
--- profileId) — a rebind between the confirmation gate and this commit
--- fails with NOTHING written, even if config:version was captured stale.
+-- Profile-scoped assistant writes revalidate the caller profile's CURRENT
+-- source binding inside this eval. The authenticated web workspace uses the
+-- explicit global authority type instead; its complete consumer set and every
+-- profile mutation remain protected by the same config-version CAS.
+if ARGV[12] ~= 'global' then
 local profileRaw = redis.call('HGET', KEYS[6], ARGV[11])
 if type(profileRaw) ~= 'string' or profileRaw == '' then
   return {2, 'profile-missing'}
@@ -166,6 +168,7 @@ if ARGV[12] == 'collection' then
       return {2, 'profile-binding-mismatch'}
     end
   end
+end
 end
 local ordinalRaw = redis.call('GET', KEYS[8])
 if not ordinalRaw then ordinalRaw = '0' end
@@ -430,6 +433,7 @@ const ALLOWED_LITERAL_PATHS = new Set([
   'target.kind',
   'target.type',
   'after.mode',
+  'scope',
 ]);
 
 function assertPayloadStringsClean(value: unknown, path: string, depth: number): void {
@@ -528,7 +532,7 @@ function validateNamingHistory(
  * Strict repository-boundary audit validation (pass-1 finding): EVERY
  * fallible audit argument is proven BEFORE the eval — absent/malformed JSON,
  * invalid/duplicate UUID, payload-vs-argument mismatch (id/ts/op/actor),
- * entity type/id + expected profile binding, NaN/Infinity/out-of-range
+ * entity type/id + expected global/profile authority, NaN/Infinity/out-of-range
  * timestamps, oversized values, unknown/extra keys (the strict naming
  * projection), and credential-bearing unsanitized strings ANYWHERE in the
  * payload (recursively) are all rejected here with ZERO
@@ -543,7 +547,7 @@ async function validateNamingAudit(
     actor: string;
     payloadJson: string;
   },
-  binding: { entityKey: string; recordId: string; expectedProfileId: string },
+  binding: { entityKey: string; recordId: string; expectedProfileId?: string },
 ): Promise<void> {
   if (!audit || typeof audit !== 'object') {
     throw new Error('namingCasRepo: audit is REQUIRED for every naming transition');
@@ -599,13 +603,13 @@ async function validateNamingAudit(
   if (event.data.target.id !== binding.recordId) {
     throw new Error('namingCasRepo: audit target id does not match the record id');
   }
-  // PROFILE binding (pass-2 finding): the strict projection REQUIRES a
-  // canonical profileId and it must equal the caller's authorized expected
-  // profile — every UI/assistant caller supplies and binds it.
+  // Authority binding: assistant events bind a concrete profile; global web
+  // workspace events explicitly carry scope=global and no profileId.
   if (binding.expectedProfileId === undefined) {
-    throw new Error('namingCasRepo: audit requires an expected profile binding');
-  }
-  if (event.data.profileId !== binding.expectedProfileId) {
+    if (event.data.scope !== 'global' || event.data.profileId !== undefined) {
+      throw new Error('namingCasRepo: audit does not match global authority');
+    }
+  } else if (event.data.scope === 'global' || event.data.profileId !== binding.expectedProfileId) {
     throw new Error('namingCasRepo: audit profile does not match the expected profile');
   }
   // REUSE check (fast path): the id must not already exist in the audit log.
@@ -636,12 +640,10 @@ export async function commitEntityWithNamingHistory(options: {
     /** Serialized event payload — sanitized + bounded + schema-validated. */
     payloadJson: string;
   };
-  /** REQUIRED session profile the write is bound to — the payload's
-   * profileId must equal it exactly (pass-2 finding). */
-  expectedProfileId: string;
-  /** pass-7 blocker 4 / pass-8 blocker 6: caller profile id + expected
-   * source binding (and, for collections, the gate-captured member-id list)
-   * re-checked by the Lua INSIDE the atomic eval (zero-write on mismatch). */
+  /** Profile-scoped authority id; absent only for an explicit global write. */
+  expectedProfileId?: string;
+  /** Profile authority binding rechecked by Lua, or the explicit global
+   * marker protected by the shared config-version CAS. */
   profileBinding: {
     profileId: string;
     type: string;
@@ -654,10 +656,14 @@ export async function commitEntityWithNamingHistory(options: {
     entityKey: options.entityKey,
     recordId: options.recordId,
   });
-  if (
-    options.expectedProfileId !== undefined &&
-    options.expectedProfileId !== options.profileBinding.profileId
-  ) {
+  if (!options.audit || typeof options.audit !== 'object') {
+    throw new Error('namingCasRepo: audit is REQUIRED for every naming transition');
+  }
+  if (options.expectedProfileId === undefined) {
+    if (options.profileBinding.type !== 'global' || options.profileBinding.profileId !== '') {
+      throw new Error('namingCasRepo: global authority binding is malformed');
+    }
+  } else if (options.expectedProfileId !== options.profileBinding.profileId) {
     throw new Error('namingCasRepo: expected profile and live binding profile must match');
   }
   await validateNamingAudit(options.audit, {

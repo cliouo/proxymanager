@@ -100,13 +100,21 @@ export interface NamingApplyResult {
   label: string;
 }
 
-export interface NamingAuditRequest {
+export type NamingAuditRequest = {
   /** Sanitized + bounded inside the builder (never merely sliced). */
   actor: string;
-  /** REQUIRED authorized profile the write happens in (pass-2 finding):
-   * the persisted audit binds its canonical profileId to this. */
-  profileId: string;
-}
+} & (
+  | {
+      /** Authenticated administrator workspace over globally shared sources. */
+      scope: 'global';
+      profileId?: never;
+    }
+  | {
+      /** Profile-scoped assistant/tool authority. */
+      scope?: 'profile';
+      profileId: string;
+    }
+);
 
 /** Sanitize ANY string that can leave storage (audit persistence): redact
  * credential-shaped content (URLs/tokens/UUIDs), collapse whitespace, bound. */
@@ -118,24 +126,25 @@ function sanitizeStorageText(value: string, bound: number, fallback: string): st
 /**
  * Build the durable naming-source audit event BEFORE the atomic CAS. The
  * payload is sanitized + bounded field-by-field (actor redacted, labels
- * bounded), the raw template is structurally summarized, profileId is
- * REQUIRED, and the payload is validated against the strict
+ * bounded), the raw template is structurally summarized, its global/profile
+ * authority is explicit, and the payload is validated against the strict
  * NamingAuditEventSchema — an invalid payload throws HERE, so a bad audit
  * can never reach the transition.
  * The same builder serves the workspace UI route AND the assistant action,
  * so every successful apply/rollback creates exactly one event.
  */
-export function buildNamingAudit(options: {
-  op: 'naming.apply' | 'naming.rollback';
-  actor: string;
-  type: 'subscription' | 'collection';
-  id: string;
-  label: string;
-  hadManaged: boolean;
-  template?: string;
-  mode: 'added' | 'replaced' | 'removed';
-  profileId: string;
-}): {
+export function buildNamingAudit(
+  options: {
+    op: 'naming.apply' | 'naming.rollback';
+    actor: string;
+    type: 'subscription' | 'collection';
+    id: string;
+    label: string;
+    hadManaged: boolean;
+    template?: string;
+    mode: 'added' | 'replaced' | 'removed';
+  } & ({ scope: 'global'; profileId?: never } | { scope?: 'profile'; profileId: string }),
+): {
   id: string;
   ts: number;
   op: 'naming.apply' | 'naming.rollback';
@@ -167,7 +176,9 @@ export function buildNamingAudit(options: {
       mode: options.mode,
     },
     undoable: false,
-    profileId: options.profileId,
+    ...(options.scope === 'global'
+      ? { scope: 'global' as const }
+      : { profileId: options.profileId }),
   };
   const parsed = NamingAuditEventSchema.safeParse(payload);
   if (!parsed.success) {
@@ -372,9 +383,7 @@ async function affectedProfilesForSubscription(
   };
 }
 
-/** Gate capture for UI-path applies/rollbacks: the caller profile must
- * still exist and be bound — absent profile / no-source profile fail the
- * same bounded non-oracle error as every other naming surface. */
+/** Gate capture for profile-scoped assistant applies/rollbacks. */
 async function captureMembershipOrScopeError(profileId: string): Promise<NamingMembershipSnapshot> {
   const profile = await getProfile(profileId);
   if (!profile) {
@@ -407,18 +416,18 @@ async function commitUnderBracket(options: {
     actor: string;
     payloadJson: string;
   };
-  /** REQUIRED session profile the write is bound to (pass-2 finding): the
-   * repository rejects a missing/mismatched payload profileId. */
-  expectedProfileId: string;
-  /** pass-7 blocker 4: gate-captured membership bracket re-checked from
-   * CURRENT repository state immediately before the CAS — rebind / member
-   * rename/disable/delete / wrong-kind / equality changes fail the bounded
-   * non-oracle error with zero writes and zero audit. */
-  membership: NamingMembershipSnapshot;
+  authority:
+    | { scope: 'global' }
+    | { scope: 'profile'; profileId: string; membership: NamingMembershipSnapshot };
 }): Promise<void> {
-  // Membership re-check BEFORE any write/audit (the Lua additionally
-  // re-validates the profile source binding inside the eval).
-  await assertNamingMembershipUnchanged(options.expectedProfileId, options.membership);
+  if (options.authority.scope === 'profile') {
+    // Membership re-check BEFORE any write/audit (the Lua additionally
+    // re-validates the profile source binding inside the eval).
+    await assertNamingMembershipUnchanged(
+      options.authority.profileId,
+      options.authority.membership,
+    );
+  }
   if (!options.audit || options.audit.payloadJson === '') {
     throw ProblemDetailsError.preconditionFailed('命名写入必须携带审计信息。');
   }
@@ -458,12 +467,16 @@ async function commitUnderBracket(options: {
         ordinalPlan,
         history: options.history,
         audit: options.audit,
-        expectedProfileId: options.expectedProfileId,
-        profileBinding: {
-          profileId: options.expectedProfileId,
-          ...splitProfileBinding(options.membership.binding),
-          memberIds: options.membership.collectionMemberIds,
-        },
+        expectedProfileId:
+          options.authority.scope === 'profile' ? options.authority.profileId : undefined,
+        profileBinding:
+          options.authority.scope === 'profile'
+            ? {
+                profileId: options.authority.profileId,
+                ...splitProfileBinding(options.authority.membership.binding),
+                memberIds: options.authority.membership.collectionMemberIds,
+              }
+            : { profileId: '', type: 'global', id: '', memberIds: [] },
       }),
   });
   invalidateResolvedSnapshot().catch(() => undefined);
@@ -500,9 +513,19 @@ export async function applyNamingPlan(
   if (!options?.audit) {
     throw ProblemDetailsError.preconditionFailed('命名写入必须携带审计信息。');
   }
-  // Membership bracket FIRST — capture before any entity/history read.
-  const membership =
-    options.expectedMembership ?? (await captureMembershipOrScopeError(options.audit.profileId));
+  // Profile-scoped assistant writes capture their membership bracket first.
+  // The administrator workspace is target-global; config-version CAS plus
+  // all-consumer preflight is its authority bracket.
+  const authority =
+    options.audit.scope === 'global'
+      ? ({ scope: 'global' } as const)
+      : ({
+          scope: 'profile',
+          profileId: options.audit.profileId,
+          membership:
+            options.expectedMembership ??
+            (await captureMembershipOrScopeError(options.audit.profileId)),
+        } as const);
   if (plan.template === undefined) {
     throw ProblemDetailsError.badRequest('模板不能为空');
   }
@@ -617,7 +640,9 @@ export async function applyNamingPlan(
   const audit = buildNamingAudit({
     op: 'naming.apply',
     actor: options.audit.actor,
-    profileId: options.audit.profileId,
+    ...(options.audit.scope === 'global'
+      ? { scope: 'global' as const }
+      : { profileId: options.audit.profileId }),
     type,
     id,
     label:
@@ -633,10 +658,9 @@ export async function applyNamingPlan(
     type,
     id,
     nextEntity,
-    membership,
     history: { op: 'set', field: historyField, value: safeJsonStringify(priorState) },
     audit,
-    expectedProfileId: options.audit.profileId,
+    authority,
   });
   return {
     planningVersion,
@@ -671,9 +695,16 @@ export async function rollbackNamingPlan(
   if (!options.audit) {
     throw ProblemDetailsError.preconditionFailed('命名回滚必须携带审计信息。');
   }
-  // Membership bracket FIRST — capture before any entity/history read.
-  const membership =
-    options.expectedMembership ?? (await captureMembershipOrScopeError(options.audit.profileId));
+  const authority =
+    options.audit.scope === 'global'
+      ? ({ scope: 'global' } as const)
+      : ({
+          scope: 'profile',
+          profileId: options.audit.profileId,
+          membership:
+            options.expectedMembership ??
+            (await captureMembershipOrScopeError(options.audit.profileId)),
+        } as const);
   // BRACKET FIRST — same rule as apply. pass-8 blocker 6: when the caller
   // (workspace UI) captured the version at its gate, commit ONLY under it —
   // a moved version (any intermediate change, incl. ABA rebinds) fails
@@ -744,7 +775,9 @@ export async function rollbackNamingPlan(
   const audit = buildNamingAudit({
     op: 'naming.rollback',
     actor: options.audit.actor,
-    profileId: options.audit.profileId,
+    ...(options.audit.scope === 'global'
+      ? { scope: 'global' as const }
+      : { profileId: options.audit.profileId }),
     type,
     id,
     label:
@@ -760,10 +793,9 @@ export async function rollbackNamingPlan(
     type,
     id,
     nextEntity,
-    membership,
     history: { op: 'del', field: historyField },
     audit,
-    expectedProfileId: options.audit.profileId,
+    authority,
   });
   return {
     planningVersion,

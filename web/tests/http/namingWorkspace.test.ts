@@ -1,10 +1,11 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installTestHandleSecret } from '../helpers/handleSecret';
 import { buildProfileScope, buildSourceAliasScope } from '@/lib/proxies/handleScopes';
+import { GLOBAL_NAMING_SCOPE_ID } from '@/lib/services/namingTargetScope';
 
 /** Test-local handle helpers over complete one-identity domains. */
 const profileHandle = (profileId: string): string =>
-  buildProfileScope(profileId, [profileId]).project(`profile:${profileId}`);
+  buildProfileScope(GLOBAL_NAMING_SCOPE_ID, [profileId]).project(`profile:${profileId}`);
 const srcHandle = (key: string): string => buildSourceAliasScope([key]).project(key);
 import { REDIS_KEYS } from '@/lib/redis/keys';
 
@@ -108,7 +109,7 @@ const fakeRedis = {
         // pass-7 blocker 4 / pass-8 blocker 6: the Lua re-validates the
         // caller profile's CURRENT source binding inside the same atomic
         // eval, and collection bindings re-validate the member-id list.
-        if (keys.length >= 6) {
+        if (keys.length >= 6 && args[11] !== 'global') {
           const raw = bucket(keys[5]).get(args[10]);
           if (raw === undefined) return [2, 'profile-missing'];
           const profile = JSON.parse(typeof raw === 'string' ? raw : JSON.stringify(raw)) as {
@@ -300,6 +301,32 @@ async function call(
 }
 
 describe('GET /api/v1/naming/[type]/[id]', () => {
+  it('treats subscriptions and collections as global naming targets, independent of the active profile binding', async () => {
+    bucket(REDIS_KEYS.profiles).set(PROFILE_ID, {
+      id: PROFILE_ID,
+      name: 'default',
+      source: { type: 'none' },
+      updated_at: 2,
+    });
+    bucket(REDIS_KEYS.collections).set(COL_ID, {
+      id: COL_ID,
+      name: 'all-airports',
+      slug: 'all-airports',
+      enabled: true,
+      type: 'select',
+      subscription_ids: [SUB_ID],
+      subscription_tags: [],
+      operators: [],
+      updated_at: 1,
+    });
+
+    const subscription = await call(GET, 'subscription', SUB_ID);
+    const collection = await call(GET, 'collection', COL_ID);
+
+    expect(subscription.status).toBe(200);
+    expect(collection.status).toBe(200);
+  });
+
   it('returns managed state, recommended template, health (per-node facts) and diagnostics', async () => {
     const res = await call(GET, 'subscription', SUB_ID);
     expect(res.status).toBe(200);
@@ -701,22 +728,22 @@ describe('POST apply — policy preservation + persisted prior plan', () => {
     expect(op.sourceAliases).toEqual({ 'airport-a': '别名' });
   });
 
-  it('pass-2: an unresolvable scope profile fails BEFORE any write (zero writes, no audit)', async () => {
-    // the route resolves the authorized profile via resolveScopeProfile;
-    // with no 'default' profile present the apply must fail 404 with
-    // NOTHING written — entity/history/version/audit untouched
-    const subBefore = JSON.stringify(bucket(REDIS_KEYS.subscriptions).get(SUB_ID));
+  it('applies an unconsumed global target without requiring a default profile', async () => {
     bucket(REDIS_KEYS.profiles).delete(PROFILE_ID);
     counters.set(REDIS_KEYS.configVersion, 7);
     const res = await call(POST, 'subscription', SUB_ID, {
       apply: { template: '${region}' },
     });
-    expect(res.status).toBe(404);
-    expect(JSON.stringify(bucket(REDIS_KEYS.subscriptions).get(SUB_ID))).toBe(subBefore);
-    expect(bucket(REDIS_KEYS.namingHistory).has('subscription:' + SUB_ID)).toBe(false);
-    expect(counters.get(REDIS_KEYS.configVersion)).toBe(7);
-    expect(bucket(REDIS_KEYS.audit.events).size).toBe(0);
-    expect(bucket(REDIS_KEYS.audit.byId).size).toBe(0);
+    expect(res.status).toBe(200);
+    expect(bucket(REDIS_KEYS.namingHistory).has('subscription:' + SUB_ID)).toBe(true);
+    expect(counters.get(REDIS_KEYS.configVersion)).toBe(8);
+    expect(bucket(REDIS_KEYS.audit.events).size).toBe(1);
+    const event = JSON.parse([...bucket(REDIS_KEYS.audit.byId).values()][0] as string) as {
+      scope?: string;
+      profileId?: string;
+    };
+    expect(event.scope).toBe('global');
+    expect(event.profileId).toBeUndefined();
   });
 
   it('rejects malformed templates and invalid bodies at the schema boundary', async () => {
@@ -796,7 +823,8 @@ describe('POST apply — policy preservation + persisted prior plan', () => {
   });
 
   it('applies to collections the same way', async () => {
-    // pass-6 scope: the caller profile must be bound to the collection
+    // Collection naming is global even when the active profile happens to be
+    // bound to it; all consuming profiles are still preflighted.
     bucket(REDIS_KEYS.profiles).set(PROFILE_ID, {
       id: PROFILE_ID,
       name: 'default',
@@ -1452,16 +1480,16 @@ describe('POST apply — policy preservation + persisted prior plan', () => {
       undoable: boolean;
       target: { kind: string; name: string };
       actor: string;
-      profileId: string;
+      scope?: string;
+      profileId?: string;
       after: { templateSummary: { placeholderCount: number; length: number } };
     };
     expect(applyEvent.op).toBe('naming.apply');
     expect(applyEvent.undoable).toBe(false);
     expect(applyEvent.target).toMatchObject({ kind: 'naming-source', name: '机场A' });
     expect(applyEvent.actor).toBe('admin'); // no X-Source header → resolveActor default
-    // pass-2: the UI route resolves and binds the authorized profile, and the
-    // audit carries the structural summary, never the raw template
-    expect(applyEvent.profileId).toBe(PROFILE_ID);
+    expect(applyEvent.scope).toBe('global');
+    expect(applyEvent.profileId).toBeUndefined();
     expect(applyEvent.after.templateSummary.placeholderCount).toBe(1);
     expect(JSON.stringify(applyEvent.after)).not.toContain('${');
     const rollbackRes = await call(POST, 'subscription', SUB_ID, { rollback: true });
@@ -1946,7 +1974,7 @@ describe('pass-9 blocker 1: hostile disabled-member aliases across workspace con
     fakeRedis.hget = async (key: string, field: string) => {
       if (key === REDIS_KEYS.subscriptions && field === SUB_ID) {
         subReads++;
-        if (subReads === 2) bucket(key).delete(field);
+        if (subReads === 1) bucket(key).delete(field);
       }
       return originalHget(key, field);
     };
@@ -1956,13 +1984,13 @@ describe('pass-9 blocker 1: hostile disabled-member aliases across workspace con
       const text = await res.text();
       expect(text).toContain('来源范围');
       expect(text).not.toContain(SUB_ID);
-      expect(subReads).toBeGreaterThanOrEqual(2);
+      expect(subReads).toBeGreaterThanOrEqual(1);
     } finally {
       fakeRedis.hget = originalHget;
     }
   });
 
-  it('GET re-validates the current profile after diagnostics and rejects an auth-to-snapshot rebind', async () => {
+  it('GET is independent of active-profile rebinding', async () => {
     const originalHget = fakeRedis.hget;
     let profileReads = 0;
     fakeRedis.hget = async (key: string, field: string) => {
@@ -1982,17 +2010,14 @@ describe('pass-9 blocker 1: hostile disabled-member aliases across workspace con
     };
     try {
       const res = await call(GET, 'subscription', SUB_ID);
-      expect(res.status).toBe(404);
-      const text = await res.text();
-      expect(text).toContain('来源范围');
-      expect(text).not.toContain(SUB_ID);
-      expect(profileReads).toBeGreaterThanOrEqual(1);
+      expect(res.status).toBe(200);
+      expect(profileReads).toBe(0);
     } finally {
       fakeRedis.hget = originalHget;
     }
   });
 
-  it('read-only POST preview rejects the same auth-to-snapshot profile rebind', async () => {
+  it('read-only POST preview is independent of active-profile rebinding', async () => {
     const originalHget = fakeRedis.hget;
     let profileReads = 0;
     fakeRedis.hget = async (key: string, field: string) => {
@@ -2018,11 +2043,8 @@ describe('pass-9 blocker 1: hostile disabled-member aliases across workspace con
           recognitionRules: [],
         },
       });
-      expect(res.status).toBe(404);
-      const text = await res.text();
-      expect(text).toContain('来源范围');
-      expect(text).not.toContain(SUB_ID);
-      expect(profileReads).toBeGreaterThanOrEqual(1);
+      expect(res.status).toBe(200);
+      expect(profileReads).toBe(0);
     } finally {
       fakeRedis.hget = originalHget;
     }

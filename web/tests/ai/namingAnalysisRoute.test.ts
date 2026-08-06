@@ -2,10 +2,13 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import { installTestHandleSecret } from '../helpers/handleSecret';
 import { DEFAULT_PROFILE_NAME } from '@/schemas';
 import { buildTargetRefScope } from '@/lib/proxies/handleScopes';
+import { GLOBAL_NAMING_SCOPE_ID } from '@/lib/services/namingTargetScope';
 
 /** Test-local ref helper: a complete one-target domain. */
 const refOf = (type: 'subscription' | 'collection', id: string): string =>
   buildTargetRefScope(PID, [{ type, id }]).project(`${type}:${id}`);
+const globalRefOf = (type: 'subscription' | 'collection', id: string): string =>
+  buildTargetRefScope(GLOBAL_NAMING_SCOPE_ID, [{ type, id }]).project(`${type}:${id}`);
 import { REDIS_KEYS } from '@/lib/redis/keys';
 
 /**
@@ -131,6 +134,27 @@ beforeAll(() => {
 });
 
 describe('POST /api/v1/assistant/naming-analysis', () => {
+  it('accepts a global workspace ref even when the active profile does not consume the target', async () => {
+    scalars.set(REDIS_KEYS.assistantConfig, {
+      baseUrl: 'https://api.deepseek.com',
+      model: 'deepseek-chat',
+      apiKey: 'cfg-key-123',
+    });
+    bucket(REDIS_KEYS.profiles).set(PID, {
+      id: PID,
+      name: DEFAULT_PROFILE_NAME,
+      display_name: '默认配置',
+      source: { type: 'none' },
+      kind: 'normal',
+      updated_at: 1,
+    });
+
+    const res = await POST(request({ ref: globalRefOf('subscription', SUB_ID) }));
+
+    expect(res.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it('uses the STORED assistant config (custom base URL/model/key), no env key needed', async () => {
     scalars.set(REDIS_KEYS.assistantConfig, {
       baseUrl: 'https://custom-llm.example/v1',

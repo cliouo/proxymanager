@@ -1,19 +1,21 @@
 /**
- * Authoritative caller-visible naming target scope (pass-6 blocker 1): the
- * visible set derives from the CURRENT Profile's source binding — a profile
- * bound to a subscription sees exactly that subscription; bound to a
- * collection it sees the collection AND its enabled member subscriptions;
- * an unbound (no-source) profile sees NOTHING and an absent profile mints
- * no refs. This single resolver gates target listing, ref minting, ref
- * resolution, workspace GET and POST apply/rollback — no global access.
+ * Naming-target authority has two deliberately separate domains:
+ *
+ * - the administrator workspace can manage every globally shared
+ *   subscription/collection entity;
+ * - assistant/MCP actions remain restricted to the CURRENT profile's source
+ *   binding (including enabled collection members).
+ *
+ * The domains use different opaque-ref salts so a workspace ref cannot be
+ * replayed as profile-scoped authority or vice versa.
  */
 
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { getProfile } from '@/lib/repos/profilesRepo';
 import { getSubscription, listSubscriptions } from '@/lib/services/subscriptionService';
-import { getCollection } from '@/lib/services/collectionService';
+import { getCollection, listCollections } from '@/lib/services/collectionService';
 import { enabledCollectionMemberSubs } from '@/lib/engine/resolve';
-import { buildTargetRefScope } from '@/lib/proxies/handleScopes';
+import { buildRawScope, buildTargetRefScope } from '@/lib/proxies/handleScopes';
 import { createHash } from 'node:crypto';
 import type { Profile } from '@/schemas';
 
@@ -32,8 +34,48 @@ export interface NamingTarget {
  * wrong kind, zero matches and multiple matches. */
 export const NAMING_SCOPE_ERROR = '目标不存在或不在当前配置文件的来源范围内。';
 
+/**
+ * The administrator-facing workspace manages globally shared subscription
+ * entities, not one profile's rendered view. Its refs use a dedicated salt so
+ * they cannot be replayed as profile-scoped assistant refs (or vice versa).
+ */
+export const GLOBAL_NAMING_SCOPE_ID = 'global-naming-workspace';
+
 /** Canonical opaque target ref format shared by every model-facing surface. */
 export const NAMING_REF_RE = /^ref-[0-9a-f]{16}$/;
+
+/** Every globally stored naming target. The web workspace is authenticated by
+ * the management API and may open any row in this complete domain. */
+export async function globalNamingTargets(): Promise<NamingTarget[]> {
+  const [subscriptions, collections] = await Promise.all([listSubscriptions(), listCollections()]);
+  return [
+    ...subscriptions.map((sub) => ({
+      type: 'subscription' as const,
+      id: sub.id,
+      key: sub.name,
+      enabled: sub.enabled,
+    })),
+    ...collections.map((collection) => ({
+      type: 'collection' as const,
+      id: collection.id,
+      key: collection.name,
+      enabled: collection.enabled,
+    })),
+  ];
+}
+
+/** Require a real global entity without consulting the active profile. */
+export async function requireGlobalNamingTarget(
+  type: 'subscription' | 'collection',
+  id: string,
+): Promise<NamingTarget> {
+  const targets = await globalNamingTargets();
+  const matches = targets.filter((target) => target.type === type && target.id === id);
+  if (matches.length !== 1) {
+    throw ProblemDetailsError.notFound(NAMING_SCOPE_ERROR);
+  }
+  return matches[0];
+}
 
 /** The profile's naming-visible targets under the CURRENT source binding. */
 export async function callerVisibleNamingTargets(profile: Profile): Promise<NamingTarget[]> {
@@ -104,8 +146,47 @@ export function resolveRefInVisibleSet(
   return matches[0];
 }
 
-/** Gate a workspace target (GET/preview/apply/rollback) against the caller's
- * profile source binding — unbound/foreign targets fail the bounded error. */
+/**
+ * Resolve the one-shot analysis ref across two disjoint authorized domains:
+ * the administrator workspace's complete global target set and the current
+ * profile's assistant-visible set. One raw collision-checked index covers the
+ * union before lookup, so a forced cross-domain MAC collision fails closed.
+ */
+export async function resolveNamingAnalysisRef(
+  profile: Profile,
+  ref: string,
+): Promise<NamingTarget> {
+  const [globalTargets, profileTargets] = await Promise.all([
+    globalNamingTargets(),
+    callerVisibleNamingTargets(profile),
+  ]);
+  const inputs = [
+    ...globalTargets.map((target) => `${GLOBAL_NAMING_SCOPE_ID}\x00${target.type}:${target.id}`),
+    ...profileTargets.map((target) => `${profile.id}\x00${target.type}:${target.id}`),
+  ];
+  const scope = buildRawScope('target-ref', inputs);
+  const resolved = scope.resolve(ref);
+  if (resolved === null) throw ProblemDetailsError.notFound(NAMING_SCOPE_ERROR);
+
+  const globalPrefix = `${GLOBAL_NAMING_SCOPE_ID}\x00`;
+  const profilePrefix = `${profile.id}\x00`;
+  const targets = resolved.startsWith(globalPrefix)
+    ? globalTargets
+    : resolved.startsWith(profilePrefix)
+      ? profileTargets
+      : [];
+  const identity = resolved.startsWith(globalPrefix)
+    ? resolved.slice(globalPrefix.length)
+    : resolved.startsWith(profilePrefix)
+      ? resolved.slice(profilePrefix.length)
+      : '';
+  const matches = targets.filter((target) => `${target.type}:${target.id}` === identity);
+  if (matches.length !== 1) throw ProblemDetailsError.notFound(NAMING_SCOPE_ERROR);
+  return matches[0];
+}
+
+/** Gate a profile-scoped assistant/MCP target against the caller's current
+ * source binding — unbound/foreign targets fail the bounded error. */
 export async function requireAuthorizedNamingTarget(
   profile: Profile,
   type: 'subscription' | 'collection',
