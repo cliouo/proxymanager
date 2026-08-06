@@ -18,6 +18,7 @@
  * (see ./neverList.ts) and stay REST/UI-only.
  */
 
+import type { NamingMembershipSnapshot } from '@/lib/services/namingTargetScope';
 import type { z } from '@/lib/openapi/zod';
 
 export type ActionRisk = 'read' | 'write';
@@ -39,6 +40,9 @@ export interface ActionContext {
   confirmation?: {
     configVersion?: number;
     subscriptionFailureSignature?: string;
+    /** pass-7 blocker 4: gate-captured profile source binding + visible-set
+     * fingerprint re-checked from current state right before the CAS. */
+    membership?: NamingMembershipSnapshot;
   };
 }
 
@@ -68,6 +72,9 @@ export interface WritePreview {
   confirmation?: {
     configVersion?: number;
     subscriptionFailureSignature?: string;
+    /** pass-7 blocker 4: gate-captured profile source binding + visible-set
+     * fingerprint re-checked from current state right before the CAS. */
+    membership?: NamingMembershipSnapshot;
   };
 }
 

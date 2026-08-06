@@ -12,6 +12,7 @@ import { z } from '@/lib/openapi/zod';
 import { getAction } from '@/lib/ai/actions/registry';
 import { assertWriteAllowed } from '@/lib/ai/actions/neverList';
 import { consumeConfirmation } from '@/lib/ai/confirm';
+import { projectWriteResult, UNKNOWN_OUTCOME_BODY } from '@/lib/ai/writeResultProjection';
 import { withProblemDetails } from '@/lib/http/handler';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { resolveActor } from '@/lib/services/rulesService';
@@ -50,5 +51,19 @@ export const POST = withProblemDetails(async (request: Request) => {
     input,
   );
 
-  return Response.json({ data: envelope });
+  // Round-9: the projection produces a hardened responseContent JSON string
+  // built without reserializing ordinary objects/arrays. The route returns
+  // it directly — never spreads the envelope, never calls Response.json on
+  // an ordinary record/array. Unknown outcome uses the same hardened builder.
+  const projection = projectWriteResult(envelope, action.name);
+  if (projection.outcome !== 'ok' || projection.responseContent === null) {
+    return new Response(UNKNOWN_OUTCOME_BODY, {
+      status: 200,
+      headers: { 'Content-Type': 'application/json; charset=utf-8' },
+    });
+  }
+  return new Response(projection.responseContent, {
+    status: 200,
+    headers: { 'Content-Type': 'application/json; charset=utf-8' },
+  });
 });

@@ -1,0 +1,5578 @@
+{
+  "version": 1,
+  "generated": "literal-oracle",
+  "cases": [
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Bearer",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0001"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Updated node Bearer",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0002"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Updated node Authorization: Bearer",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0003"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Bearer x",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0004"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Updated node Bearer x",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0005"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Updated node Authorization: Bearer x",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0006"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Bearer xx",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0007"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Updated node Bearer xx",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0008"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Updated node Authorization: Bearer xx",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0009"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Bearer xxx",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0010"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Updated node Bearer xxx",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0011"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Updated node Authorization: Bearer xxx",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0012"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Bearer xxxxxxx",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0013"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Updated node Bearer xxxxxxx",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0014"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Updated node Authorization: Bearer xxxxxxx",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0015"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Bearer xxxxxxxx",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0016"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Updated node Bearer xxxxxxxx",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0017"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Updated node Authorization: Bearer xxxxxxxx",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0018"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Bearer xxxxxxxxxxxxxxxxxxxxxxx",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0019"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Updated node Bearer xxxxxxxxxxxxxxxxxxxxxxx",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0020"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Updated node Authorization: Bearer xxxxxxxxxxxxxxxxxxxxxxx",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0021"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Bearer xxxxxxxxxxxxxxxxxxxxxxxx",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0022"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Updated node Bearer xxxxxxxxxxxxxxxxxxxxxxxx",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0023"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Updated node Authorization: Bearer xxxxxxxxxxxxxxxxxxxxxxxx",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0024"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Bearer xxxxxxxxxxxxxxxxxxxxxxxxx",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0025"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Updated node Bearer xxxxxxxxxxxxxxxxxxxxxxxxx",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0026"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Updated node Authorization: Bearer xxxxxxxxxxxxxxxxxxxxxxxxx",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0027"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Basic",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0028"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Updated node Basic",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0029"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Updated node Authorization: Basic",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0030"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Basic x",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0031"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Updated node Basic x",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0032"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Updated node Authorization: Basic x",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0033"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Basic xx",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0034"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Updated node Basic xx",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0035"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Updated node Authorization: Basic xx",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0036"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Basic xxx",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0037"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Updated node Basic xxx",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0038"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Updated node Authorization: Basic xxx",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0039"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Basic xxxxxxx",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0040"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Updated node Basic xxxxxxx",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0041"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Updated node Authorization: Basic xxxxxxx",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0042"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Basic xxxxxxxx",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0043"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Updated node Basic xxxxxxxx",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0044"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Updated node Authorization: Basic xxxxxxxx",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0045"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Basic xxxxxxxxxxxxxxxxxxxxxxx",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0046"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Updated node Basic xxxxxxxxxxxxxxxxxxxxxxx",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0047"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Updated node Authorization: Basic xxxxxxxxxxxxxxxxxxxxxxx",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0048"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Basic xxxxxxxxxxxxxxxxxxxxxxxx",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0049"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Updated node Basic xxxxxxxxxxxxxxxxxxxxxxxx",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0050"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Updated node Authorization: Basic xxxxxxxxxxxxxxxxxxxxxxxx",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0051"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Basic xxxxxxxxxxxxxxxxxxxxxxxxx",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0052"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Updated node Basic xxxxxxxxxxxxxxxxxxxxxxxxx",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0053"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Updated node Authorization: Basic xxxxxxxxxxxxxxxxxxxxxxxxx",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0054"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Token",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0055"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Updated node Token",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0056"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Updated node Authorization: Token",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0057"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Token x",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0058"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Updated node Token x",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0059"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Updated node Authorization: Token x",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0060"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Token xx",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0061"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Updated node Token xx",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0062"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Updated node Authorization: Token xx",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0063"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Token xxx",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0064"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Updated node Token xxx",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0065"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Updated node Authorization: Token xxx",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0066"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Token xxxxxxx",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0067"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Updated node Token xxxxxxx",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0068"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Updated node Authorization: Token xxxxxxx",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0069"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Token xxxxxxxx",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0070"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Updated node Token xxxxxxxx",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0071"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Updated node Authorization: Token xxxxxxxx",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0072"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Token xxxxxxxxxxxxxxxxxxxxxxx",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0073"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Updated node Token xxxxxxxxxxxxxxxxxxxxxxx",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0074"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Updated node Authorization: Token xxxxxxxxxxxxxxxxxxxxxxx",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0075"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Token xxxxxxxxxxxxxxxxxxxxxxxx",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0076"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Updated node Token xxxxxxxxxxxxxxxxxxxxxxxx",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0077"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Updated node Authorization: Token xxxxxxxxxxxxxxxxxxxxxxxx",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0078"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Token xxxxxxxxxxxxxxxxxxxxxxxxx",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0079"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Updated node Token xxxxxxxxxxxxxxxxxxxxxxxxx",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0080"
+    },
+    {
+      "category": "auth-length",
+      "op": "update",
+      "summary": "Updated node Authorization: Token xxxxxxxxxxxxxxxxxxxxxxxxx",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0081"
+    },
+    {
+      "category": "sk-length",
+      "op": "update",
+      "summary": "sk-",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0082"
+    },
+    {
+      "category": "sk-length",
+      "op": "update",
+      "summary": "sk-x",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0083"
+    },
+    {
+      "category": "sk-length",
+      "op": "update",
+      "summary": "sk-xx",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0084"
+    },
+    {
+      "category": "sk-length",
+      "op": "update",
+      "summary": "sk-xxx",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0085"
+    },
+    {
+      "category": "sk-length",
+      "op": "update",
+      "summary": "sk-xxxxxxx",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0086"
+    },
+    {
+      "category": "sk-length",
+      "op": "update",
+      "summary": "sk-xxxxxxxx",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0087"
+    },
+    {
+      "category": "sk-length",
+      "op": "update",
+      "summary": "sk-xxxxxxxxxxxxxxxxxxxxxxx",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0088"
+    },
+    {
+      "category": "sk-length",
+      "op": "update",
+      "summary": "sk-xxxxxxxxxxxxxxxxxxxxxxxx",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0089"
+    },
+    {
+      "category": "sk-length",
+      "op": "update",
+      "summary": "sk-xxxxxxxxxxxxxxxxxxxxxxxxx",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0090"
+    },
+    {
+      "category": "endpoint",
+      "op": "update",
+      "summary": "Updated node 1.2.3.4:443",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0091"
+    },
+    {
+      "category": "endpoint",
+      "op": "update",
+      "summary": "Updated node 1.2.3.4",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0092"
+    },
+    {
+      "category": "endpoint",
+      "op": "update",
+      "summary": "Updated node [2001:db8::1]:443",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0093"
+    },
+    {
+      "category": "endpoint",
+      "op": "update",
+      "summary": "Updated node 2001:db8::1:8443",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0094"
+    },
+    {
+      "category": "endpoint",
+      "op": "update",
+      "summary": "Updated node 2001:db8::1",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0095"
+    },
+    {
+      "category": "endpoint",
+      "op": "update",
+      "summary": "Updated node ::1",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0096"
+    },
+    {
+      "category": "endpoint",
+      "op": "update",
+      "summary": "Updated node myhost:443",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0097"
+    },
+    {
+      "category": "endpoint",
+      "op": "update",
+      "summary": "Updated node example.com:8443",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0098"
+    },
+    {
+      "category": "endpoint",
+      "op": "update",
+      "summary": "Updated node user@example.com",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0099"
+    },
+    {
+      "category": "endpoint",
+      "op": "update",
+      "summary": "Updated node https://user:pass@1.2.3.4:443/x?k=v",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0100"
+    },
+    {
+      "category": "endpoint",
+      "op": "update",
+      "summary": "Updated node ?token=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0101"
+    },
+    {
+      "category": "endpoint",
+      "op": "update",
+      "summary": "Updated node a=1&b=2",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0102"
+    },
+    {
+      "category": "endpoint",
+      "op": "update",
+      "summary": "1.2.3.4:443",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0103"
+    },
+    {
+      "category": "endpoint",
+      "op": "update",
+      "summary": "[::1]:443",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0104"
+    },
+    {
+      "category": "endpoint",
+      "op": "update",
+      "summary": "https://user:pass@1.2.3.4:443/x?k=v",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0105"
+    },
+    {
+      "category": "endpoint",
+      "op": "update",
+      "summary": "example.com:8443",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0106"
+    },
+    {
+      "category": "jwt",
+      "op": "update",
+      "summary": "Updated node eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0107"
+    },
+    {
+      "category": "jwt",
+      "op": "update",
+      "summary": "Updated node abcdef.abcdef.abcdef",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0108"
+    },
+    {
+      "category": "jwt",
+      "op": "update",
+      "summary": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0109"
+    },
+    {
+      "category": "jwt",
+      "op": "update",
+      "summary": "Updated node abcdef.abcdef.abcdef abcdef.abcdef.abcdef",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0110"
+    },
+    {
+      "category": "uuid-hex",
+      "op": "update",
+      "summary": "Updated node 00000000-0000-4000-8000-000000000000",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0111"
+    },
+    {
+      "category": "uuid-hex",
+      "op": "update",
+      "summary": "Updated node 0123456789abcdef0123456789abcdef",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0112"
+    },
+    {
+      "category": "uuid-hex",
+      "op": "update",
+      "summary": "Updated node 0123456789abcdef",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0113"
+    },
+    {
+      "category": "uuid-hex",
+      "op": "update",
+      "summary": "00000000-0000-4000-8000-000000000000",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0114"
+    },
+    {
+      "category": "opaque",
+      "op": "update",
+      "summary": "Updated node FAKETOKEN0123456789ABCDEF",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0115"
+    },
+    {
+      "category": "opaque",
+      "op": "update",
+      "summary": "Updated node FAKETOKEN0123456789ABCDEFG",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0116"
+    },
+    {
+      "category": "opaque",
+      "op": "update",
+      "summary": "Updated node AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0117"
+    },
+    {
+      "category": "opaque",
+      "op": "update",
+      "summary": "FAKETOKEN0123456789ABCDEF",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0118"
+    },
+    {
+      "category": "placeholder",
+      "op": "update",
+      "summary": "[REDACTED]",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0119"
+    },
+    {
+      "category": "placeholder",
+      "op": "update",
+      "summary": "redacted",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0120"
+    },
+    {
+      "category": "placeholder",
+      "op": "update",
+      "summary": "[masked]",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0121"
+    },
+    {
+      "category": "placeholder",
+      "op": "update",
+      "summary": "masked",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0122"
+    },
+    {
+      "category": "placeholder",
+      "op": "update",
+      "summary": "[removed]",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0123"
+    },
+    {
+      "category": "placeholder",
+      "op": "update",
+      "summary": "removed",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0124"
+    },
+    {
+      "category": "placeholder",
+      "op": "update",
+      "summary": "Updated node [REDACTED]",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0125"
+    },
+    {
+      "category": "placeholder",
+      "op": "update",
+      "summary": "Updated node redacted",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0126"
+    },
+    {
+      "category": "bare-key",
+      "op": "update",
+      "summary": "password",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0127"
+    },
+    {
+      "category": "bare-key",
+      "op": "update",
+      "summary": "passwd",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0128"
+    },
+    {
+      "category": "bare-key",
+      "op": "update",
+      "summary": "pwd",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0129"
+    },
+    {
+      "category": "bare-key",
+      "op": "update",
+      "summary": "secret",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0130"
+    },
+    {
+      "category": "bare-key",
+      "op": "update",
+      "summary": "token",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0131"
+    },
+    {
+      "category": "bare-key",
+      "op": "update",
+      "summary": "api-key",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0132"
+    },
+    {
+      "category": "bare-key",
+      "op": "update",
+      "summary": "access-key",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0133"
+    },
+    {
+      "category": "bare-key",
+      "op": "update",
+      "summary": "auth",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0134"
+    },
+    {
+      "category": "bare-key",
+      "op": "update",
+      "summary": "authorization",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0135"
+    },
+    {
+      "category": "bare-key",
+      "op": "update",
+      "summary": "credential",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0136"
+    },
+    {
+      "category": "bare-key",
+      "op": "update",
+      "summary": "uuid",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0137"
+    },
+    {
+      "category": "bare-key",
+      "op": "update",
+      "summary": "sni",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0138"
+    },
+    {
+      "category": "bare-key",
+      "op": "update",
+      "summary": "host",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0139"
+    },
+    {
+      "category": "bare-key",
+      "op": "update",
+      "summary": "key",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0140"
+    },
+    {
+      "category": "bare-key",
+      "op": "update",
+      "summary": "psk",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0141"
+    },
+    {
+      "category": "bare-key",
+      "op": "update",
+      "summary": "code",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0142"
+    },
+    {
+      "category": "bare-key",
+      "op": "update",
+      "summary": "signature",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0143"
+    },
+    {
+      "category": "bare-key",
+      "op": "update",
+      "summary": "sig",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0144"
+    },
+    {
+      "category": "bare-key",
+      "op": "update",
+      "summary": "op",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0145"
+    },
+    {
+      "category": "bare-key",
+      "op": "update",
+      "summary": "cookie",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0146"
+    },
+    {
+      "category": "bare-key",
+      "op": "update",
+      "summary": "cookies",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0147"
+    },
+    {
+      "category": "bare-key",
+      "op": "update",
+      "summary": "header",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0148"
+    },
+    {
+      "category": "bare-key",
+      "op": "update",
+      "summary": "headers",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0149"
+    },
+    {
+      "category": "bare-key",
+      "op": "update",
+      "summary": "private-key",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0150"
+    },
+    {
+      "category": "bare-key",
+      "op": "update",
+      "summary": "session",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0151"
+    },
+    {
+      "category": "bare-key",
+      "op": "update",
+      "summary": "csrf",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0152"
+    },
+    {
+      "category": "bare-key",
+      "op": "update",
+      "summary": "endpoint",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0153"
+    },
+    {
+      "category": "bare-key",
+      "op": "update",
+      "summary": "url",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0154"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node password=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0155"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node password: abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0156"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node password = abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0157"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node password:",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0158"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node password=a=1",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0159"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "password=abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0160"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node password=x y",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node y",
+      "mcpRawReject": true,
+      "id": "rc-0161"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node |password=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0162"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node [password=abc]",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0163"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node password=abc.",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0164"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node passwd=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0165"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node passwd: abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0166"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node passwd = abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0167"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node passwd:",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0168"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node passwd=a=1",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0169"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "passwd=abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0170"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node passwd=x y",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node y",
+      "mcpRawReject": true,
+      "id": "rc-0171"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node |passwd=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0172"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node [passwd=abc]",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0173"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node passwd=abc.",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0174"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node pwd=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0175"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node pwd: abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0176"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node pwd = abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0177"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node pwd:",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0178"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node pwd=a=1",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0179"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "pwd=abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0180"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node pwd=x y",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node y",
+      "mcpRawReject": true,
+      "id": "rc-0181"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node |pwd=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0182"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node [pwd=abc]",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0183"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node pwd=abc.",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0184"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node secret=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0185"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node secret: abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0186"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node secret = abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0187"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node secret:",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0188"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node secret=a=1",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0189"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "secret=abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0190"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node secret=x y",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node y",
+      "mcpRawReject": true,
+      "id": "rc-0191"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node |secret=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0192"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node [secret=abc]",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0193"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node secret=abc.",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0194"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node token=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0195"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node token: abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0196"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node token = abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0197"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node token:",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0198"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node token=a=1",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0199"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "token=abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0200"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node token=x y",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node y",
+      "mcpRawReject": true,
+      "id": "rc-0201"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node |token=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0202"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node [token=abc]",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0203"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node token=abc.",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0204"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node api-key=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0205"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node api-key: abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0206"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node api-key = abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0207"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node api-key:",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0208"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node api-key=a=1",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0209"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "api-key=abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0210"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node api-key=x y",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node y",
+      "mcpRawReject": true,
+      "id": "rc-0211"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node |api-key=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0212"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node [api-key=abc]",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0213"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node api-key=abc.",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0214"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node access-key=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0215"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node access-key: abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0216"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node access-key = abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0217"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node access-key:",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0218"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node access-key=a=1",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0219"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "access-key=abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0220"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node access-key=x y",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node y",
+      "mcpRawReject": true,
+      "id": "rc-0221"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node |access-key=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0222"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node [access-key=abc]",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0223"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node access-key=abc.",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0224"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node auth=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0225"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node auth: abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0226"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node auth = abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0227"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node auth:",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0228"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node auth=a=1",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0229"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "auth=abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0230"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node auth=x y",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node y",
+      "mcpRawReject": true,
+      "id": "rc-0231"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node |auth=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0232"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node [auth=abc]",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0233"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node auth=abc.",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0234"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node authorization=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0235"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node authorization: abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0236"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node authorization = abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0237"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node authorization:",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0238"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node authorization=a=1",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0239"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "authorization=abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0240"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node authorization=x y",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node y",
+      "mcpRawReject": true,
+      "id": "rc-0241"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node |authorization=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0242"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node [authorization=abc]",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0243"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node authorization=abc.",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0244"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node credential=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0245"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node credential: abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0246"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node credential = abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0247"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node credential:",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0248"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node credential=a=1",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0249"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "credential=abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0250"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node credential=x y",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node y",
+      "mcpRawReject": true,
+      "id": "rc-0251"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node |credential=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0252"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node [credential=abc]",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0253"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node credential=abc.",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0254"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node uuid=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0255"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node uuid: abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0256"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node uuid = abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0257"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node uuid:",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0258"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node uuid=a=1",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0259"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "uuid=abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0260"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node uuid=x y",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node y",
+      "mcpRawReject": true,
+      "id": "rc-0261"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node |uuid=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0262"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node [uuid=abc]",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0263"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node uuid=abc.",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0264"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node sni=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0265"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node sni: abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0266"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node sni = abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0267"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node sni:",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0268"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node sni=a=1",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0269"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "sni=abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0270"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node sni=x y",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node y",
+      "mcpRawReject": true,
+      "id": "rc-0271"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node |sni=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0272"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node [sni=abc]",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0273"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node sni=abc.",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0274"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node host=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0275"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node host: abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0276"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node host = abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0277"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node host:",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0278"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node host=a=1",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0279"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "host=abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0280"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node host=x y",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node y",
+      "mcpRawReject": true,
+      "id": "rc-0281"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node |host=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0282"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node [host=abc]",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0283"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node host=abc.",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0284"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node key=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0285"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node key: abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0286"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node key = abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0287"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node key:",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0288"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node key=a=1",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0289"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "key=abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0290"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node key=x y",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node y",
+      "mcpRawReject": true,
+      "id": "rc-0291"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node |key=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0292"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node [key=abc]",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0293"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node key=abc.",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0294"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node psk=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0295"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node psk: abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0296"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node psk = abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0297"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node psk:",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0298"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node psk=a=1",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0299"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "psk=abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0300"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node psk=x y",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node y",
+      "mcpRawReject": true,
+      "id": "rc-0301"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node |psk=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0302"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node [psk=abc]",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0303"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node psk=abc.",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0304"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node code=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0305"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node code: abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0306"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node code = abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0307"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node code:",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0308"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node code=a=1",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0309"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "code=abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0310"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node code=x y",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node y",
+      "mcpRawReject": true,
+      "id": "rc-0311"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node |code=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0312"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node [code=abc]",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0313"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node code=abc.",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0314"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node signature=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0315"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node signature: abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0316"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node signature = abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0317"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node signature:",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0318"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node signature=a=1",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0319"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "signature=abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0320"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node signature=x y",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node y",
+      "mcpRawReject": true,
+      "id": "rc-0321"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node |signature=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0322"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node [signature=abc]",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0323"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node signature=abc.",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0324"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node sig=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0325"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node sig: abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0326"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node sig = abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0327"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node sig:",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0328"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node sig=a=1",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0329"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "sig=abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0330"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node sig=x y",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node y",
+      "mcpRawReject": true,
+      "id": "rc-0331"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node |sig=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0332"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node [sig=abc]",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0333"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node sig=abc.",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0334"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node op=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0335"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node op: abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0336"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node op = abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0337"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node op:",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0338"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node op=a=1",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0339"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "op=abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0340"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node op=x y",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node y",
+      "mcpRawReject": true,
+      "id": "rc-0341"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node |op=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0342"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node [op=abc]",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0343"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node op=abc.",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0344"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node cookie=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0345"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node cookie: abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0346"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node cookie = abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0347"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node cookie:",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0348"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node cookie=a=1",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0349"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "cookie=abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0350"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node cookie=x y",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node y",
+      "mcpRawReject": true,
+      "id": "rc-0351"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node |cookie=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0352"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node [cookie=abc]",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0353"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node cookie=abc.",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0354"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node cookies=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0355"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node cookies: abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0356"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node cookies = abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0357"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node cookies:",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0358"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node cookies=a=1",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0359"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "cookies=abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0360"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node cookies=x y",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node y",
+      "mcpRawReject": true,
+      "id": "rc-0361"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node |cookies=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0362"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node [cookies=abc]",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0363"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node cookies=abc.",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0364"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node header=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0365"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node header: abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0366"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node header = abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0367"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node header:",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0368"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node header=a=1",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0369"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "header=abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0370"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node header=x y",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node y",
+      "mcpRawReject": true,
+      "id": "rc-0371"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node |header=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0372"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node [header=abc]",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0373"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node header=abc.",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0374"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node headers=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0375"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node headers: abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0376"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node headers = abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0377"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node headers:",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0378"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node headers=a=1",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0379"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "headers=abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0380"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node headers=x y",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node y",
+      "mcpRawReject": true,
+      "id": "rc-0381"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node |headers=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0382"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node [headers=abc]",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0383"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node headers=abc.",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0384"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node private-key=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0385"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node private-key: abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0386"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node private-key = abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0387"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node private-key:",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0388"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node private-key=a=1",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0389"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "private-key=abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0390"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node private-key=x y",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node y",
+      "mcpRawReject": true,
+      "id": "rc-0391"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node |private-key=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0392"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node [private-key=abc]",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0393"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node private-key=abc.",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0394"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node session=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0395"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node session: abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0396"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node session = abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0397"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node session:",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0398"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node session=a=1",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0399"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "session=abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0400"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node session=x y",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node y",
+      "mcpRawReject": true,
+      "id": "rc-0401"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node |session=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0402"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node [session=abc]",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0403"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node session=abc.",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0404"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node csrf=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0405"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node csrf: abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0406"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node csrf = abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0407"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node csrf:",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0408"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node csrf=a=1",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0409"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "csrf=abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0410"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node csrf=x y",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node y",
+      "mcpRawReject": true,
+      "id": "rc-0411"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node |csrf=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0412"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node [csrf=abc]",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0413"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node csrf=abc.",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0414"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node endpoint=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0415"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node endpoint: abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0416"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node endpoint = abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0417"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node endpoint:",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0418"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node endpoint=a=1",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0419"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "endpoint=abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0420"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node endpoint=x y",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node y",
+      "mcpRawReject": true,
+      "id": "rc-0421"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node |endpoint=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0422"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node [endpoint=abc]",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0423"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node endpoint=abc.",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0424"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node url=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0425"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node url: abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0426"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node url = abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0427"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node url:",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0428"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node url=a=1",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0429"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "url=abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0430"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node url=x y",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node y",
+      "mcpRawReject": true,
+      "id": "rc-0431"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node |url=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0432"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node [url=abc]",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0433"
+    },
+    {
+      "category": "key-value",
+      "op": "update",
+      "summary": "Updated node url=abc.",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0434"
+    },
+    {
+      "category": "scheme-delim",
+      "op": "update",
+      "summary": "Updated node Bearer:abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0435"
+    },
+    {
+      "category": "scheme-delim",
+      "op": "update",
+      "summary": "Bearer:abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0436"
+    },
+    {
+      "category": "scheme-delim",
+      "op": "update",
+      "summary": "Updated node Basic=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0437"
+    },
+    {
+      "category": "scheme-delim",
+      "op": "update",
+      "summary": "Basic=abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0438"
+    },
+    {
+      "category": "scheme-delim",
+      "op": "update",
+      "summary": "Updated node Token: abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0439"
+    },
+    {
+      "category": "scheme-delim",
+      "op": "update",
+      "summary": "Token: abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0440"
+    },
+    {
+      "category": "scheme-delim",
+      "op": "update",
+      "summary": "Updated node Bearer = abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0441"
+    },
+    {
+      "category": "scheme-delim",
+      "op": "update",
+      "summary": "Bearer = abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0442"
+    },
+    {
+      "category": "scheme-delim",
+      "op": "update",
+      "summary": "Updated node Basic,abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0443"
+    },
+    {
+      "category": "scheme-delim",
+      "op": "update",
+      "summary": "Basic,abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0444"
+    },
+    {
+      "category": "scheme-delim",
+      "op": "update",
+      "summary": "Updated node Token;abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0445"
+    },
+    {
+      "category": "scheme-delim",
+      "op": "update",
+      "summary": "Token;abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0446"
+    },
+    {
+      "category": "scheme-delim",
+      "op": "update",
+      "summary": "Updated node Bearer|abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0447"
+    },
+    {
+      "category": "scheme-delim",
+      "op": "update",
+      "summary": "Bearer|abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0448"
+    },
+    {
+      "category": "scheme-delim",
+      "op": "update",
+      "summary": "Updated node Basic：abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0449"
+    },
+    {
+      "category": "scheme-delim",
+      "op": "update",
+      "summary": "Basic：abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0450"
+    },
+    {
+      "category": "scheme-delim",
+      "op": "update",
+      "summary": "Updated node Token＝abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0451"
+    },
+    {
+      "category": "scheme-delim",
+      "op": "update",
+      "summary": "Token＝abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0452"
+    },
+    {
+      "category": "scheme-delim",
+      "op": "update",
+      "summary": "Updated node Bearer（abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0453"
+    },
+    {
+      "category": "scheme-delim",
+      "op": "update",
+      "summary": "Bearer（abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0454"
+    },
+    {
+      "category": "scheme-delim",
+      "op": "update",
+      "summary": "Updated node Basic[abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0455"
+    },
+    {
+      "category": "scheme-delim",
+      "op": "update",
+      "summary": "Basic[abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0456"
+    },
+    {
+      "category": "scheme-delim",
+      "op": "update",
+      "summary": "Updated node Token{abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0457"
+    },
+    {
+      "category": "scheme-delim",
+      "op": "update",
+      "summary": "Token{abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0458"
+    },
+    {
+      "category": "scheme-delim",
+      "op": "update",
+      "summary": "Updated node Bearer\nabc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0459"
+    },
+    {
+      "category": "scheme-delim",
+      "op": "update",
+      "summary": "Bearer\nabc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0460"
+    },
+    {
+      "category": "scheme-delim-mixed",
+      "op": "update",
+      "summary": "Updated node Basic:abc 已处理",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node 已处理",
+      "mcpRawReject": true,
+      "id": "rc-0461"
+    },
+    {
+      "category": "scheme-delim-mixed",
+      "op": "update",
+      "summary": "处理完成 Basic:abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "处理完成",
+      "mcpRawReject": true,
+      "id": "rc-0462"
+    },
+    {
+      "category": "scheme-delim-mixed",
+      "op": "update",
+      "summary": "Updated node Token=abc 已处理",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node 已处理",
+      "mcpRawReject": true,
+      "id": "rc-0463"
+    },
+    {
+      "category": "scheme-delim-mixed",
+      "op": "update",
+      "summary": "处理完成 Token=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "处理完成",
+      "mcpRawReject": true,
+      "id": "rc-0464"
+    },
+    {
+      "category": "scheme-delim-mixed",
+      "op": "update",
+      "summary": "Updated node Bearer: abc 已处理",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node 已处理",
+      "mcpRawReject": true,
+      "id": "rc-0465"
+    },
+    {
+      "category": "scheme-delim-mixed",
+      "op": "update",
+      "summary": "处理完成 Bearer: abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "处理完成",
+      "mcpRawReject": true,
+      "id": "rc-0466"
+    },
+    {
+      "category": "scheme-delim-mixed",
+      "op": "update",
+      "summary": "Updated node Basic = abc 已处理",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node 已处理",
+      "mcpRawReject": true,
+      "id": "rc-0467"
+    },
+    {
+      "category": "scheme-delim-mixed",
+      "op": "update",
+      "summary": "处理完成 Basic = abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "处理完成",
+      "mcpRawReject": true,
+      "id": "rc-0468"
+    },
+    {
+      "category": "scheme-delim-mixed",
+      "op": "update",
+      "summary": "Updated node Token,abc 已处理",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node 已处理",
+      "mcpRawReject": true,
+      "id": "rc-0469"
+    },
+    {
+      "category": "scheme-delim-mixed",
+      "op": "update",
+      "summary": "处理完成 Token,abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "处理完成",
+      "mcpRawReject": true,
+      "id": "rc-0470"
+    },
+    {
+      "category": "scheme-delim-mixed",
+      "op": "update",
+      "summary": "Updated node Bearer;abc 已处理",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node 已处理",
+      "mcpRawReject": true,
+      "id": "rc-0471"
+    },
+    {
+      "category": "scheme-delim-mixed",
+      "op": "update",
+      "summary": "处理完成 Bearer;abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "处理完成",
+      "mcpRawReject": true,
+      "id": "rc-0472"
+    },
+    {
+      "category": "scheme-delim-mixed",
+      "op": "update",
+      "summary": "Updated node Basic|abc 已处理",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node 已处理",
+      "mcpRawReject": true,
+      "id": "rc-0473"
+    },
+    {
+      "category": "scheme-delim-mixed",
+      "op": "update",
+      "summary": "处理完成 Basic|abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "处理完成",
+      "mcpRawReject": true,
+      "id": "rc-0474"
+    },
+    {
+      "category": "scheme-delim-mixed",
+      "op": "update",
+      "summary": "Updated node Token：abc 已处理",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node 已处理",
+      "mcpRawReject": true,
+      "id": "rc-0475"
+    },
+    {
+      "category": "scheme-delim-mixed",
+      "op": "update",
+      "summary": "处理完成 Token：abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "处理完成",
+      "mcpRawReject": true,
+      "id": "rc-0476"
+    },
+    {
+      "category": "scheme-delim-mixed",
+      "op": "update",
+      "summary": "Updated node Bearer＝abc 已处理",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node 已处理",
+      "mcpRawReject": true,
+      "id": "rc-0477"
+    },
+    {
+      "category": "scheme-delim-mixed",
+      "op": "update",
+      "summary": "处理完成 Bearer＝abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "处理完成",
+      "mcpRawReject": true,
+      "id": "rc-0478"
+    },
+    {
+      "category": "scheme-delim-mixed",
+      "op": "update",
+      "summary": "Updated node Basic（abc 已处理",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node 已处理",
+      "mcpRawReject": true,
+      "id": "rc-0479"
+    },
+    {
+      "category": "scheme-delim-mixed",
+      "op": "update",
+      "summary": "处理完成 Basic（abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "处理完成",
+      "mcpRawReject": true,
+      "id": "rc-0480"
+    },
+    {
+      "category": "scheme-delim-mixed",
+      "op": "update",
+      "summary": "Updated node Token[abc 已处理",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node 已处理",
+      "mcpRawReject": true,
+      "id": "rc-0481"
+    },
+    {
+      "category": "scheme-delim-mixed",
+      "op": "update",
+      "summary": "处理完成 Token[abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "处理完成",
+      "mcpRawReject": true,
+      "id": "rc-0482"
+    },
+    {
+      "category": "scheme-delim-mixed",
+      "op": "update",
+      "summary": "Updated node Bearer{abc 已处理",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node 已处理",
+      "mcpRawReject": true,
+      "id": "rc-0483"
+    },
+    {
+      "category": "scheme-delim-mixed",
+      "op": "update",
+      "summary": "处理完成 Bearer{abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "处理完成",
+      "mcpRawReject": true,
+      "id": "rc-0484"
+    },
+    {
+      "category": "scheme-delim-mixed",
+      "op": "update",
+      "summary": "Updated node Basic\nabc 已处理",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node Basic abc 已处理",
+      "mcpRawReject": true,
+      "id": "rc-0485"
+    },
+    {
+      "category": "scheme-delim-mixed",
+      "op": "update",
+      "summary": "处理完成 Basic\nabc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "处理完成",
+      "mcpRawReject": true,
+      "id": "rc-0486"
+    },
+    {
+      "category": "key-prefix-delim",
+      "op": "update",
+      "summary": ";password=abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0487"
+    },
+    {
+      "category": "key-prefix-delim",
+      "op": "update",
+      "summary": "Updated node ;password=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0488"
+    },
+    {
+      "category": "key-prefix-delim",
+      "op": "update",
+      "summary": ",passwd=abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0489"
+    },
+    {
+      "category": "key-prefix-delim",
+      "op": "update",
+      "summary": "Updated node ,passwd=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0490"
+    },
+    {
+      "category": "key-prefix-delim",
+      "op": "update",
+      "summary": "|pwd=abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0491"
+    },
+    {
+      "category": "key-prefix-delim",
+      "op": "update",
+      "summary": "Updated node |pwd=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0492"
+    },
+    {
+      "category": "key-prefix-delim",
+      "op": "update",
+      "summary": "{secret=abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0493"
+    },
+    {
+      "category": "key-prefix-delim",
+      "op": "update",
+      "summary": "Updated node {secret=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0494"
+    },
+    {
+      "category": "key-prefix-delim",
+      "op": "update",
+      "summary": "}token=abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0495"
+    },
+    {
+      "category": "key-prefix-delim",
+      "op": "update",
+      "summary": "Updated node }token=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0496"
+    },
+    {
+      "category": "key-prefix-delim",
+      "op": "update",
+      "summary": "[api-key=abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0497"
+    },
+    {
+      "category": "key-prefix-delim",
+      "op": "update",
+      "summary": "Updated node [api-key=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0498"
+    },
+    {
+      "category": "key-prefix-delim",
+      "op": "update",
+      "summary": "]access-key=abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0499"
+    },
+    {
+      "category": "key-prefix-delim",
+      "op": "update",
+      "summary": "Updated node ]access-key=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0500"
+    },
+    {
+      "category": "key-prefix-delim",
+      "op": "update",
+      "summary": "(auth=abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0501"
+    },
+    {
+      "category": "key-prefix-delim",
+      "op": "update",
+      "summary": "Updated node (auth=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0502"
+    },
+    {
+      "category": "key-prefix-delim",
+      "op": "update",
+      "summary": ")authorization=abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0503"
+    },
+    {
+      "category": "key-prefix-delim",
+      "op": "update",
+      "summary": "Updated node )authorization=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0504"
+    },
+    {
+      "category": "key-prefix-delim",
+      "op": "update",
+      "summary": "<credential=abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0505"
+    },
+    {
+      "category": "key-prefix-delim",
+      "op": "update",
+      "summary": "Updated node <credential=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0506"
+    },
+    {
+      "category": "key-prefix-delim",
+      "op": "update",
+      "summary": ">uuid=abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0507"
+    },
+    {
+      "category": "key-prefix-delim",
+      "op": "update",
+      "summary": "Updated node >uuid=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0508"
+    },
+    {
+      "category": "key-prefix-delim",
+      "op": "update",
+      "summary": "：sni=abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0509"
+    },
+    {
+      "category": "key-prefix-delim",
+      "op": "update",
+      "summary": "Updated node ：sni=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0510"
+    },
+    {
+      "category": "key-prefix-delim",
+      "op": "update",
+      "summary": "　host=abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0511"
+    },
+    {
+      "category": "key-prefix-delim",
+      "op": "update",
+      "summary": "Updated node 　host=abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0512"
+    },
+    {
+      "category": "nfkc-zero-width",
+      "op": "update",
+      "summary": "Ｕｐｄａｔｅｄ ｎｏｄｅ",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0513"
+    },
+    {
+      "category": "nfkc-zero-width",
+      "op": "update",
+      "summary": "Updated node Ｂｅａｒｅｒ abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0514"
+    },
+    {
+      "category": "nfkc-zero-width",
+      "op": "update",
+      "summary": "Ｂｅａｒｅｒ abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0515"
+    },
+    {
+      "category": "nfkc-zero-width",
+      "op": "update",
+      "summary": "Updated node Bearer​abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0516"
+    },
+    {
+      "category": "nfkc-zero-width",
+      "op": "update",
+      "summary": "Bearer​abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0517"
+    },
+    {
+      "category": "nfkc-zero-width",
+      "op": "update",
+      "summary": "Updated node\u0000Bearer abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0518"
+    },
+    {
+      "category": "nfkc-zero-width",
+      "op": "update",
+      "summary": "Updated nodeBearer abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0519"
+    },
+    {
+      "category": "nfkc-zero-width",
+      "op": "update",
+      "summary": "Updated nodeBearer abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0520"
+    },
+    {
+      "category": "composition",
+      "op": "update",
+      "summary": "Updated node Bearer abc sk-FAKE",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0521"
+    },
+    {
+      "category": "composition",
+      "op": "update",
+      "summary": "Updated node password=x token=y",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0522"
+    },
+    {
+      "category": "composition",
+      "op": "update",
+      "summary": "Updated node https://x.example/y?k=v token=z",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0523"
+    },
+    {
+      "category": "composition",
+      "op": "update",
+      "summary": "Updated node 1.2.3.4:443 Bearer abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0524"
+    },
+    {
+      "category": "composition",
+      "op": "update",
+      "summary": "Bearer abc token=z",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0525"
+    },
+    {
+      "category": "composition",
+      "op": "update",
+      "summary": "Updated node sk-a Bearer",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0526"
+    },
+    {
+      "category": "composition",
+      "op": "update",
+      "summary": "Updated node Bearer sk-",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0527"
+    },
+    {
+      "category": "composition",
+      "op": "update",
+      "summary": "Updated node [REDACTED] Bearer abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0528"
+    },
+    {
+      "category": "composition",
+      "op": "update",
+      "summary": "password Bearer",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0529"
+    },
+    {
+      "category": "composition",
+      "op": "update",
+      "summary": "Updated node password Bearer",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0530"
+    },
+    {
+      "category": "composition",
+      "op": "update",
+      "summary": "Updated node Bearer password",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0531"
+    },
+    {
+      "category": "composition",
+      "op": "update",
+      "summary": "Updated node sk-a,sk-b",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0532"
+    },
+    {
+      "category": "composition",
+      "op": "update",
+      "summary": "Updated node cookie=1 header=2",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0533"
+    },
+    {
+      "category": "composition",
+      "op": "update",
+      "summary": "cookie=1 Bearer abc",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0534"
+    },
+    {
+      "category": "composition",
+      "op": "update",
+      "summary": "Updated node [2001:db8::1]:443 Bearer abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0535"
+    },
+    {
+      "category": "composition",
+      "op": "update",
+      "summary": "Updated node 00000000-0000-4000-8000-000000000000 token=z",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0536"
+    },
+    {
+      "category": "composition",
+      "op": "update",
+      "summary": "Updated node abcdef.abcdef.abcdef sk-a",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0537"
+    },
+    {
+      "category": "composition",
+      "op": "update",
+      "summary": "Updated node token FAKE_TOKEN_0001 sk-a",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0538"
+    },
+    {
+      "category": "composition",
+      "op": "update",
+      "summary": "Updated node op: sk-fake Bearer",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0539"
+    },
+    {
+      "category": "composition",
+      "op": "update",
+      "summary": "Updated node 1.2.3.4",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0540"
+    },
+    {
+      "category": "composition",
+      "op": "update",
+      "summary": "Updated node example.com:443 Bearer abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0541"
+    },
+    {
+      "category": "composition",
+      "op": "update",
+      "summary": "Updated node a=1&b=2 password=x",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0542"
+    },
+    {
+      "category": "composition",
+      "op": "update",
+      "summary": "Updated node https://x.example/y?a=b token: z",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0543"
+    },
+    {
+      "category": "composition",
+      "op": "update",
+      "summary": "Updated node [REDACTED] cookie=x",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0544"
+    },
+    {
+      "category": "composition",
+      "op": "update",
+      "summary": "Updated node 0123456789abcdef0123456789abcdef Bearer abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0545"
+    },
+    {
+      "category": "composition",
+      "op": "update",
+      "summary": "Updated node sk-a Bearer:abc",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0546"
+    },
+    {
+      "category": "composition",
+      "op": "update",
+      "summary": "Bearer abc Token def",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0547"
+    },
+    {
+      "category": "multiple",
+      "op": "update",
+      "summary": "Updated node Bearer a Bearer b",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0548"
+    },
+    {
+      "category": "multiple",
+      "op": "update",
+      "summary": "Updated node sk-a sk-b sk-c",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0549"
+    },
+    {
+      "category": "multiple",
+      "op": "update",
+      "summary": "Updated node password=1 password=2 password=3",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0550"
+    },
+    {
+      "category": "multiple",
+      "op": "update",
+      "summary": "Updated node 1.2.3.4 5.6.7.8 9.10.11.12",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0551"
+    },
+    {
+      "category": "multiple",
+      "op": "update",
+      "summary": "Bearer a Bearer b",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0552"
+    },
+    {
+      "category": "multiple",
+      "op": "update",
+      "summary": "Updated node https://a.example/x https://b.example/y",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0553"
+    },
+    {
+      "category": "multiple",
+      "op": "update",
+      "summary": "Updated node 11111111-1111-4111-8111-111111111111 22222222-2222-4222-8222-222222222222",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0554"
+    },
+    {
+      "category": "residue",
+      "op": "update",
+      "summary": "Bearer",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0555"
+    },
+    {
+      "category": "residue",
+      "op": "update",
+      "summary": "Basic",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0556"
+    },
+    {
+      "category": "residue",
+      "op": "update",
+      "summary": "Token",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0557"
+    },
+    {
+      "category": "residue",
+      "op": "update",
+      "summary": "token",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0558"
+    },
+    {
+      "category": "residue",
+      "op": "update",
+      "summary": "password",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0559"
+    },
+    {
+      "category": "residue",
+      "op": "update",
+      "summary": "sk-",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0560"
+    },
+    {
+      "category": "residue",
+      "op": "update",
+      "summary": "redacted",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0561"
+    },
+    {
+      "category": "residue",
+      "op": "update",
+      "summary": "authorization",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0562"
+    },
+    {
+      "category": "residue",
+      "op": "update",
+      "summary": "api",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0563"
+    },
+    {
+      "category": "residue",
+      "op": "update",
+      "summary": "key",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0564"
+    },
+    {
+      "category": "residue",
+      "op": "update",
+      "summary": "http://",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0565"
+    },
+    {
+      "category": "residue",
+      "op": "update",
+      "summary": "https://x",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0566"
+    },
+    {
+      "category": "residue",
+      "op": "update",
+      "summary": "uuid",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0567"
+    },
+    {
+      "category": "residue",
+      "op": "update",
+      "summary": "masked",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0568"
+    },
+    {
+      "category": "residue",
+      "op": "update",
+      "summary": "secret",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0569"
+    },
+    {
+      "category": "safe",
+      "op": "update",
+      "summary": "Updated node",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": false,
+      "id": "rc-0570"
+    },
+    {
+      "category": "safe",
+      "op": "update",
+      "summary": "Updated token refresh",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated token refresh",
+      "mcpRawReject": false,
+      "id": "rc-0571"
+    },
+    {
+      "category": "safe",
+      "op": "update",
+      "summary": "Basic plan enabled",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Basic plan enabled",
+      "mcpRawReject": false,
+      "id": "rc-0572"
+    },
+    {
+      "category": "safe",
+      "op": "update",
+      "summary": "Bearer service updated",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Bearer service updated",
+      "mcpRawReject": false,
+      "id": "rc-0573"
+    },
+    {
+      "category": "safe",
+      "op": "update",
+      "summary": "Version 1:2 unchanged",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Version 1:2 unchanged",
+      "mcpRawReject": false,
+      "id": "rc-0574"
+    },
+    {
+      "category": "safe",
+      "op": "update",
+      "summary": "Node renamed successfully",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Node renamed successfully",
+      "mcpRawReject": false,
+      "id": "rc-0575"
+    },
+    {
+      "category": "safe",
+      "op": "update",
+      "summary": "规则已更新",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "规则已更新",
+      "mcpRawReject": false,
+      "id": "rc-0576"
+    },
+    {
+      "category": "safe",
+      "op": "update",
+      "summary": "订阅源已刷新",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "订阅源已刷新",
+      "mcpRawReject": false,
+      "id": "rc-0577"
+    },
+    {
+      "category": "safe",
+      "op": "update",
+      "summary": "Proxy group reordered",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Proxy group reordered",
+      "mcpRawReject": false,
+      "id": "rc-0578"
+    },
+    {
+      "category": "safe",
+      "op": "update",
+      "summary": "设置已保存",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "设置已保存",
+      "mcpRawReject": false,
+      "id": "rc-0579"
+    },
+    {
+      "category": "safe",
+      "op": "update",
+      "summary": "Filter updated for HK",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Filter updated for HK",
+      "mcpRawReject": false,
+      "id": "rc-0580"
+    },
+    {
+      "category": "safe",
+      "op": "update",
+      "summary": "香港 01 已重命名",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "香港 01 已重命名",
+      "mcpRawReject": false,
+      "id": "rc-0581"
+    },
+    {
+      "category": "safe",
+      "op": "update",
+      "summary": "Deleted obsolete rule",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Deleted obsolete rule",
+      "mcpRawReject": false,
+      "id": "rc-0582"
+    },
+    {
+      "category": "safe",
+      "op": "update",
+      "summary": "缓存已清理",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "缓存已清理",
+      "mcpRawReject": false,
+      "id": "rc-0583"
+    },
+    {
+      "category": "safe",
+      "op": "update",
+      "summary": "Profile switched to default",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Profile switched to default",
+      "mcpRawReject": false,
+      "id": "rc-0584"
+    },
+    {
+      "category": "raw-bound",
+      "op": "update                                                                                                                                                                                                                                                          ",
+      "summary": "Updated node",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": false,
+      "id": "rc-0585"
+    },
+    {
+      "category": "raw-bound",
+      "op": "update",
+      "summary": "Updated node                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    ",
+      "web": "ok",
+      "canonicalOp": "update",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": true,
+      "id": "rc-0586"
+    },
+    {
+      "category": "canonical-bound",
+      "op": "update-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "summary": "Updated node",
+      "web": "ok",
+      "canonicalOp": "update-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "canonicalSummary": "Updated node",
+      "mcpRawReject": false,
+      "id": "rc-0587"
+    },
+    {
+      "category": "canonical-bound",
+      "op": "update",
+      "summary": "更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更新节点更",
+      "web": "unknown",
+      "mcpRawReject": true,
+      "id": "rc-0588"
+    }
+  ]
+}
