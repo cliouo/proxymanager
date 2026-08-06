@@ -39,15 +39,16 @@ const fakeRedis = {
     return next;
   },
   eval: async (_script: string, keys: string[], args: string[]) => {
-    // Lua ARGV is 1-indexed: write = [1] version, [2] id, [3] JSON body;
-    // delete = [1] version, [2] id.
+    // Lua ARGV is 1-indexed: [1] version, [2] id, [3] JSON body,
+    // [4] action, [5] history field.
     const current = counters.get(keys[0]) ?? 0;
     const expected = Number(args[0]);
     if (current !== expected) return [0, String(current)];
-    if (args.length >= 3) {
+    if (args[3] === 'set') {
       await fakeRedis.hset(keys[1], { [args[1]]: JSON.parse(args[2]) });
     } else {
       bucket(keys[1]).delete(args[1]);
+      if (keys[2] && args[4]) bucket(keys[2]).delete(args[4]);
     }
     const next = await fakeRedis.incr(keys[0]);
     return [1, String(next)];
@@ -91,25 +92,36 @@ vi.mock('@/lib/redis/client', () => ({ getRedis: () => fakeRedis }));
 vi.mock('@/lib/repos/resolvedRepo', () => ({
   invalidateResolvedSnapshot: vi.fn(async () => undefined),
 }));
+vi.mock('@/lib/services/nodeOrdinalService', () => ({
+  createOrdinalPlanningSession: vi.fn(async () => ({
+    registerSourceDomain: vi.fn(),
+    resolverFor: vi.fn(() => () => undefined),
+    seal: () => ({
+      expectedGeneration: counters.get(REDIS_KEYS.nodeOrdinalGeneration) ?? 0,
+      expectedGlobalSize: 0,
+      sources: [],
+    }),
+  })),
+}));
 
 interface PreflightResult {
   configVersion: number;
-  candidate: { profileId: string; builder: unknown };
+  candidate: { profileId: string; builder: unknown; options?: unknown };
 }
 
 const preflightMock = vi.fn(
-  async (profileId: string, builder: unknown): Promise<PreflightResult> => ({
+  async (profileId: string, builder: unknown, options?: unknown): Promise<PreflightResult> => ({
     configVersion: 7,
-    candidate: { profileId, builder },
+    candidate: { profileId, builder, options },
   }),
 );
 let preflightFailure: { profileId: string; error: Error } | null = null;
 vi.mock('@/lib/services/configPreflight', () => ({
-  preflightProfileConfig: (profileId: string, buildCandidate: unknown) => {
+  preflightProfileConfig: (profileId: string, buildCandidate: unknown, options?: unknown) => {
     if (preflightFailure && preflightFailure.profileId === profileId) {
       return Promise.reject(preflightFailure.error);
     }
-    return preflightMock(profileId, buildCandidate);
+    return preflightMock(profileId, buildCandidate, options);
   },
 }));
 
@@ -213,6 +225,14 @@ describe('subscription operators save gate', () => {
     const profiles = preflightMock.mock.calls.map((c) => c[0]);
     expect(profiles).toEqual(expect.arrayContaining([PROF_A, PROF_B]));
     expect(profiles).not.toContain('cccccccc-cccc-4ccc-8ccc-cccccccccccc');
+    const preflightOptions = preflightMock.mock.calls.map(
+      (call) => call[2] as { ordinalPlanningSession: unknown; subscriptionSnapshot: unknown },
+    );
+    expect(preflightOptions[0].ordinalPlanningSession).toBe(
+      preflightOptions[1].ordinalPlanningSession,
+    );
+    expect(preflightOptions[0].subscriptionSnapshot).toBe(preflightOptions[1].subscriptionSnapshot);
+    expect(preflightOptions[0].subscriptionSnapshot).toBeInstanceOf(Map);
     // candidate replaces the edited sub inside the bracketed snapshot
     const builder = preflightMock.mock.calls[0][1] as (state: {
       subscriptions: unknown[];
@@ -543,6 +563,10 @@ describe('create / replace / delete gates (Delivery finding 6)', () => {
     );
     // and at the matching generation it commits
     counters.set(REDIS_KEYS.configVersion, 7);
-    await expect(preflightPipelineSave({ expectedVersion: 7, affected: [] })).resolves.toBe(7);
+    await expect(preflightPipelineSave({ expectedVersion: 7, affected: [] })).resolves.toEqual({
+      configVersion: 7,
+      ordinalGeneration: 0,
+      ordinalPlan: { expectedGeneration: 0, expectedGlobalSize: 0, sources: [] },
+    });
   });
 });

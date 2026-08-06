@@ -17,8 +17,8 @@
  *     serving-parity tests run this VM, never a JS re-implementation of the
  *     script's logic.
  *
- * Supported constructs (the union of both production scripts): local (multi
- * name/init), local function, assignment, if/elseif/else/end, numeric for,
+ * Supported constructs (the union of the production scripts): local (multi
+ * name/init), local function, assignment, if/elseif/else/end, numeric for, while,
  * return, expression statements, function calls (redis.call, string.*,
  * tonumber, tostring, type), table literals (array style), table index
  * (t[k] and t.key), length operator (#), arithmetic +/-, comparisons,
@@ -168,6 +168,7 @@ export type Stmt =
       els: Stmt[] | null;
     }
   | { k: 'fornum'; varName: string; from: Expr; to: Expr; body: Stmt[] }
+  | { k: 'while'; cond: Expr; body: Stmt[] }
   | { k: 'return'; exprs: Expr[] }
   | { k: 'expr'; e: Expr };
 
@@ -273,6 +274,14 @@ class Parser {
         const body = this.block();
         this.expectKeyword('end');
         return { k: 'fornum', varName, from, to, body };
+      }
+      if (t.v === 'while') {
+        this.next();
+        const cond = this.expression();
+        this.expectKeyword('do');
+        const body = this.block();
+        this.expectKeyword('end');
+        return { k: 'while', cond, body };
       }
       if (t.v === 'return') {
         this.next();
@@ -677,6 +686,19 @@ class Interpreter {
         }
         return undefined;
       }
+      case 'while': {
+        // Production loops are bounded by ARGV/table lengths. Keep an
+        // independent guard so a broken script fails the test deterministically.
+        let iterations = 0;
+        while (luaTruthy(this.evalExpr(stmt.cond, env))) {
+          iterations += 1;
+          if (iterations > 1_000_000) throw luaRuntimeError('while iteration limit exceeded');
+          const child: Env = { vars: new Map(), parent: env };
+          const r = this.execBody(stmt.body, child);
+          if (r !== undefined) return r;
+        }
+        return undefined;
+      }
       case 'return': {
         const values = stmt.exprs.map((e) => this.evalExpr(e, env));
         // Lua return semantics: one value returns the value itself
@@ -824,6 +846,16 @@ class Interpreter {
     }
     if (name === 'string.len') {
       return typeof args[0] === 'string' ? args[0].length : null;
+    }
+    if (name === 'string.find') {
+      const subject = args[0];
+      const needle = args[1];
+      const init = typeof args[2] === 'number' ? args[2] : 1;
+      if (typeof subject !== 'string' || typeof needle !== 'string') return null;
+      // Production scripts use the plain=true form and consume only the
+      // first return value (1-based start position).
+      const index = subject.indexOf(needle, Math.max(0, init - 1));
+      return index === -1 ? null : index + 1;
     }
     if (name === 'string.sub') {
       const s = args[0];

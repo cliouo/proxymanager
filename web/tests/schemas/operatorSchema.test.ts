@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   hasOwnCompatibilityIssue,
+  isActiveCurrentRenameTemplateOperator,
   isExecutableOperator,
   OperatorListSchema,
   OperatorSchema,
@@ -670,5 +671,38 @@ describe('round-9: own-property compatibility_issue (Object.hasOwn) under protot
     );
     expect(getterFired).toBe(0);
     expect(result).toBe(false);
+  });
+
+  it('classifies only enabled current-valid rename rows as active', () => {
+    const current = { ...RT, recognitionRules: [] };
+    const disabled = { ...RT, id: 'disabled', recognitionRules: [], disabled: true };
+    const runtimeInvalid = {
+      ...RT,
+      id: 'invalid',
+      recognitionRules: [],
+      disabled: true,
+      compatibility_issue: 'runtime-validation-required',
+    };
+
+    expect(isActiveCurrentRenameTemplateOperator(current)).toBe(true);
+    expect(isActiveCurrentRenameTemplateOperator(disabled)).toBe(false);
+    expect(isActiveCurrentRenameTemplateOperator(runtimeInvalid as never)).toBe(false);
+
+    let fired = 0;
+    let active = false;
+    withProtoPollution(
+      'compatibility_issue',
+      {
+        get() {
+          fired += 1;
+          throw new Error('prototype getter should stay unobserved');
+        },
+      },
+      () => {
+        active = isActiveCurrentRenameTemplateOperator(current);
+      },
+    );
+    expect(fired).toBe(0);
+    expect(active).toBe(true);
   });
 });

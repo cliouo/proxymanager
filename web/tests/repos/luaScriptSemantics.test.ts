@@ -116,13 +116,12 @@ describe('production Lua scripts use Lua-valid canonical decimal checks', () => 
     );
   });
 
-  it('the counter pattern stays Lua-valid signed-decimal (INCR-style)', () => {
-    // Redis INCR accepts optional minus + digits; the script keeps that.
+  it('the counter pattern stays canonical unsigned-decimal and self-heals negative state', () => {
     const ordinalPatterns = patternsOf(ASSIGN_ORDINALS_LUA);
-    const signed = ordinalPatterns.find((p) => p.startsWith('^-'));
-    expect(signed).toBe('^-?[0-9]+$');
-    expect(luaMatch('-5', signed ?? '')).toBe('-5');
-    expect(luaMatch('12x', signed ?? '')).toBeNull();
+    const unsigned = ordinalPatterns.find((p) => p === '^[0-9]+$');
+    expect(unsigned).toBe('^[0-9]+$');
+    expect(luaMatch('-5', unsigned ?? '')).toBeNull();
+    expect(luaMatch('12x', unsigned ?? '')).toBeNull();
   });
 
   it('range-level rejection (int64 max, 2^53) is enforced by the scripts, not the pattern', () => {

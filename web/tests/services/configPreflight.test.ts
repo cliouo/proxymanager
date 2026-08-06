@@ -51,6 +51,7 @@ import {
   validateMihomoProxyList,
 } from '@/lib/proxies/mihomoProxyValidator';
 import { applyConfigEntityChanges, preflightProfileConfig } from '@/lib/services/configPreflight';
+import type { SubscriptionPreflightSnapshot } from '@/lib/services/configPreflight';
 import {
   asSubscriptionValidationError,
   SubscriptionContentValidationError,
@@ -154,6 +155,68 @@ describe('preflightProfileConfig', () => {
     expect(mocks.resolveSubscriptionProxies).toHaveBeenCalledWith(REMOTE_SUB, {
       writeCache: false,
       allowStale: false,
+    });
+  });
+
+  it('reuses one immutable upstream result across profile preflights in an outer save', async () => {
+    const observedOrders: string[][] = [];
+    let fetchCount = 0;
+    mocks.resolveSubscriptionProxies.mockImplementation(async () => {
+      fetchCount += 1;
+      return fetchCount === 1
+        ? {
+            proxies: [{ name: 'A' }, { name: 'B' }],
+            proxyCount: 2,
+          }
+        : // A second remote request would harmlessly reorder the same nodes.
+          // The operation-local snapshot must make this branch unreachable.
+          {
+            proxies: [{ name: 'B' }, { name: 'A' }],
+            proxyCount: 2,
+          };
+    });
+    mocks.resolveConfig.mockImplementation(async (...args: unknown[]) => {
+      const options = args[5] as {
+        subscriptionResolver: (
+          sub: Subscription,
+        ) => Promise<{ proxies: Array<{ name?: unknown }> }>;
+      };
+      const resolved = await options.subscriptionResolver(REMOTE_SUB);
+      observedOrders.push(resolved.proxies.map((proxy) => String(proxy.name)));
+      return { content: 'ok', buildId: 'abcdef12' };
+    });
+    const subscriptionSnapshot: SubscriptionPreflightSnapshot = new Map();
+
+    await preflightProfileConfig(PROFILE_ID, () => ({}), { subscriptionSnapshot });
+    await preflightProfileConfig(PROFILE_ID, () => ({}), { subscriptionSnapshot });
+
+    expect(mocks.resolveSubscriptionProxies).toHaveBeenCalledTimes(1);
+    expect(fetchCount).toBe(1);
+    expect(observedOrders).toEqual([
+      ['A', 'B'],
+      ['A', 'B'],
+    ]);
+  });
+
+  it("forwards resolveConfig's read-only ordinal session into the source resolver", async () => {
+    const ordinalPlanningSession = { marker: 'resolve-owned-session' };
+    mocks.resolveConfig.mockImplementationOnce(async (...args: unknown[]) => {
+      const options = args[5] as {
+        subscriptionResolver: (
+          sub: Subscription,
+          resolverOptions: { ordinalPlanningSession: unknown },
+        ) => Promise<unknown>;
+      };
+      await options.subscriptionResolver(REMOTE_SUB, { ordinalPlanningSession });
+      return { content: 'ok', buildId: 'abcdef12' };
+    });
+
+    await preflightProfileConfig(PROFILE_ID, () => ({}));
+
+    expect(mocks.resolveSubscriptionProxies).toHaveBeenCalledWith(REMOTE_SUB, {
+      writeCache: false,
+      allowStale: false,
+      ordinalPlanningSession,
     });
   });
 

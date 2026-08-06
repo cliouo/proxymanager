@@ -124,6 +124,7 @@ describe('DSL parser', () => {
     const out = renderTemplate(compileTemplate('${index:4}'), { index: '7' });
     expect(out).toBe('0007');
     expect(out.length).toBeLessThanOrEqual(4);
+    expect(renderTemplate(compileTemplate('${index:3}'), { index: '09' })).toBe('009');
   });
 
   it('rejects excessive nesting beyond the bound', () => {

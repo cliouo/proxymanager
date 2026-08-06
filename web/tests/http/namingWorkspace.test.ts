@@ -205,9 +205,19 @@ vi.mock('@/lib/services/nodeReferenceService', () => ({
 }));
 vi.mock('@/lib/services/nodeOrdinalService', () => ({
   resolveOrdinalsFor: vi.fn(async () => () => undefined),
+  createOrdinalPlanningSession: vi.fn(async () => ({
+    registerSourceDomain: vi.fn(),
+    resolverFor: vi.fn(() => () => undefined),
+    seal: () => ({
+      expectedGeneration: counters.get(REDIS_KEYS.nodeOrdinalGeneration) ?? 0,
+      expectedGlobalSize: 0,
+      sources: [],
+    }),
+  })),
 }));
 
 import { GET, POST } from '@/app/api/v1/naming/[type]/[id]/route';
+import { resolveOrdinalsFor as mockedResolveOrdinalsFor } from '@/lib/services/nodeOrdinalService';
 
 const SUB_ID = '11111111-1111-4111-8111-111111111111';
 const COL_ID = '22222222-2222-4222-8222-222222222222';
@@ -263,11 +273,28 @@ async function call(
   body?: unknown,
 ): Promise<Response> {
   const ctx = { params: Promise.resolve({ type, id }) } as Ctx;
+  const currentVersion = counters.get(REDIS_KEYS.configVersion);
+  const expectedVersion =
+    typeof currentVersion === 'number' &&
+    Number.isSafeInteger(currentVersion) &&
+    currentVersion >= 0
+      ? currentVersion
+      : 0;
+  const requestBody =
+    body !== null &&
+    typeof body === 'object' &&
+    (Object.hasOwn(body, 'apply') || Object.hasOwn(body, 'rollback')) &&
+    !Object.hasOwn(body, 'expectedVersion')
+      ? {
+          ...(body as Record<string, unknown>),
+          expectedVersion,
+        }
+      : body;
   const request = new Request(`http://localhost/api/v1/naming/${type}/${id}`, {
     method: body === undefined ? 'GET' : 'POST',
     ...(body === undefined
       ? {}
-      : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
+      : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(requestBody) }),
   });
   return handler(request, ctx);
 }
@@ -359,6 +386,56 @@ describe('GET /api/v1/naming/[type]/[id]', () => {
     expect(body.data.managed.template).toBe('${emoji} ${region}');
     // three nodes → three distinct names → changed 3, no collisions
     expect(body.data.diagnostics.changed).toBe(3);
+  });
+
+  it('uses the recommended template for both ordinal planning and rendering when no managed row exists', async () => {
+    const fetcher = await import('@/lib/services/subscriptionFetcher');
+    vi.mocked(fetcher.resolveSubscriptionProxiesRaw).mockResolvedValueOnce({
+      proxies: [{ name: '🇭🇰 动漫角色', type: 'ss', server: 'a.example.com', port: 443 }],
+      proxyCount: 1,
+    });
+    vi.mocked(mockedResolveOrdinalsFor).mockResolvedValueOnce(() => 41);
+
+    const res = await call(GET, 'subscription', SUB_ID);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      data: { recommended: string; diagnostics: { afterNames: string[] } };
+    };
+    expect(vi.mocked(mockedResolveOrdinalsFor).mock.lastCall?.[2]?.template).toBe(
+      body.data.recommended,
+    );
+    expect(body.data.diagnostics.afterNames[0]).toContain('41');
+  });
+
+  it('uses a disabled managed draft for both ordinal planning and diagnostics', async () => {
+    seedSub({
+      operators: [
+        {
+          id: 'rt-disabled',
+          kind: 'rename-template',
+          template: '${region} ${index:3}',
+          recognitionRules: [],
+          disabled: true,
+        },
+      ],
+    });
+    const fetcher = await import('@/lib/services/subscriptionFetcher');
+    vi.mocked(fetcher.resolveSubscriptionProxiesRaw).mockResolvedValueOnce({
+      proxies: [{ name: '🇭🇰 动漫角色', type: 'ss', server: 'a.example.com', port: 443 }],
+      proxyCount: 1,
+    });
+    vi.mocked(mockedResolveOrdinalsFor).mockResolvedValueOnce(() => 9);
+
+    const res = await call(GET, 'subscription', SUB_ID);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      data: { managed: { disabled: boolean }; diagnostics: { afterNames: string[] } };
+    };
+    expect(body.data.managed.disabled).toBe(true);
+    expect(vi.mocked(mockedResolveOrdinalsFor).mock.lastCall?.[2]?.template).toBe(
+      '${region} ${index:3}',
+    );
+    expect(body.data.diagnostics.afterNames).toEqual(['香港 009']);
   });
 
   it('is fully read-only: no stores written, no counters bumped', async () => {
@@ -654,6 +731,68 @@ describe('POST apply — policy preservation + persisted prior plan', () => {
     expect(badPreview.status).toBe(422);
     const badBody = await call(POST, 'subscription', SUB_ID, { nope: true });
     expect(badBody.status).toBe(422);
+    const missingExpectedVersion = await call(POST, 'subscription', SUB_ID, {
+      apply: { template: '${region}' },
+      expectedVersion: undefined,
+    });
+    expect(missingExpectedVersion.status).toBe(422);
+
+    const entityBefore = JSON.stringify(bucket(REDIS_KEYS.subscriptions).get(SUB_ID));
+    const historyBefore = JSON.stringify(
+      bucket(REDIS_KEYS.namingHistory).get(`subscription:${SUB_ID}`),
+    );
+    const versionBefore = counters.get(REDIS_KEYS.configVersion);
+    const auditEventsBefore = bucket(REDIS_KEYS.audit.events).size;
+    const auditPayloadsBefore = bucket(REDIS_KEYS.audit.byId).size;
+    const mixedApplyPreview = await call(POST, 'subscription', SUB_ID, {
+      apply: { template: '${region}' },
+      preview: { template: '${region}' },
+    });
+    const mixedRollbackApply = await call(POST, 'subscription', SUB_ID, {
+      rollback: true,
+      apply: { template: '${region}' },
+    });
+    const nestedExtra = await call(POST, 'subscription', SUB_ID, {
+      apply: { template: '${region}', unexpected: true },
+    });
+    expect(mixedApplyPreview.status).toBe(422);
+    expect(mixedRollbackApply.status).toBe(422);
+    expect(nestedExtra.status).toBe(422);
+    expect(JSON.stringify(bucket(REDIS_KEYS.subscriptions).get(SUB_ID))).toBe(entityBefore);
+    expect(JSON.stringify(bucket(REDIS_KEYS.namingHistory).get(`subscription:${SUB_ID}`))).toBe(
+      historyBefore,
+    );
+    expect(counters.get(REDIS_KEYS.configVersion)).toBe(versionBefore);
+    expect(bucket(REDIS_KEYS.audit.events).size).toBe(auditEventsBefore);
+    expect(bucket(REDIS_KEYS.audit.byId).size).toBe(auditPayloadsBefore);
+  });
+
+  it('rejects a replayed apply version without overwriting the exact rollback target', async () => {
+    counters.set(REDIS_KEYS.configVersion, 7);
+    const first = await call(POST, 'subscription', SUB_ID, {
+      apply: { template: '${region}' },
+      expectedVersion: 7,
+    });
+    expect(first.status).toBe(200);
+    expect(counters.get(REDIS_KEYS.configVersion)).toBe(8);
+    const historyAfterFirst = JSON.stringify(
+      bucket(REDIS_KEYS.namingHistory).get(`subscription:${SUB_ID}`),
+    );
+    const entityAfterFirst = JSON.stringify(bucket(REDIS_KEYS.subscriptions).get(SUB_ID));
+    const auditsAfterFirst = bucket(REDIS_KEYS.audit.byId).size;
+
+    const replay = await call(POST, 'subscription', SUB_ID, {
+      apply: { template: '${region}' },
+      expectedVersion: 7,
+    });
+
+    expect(replay.status).toBe(412);
+    expect(counters.get(REDIS_KEYS.configVersion)).toBe(8);
+    expect(JSON.stringify(bucket(REDIS_KEYS.subscriptions).get(SUB_ID))).toBe(entityAfterFirst);
+    expect(JSON.stringify(bucket(REDIS_KEYS.namingHistory).get(`subscription:${SUB_ID}`))).toBe(
+      historyAfterFirst,
+    );
+    expect(bucket(REDIS_KEYS.audit.byId).size).toBe(auditsAfterFirst);
   });
 
   it('applies to collections the same way', async () => {
@@ -1444,6 +1583,53 @@ describe('POST apply — policy preservation + persisted prior plan', () => {
     expect(bucket(REDIS_KEYS.namingHistory).has('subscription:' + SUB_ID)).toBe(false);
   });
 
+  it('apply/history/rollback stay byte-exact and observe zero inherited Array.toJSON hooks', async () => {
+    const rawOperators = [
+      { id: 'f-1', kind: 'filter-useless', extra: ['keep'] },
+      {
+        id: 'rt-1',
+        kind: 'rename-template',
+        template: '${region}',
+        recognitionRules: [],
+        futureField: { keep: true },
+      },
+    ];
+    seedSub({ operators: rawOperators as never });
+    counters.set(REDIS_KEYS.configVersion, 7);
+    const { applyNamingPlan, rollbackNamingPlan } =
+      await import('@/lib/services/namingApplyService');
+    const prior = Object.getOwnPropertyDescriptor(Array.prototype, 'toJSON');
+    let fired = 0;
+    try {
+      Object.defineProperty(Array.prototype, 'toJSON', {
+        configurable: true,
+        get() {
+          fired += 1;
+          throw new Error('inherited Array.toJSON getter should stay unobserved');
+        },
+      });
+      await applyNamingPlan(
+        'subscription',
+        SUB_ID,
+        { template: '${emoji} ${region}' },
+        { audit: { actor: 'test', profileId: PROFILE_ID } },
+      );
+      await rollbackNamingPlan('subscription', SUB_ID, {
+        audit: { actor: 'test', profileId: PROFILE_ID },
+      });
+    } finally {
+      if (prior === undefined) Reflect.deleteProperty(Array.prototype, 'toJSON');
+      else Object.defineProperty(Array.prototype, 'toJSON', prior);
+    }
+
+    expect(fired).toBe(0);
+    expect(
+      (bucket(REDIS_KEYS.subscriptions).get(SUB_ID) as { operators: unknown[] }).operators,
+    ).toEqual(rawOperators);
+    expect(bucket(REDIS_KEYS.namingHistory).has(`subscription:${SUB_ID}`)).toBe(false);
+    expect(bucket(REDIS_KEYS.audit.byId).size).toBe(2);
+  });
+
   it('same-position DIFFERENT-id rollback fails closed and preserves every row (finding 4)', async () => {
     seedSub({ operators: [] });
     counters.set(REDIS_KEYS.configVersion, 7);
@@ -1771,6 +1957,72 @@ describe('pass-9 blocker 1: hostile disabled-member aliases across workspace con
       expect(text).toContain('来源范围');
       expect(text).not.toContain(SUB_ID);
       expect(subReads).toBeGreaterThanOrEqual(2);
+    } finally {
+      fakeRedis.hget = originalHget;
+    }
+  });
+
+  it('GET re-validates the current profile after diagnostics and rejects an auth-to-snapshot rebind', async () => {
+    const originalHget = fakeRedis.hget;
+    let profileReads = 0;
+    fakeRedis.hget = async (key: string, field: string) => {
+      if (key === REDIS_KEYS.profiles && field === PROFILE_ID) {
+        profileReads += 1;
+        if (profileReads === 1) {
+          bucket(key).set(field, {
+            id: PROFILE_ID,
+            name: 'default',
+            source: { type: 'none' },
+            updated_at: 2,
+          });
+          counters.set(REDIS_KEYS.configVersion, 1);
+        }
+      }
+      return originalHget(key, field);
+    };
+    try {
+      const res = await call(GET, 'subscription', SUB_ID);
+      expect(res.status).toBe(404);
+      const text = await res.text();
+      expect(text).toContain('来源范围');
+      expect(text).not.toContain(SUB_ID);
+      expect(profileReads).toBeGreaterThanOrEqual(1);
+    } finally {
+      fakeRedis.hget = originalHget;
+    }
+  });
+
+  it('read-only POST preview rejects the same auth-to-snapshot profile rebind', async () => {
+    const originalHget = fakeRedis.hget;
+    let profileReads = 0;
+    fakeRedis.hget = async (key: string, field: string) => {
+      if (key === REDIS_KEYS.profiles && field === PROFILE_ID) {
+        profileReads += 1;
+        if (profileReads === 1) {
+          bucket(key).set(field, {
+            id: PROFILE_ID,
+            name: 'default',
+            source: { type: 'none' },
+            updated_at: 2,
+          });
+          counters.set(REDIS_KEYS.configVersion, 1);
+        }
+      }
+      return originalHget(key, field);
+    };
+    try {
+      const res = await call(POST, 'subscription', SUB_ID, {
+        preview: {
+          template: '${region} ${index}',
+          sourceAliases: {},
+          recognitionRules: [],
+        },
+      });
+      expect(res.status).toBe(404);
+      const text = await res.text();
+      expect(text).toContain('来源范围');
+      expect(text).not.toContain(SUB_ID);
+      expect(profileReads).toBeGreaterThanOrEqual(1);
     } finally {
       fakeRedis.hget = originalHget;
     }

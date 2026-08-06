@@ -81,6 +81,16 @@ vi.mock('@/lib/repos/resolvedRepo', () => ({
 }));
 vi.mock('@/lib/services/nodeOrdinalService', () => ({
   resolveOrdinalsFor: vi.fn(async () => () => undefined),
+  createOrdinalDomainRegistry: vi.fn(() => ({
+    registerSourceDomain: vi.fn(),
+    fingerprintsForSource: vi.fn(() => undefined),
+  })),
+  createOrdinalPlanningSession: vi.fn(async () => ({
+    registerSourceDomain: vi.fn(),
+    fingerprintsForSource: vi.fn(() => undefined),
+    resolverFor: vi.fn(() => () => undefined),
+    seal: vi.fn(() => ({ expectedGeneration: 0, expectedGlobalSize: 0, sources: [] })),
+  })),
 }));
 
 /**

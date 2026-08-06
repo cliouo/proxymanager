@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { parse } from 'yaml';
 import { applyOperators, type ClashProxy } from '@/lib/proxies/operators';
 import type { Collection, Subscription } from '@/schemas';
@@ -18,16 +18,39 @@ vi.mock('@/lib/services/subscriptionFetcher', () => ({
 // assignment store is orthogonal to export semantics, so these tests stub it
 // empty (input-order ordinals, no Redis dependency).
 vi.mock('@/lib/repos/nodeOrdinalRepo', () => ({
-  loadOrdinalAssignments: async () => new Map(),
-  assignOrdinals: async () => new Map(),
-  clearOrdinalAssignments: async () => undefined,
+  loadOrdinalAssignments: vi.fn(async () => new Map()),
+  assignOrdinals: vi.fn(
+    async (_source: string, fingerprints: string[]) =>
+      new Map(fingerprints.map((fingerprint, index) => [fingerprint, index + 1])),
+  ),
+  readOrdinalStore: vi.fn(async (sourceKeys: string[]) => ({
+    assignments: new Map(sourceKeys.map((key) => [key, new Map()])),
+    invalidFields: new Map(sourceKeys.map((key) => [key, new Set()])),
+    duplicateSources: new Set(),
+    counters: new Map(sourceKeys.map((key) => [key, null])),
+    hashBroken: false,
+    counterBroken: new Set(),
+    hlenBySource: new Map(sourceKeys.map((key) => [key, 0])),
+    globalSize: 0,
+    generation: 0,
+  })),
+  MAX_ORDINAL: 99_999,
+  MAX_TOTAL_ASSIGNMENTS: 20_000,
+  clearOrdinalAssignments: vi.fn(async () => undefined),
 }));
 
 import { resolveSubscriptionProxies } from '@/lib/services/subscriptionFetcher';
 import { exportCollectionNodes, exportSubscriptionNodes } from '@/lib/services/nodeExportService';
 import { SubscriptionResolutionValidationError } from '@/lib/services/subscriptionResolutionErrors';
+import { assignOrdinals } from '@/lib/repos/nodeOrdinalRepo';
 
 const fetchMock = resolveSubscriptionProxies as unknown as ReturnType<typeof vi.fn>;
+const assignOrdinalsMock = assignOrdinals as unknown as ReturnType<typeof vi.fn>;
+
+beforeEach(() => {
+  fetchMock.mockReset();
+  assignOrdinalsMock.mockClear();
+});
 
 function makeSub(over: Partial<Subscription> = {}): Subscription {
   return {
@@ -392,6 +415,71 @@ describe('exportCollectionNodes', () => {
 /* ─── rename-template + provenance through the export paths ─────────── */
 
 describe('collection export with rename-template (provenance semantics)', () => {
+  it('ignores a parked rename row before the active template when resolving ordinals', async () => {
+    fetchMock.mockResolvedValueOnce({ proxies: [proxy('香港 05')], proxyCount: 1 });
+    const sub = makeSub({
+      id: '11111111-1111-4111-8111-111111111111',
+      name: 'sub-a',
+    });
+    const collection = makeCollection({
+      subscription_ids: [sub.id],
+      operators: [
+        {
+          id: 'old-invalid',
+          kind: 'rename-template',
+          template: '${region}',
+          sourceAliases: { a: 'x'.repeat(100) },
+          disabled: true,
+          compatibility_issue: 'runtime-validation-required',
+        } as never,
+        {
+          id: 'active',
+          kind: 'rename-template',
+          template: '${region} ${index}',
+          recognitionRules: [],
+        } as never,
+      ],
+    });
+
+    const result = await exportCollectionNodes(collection, [sub], { ordinalConfigVersion: 7 });
+
+    expect(proxiesOf(result.yaml).map((item) => item.name)).toEqual(['香港 05']);
+    expect(assignOrdinalsMock).toHaveBeenCalledWith(expect.any(String), expect.any(Array), 7);
+  });
+
+  it('does not allocate ordinals or promote managed dedup for a disabled-only collection', async () => {
+    fetchMock
+      .mockResolvedValueOnce({ proxies: [proxy('同名节点', 'first.example')], proxyCount: 1 })
+      .mockResolvedValueOnce({ proxies: [proxy('同名节点', 'second.example')], proxyCount: 1 });
+    const a = makeSub({
+      id: '11111111-1111-4111-8111-111111111111',
+      name: 'sub-a',
+    });
+    const b = makeSub({
+      id: '22222222-2222-4222-8222-222222222222',
+      name: 'sub-b',
+    });
+    const collection = makeCollection({
+      subscription_ids: [a.id, b.id],
+      operators: [
+        {
+          id: 'disabled',
+          kind: 'rename-template',
+          template: '${region} ${index}',
+          recognitionRules: [],
+          disabled: true,
+        } as never,
+      ],
+    });
+
+    const result = await exportCollectionNodes(collection, [a, b]);
+    const proxies = proxiesOf(result.yaml) as Array<{ name: string; server: string }>;
+
+    expect(proxies).toHaveLength(1);
+    expect(proxies[0]).toMatchObject({ name: '同名节点', server: 'first.example' });
+    expect(assignOrdinalsMock).not.toHaveBeenCalled();
+  });
+
   it('attaches per-member alias + per-source numbering, no metadata leak in YAML', async () => {
     fetchMock.mockResolvedValueOnce({
       proxies: [proxy('香港 01', 'a.com'), proxy('香港 02', 'b.com')],
@@ -420,7 +508,7 @@ describe('collection export with rename-template (provenance semantics)', () => 
       makeSub({ id: '11111111-1111-4111-8111-111111111111', name: 'sub-a', display_name: '机场A' }),
       makeSub({ id: '22222222-2222-4222-8222-222222222222', name: 'sub-b', display_name: '机场B' }),
     ];
-    const result = await exportCollectionNodes(collection, subs);
+    const result = await exportCollectionNodes(collection, subs, { ordinalConfigVersion: 7 });
     const proxies = proxiesOf(result.yaml);
     expect(proxies.map((p) => p.name)).toEqual([
       '🇭🇰 香港 · 机场A · 01',
@@ -450,7 +538,7 @@ describe('collection export with rename-template (provenance semantics)', () => 
     const subs = [
       makeSub({ id: '11111111-1111-4111-8111-111111111111', name: 'sub-a', display_name: '机场A' }),
     ];
-    const result = await exportCollectionNodes(collection, subs);
+    const result = await exportCollectionNodes(collection, subs, { ordinalConfigVersion: 7 });
     expect(proxiesOf(result.yaml).map((p) => p.name)).toEqual(['🇭🇰 香港 · 改名机场 · 01']);
   });
 
@@ -539,7 +627,7 @@ describe('collection export with rename-template (provenance semantics)', () => 
       makeSub({ id: '11111111-1111-4111-8111-111111111111', name: 'sub-a', display_name: '机场A' }),
       makeSub({ id: '22222222-2222-4222-8222-222222222222', name: 'sub-b', display_name: '机场B' }),
     ];
-    const result = await exportCollectionNodes(collection, subs);
+    const result = await exportCollectionNodes(collection, subs, { ordinalConfigVersion: 7 });
     expect(proxiesOf(result.yaml).map((p) => p.name)).toEqual([
       '🇭🇰 香港 · 机场A · 01',
       '🇭🇰 香港 · 机场B · 01',

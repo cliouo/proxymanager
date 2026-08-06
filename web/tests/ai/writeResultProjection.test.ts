@@ -1455,6 +1455,36 @@ describe('round-9: Object.prototype.toJSON and Array.prototype.toJSON shadowing'
 });
 
 describe('round-9: descriptor get/set zero-observation', () => {
+  it.each(['writable', 'enumerable', 'configurable'] as const)(
+    'inherited Object.prototype.%s option metadata is never observed',
+    (key) => {
+      let fired = 0;
+      let result: WriteResultProjection | undefined;
+      const prior = Object.getOwnPropertyDescriptor(Object.prototype, key);
+      Object.defineProperty(Object.prototype, key, {
+        configurable: true,
+        get() {
+          fired += 1;
+          throw new Error(`prototype ${key} getter should stay unobserved`);
+        },
+      });
+      try {
+        result = projectWriteResult(
+          { kind: 'write-result', data: { op: 'update', summary: 'ok', events: [] } },
+          'update_rule',
+        );
+      } finally {
+        if (prior === undefined) {
+          Reflect.deleteProperty(Object.prototype, key);
+        } else {
+          Object.defineProperty(Object.prototype, key, prior);
+        }
+      }
+      expect(fired).toBe(0);
+      expect(result?.outcome).toBe('ok');
+    },
+  );
+
   it('inherited Object.prototype.get descriptor metadata: zero observation, result ok', () => {
     let fired = 0;
     const result = (() => {

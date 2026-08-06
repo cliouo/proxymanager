@@ -100,6 +100,17 @@ describe('projectNodeSnapshot', () => {
     expect(scope.resolve(projection.nodes[0].handle)).not.toBeNull();
   });
 
+  it('never exposes a stable source key when no independent display label exists', () => {
+    const stableKey = 'internal-stable-source-slug';
+    const projection = projectNodeSnapshot([
+      withSource(node('香港 01'), { key: stableKey, label: stableKey }),
+    ]);
+
+    expect(projection.sources).toHaveLength(1);
+    expect(projection.sources[0].label).toBeNull();
+    expect(JSON.stringify(projection)).not.toContain(stableKey);
+  });
+
   it('node handles are collision-checked over the COMPLETE snapshot before any cap', () => {
     try {
       injectHandleSignerForTests({ mac: () => 'same-mac' } as never);

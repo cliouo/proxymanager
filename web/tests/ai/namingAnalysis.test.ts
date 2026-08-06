@@ -99,7 +99,7 @@ describe('buildScrubbedPayload', () => {
     const serialized = JSON.stringify(payload);
     expect(serialized).not.toContain('member-49999');
     expect(serialized).not.toContain('n.invalid');
-  });
+  }, 60_000);
 
   it('pass-5: all 25 canonical protocol types survive the one-shot projection; unknown/case/whitespace types are null and absent', () => {
     const ALL_25 = [

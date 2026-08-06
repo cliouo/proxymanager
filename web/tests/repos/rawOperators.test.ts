@@ -160,6 +160,66 @@ describe('raw stored operator preservation', () => {
     expect(storedRawOperators(REDIS_KEYS.subscriptions, SUB_ID)).toEqual(RAW_OPERATORS);
   });
 
+  it('a naming write between sync read and runtime CAS wins without being overwritten', async () => {
+    seedSubscription();
+    const namedOperators = [
+      {
+        id: 'managed',
+        kind: 'rename-template',
+        template: '${region} ${index}',
+        recognitionRules: [],
+      },
+    ];
+    const originalEval = fakeRedis.eval;
+    fakeRedis.eval = (async (script: string, keys: string[], args: string[]) => {
+      const current = bucket(REDIS_KEYS.subscriptions).get(SUB_ID) as Record<string, unknown>;
+      bucket(REDIS_KEYS.subscriptions).set(SUB_ID, { ...current, operators: namedOperators });
+      counters.set(REDIS_KEYS.configVersion, 8);
+      return originalEval(script, keys, args);
+    }) as typeof fakeRedis.eval;
+    try {
+      await expect(subSvc.recordSubscriptionSync(SUB_ID, 1234)).rejects.toMatchObject({
+        problem: { status: 412 },
+      });
+      expect(storedRawOperators(REDIS_KEYS.subscriptions, SUB_ID)).toEqual(namedOperators);
+      const stored = bucket(REDIS_KEYS.subscriptions).get(SUB_ID) as {
+        last_synced_at?: number;
+      };
+      expect(stored.last_synced_at).toBeUndefined();
+    } finally {
+      fakeRedis.eval = originalEval;
+    }
+  });
+
+  it('a naming write between error read and runtime CAS wins; error receipt stays best-effort', async () => {
+    seedSubscription();
+    const namedOperators = [
+      {
+        id: 'managed',
+        kind: 'rename-template',
+        template: '${region} ${index}',
+        recognitionRules: [],
+      },
+    ];
+    const originalEval = fakeRedis.eval;
+    fakeRedis.eval = (async (script: string, keys: string[], args: string[]) => {
+      const current = bucket(REDIS_KEYS.subscriptions).get(SUB_ID) as Record<string, unknown>;
+      bucket(REDIS_KEYS.subscriptions).set(SUB_ID, { ...current, operators: namedOperators });
+      counters.set(REDIS_KEYS.configVersion, 8);
+      return originalEval(script, keys, args);
+    }) as typeof fakeRedis.eval;
+    try {
+      await expect(subSvc.recordSubscriptionError(SUB_ID, 'old upstream error')).resolves.toBe(
+        undefined,
+      );
+      expect(storedRawOperators(REDIS_KEYS.subscriptions, SUB_ID)).toEqual(namedOperators);
+      const stored = bucket(REDIS_KEYS.subscriptions).get(SUB_ID) as { last_error?: string };
+      expect(stored.last_error).toBeUndefined();
+    } finally {
+      fakeRedis.eval = originalEval;
+    }
+  });
+
   it('ordinary non-operator subscription patch preserves raw operators', async () => {
     seedSubscription();
     await subSvc.patchSubscription(SUB_ID, { display_name: '新名字' });

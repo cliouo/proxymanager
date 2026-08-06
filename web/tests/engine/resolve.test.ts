@@ -30,7 +30,7 @@ vi.mock('@/lib/services/subscriptionFetcher', () => ({
 const ordinalStore = new Map<string, Map<string, string>>();
 const ordinalCounters = new Map<string, number>();
 const ordinalTypeOf = (key: string): string =>
-  key.startsWith('node-ordinal-counter:') ? 'string' : 'hash';
+  key.startsWith('node-ordinal-counter:') || key.includes('generation') ? 'string' : 'hash';
 vi.mock('@/lib/redis/client', () => ({
   getRedis: () => ({
     hgetall: async () => {
@@ -57,7 +57,7 @@ vi.mock('@/lib/redis/client', () => ({
       return removed;
     },
     eval: async (_script: string, keys: string[], args: string[]) => {
-      if (_script.includes('HGETALL')) {
+      if (_script.includes('local out = {0, h, size, generation}')) {
         // ORDINAL_SNAPSHOT_LUA (atomic all-source read-only snapshot):
         // KEYS[1] = hash, ARGV[2..] = counter keys
         const hashKey = keys[0];
@@ -70,7 +70,8 @@ vi.mock('@/lib/redis/client', () => ({
           if (ordinalTypeOf(counterKey) !== 'string') counters.push([2, 'counter-wrongtype']);
           else counters.push(ordinalCounters.get(counterKey) ?? null);
         }
-        return [0, pairs, m?.size ?? 0, ...counters];
+        const generation = ordinalCounters.get(keys[1]) ?? null;
+        return [0, pairs, m?.size ?? 0, generation, ...counters];
       }
       // Mirror of the serving Lua / allocateOrdinal state machine (C6/C11):
       // existing → hash cap → canonical counter parse (invalid → 0, negative
@@ -82,7 +83,8 @@ vi.mock('@/lib/redis/client', () => ({
       const maxOrd = Number(args[1]);
       const results: Array<number | string> = [];
       let bucket = ordinalStore.get(hashKey);
-      for (let i = 2; i < args.length; i += 1) {
+      let wrote = false;
+      for (let i = 4; i < args.length; i += 1) {
         const field = args[i];
         const existing = bucket?.get(field);
         if (existing !== undefined) {
@@ -109,7 +111,12 @@ vi.mock('@/lib/redis/client', () => ({
         }
         ordinalCounters.set(counterKey, ordinal);
         bucket.set(field, String(ordinal));
+        wrote = true;
         results.push(ordinal);
+      }
+      if (wrote) {
+        const generationKey = keys[3];
+        ordinalCounters.set(generationKey, Number(ordinalCounters.get(generationKey) ?? 0) + 1);
       }
       return results;
     },
@@ -168,6 +175,8 @@ function providerProxies(
 beforeEach(() => {
   resolveSubMock.mockReset();
   snapshotMock.mockClear();
+  ordinalStore.clear();
+  ordinalCounters.clear();
 });
 
 describe('resolveConfig — subscription injection', () => {
@@ -1550,6 +1559,90 @@ describe('resolveConfig — profile binding (boundSource)', () => {
     expect(result.content).toContain('香港-A');
     expect(result.content).not.toContain('US-A');
     expect(result.content).not.toContain('US-C');
+  });
+
+  it('uses the active rename row after a parked historical row and reserves upstream-suffix ordinals', async () => {
+    resolveSubMock.mockResolvedValueOnce({
+      proxies: providerProxies([{ name: '香港 05' }]),
+      proxyCount: 1,
+    });
+    const sub = makeSub({ name: 'sub-a' });
+    const col: Collection = {
+      id: crypto.randomUUID(),
+      name: 'pool',
+      slug: 'pool',
+      enabled: true,
+      type: 'select',
+      subscription_ids: [sub.id],
+      subscription_tags: [],
+      operators: [
+        {
+          id: 'old-invalid',
+          kind: 'rename-template',
+          template: '${region}',
+          sourceAliases: { a: 'x'.repeat(100) },
+          disabled: true,
+          compatibility_issue: 'runtime-validation-required',
+        } as never,
+        {
+          id: 'active',
+          kind: 'rename-template',
+          template: '${region} ${index}',
+          recognitionRules: [],
+        },
+      ],
+    };
+
+    const result = await resolveConfig(BASE_WITH_LITERAL, [], [sub], [], [], {
+      collections: [col],
+      boundSource: { type: 'collection', id: col.id },
+    });
+
+    expect(result.nodeNames).toContain('香港 05');
+    expect(result.nodeNames).not.toContain('香港 01');
+    expect([...ordinalStore.values()][0]?.size).toBe(1);
+    expect([...ordinalCounters.values()]).toContain(1);
+  });
+
+  it('keeps disabled-only collection render un-managed and allocation-free', async () => {
+    resolveSubMock
+      .mockResolvedValueOnce({
+        proxies: providerProxies([{ name: '同名节点', server: 'first.example' }]),
+        proxyCount: 1,
+      })
+      .mockResolvedValueOnce({
+        proxies: providerProxies([{ name: '同名节点', server: 'second.example' }]),
+        proxyCount: 1,
+      });
+    const a = makeSub({ name: 'sub-a' });
+    const b = makeSub({ name: 'sub-b' });
+    const col: Collection = {
+      id: crypto.randomUUID(),
+      name: 'pool',
+      slug: 'pool',
+      enabled: true,
+      type: 'select',
+      subscription_ids: [a.id, b.id],
+      subscription_tags: [],
+      operators: [
+        {
+          id: 'disabled',
+          kind: 'rename-template',
+          template: '${region} ${index}',
+          recognitionRules: [],
+          disabled: true,
+        },
+      ],
+    };
+
+    const result = await resolveConfig(BASE_WITH_LITERAL, [], [a, b], [], [], {
+      collections: [col],
+      boundSource: { type: 'collection', id: col.id },
+    });
+
+    expect(result.nodeNames.filter((name) => name === '同名节点')).toHaveLength(1);
+    expect(ordinalStore.size).toBe(0);
+    expect(ordinalCounters.size).toBe(0);
   });
 
   it('fails closed when a collection operator creates an invalid node', async () => {

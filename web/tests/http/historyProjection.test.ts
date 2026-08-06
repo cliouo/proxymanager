@@ -124,6 +124,55 @@ describe('GET /api/v1/history — pass-8 blocker 7 external privacy', () => {
     expect(rule.target?.id).toBe('rule-1');
   });
 
+  it('drops malformed legacy naming events that cannot be projected without leaking raw ids', async () => {
+    const malformed = {
+      id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+      ts: 997,
+      op: 'naming.apply',
+      actor: 'legacy',
+      target: { kind: 'naming-source', type: 'subscription', id: SUB_ID, name: '机场A' },
+      before: null,
+      after: { templateSummary: { placeholderCount: 1, length: 8 }, mode: 'added' },
+      undoable: false,
+      // profileId deliberately missing: no safe profile-bound ref can be minted.
+    };
+    bucket(REDIS_KEYS.audit.events).set(malformed.id, malformed.ts);
+    bucket(REDIS_KEYS.audit.byId).set(malformed.id, JSON.stringify(malformed));
+
+    const res = await GET(new Request('http://localhost/api/v1/history'));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: unknown[]; meta: { count: number } };
+    const serialized = JSON.stringify(body);
+    expect(serialized).not.toContain(malformed.id);
+    expect(body.data).toHaveLength(2);
+    expect(body.meta.count).toBe(2);
+  });
+
+  it('drops naming op rows even when a corrupt target kind tries to bypass naming projection', async () => {
+    const malformed = {
+      id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+      ts: 996,
+      op: 'naming.apply',
+      actor: 'legacy',
+      target: { kind: 'rule', type: 'subscription', id: SUB_ID, name: '机场A' },
+      before: null,
+      after: { templateSummary: { placeholderCount: 1, length: 8 }, mode: 'added' },
+      undoable: false,
+      profileId: PROFILE_ID,
+    };
+    bucket(REDIS_KEYS.audit.events).set(malformed.id, malformed.ts);
+    bucket(REDIS_KEYS.audit.byId).set(malformed.id, JSON.stringify(malformed));
+
+    const res = await GET(new Request('http://localhost/api/v1/history'));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: unknown[]; meta: { count: number } };
+    const serialized = JSON.stringify(body);
+    expect(serialized).not.toContain(malformed.id);
+    expect(serialized).not.toContain(SUB_ID);
+    expect(body.data).toHaveLength(2);
+    expect(body.meta.count).toBe(2);
+  });
+
   it('pass-10 blocker 3: multi-event target-ref MAC collisions are detected as ONE domain — the batch projector fails closed', async () => {
     const { injectHandleSignerForTests } = await import('@/lib/proxies/handles');
     // two naming events on DIFFERENT targets/profiles — under a colliding

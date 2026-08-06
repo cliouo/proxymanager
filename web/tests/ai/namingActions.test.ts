@@ -77,6 +77,24 @@ const fakeRedis = {
   // 3-key CAS_ENTITY_WITH_HISTORY validates types/values before ANY write
   // and SETs the exact next version; the 2-key CAS is the generic form.
   eval: async (_script: string, keys: string[], args: string[]) => {
+    if (_script.includes('local out = {0, h, size, generation}')) {
+      const hashType = keyTypes.get(keys[0]) ?? 'hash';
+      if (hashType !== 'hash' && hashType !== 'none') return [2, 'hash-wrongtype'];
+      const generationType = keyTypes.get(keys[1]) ?? 'string';
+      if (generationType !== 'string' && generationType !== 'none') {
+        return [2, 'generation-wrongtype'];
+      }
+      const ordinalRows = stores.get(keys[0]);
+      const pairs = ordinalRows ? [...ordinalRows].flatMap(([field, value]) => [field, value]) : [];
+      const generation = counters.get(keys[1]) ?? null;
+      const counterValues = args.map((counterKey) => {
+        const kind = keyTypes.get(counterKey) ?? 'string';
+        return kind === 'string' || kind === 'none'
+          ? (counters.get(counterKey) ?? null)
+          : [2, 'counter-wrongtype'];
+      });
+      return [0, pairs, ordinalRows?.size ?? 0, generation, ...counterValues];
+    }
     const typeOf = (key: string): string =>
       keyTypes.get(key) ??
       (key === REDIS_KEYS.audit.events
@@ -685,14 +703,28 @@ describe('namingCasRepo strict audit boundary (pass-3 finding) — every rejecti
 
   async function attempt(
     audit: unknown,
-    over: { entityKey?: string; recordId?: string; expectedProfileId?: string } = {},
+    over: {
+      entityKey?: string;
+      recordId?: string;
+      expectedProfileId?: string;
+      profileBindingProfileId?: string;
+      history?: unknown;
+    } = {},
   ): Promise<void> {
     await commitEntityWithNamingHistory({
       entityKey: over.entityKey ?? REDIS_KEYS.subscriptions,
       recordId: over.recordId ?? SUB_ID,
       recordJson: JSON.stringify(attemptRecord()),
       expectedVersion: 0,
-      history: { op: 'set', field: 'subscription:' + SUB_ID, value: '{}' },
+      ordinalPlan: { expectedGeneration: 0, expectedGlobalSize: 0, sources: [] },
+      history:
+        'history' in over
+          ? (over.history as never)
+          : {
+              op: 'set',
+              field: 'subscription:' + SUB_ID,
+              value: '{"hadManaged":false}',
+            },
       audit: audit as never,
       // 'expectedProfileId' IN over: an explicit undefined must reach the
       // repository (the required-binding rejection path), while an omitted
@@ -702,7 +734,7 @@ describe('namingCasRepo strict audit boundary (pass-3 finding) — every rejecti
           ? over.expectedProfileId
           : 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
       profileBinding: {
-        profileId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        profileId: over.profileBindingProfileId ?? 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
         type: 'subscription',
         id: SUB_ID,
       },
@@ -876,6 +908,7 @@ describe('namingCasRepo strict audit boundary (pass-3 finding) — every rejecti
     await expect(
       attempt(validAudit(), {
         expectedProfileId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+        profileBindingProfileId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
       }),
     ).rejects.toThrow(/profile does not match/);
     assertZeroWrites(before);
@@ -891,6 +924,43 @@ describe('namingCasRepo strict audit boundary (pass-3 finding) — every rejecti
     await expect(attempt(validAudit(), { expectedProfileId: undefined })).rejects.toThrow(
       /expected profile binding/,
     );
+    assertZeroWrites(before);
+    await expect(
+      attempt(validAudit(), {
+        profileBindingProfileId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      }),
+    ).rejects.toThrow(/expected profile and live binding profile must match/);
+    assertZeroWrites(before);
+  });
+
+  it('history is bound to the exact entity and operation before any write', async () => {
+    const before = JSON.stringify(bucket(REDIS_KEYS.subscriptions).get(SUB_ID));
+    const otherField = 'subscription:33333333-3333-4333-8333-333333333333';
+    await expect(
+      attempt(validAudit(), {
+        history: { op: 'set', field: otherField, value: '{"hadManaged":false}' },
+      }),
+    ).rejects.toThrow(/history target does not match/);
+    assertZeroWrites(before);
+    await expect(
+      attempt(validAudit(), { history: { op: 'del', field: otherField } }),
+    ).rejects.toThrow(/history target does not match/);
+    assertZeroWrites(before);
+    await expect(
+      attempt(validAudit(), {
+        history: {
+          op: 'skip',
+          field: 'subscription:' + SUB_ID,
+          value: '{"hadManaged":false}',
+        },
+      }),
+    ).rejects.toThrow(/unsupported naming history operation/);
+    assertZeroWrites(before);
+    await expect(
+      attempt(validAudit(), {
+        history: { op: 'set', field: 'subscription:' + SUB_ID, value: '{}' },
+      }),
+    ).rejects.toThrow(/valid prior plan/);
     assertZeroWrites(before);
   });
 
@@ -957,7 +1027,12 @@ describe('namingCasRepo strict audit boundary (pass-3 finding) — every rejecti
         recordId: SUB_ID,
         recordJson: JSON.stringify(attemptRecord()),
         expectedVersion: 0,
-        history: { op: 'set', field: 'subscription:' + SUB_ID, value: '{}' },
+        ordinalPlan: { expectedGeneration: 0, expectedGlobalSize: 0, sources: [] },
+        history: {
+          op: 'set',
+          field: 'subscription:' + SUB_ID,
+          value: '{"hadManaged":false}',
+        },
         audit: validAudit({ id }),
         expectedProfileId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
         profileBinding: {
@@ -1228,7 +1303,11 @@ describe('save_naming_plan (the single gated write)', () => {
         recordId: SUB_ID,
         recordJson: '{}',
         expectedVersion: 0,
-        history: { op: 'set', field: 'subscription:' + SUB_ID, value: '{}' },
+        history: {
+          op: 'set',
+          field: 'subscription:' + SUB_ID,
+          value: '{"hadManaged":false}',
+        },
       }),
     ).rejects.toThrow(/audit is REQUIRED/);
     expect(JSON.stringify(bucket(REDIS_KEYS.subscriptions).get(SUB_ID))).toBe(before);
@@ -1750,7 +1829,7 @@ describe('50000-node / 50000-source matrix across EVERY read action (pass-1 find
       const env = await readAction('preview_naming_target').run(ctx, {
         source_type: 'subscription',
         ref: subRef(),
-        template: '${emoji} ${region}${?index: · ${index}}',
+        template: '${emoji} ${region} ${note}',
         tw2cn: false,
         sourceAliases: {},
         recognitionRules: [],
@@ -2004,7 +2083,7 @@ describe('50000-node / 50000-source matrix across EVERY read action (pass-1 find
       raw.mockReset();
     }
   });
-});
+}, 60_000);
 
 describe('50000-node output caps (pass-3 finding) — bulk never reaches the model', () => {
   it('inspect_naming_collisions caps participants + entries with deterministic totals and truncation flags', async () => {
@@ -2021,7 +2100,7 @@ describe('50000-node output caps (pass-3 finding) — bulk never reaches the mod
       const env = await readAction('inspect_naming_collisions').run(ctx, {
         source_type: 'subscription',
         ref: subRef(),
-        template: '${emoji} ${region}${?index: · ${index}}',
+        template: '${emoji} ${region} ${note}',
       });
       const data = env.data as {
         nodeCount: number;

@@ -221,6 +221,16 @@ vi.mock('@/lib/services/nodeReferenceService', () => ({
 }));
 vi.mock('@/lib/services/nodeOrdinalService', () => ({
   resolveOrdinalsFor: vi.fn(async () => () => undefined),
+  createOrdinalPlanningSession: vi.fn(async () => ({
+    registerSourceDomain: vi.fn(),
+    fingerprintsForSource: vi.fn(() => undefined),
+    resolverFor: vi.fn(() => () => undefined),
+    seal: vi.fn(() => ({
+      expectedGeneration: counters.get(REDIS_KEYS.nodeOrdinalGeneration) ?? 0,
+      expectedGlobalSize: 0,
+      sources: [],
+    })),
+  })),
 }));
 
 const SUB_ID = '11111111-1111-4111-8111-111111111111';

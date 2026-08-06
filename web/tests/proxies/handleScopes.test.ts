@@ -1,5 +1,6 @@
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import {
+  buildRawScope,
   buildNodeScope,
   buildOperatorScope,
   buildProfileScope,
@@ -207,6 +208,36 @@ describe('typed handle scopes', () => {
     const source = buildSourceAliasScope(['same-text']).project('same-text');
     expect(node).not.toBe(source);
   });
+
+  it.each(['skipEmpty', 'rejectDuplicates'] as const)(
+    'ignores inherited Object.prototype.%s option getters',
+    (key) => {
+      let fired = 0;
+      let scope: ReturnType<typeof buildRawScope> | undefined;
+      const prior = Object.getOwnPropertyDescriptor(Object.prototype, key);
+      Object.defineProperty(Object.prototype, key, {
+        configurable: true,
+        get() {
+          fired += 1;
+          throw new Error(`prototype ${key} getter should stay unobserved`);
+        },
+      });
+      try {
+        scope = buildRawScope('source', ['', 'a', 'a']);
+      } finally {
+        if (prior === undefined) {
+          Reflect.deleteProperty(Object.prototype, key);
+        } else {
+          Object.defineProperty(Object.prototype, key, prior);
+        }
+      }
+
+      expect(fired).toBe(0);
+      expect(scope?.size).toBe(1);
+      const built = scope!;
+      expect(built.resolve(built.project('a'))).toBe('a');
+    },
+  );
 });
 
 const readFs = await import('node:fs');

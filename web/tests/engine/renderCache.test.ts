@@ -226,11 +226,11 @@ describe('renderProfileConfig — miss then hit', () => {
 });
 
 describe('renderProfileConfig — invalidation paths', () => {
-  it('rejects epoch 9 entries created before proxy parsing became fail-closed', async () => {
+  it('rejects epoch 21 entries created before full-domain stable numbering', async () => {
     await mod.renderProfileConfig('default', { providerUrlBase: URL_BASE });
     const key = REDIS_KEYS.renderCache('default');
     const entry = kv.get(key) as { epoch: number };
-    entry.epoch = 9;
+    entry.epoch = 21;
 
     const out = await mod.renderProfileConfig('default', { providerUrlBase: URL_BASE });
     expect(out.cache).toBe('miss');
