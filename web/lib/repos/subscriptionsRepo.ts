@@ -55,9 +55,10 @@ export async function getSubscriptionByName(name: string): Promise<Subscription 
 }
 
 // Writes bump config:version in the same multi() — subscription records
-// (enabled/url/prefix/operators…) shape the rendered config. Note this also
-// fires for pure runtime-state updates (last_synced_at / last_traffic);
-// over-invalidation is safe, just an extra render.
+// (enabled/url/policy/operators…) shape the rendered config. P-FFP v1: the
+// definition row is CONFIG-ONLY — runtime fetch state (last_synced_at /
+// last_traffic / last_error / refresh receipts) was retired; the separate
+// subscription-fetch-health value records actual attempt health instead.
 
 export async function upsertSubscription(sub: Subscription): Promise<void> {
   // Non-operator writes must not destroy raw future-operator bytes.
@@ -82,60 +83,6 @@ export const CAS_SUBSCRIPTION_CHANGE = CAS_PIPELINE_ENTITY_WITH_ORDINALS;
 export interface SubscriptionCommitResult {
   ok: boolean;
   currentVersion: number | null;
-}
-
-/**
- * Runtime refresh fields still replace the stored JSON row, but only under
- * the exact config generation captured before that refresh began. This closes
- * the final-check→HSET race where a naming CAS could otherwise commit and
- * then be overwritten by the refresh's stale full-row snapshot.
- */
-export const CAS_SUBSCRIPTION_RUNTIME_PATCH = `
-local function isHashKey(key)
-  local t = redis.call('TYPE', key).ok
-  return t == 'hash' or t == 'none'
-end
-local function isStringKey(key)
-  local t = redis.call('TYPE', key).ok
-  return t == 'string' or t == 'none'
-end
-local function isCanonicalUnsigned(raw)
-  if type(raw) ~= 'string' then return false end
-  if not string.match(raw, '^[0-9]+$') then return false end
-  if string.len(raw) > 1 and string.sub(raw, 1, 1) == '0' then return false end
-  return true
-end
-if not isStringKey(KEYS[1]) then return {2, 'version-wrongtype'} end
-if not isHashKey(KEYS[2]) then return {2, 'entity-wrongtype'} end
-local currentRaw = redis.call('GET', KEYS[1])
-if not currentRaw then currentRaw = '0' end
-if not isCanonicalUnsigned(currentRaw) then return {2, 'version-malformed'} end
-local current = tonumber(currentRaw)
-if not current or current > 9007199254740990 then return {2, 'version-overflow'} end
-if currentRaw ~= ARGV[1] then return {0, string.format('%.0f', current)} end
-if ARGV[2] == '' or ARGV[3] == '' then return {2, 'entity-malformed'} end
-local nextVersion = current + 1
-redis.call('HSET', KEYS[2], ARGV[2], ARGV[3])
-redis.call('SET', KEYS[1], string.format('%.0f', nextVersion))
-return {1, string.format('%.0f', nextVersion)}
-`.trim();
-
-export async function commitSubscriptionRuntimePatch(
-  sub: Subscription,
-  expectedVersion: number,
-): Promise<SubscriptionCommitResult> {
-  const toStore = restoreRawOperators(sub);
-  const result = (await getRedis().eval(
-    CAS_SUBSCRIPTION_RUNTIME_PATCH,
-    [REDIS_KEYS.configVersion, REDIS_KEYS.subscriptions],
-    [String(expectedVersion), toStore.id, safeJsonStringify(toStore)],
-  )) as [number, string];
-  const parsedVersion = Number(Array.isArray(result) ? result[1] : '');
-  return {
-    ok: Array.isArray(result) && result[0] === 1,
-    currentVersion:
-      Number.isSafeInteger(parsedVersion) && parsedVersion >= 0 ? parsedVersion : null,
-  };
 }
 
 export async function commitSubscriptionChange(

@@ -17,11 +17,16 @@ fetch layer runs.
 
 ## Save-time rendered-config invariant
 
-Any profile-scoped base, rule, or proxy-group mutation must preflight the exact
-final rendered config without writing fetch/render caches or accepting stale
-upstream data, then commit against the same planning/config version. New
-mutation paths that can change rendered output must preserve this invariant and
-return structured, credential-free validation issues.
+Any profile-scoped base, rule, proxy-group, or subscription mutation must
+preflight the exact final rendered config without writing fetch/render caches,
+fetch health, resolved snapshots, or ordinal state, then commit against the same
+planning/config version. A remote source may use only a validated retained cache
+when its `fetch_failure_policy` permits it; a failed collection member may be
+skipped only under that same tolerant policy and only when the final rendered
+config still validates. Direct sources, local sources, `fail-closed`, and
+`noCache` remain fail-closed. New mutation paths that can change rendered output
+must preserve this invariant and return structured, credential-free validation
+issues.
 
 In the final active top-level rule sequence, `MATCH` is terminal and must be the
 global last rule. Same-anchor rendering and rank normalization keep ordinary

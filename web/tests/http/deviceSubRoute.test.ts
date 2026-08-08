@@ -105,6 +105,14 @@ describe('/api/sub/{token}/{profile}/{device}', () => {
     });
   });
 
+  it('public device distribution keeps fetch-health recording enabled (no preview flag)', async () => {
+    await GET(new Request('https://pm.test/api/sub/tk/home/macbook'), ctx('tk', 'home', 'macbook'));
+    const opts = renderDeviceConfig.mock.calls[0]?.[2] as { recordFetchHealth?: boolean };
+    // Real distribution is a genuine attempt: health must be recorded, so the
+    // option is absent (defaults true) rather than preview-suppressed.
+    expect(opts.recordFetchHealth).toBeUndefined();
+  });
+
   it('emits a base64 share-link subscription for ?format=base64', async () => {
     const res = await GET(
       new Request('https://pm.test/api/sub/tk/home/macbook?format=base64'),

@@ -1,19 +1,22 @@
 import { z } from '@/lib/openapi/zod';
 import { BaseConfigSchema, BaseValidationResultSchema } from './base';
 import { RuleSetMetaSchema, RuleSetSchema } from './ruleSet';
-import { SubscriptionSchema } from './subscription';
+import { SubscriptionAdminViewSchema } from './subscription';
 
 export const BaseResponseSchema = z.object({ data: BaseConfigSchema });
 export const BaseValidationResponseSchema = z.object({ data: BaseValidationResultSchema });
 export const StringArrayResponseSchema = z.object({ data: z.array(z.string()) });
 
-export const SubscriptionResponseSchema = z.object({ data: SubscriptionSchema });
+// P-FFP v1: every subscription API response uses the ADMIN VIEW — remote rows
+// carry the effective fetch_failure_policy + fingerprint-joined fetch_health,
+// local rows omit both.
+export const SubscriptionResponseSchema = z.object({ data: SubscriptionAdminViewSchema });
 export const SubscriptionListResponseSchema = z.object({
-  data: z.array(SubscriptionSchema),
+  data: z.array(SubscriptionAdminViewSchema),
   meta: z.object({ total: z.number().int().nonnegative() }),
 });
 export const SubscriptionRefreshResponseSchema = z.object({
-  data: SubscriptionSchema,
+  data: SubscriptionAdminViewSchema,
   meta: z.object({ proxyCount: z.number().int().nonnegative() }),
 });
 

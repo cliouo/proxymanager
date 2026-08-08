@@ -198,6 +198,17 @@ describe('renderProfileConfig — miss then hit', () => {
     expect(setCalls[0].opts).toEqual({ ex: 600 + 60 });
   });
 
+  it('forwards recordFetchHealth: default true, false when the caller opts out', async () => {
+    await mod.renderProfileConfig('default');
+    const serving = resolveConfigMock.mock.calls[0][5] as { recordFetchHealth?: boolean };
+    expect(serving.recordFetchHealth).toBe(true);
+
+    // noCache forces the pipeline again so the forwarding is observable.
+    await mod.renderProfileConfig('default', { recordFetchHealth: false, noCache: true });
+    const preview = resolveConfigMock.mock.calls[1][5] as { recordFetchHealth?: boolean };
+    expect(preview.recordFetchHealth).toBe(false);
+  });
+
   it('serves the second read from cache without touching the pipeline', async () => {
     await mod.renderProfileConfig('default', { providerUrlBase: URL_BASE });
     const out = await mod.renderProfileConfig('default', { providerUrlBase: URL_BASE });

@@ -18,6 +18,8 @@ export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
   // nothing changed since the last render, this is a single Redis MGET.
   const { resolved, cache } = await renderProfileConfig(profile, {
     providerUrlBase: token ? `${origin}/api/rule-providers/${token}` : undefined,
+    // P-FFP v1: admin previews are not real attempts — no fetch health.
+    recordFetchHealth: false,
   });
 
   return Response.json(

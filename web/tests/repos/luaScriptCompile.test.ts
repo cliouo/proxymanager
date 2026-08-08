@@ -1,11 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { compileLua51, luaRuntimeError, runLua51 } from '../helpers/lua51';
 import { CAS_ENTITY_WITH_HISTORY } from '@/lib/repos/namingCasRepo';
-import {
-  CAS_SUBSCRIPTION_CHANGE,
-  CAS_SUBSCRIPTION_DELETE,
-  CAS_SUBSCRIPTION_RUNTIME_PATCH,
-} from '@/lib/repos/subscriptionsRepo';
+import { CAS_SUBSCRIPTION_CHANGE, CAS_SUBSCRIPTION_DELETE } from '@/lib/repos/subscriptionsRepo';
+import { CAS_SUBSCRIPTION_FETCH_HEALTH } from '@/lib/repos/subscriptionFetchHealthRepo';
 import { CAS_COLLECTION_CHANGE, CAS_COLLECTION_DELETE } from '@/lib/repos/collectionsRepo';
 import {
   ASSIGN_ORDINALS_LUA,
@@ -268,7 +265,7 @@ describe('production Lua 5.1 compile gate', () => {
       CAS_ENTITY_WITH_HISTORY,
       CAS_SUBSCRIPTION_CHANGE,
       CAS_SUBSCRIPTION_DELETE,
-      CAS_SUBSCRIPTION_RUNTIME_PATCH,
+      CAS_SUBSCRIPTION_FETCH_HEALTH,
       CAS_COLLECTION_CHANGE,
       CAS_COLLECTION_DELETE,
       CAS_PIPELINE_ENTITY_WITH_ORDINALS,
@@ -285,43 +282,49 @@ describe('production Lua 5.1 compile gate', () => {
   });
 });
 
-describe('subscription runtime status CAS', () => {
-  function runRuntime(expectedVersion = '7'): unknown[] {
+describe('subscription fetch-health CAS (v2 I13)', () => {
+  const HEALTH_KEY = 'subscription-fetch-health:entity-1';
+  const payload = (attempted: number, observed: number): string =>
+    JSON.stringify({
+      definition_fingerprint: 'f',
+      state: 'fresh',
+      attempted_at: attempted,
+      observed_at: observed,
+      fresh_at: observed,
+      proxy_count: 1,
+    });
+
+  // The script returns the Lua scalar 1 (accept) / 0 (reject). The
+  // strengthened validation branch runs cjson.decode inside `if existing` —
+  // the repo Lua VM models the no-cjson subset, so the RUNNABLE harness
+  // cases here are exactly the first-write (no existing value) path plus
+  // version isolation; ordering and malformed-replacement semantics are
+  // pinned in luaScriptSemantics and exercised against the JS mirror in
+  // subscriptionFetchHealthRepo.test.ts.
+  function runHealth(attempted: number, observed: number): number {
     return runLua51(
-      CAS_SUBSCRIPTION_RUNTIME_PATCH,
+      CAS_SUBSCRIPTION_FETCH_HEALTH,
       {
-        KEYS: ['version', 'entities'],
-        ARGV: [expectedVersion, 'entity-1', '{"id":"entity-1","last_synced_at":1234}'],
+        KEYS: [HEALTH_KEY],
+        ARGV: [payload(attempted, observed), String(attempted), String(observed), '604800'],
       },
       redis,
-    ) as unknown[];
+    ) as number;
   }
 
-  it('writes the complete runtime row and version in one transition', () => {
-    expect(runRuntime()).toEqual([1, '8']);
-    expect(values.get('version')).toBe('8');
-    expect(hash('entities').get('entity-1')).toBe('{"id":"entity-1","last_synced_at":1234}');
+  it('compiles and accepts the first write with the EX 604800 argument', () => {
+    expect(() => compileLua51(CAS_SUBSCRIPTION_FETCH_HEALTH)).not.toThrow();
+    expect(runHealth(100, 100)).toBe(1);
+    expect(values.get(HEALTH_KEY)).toBe(payload(100, 100));
   });
 
-  it('a concurrent naming/config version wins with byte-exact zero writes', () => {
-    values.set('version', '8');
-    hash('entities').set('entity-1', '{"id":"entity-1","operators":["new-naming"]}');
-    const before = snapshot();
-    expect(runRuntime()).toEqual([0, '8']);
-    expect(snapshot()).toBe(before);
-  });
-
-  it('wrongtype and version overflow fail before any entity write', () => {
-    types.set('entities', 'string');
-    let before = snapshot();
-    expect(runRuntime()).toEqual([2, 'entity-wrongtype']);
-    expect(snapshot()).toBe(before);
-
-    types.delete('entities');
-    values.set('version', String(Number.MAX_SAFE_INTEGER));
-    before = snapshot();
-    expect(runRuntime(String(Number.MAX_SAFE_INTEGER))).toEqual([2, 'version-overflow']);
-    expect(snapshot()).toBe(before);
+  it('leaves the preseeded config version untouched and never touches the entity hash', () => {
+    // The suite seeds version=7 before each test; the health CAS must not
+    // read, write or bump it — it stays exactly 7.
+    expect(values.get('version')).toBe('7');
+    runHealth(1, 1);
+    expect(values.get('version')).toBe('7');
+    expect(hashes.has('entities')).toBe(false);
   });
 });
 

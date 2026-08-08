@@ -190,6 +190,18 @@ describe('renderDeviceConfig', () => {
     expect(opts.noCache).toBe(true);
   });
 
+  it('forwards recordFetchHealth (default true for public distribution; false for previews)', async () => {
+    await renderDeviceConfig('home', 'macbook');
+    const serving = mocks.resolveConfig.mock.calls[0]?.[5] as { recordFetchHealth?: boolean };
+    expect(serving.recordFetchHealth).toBe(true);
+
+    mocks.resolveConfig.mockClear();
+    // noCache forces the pipeline again so the forwarding is observable.
+    await renderDeviceConfig('home', 'macbook', { recordFetchHealth: false, noCache: true });
+    const preview = mocks.resolveConfig.mock.calls[0]?.[5] as { recordFetchHealth?: boolean };
+    expect(preview.recordFetchHealth).toBe(false);
+  });
+
   it('404s an unknown device', async () => {
     mocks.getDeviceByName.mockResolvedValue(null);
     await expect(renderDeviceConfig('home', 'ghost')).rejects.toMatchObject({

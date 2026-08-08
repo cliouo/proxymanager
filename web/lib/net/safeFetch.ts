@@ -144,13 +144,38 @@ export function createPinnedLookup(
   };
 }
 
-/** Read a response body, stopping at `maxBytes` (so an unbounded stream can't OOM us). */
+/**
+ * Read a response body, stopping at `maxBytes` (so an unbounded stream can't
+ * OOM us).
+ *
+ * v2 I3: the optional `onTransportRejection` callback is the ONLY
+ * body-transport recognition seam — it is invoked exclusively when the
+ * PROMISE returned by `response.arrayBuffer()` or `reader.read()` rejects.
+ * `response.body` access, `arrayBuffer`/`getReader`/`read` invocation,
+ * result destructuring, `byteLength`/`subarray` access, cancellation, chunk
+ * accumulation and final buffer assembly all happen OUTSIDE the rejection
+ * catch: a synchronous throw or a post-resolution helper fault preserves its
+ * exact identity as a programming fault. Callers that omit the callback keep
+ * the original rejection behavior unchanged.
+ */
 export async function readCapped(
   res: Response,
   maxBytes: number,
+  onTransportRejection?: (error: unknown) => never,
 ): Promise<{ buf: Uint8Array; truncated: boolean }> {
   if (!res.body) {
-    const all = new Uint8Array(await res.arrayBuffer());
+    // The arrayBuffer INVOCATION happens outside the catch: a synchronous
+    // invocation fault preserves its exact identity; only rejection of the
+    // returned promise is transport (I3).
+    const pending = res.arrayBuffer();
+    let buffer: ArrayBuffer;
+    try {
+      buffer = await pending;
+    } catch (error) {
+      if (onTransportRejection) onTransportRejection(error);
+      throw error;
+    }
+    const all = new Uint8Array(buffer);
     return all.byteLength > maxBytes
       ? { buf: all.subarray(0, maxBytes), truncated: true }
       : { buf: all, truncated: false };
@@ -160,7 +185,18 @@ export async function readCapped(
   let written = 0;
   let truncated = false;
   for (;;) {
-    const { done, value } = await reader.read();
+    // reader.read() INVOCATION happens outside the catch: a synchronous
+    // invocation fault preserves its exact identity; only rejection of the
+    // returned promise is transport (I3).
+    const pending = reader.read();
+    let result: ReadableStreamReadResult<Uint8Array>;
+    try {
+      result = await pending;
+    } catch (error) {
+      if (onTransportRejection) onTransportRejection(error);
+      throw error;
+    }
+    const { done, value } = result;
     if (done) break;
     if (!value || value.byteLength === 0) continue;
     const room = maxBytes - written;

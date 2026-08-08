@@ -125,21 +125,91 @@ export class SubscriptionResolutionValidationError extends ProblemDetailsError {
   }
 }
 
+/* ─── fetch attempt classification (P-FFP v1) ───────────────────────── */
+
 /**
- * The current remote subscription bytes could not be obtained. This is not
- * evidence that the candidate config is invalid, so preflight maps it to its
- * fixed, credential-free 503 response.
+ * The fixed closed enum of eligible remote-attempt failure categories. Only
+ * `RemoteFetchAttemptError` instances whose category is IN this enum are
+ * stale/skip-eligible; messages, HTTP status, generic ProblemDetails, Zod
+ * issues and broad content-stage tests never confer eligibility.
  */
-export class SubscriptionUpstreamUnavailableError extends ProblemDetailsError {
-  constructor(detail: string) {
+export const SUBSCRIPTION_FETCH_FAILURE_CATEGORIES = [
+  'network',
+  'timeout',
+  'http',
+  'response-encoding',
+  'response-content-format',
+  'proxy-node',
+] as const;
+export type SubscriptionFetchFailureCategory =
+  (typeof SUBSCRIPTION_FETCH_FAILURE_CATEGORIES)[number];
+
+/** Fixed, credential-free sentence per category — the ONLY public text. */
+const FETCH_FAILURE_DESCRIPTIONS: Record<SubscriptionFetchFailureCategory, string> = {
+  network: 'Upstream fetch failed',
+  timeout: 'Upstream fetch timed out',
+  http: 'Upstream returned an HTTP error',
+  'response-encoding': 'Upstream response is not valid UTF-8',
+  'response-content-format': 'Upstream response content is not a valid subscription',
+  'proxy-node': 'Upstream response contains invalid proxy nodes',
+};
+
+export function describeSubscriptionFetchFailureCategory(
+  category: SubscriptionFetchFailureCategory,
+): string {
+  return FETCH_FAILURE_DESCRIPTIONS[category];
+}
+
+/** network / timeout / http are transport outcomes → safe 503. */
+const TRANSPORT_CATEGORIES = new Set<SubscriptionFetchFailureCategory>([
+  'network',
+  'timeout',
+  'http',
+]);
+
+/**
+ * A typed failure of the remote attempt itself (fetch/body transport, HTTP
+ * protocol, response encoding/format, or proxy-node validation of newly
+ * fetched bytes). Eligibility is `isEligibleFetchFailure` — instanceof plus
+ * the closed enum above — and nothing else.
+ *
+ * The public problem is a fixed category sentence only (no URL, header,
+ * credential, raw line, or caught error text). Transport categories carry
+ * 503; response-content categories carry 422. `sourceName` is the SAFE slug
+ * used by preflight for its structured path; it never enters the problem
+ * payload.
+ */
+export class RemoteFetchAttemptError extends ProblemDetailsError {
+  public readonly sourceName?: string;
+
+  constructor(
+    public readonly category: SubscriptionFetchFailureCategory,
+    options: { sourceName?: string } = {},
+  ) {
+    const transport = TRANSPORT_CATEGORIES.has(category);
     super({
-      type: `${PROBLEM_BASE_URL}/bad-request`,
-      title: 'Bad Request',
-      status: 400,
-      detail,
+      type: transport
+        ? `${PROBLEM_BASE_URL}/service-unavailable`
+        : `${PROBLEM_BASE_URL}/invalid-upstream-response`,
+      title: transport ? 'Service Unavailable' : 'Invalid upstream response',
+      status: transport ? 503 : 422,
+      detail: describeSubscriptionFetchFailureCategory(category),
     });
-    this.name = 'SubscriptionUpstreamUnavailableError';
+    this.name = 'RemoteFetchAttemptError';
+    this.sourceName = options.sourceName;
   }
+}
+
+/**
+ * THE only eligibility predicate for stale fallback / collection skip:
+ * instanceof `RemoteFetchAttemptError` PLUS membership in the closed enum.
+ * A subclass, a forged message, or a generic ProblemDetails never qualifies.
+ */
+export function isEligibleFetchFailure(error: unknown): error is RemoteFetchAttemptError {
+  return (
+    error instanceof RemoteFetchAttemptError &&
+    SUBSCRIPTION_FETCH_FAILURE_CATEGORIES.includes(error.category)
+  );
 }
 
 export function asSubscriptionValidationError(

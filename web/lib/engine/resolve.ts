@@ -63,6 +63,12 @@ import {
   type FetchSubscriptionProxiesResult,
   type SubscriptionResolveOptions,
 } from '@/lib/services/subscriptionFetcher';
+import {
+  describeSubscriptionFetchFailureCategory,
+  isEligibleFetchFailure,
+  type RemoteFetchAttemptError,
+} from '@/lib/services/subscriptionResolutionErrors';
+import { effectiveFetchFailurePolicy } from '@/schemas/subscription';
 import { applyOperators } from '@/lib/proxies/operators';
 import { templateUsesIndexField, type OrdinalResolver } from '@/lib/proxies/naming';
 import { fingerprintOf, sourceOf, withSource } from '@/lib/proxies/provenance';
@@ -235,7 +241,12 @@ const MAX_FINAL_LOGIC_DEPTH = 16;
 export interface ResolveOptions extends RenderOptions {
   /** Force-refresh upstream subscriptions (bypass the fetch cache). */
   noCache?: boolean;
-  /** When true (default), sub fetch failures are tolerated. */
+  /**
+   * RETIRED as a decision input (P-FFP v1): kept as a documented no-op so
+   * existing callers need no cleanup. Failures are now governed solely by
+   * the per-source fetch_failure_policy and the collection-skip predicate —
+   * this flag can never broaden tolerance.
+   */
   ignoreFailedSubs?: boolean;
   /** When false, the resolved-snapshot is not persisted. Default true. */
   persistSnapshot?: boolean;
@@ -276,6 +287,13 @@ export interface ResolveOptions extends RenderOptions {
    * served (AGENTS.md side-effect-free preflight invariant).
    */
   persistOrdinals?: boolean;
+  /**
+   * P-FFP v1: record actual-attempt runtime fetch health. Defaults to true
+   * for serving renders; admin previews, AI config reads, device-write
+   * previews and mutation preflight pass false — health is written only by
+   * real non-preview attempts.
+   */
+  recordFetchHealth?: boolean;
   /** Generation captured before the render cache loaded config records. */
   ordinalConfigVersion?: number;
   /** One read-only ordinal plan shared by every source and collection stage. */
@@ -349,6 +367,44 @@ export async function* settleWithConcurrencyInOrder<T, R>(
     launch();
     yield result;
   }
+}
+
+/**
+ * P-FFP v1 shared collection-skip predicate — the ONE authority used by both
+ * the render pipeline (resolveConfig) and collection export
+ * (nodeExportService.mergeCollectionMemberProxies).
+ *
+ * True requires ALL of: an enabled REMOTE member, a tolerant effective policy
+ * (use-stale-cache), a TYPED eligible fetch failure, an actual bound/exported
+ * collection context, and ordinary cache mode. Direct binding/export,
+ * standalone resolution, unbound all-source rendering, noCache=1, strict
+ * policy, local/definition/operator/final errors and unexpected faults are
+ * never skippable.
+ */
+export function maySkipCollectionMember(
+  subscription: Subscription,
+  error: unknown,
+  options: { isCollection: boolean; noCache?: boolean },
+): boolean {
+  if (!options.isCollection) return false;
+  if (options.noCache) return false;
+  if (subscription.kind !== 'remote' || !subscription.enabled) return false;
+  if (effectiveFetchFailurePolicy(subscription) !== 'use-stale-cache') return false;
+  return isEligibleFetchFailure(error);
+}
+
+/**
+ * Safe warning text for a skipped collection member. Only the regex-validated
+ * slug (`^[a-z0-9-]+$`) plus the fixed category sentence may surface;
+ * display_name is arbitrary user text and never enters diagnostics.
+ */
+export function describeSkippedCollectionMember(
+  subscription: Subscription,
+  error: RemoteFetchAttemptError,
+): string {
+  return `聚合订阅成员「${subscription.name}」本次拉取失败(${describeSubscriptionFetchFailureCategory(
+    error.category,
+  )})，已跳过该成员。`;
 }
 
 export async function resolveConfig(
@@ -440,7 +496,10 @@ async function resolveConfigInternal(
   }
 
   const baseProxyNames = new Set(readProxyNames(doc));
-  const ignoreFailures = opts.ignoreFailedSubs !== false;
+  // P-FFP v1: generic `ignoreFailedSubs` is RETIRED as a decision input. The
+  // option shape stays as a documented no-op so existing callers/scripts need
+  // no broad cleanup; it can never broaden skip eligibility.
+  void opts.ignoreFailedSubs;
 
   let candidates: InjectionCandidate[] = [];
   const subStatuses: SnapshotSubStatus[] = [];
@@ -449,6 +508,9 @@ async function resolveConfigInternal(
   // no profile record at all). An explicit `{type:'none'}` injects nothing.
   let subFilter: Set<string> | null = null;
   const boundSource = opts.boundSource;
+  // P-FFP v1: collection-skip authority — only an ACTUAL bound/exported
+  // collection render may skip a tolerant member.
+  const isCollectionRender = boundSource?.type === 'collection';
   if (boundSource && boundSource.type === 'none') {
     subFilter = new Set();
   } else if (boundSource && boundSource.type === 'subscription') {
@@ -486,12 +548,15 @@ async function resolveConfigInternal(
   // 严格按原订阅顺序处理结果:candidates 累积顺序、subStatuses 顺序、去重的
   // first-writer-wins 都依赖这份顺序契约——必须与旧串行版逐项一致(有测试盯着)。
   let i = 0;
+  let skippedAny = false;
+  let firstSkippedError: RemoteFetchAttemptError | undefined;
   for await (const outcome of settleWithConcurrencyInOrder(
     eligibleSubs,
     SUB_FETCH_CONCURRENCY,
     (sub) =>
       subscriptionResolver(sub, {
         noCache: opts.noCache,
+        recordHealth: opts.recordFetchHealth !== false,
         ordinalConfigVersion,
         ordinalPlanningSession: opts.ordinalPlanningSession,
         ordinalDomainRegistry: opts.ordinalDomainRegistry,
@@ -501,12 +566,29 @@ async function resolveConfigInternal(
     i += 1;
     if (outcome.status === 'rejected') {
       const err = outcome.reason;
-      const msg = err instanceof Error ? err.message : String(err);
-      subStatuses.push({ name: sub.name, injectedCount: 0, error: msg });
-      // 不容忍失败时抛"按原顺序遇到的第一个失败"——并行下其余 fetch 的
-      // 结果直接丢弃,错误语义与串行版保持一致。
-      if (!ignoreFailures) throw err;
-      continue;
+      // P-FFP v1: only a tolerant eligible member of an actual bound/exported
+      // collection may be skipped — one member, order preserved, safe warning
+      // (validated slug + fixed category sentence only).
+      if (
+        maySkipCollectionMember(sub, err, {
+          isCollection: isCollectionRender,
+          noCache: opts.noCache,
+        })
+      ) {
+        const typed = err as RemoteFetchAttemptError;
+        skippedAny = true;
+        firstSkippedError ??= typed;
+        subStatuses.push({
+          name: sub.name,
+          injectedCount: 0,
+          error: describeSubscriptionFetchFailureCategory(typed.category),
+        });
+        warnings.push(describeSkippedCollectionMember(sub, typed));
+        continue;
+      }
+      // Any strict/ineligible/unexpected member failure fails in deterministic
+      // source order — 并行下其余 fetch 的结果直接丢弃,错误语义与串行版一致。
+      throw err;
     }
     const result = outcome.value;
     if (candidates.length + result.proxies.length > MAX_PROXY_NODES) {
@@ -527,6 +609,17 @@ async function resolveConfigInternal(
       stale: result.stale,
       staleReason: result.staleReason,
     });
+  }
+
+  // P-FFP v1: a collection whose EVERY enabled member was skipped must fail
+  // with the first typed failure in stored order — a successful-looking empty
+  // partial render can never commit (invariant 10).
+  if (isCollectionRender && skippedAny && firstSkippedError !== undefined) {
+    const allSkipped =
+      subStatuses.length === eligibleSubs.length &&
+      eligibleSubs.length > 0 &&
+      subStatuses.every((status) => status.error !== undefined);
+    if (allSkipped) throw firstSkippedError;
   }
 
   // 聚合订阅级 operators:当整份配置绑定到某个 collection 时,合并完成员节点

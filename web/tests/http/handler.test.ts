@@ -3,6 +3,7 @@ import { ConfigMissingError, ConfigPreflightUnavailableError } from '@/lib/confi
 import { parseBaseDocument } from '@/lib/engine/parser';
 import { resolveConfig } from '@/lib/engine/resolve';
 import { withProblemDetails } from '@/lib/http/handler';
+import { RemoteFetchAttemptError } from '@/lib/services/subscriptionResolutionErrors';
 
 const SECRET = 'FAKE_SECRET_DO_NOT_RETURN';
 
@@ -96,11 +97,7 @@ describe('withProblemDetails configuration errors', () => {
   });
 
   it('returns a structured 422 when a final rule remains reachable after MATCH', async () => {
-    const base = [
-      'rules:',
-      '  - MATCH,DIRECT',
-      '  - DOMAIN,example.com,DIRECT',
-    ].join('\n');
+    const base = ['rules:', '  - MATCH,DIRECT', '  - DOMAIN,example.com,DIRECT'].join('\n');
     const { response, body } = await problemFrom(() =>
       resolveConfig(base, [], [], [], [], { persistSnapshot: false }),
     );
@@ -151,6 +148,37 @@ describe('withProblemDetails configuration errors', () => {
       title: 'Service Unavailable',
       status: 503,
       detail: 'Configuration validation is temporarily unavailable.',
+    });
+  });
+
+  it('maps typed transport fetch failures to a fixed 503 without echoing anything', async () => {
+    const hostileSource = `https://user:${SECRET}@upstream.invalid/sub`;
+    const { response, body } = await problemFrom(() => {
+      throw new RemoteFetchAttemptError('network', { sourceName: hostileSource });
+    });
+
+    expect(response.status).toBe(503);
+    expect(body).toEqual({
+      type: 'https://proxymanager.dev/errors/service-unavailable',
+      title: 'Service Unavailable',
+      status: 503,
+      detail: 'Upstream fetch failed',
+    });
+    expect(JSON.stringify(body)).not.toContain(SECRET);
+    expect(JSON.stringify(body)).not.toContain('upstream.invalid');
+  });
+
+  it('maps typed response-content fetch failures to a fixed 422', async () => {
+    const { response, body } = await problemFrom(() => {
+      throw new RemoteFetchAttemptError('response-content-format');
+    });
+
+    expect(response.status).toBe(422);
+    expect(body).toEqual({
+      type: 'https://proxymanager.dev/errors/invalid-upstream-response',
+      title: 'Invalid upstream response',
+      status: 422,
+      detail: 'Upstream response content is not a valid subscription',
     });
   });
 

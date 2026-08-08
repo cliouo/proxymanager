@@ -274,5 +274,11 @@ describe('pass-10 blocker 2: generic create/PUT naming-row invariant', () => {
     expect(ok.status).toBe(200);
     const stored = bucket(REDIS_KEYS.subscriptions).get(SUB) as { operators: unknown[] };
     expect(stored.operators[1]).toEqual(rt);
+    // P-FFP v1: the response is the admin view — effective policy present,
+    // health null when nothing was attempted (no error/health leak).
+    const body = (await ok.json()) as { data: Record<string, unknown> };
+    expect(body.data.fetch_failure_policy).toBe('use-stale-cache');
+    expect(body.data.fetch_health).toBeNull();
+    expect(JSON.stringify(body)).not.toContain('last_error');
   });
 });

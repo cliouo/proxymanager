@@ -127,6 +127,7 @@ import { resolveConfig } from '@/lib/engine/resolve';
 import { MAX_PROXY_NODES } from '@/lib/proxies/mihomoProxyValidator';
 import { resolveSubscriptionProxies } from '@/lib/services/subscriptionFetcher';
 import { setResolvedSnapshot } from '@/lib/repos/resolvedRepo';
+import { RemoteFetchAttemptError } from '@/lib/services/subscriptionResolutionErrors';
 
 const resolveSubMock = resolveSubscriptionProxies as unknown as ReturnType<typeof vi.fn>;
 const snapshotMock = setResolvedSnapshot as unknown as ReturnType<typeof vi.fn>;
@@ -758,38 +759,38 @@ describe('resolveConfig — subscription injection', () => {
     expect(result.warnings[0]).toContain('old-pool');
   });
 
-  it('tolerates a failed subscription when ignoreFailedSubs is on (default)', async () => {
+  it('fails an unbound render on ANY rejection — ignoreFailedSubs is retired', async () => {
+    // The generic option no longer broadens tolerance: an ineligible failure
+    // in a non-collection context must fail, even with ignoreFailedSubs on.
     resolveSubMock
       .mockResolvedValueOnce({ proxies: providerProxies([{ name: 'HK-01' }]), proxyCount: 1 })
       .mockRejectedValueOnce(new Error('upstream 502'));
 
-    const result = await resolveConfig(
-      BASE_WITH_LITERAL,
-      [],
-      [makeSub({ name: 'a' }), makeSub({ name: 'b' })],
-      [],
-      [],
-      {},
-    );
-
-    expect(result.inlinedProxyCount).toBe(1);
-    const failed = result.subscriptions.find((s) => s.name === 'b');
-    expect(failed?.error).toContain('upstream 502');
+    await expect(
+      resolveConfig(
+        BASE_WITH_LITERAL,
+        [],
+        [makeSub({ name: 'a' }), makeSub({ name: 'b' })],
+        [],
+        [],
+        { ignoreFailedSubs: true },
+      ),
+    ).rejects.toThrow('upstream 502');
   });
 
-  it('surfaces stale flag from the fetcher', async () => {
+  it('surfaces stale flag from the fetcher with fixed category text', async () => {
     resolveSubMock.mockResolvedValueOnce({
       proxies: providerProxies([{ name: 'HK-01' }]),
       proxyCount: 1,
       stale: true,
-      staleReason: 'connect ECONNREFUSED',
+      staleReason: 'Upstream fetch failed',
     });
 
     const result = await resolveConfig(BASE_WITH_LITERAL, [], [makeSub({ name: 'a' })], [], [], {});
 
     const status = result.subscriptions[0];
     expect(status.stale).toBe(true);
-    expect(status.staleReason).toContain('ECONNREFUSED');
+    expect(status.staleReason).toBe('Upstream fetch failed');
   });
 
   it('still runs renderBase for rules + rule-providers', async () => {
@@ -2438,5 +2439,118 @@ describe('resolveConfig — render must always be mihomo-loadable', () => {
         boundSource: { type: 'collection', id: col.id },
       }),
     ).rejects.toThrow(/operator pipeline failed/i);
+  });
+});
+
+describe('resolveConfig — cross-source fetch failure policy in collections', () => {
+  function collectionOf(ids: string[]): Collection {
+    return {
+      id: crypto.randomUUID(),
+      name: '聚合池',
+      slug: 'pool',
+      enabled: true,
+      type: 'select',
+      subscription_ids: ids,
+      subscription_tags: [],
+      operators: [],
+      updated_at: 0,
+    } as unknown as Collection;
+  }
+
+  it('skips one tolerant member with an eligible typed failure, keeps order, and warns safely', async () => {
+    resolveSubMock
+      .mockResolvedValueOnce({ proxies: providerProxies([{ name: 'HK-A' }]), proxyCount: 1 })
+      .mockRejectedValueOnce(new RemoteFetchAttemptError('network', { sourceName: 'mitce' }))
+      .mockResolvedValueOnce({ proxies: providerProxies([{ name: 'US-C' }]), proxyCount: 1 });
+    const a = makeSub({ name: 'a' });
+    const b = makeSub({ name: 'mitce' });
+    const c = makeSub({ name: 'c' });
+    const col = collectionOf([a.id, b.id, c.id]);
+
+    const result = await resolveConfig(BASE_WITH_LITERAL, [], [a, b, c], [], [], {
+      collections: [col],
+      boundSource: { type: 'collection', id: col.id },
+    });
+
+    expect(result.nodeNames).toEqual(['直连', 'HK-A', 'US-C']);
+    expect(result.subscriptions.map((s) => [s.name, s.injectedCount, s.error])).toEqual([
+      ['a', 1, undefined],
+      ['mitce', 0, 'Upstream fetch failed'],
+      ['c', 1, undefined],
+    ]);
+    // Safe warning: source label + fixed category text only.
+    expect(result.warnings.some((w) => w.includes('mitce') && w.includes('拉取失败'))).toBe(true);
+    expect(JSON.stringify(result.warnings)).not.toContain('connect ECONNREFUSED');
+  });
+
+  it('a strict member with an eligible failure fails the collection in source order', async () => {
+    resolveSubMock.mockRejectedValueOnce(new RemoteFetchAttemptError('network'));
+    const a = makeSub({ name: 'a', fetch_failure_policy: 'fail-closed' });
+    const col = collectionOf([a.id]);
+
+    await expect(
+      resolveConfig(BASE_WITH_LITERAL, [], [a], [], [], {
+        collections: [col],
+        boundSource: { type: 'collection', id: col.id },
+      }),
+    ).rejects.toBeInstanceOf(RemoteFetchAttemptError);
+  });
+
+  it('an ineligible member failure fails the collection in source order (never skipped)', async () => {
+    resolveSubMock
+      .mockResolvedValueOnce({ proxies: providerProxies([{ name: 'HK-A' }]), proxyCount: 1 })
+      .mockRejectedValueOnce(new Error('definition blew up'));
+    const a = makeSub({ name: 'a' });
+    const b = makeSub({ name: 'b' });
+    const col = collectionOf([a.id, b.id]);
+
+    await expect(
+      resolveConfig(BASE_WITH_LITERAL, [], [a, b], [], [], {
+        collections: [col],
+        boundSource: { type: 'collection', id: col.id },
+      }),
+    ).rejects.toThrow('definition blew up');
+  });
+
+  it('noCache=1 never skips, even for a tolerant collection member', async () => {
+    resolveSubMock.mockRejectedValueOnce(new RemoteFetchAttemptError('network'));
+    const a = makeSub({ name: 'a' });
+    const col = collectionOf([a.id]);
+
+    await expect(
+      resolveConfig(BASE_WITH_LITERAL, [], [a], [], [], {
+        collections: [col],
+        boundSource: { type: 'collection', id: col.id },
+        noCache: true,
+      }),
+    ).rejects.toBeInstanceOf(RemoteFetchAttemptError);
+  });
+
+  it('fails with the first typed failure in stored order when every member is skipped', async () => {
+    resolveSubMock
+      .mockRejectedValueOnce(new RemoteFetchAttemptError('timeout', { sourceName: 'first' }))
+      .mockRejectedValueOnce(new RemoteFetchAttemptError('network', { sourceName: 'second' }));
+    const a = makeSub({ name: 'first' });
+    const b = makeSub({ name: 'second' });
+    const col = collectionOf([a.id, b.id]);
+
+    await expect(
+      resolveConfig(BASE_WITH_LITERAL, [], [a, b], [], [], {
+        collections: [col],
+        boundSource: { type: 'collection', id: col.id },
+      }),
+    ).rejects.toMatchObject({ category: 'timeout' });
+  });
+
+  it('a direct (non-collection) resolution never skips an eligible failure', async () => {
+    resolveSubMock.mockRejectedValueOnce(new RemoteFetchAttemptError('network'));
+    const a = makeSub({ name: 'a' });
+
+    // Bound to the single source directly — no collection context.
+    await expect(
+      resolveConfig(BASE_WITH_LITERAL, [], [a], [], [], {
+        boundSource: { type: 'subscription', id: a.id },
+      }),
+    ).rejects.toBeInstanceOf(RemoteFetchAttemptError);
   });
 });

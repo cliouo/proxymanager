@@ -50,13 +50,17 @@ import {
   MihomoProxyValidationError,
   validateMihomoProxyList,
 } from '@/lib/proxies/mihomoProxyValidator';
-import { applyConfigEntityChanges, preflightProfileConfig } from '@/lib/services/configPreflight';
+import {
+  applyConfigEntityChanges,
+  preflightProfileConfig,
+  resolveSubscriptionForPreflight,
+} from '@/lib/services/configPreflight';
 import type { SubscriptionPreflightSnapshot } from '@/lib/services/configPreflight';
 import {
   asSubscriptionValidationError,
+  RemoteFetchAttemptError,
   SubscriptionContentValidationError,
   SubscriptionResolutionValidationError,
-  SubscriptionUpstreamUnavailableError,
 } from '@/lib/services/subscriptionResolutionErrors';
 
 const PROFILE_ID = '11111111-1111-4111-8111-111111111111';
@@ -154,7 +158,7 @@ describe('preflightProfileConfig', () => {
     );
     expect(mocks.resolveSubscriptionProxies).toHaveBeenCalledWith(REMOTE_SUB, {
       writeCache: false,
-      allowStale: false,
+      recordHealth: false,
     });
   });
 
@@ -215,7 +219,7 @@ describe('preflightProfileConfig', () => {
 
     expect(mocks.resolveSubscriptionProxies).toHaveBeenCalledWith(REMOTE_SUB, {
       writeCache: false,
-      allowStale: false,
+      recordHealth: false,
       ordinalPlanningSession,
     });
   });
@@ -290,10 +294,8 @@ describe('preflightProfileConfig', () => {
     expect(mocks.resolveConfig).not.toHaveBeenCalled();
   });
 
-  it('classifies a remote-source failure as temporarily unavailable without echoing it', async () => {
-    mocks.resolveSubscriptionProxies.mockRejectedValueOnce(
-      new SubscriptionUpstreamUnavailableError('Upstream fetch failed'),
-    );
+  it('classifies a typed transport failure as temporarily unavailable without echoing it', async () => {
+    mocks.resolveSubscriptionProxies.mockRejectedValueOnce(new RemoteFetchAttemptError('network'));
     mocks.resolveConfig.mockImplementationOnce(async (...args: unknown[]) => {
       const options = args[5] as {
         subscriptionResolver: (sub: Subscription) => Promise<unknown>;
@@ -305,6 +307,100 @@ describe('preflightProfileConfig', () => {
     const error = await preflightProfileConfig(PROFILE_ID, () => ({})).catch((caught) => caught);
     expect(error).toBeInstanceOf(ConfigPreflightUnavailableError);
     expect((error as Error).message).toBe('Configuration validation is temporarily unavailable.');
+  });
+
+  it('preserves typed attempt errors through the wrapper so resolveConfig can authorize a collection skip', async () => {
+    mocks.resolveSubscriptionProxies.mockRejectedValueOnce(
+      new RemoteFetchAttemptError('response-content-format'),
+    );
+
+    await expect(resolveSubscriptionForPreflight(REMOTE_SUB)).rejects.toBeInstanceOf(
+      RemoteFetchAttemptError,
+    );
+    // Preflight itself never maps the typed error to a 422 — the skip decision
+    // belongs to resolveConfig, which saw the exact typed error above.
+    expect(mocks.resolveSubscriptionProxies).toHaveBeenCalledWith(REMOTE_SUB, {
+      writeCache: false,
+      recordHealth: false,
+    });
+  });
+
+  it('maps a remaining typed response-content failure to a fixed 422 at subscriptions[safe-name].content', async () => {
+    mocks.resolveSubscriptionProxies.mockRejectedValueOnce(
+      new RemoteFetchAttemptError('response-content-format', { sourceName: 'remote-source' }),
+    );
+    mocks.resolveConfig.mockImplementationOnce(async (...args: unknown[]) => {
+      const options = args[5] as {
+        subscriptionResolver: (sub: Subscription) => Promise<unknown>;
+      };
+      await options.subscriptionResolver(REMOTE_SUB);
+      return { content: 'unreachable' };
+    });
+
+    const error = await preflightProfileConfig(PROFILE_ID, () => ({})).catch((caught) => caught);
+    expect(error).toBeInstanceOf(ConfigValidationError);
+    expect((error as ConfigValidationError).issue).toEqual({
+      code: 'subscription_upstream_response_invalid',
+      message: 'Upstream response content is not a valid subscription',
+      section: 'subscriptions',
+      path: 'subscriptions[remote-source].content',
+      resource: 'subscription',
+    });
+  });
+
+  it('maps a remaining typed proxy-node failure to a fixed 422 (structured child path)', async () => {
+    mocks.resolveSubscriptionProxies.mockRejectedValueOnce(
+      new RemoteFetchAttemptError('proxy-node', { sourceName: 'remote-source' }),
+    );
+    mocks.resolveConfig.mockImplementationOnce(async (...args: unknown[]) => {
+      const options = args[5] as {
+        subscriptionResolver: (sub: Subscription) => Promise<unknown>;
+      };
+      await options.subscriptionResolver(REMOTE_SUB);
+      return { content: 'unreachable' };
+    });
+
+    const error = await preflightProfileConfig(PROFILE_ID, () => ({})).catch((caught) => caught);
+    expect(error).toBeInstanceOf(ConfigValidationError);
+    expect((error as ConfigValidationError).issue).toMatchObject({
+      code: 'subscription_upstream_response_invalid',
+      path: 'subscriptions[remote-source].content',
+    });
+  });
+
+  it('includes the policy in the operation-local preflight snapshot fingerprint', async () => {
+    let fetchCount = 0;
+    mocks.resolveSubscriptionProxies.mockImplementation(async () => {
+      fetchCount += 1;
+      return { proxies: [{ name: 'A' }], proxyCount: 1 };
+    });
+    mocks.resolveConfig.mockImplementation(async (...args: unknown[]) => {
+      const options = args[5] as {
+        subscriptionResolver: (sub: Subscription) => Promise<unknown>;
+      };
+      await options.subscriptionResolver(REMOTE_SUB);
+      return { content: 'ok', buildId: 'abcdef12' };
+    });
+    const subscriptionSnapshot: SubscriptionPreflightSnapshot = new Map();
+
+    await preflightProfileConfig(PROFILE_ID, () => ({}), { subscriptionSnapshot });
+    // Same definition except an explicit policy — a different fingerprint, so
+    // the shared snapshot must not conflate the two resolution outcomes.
+    const strict = { ...REMOTE_SUB, fetch_failure_policy: 'fail-closed' as const };
+    mocks.resolveSubscriptionProxies.mockImplementation(async () => {
+      fetchCount += 1;
+      return { proxies: [{ name: 'A' }], proxyCount: 1 };
+    });
+    mocks.resolveConfig.mockImplementation(async (...args: unknown[]) => {
+      const options = args[5] as {
+        subscriptionResolver: (sub: Subscription) => Promise<unknown>;
+      };
+      await options.subscriptionResolver(strict);
+      return { content: 'ok', buildId: 'abcdef12' };
+    });
+    await preflightProfileConfig(PROFILE_ID, () => ({}), { subscriptionSnapshot });
+
+    expect(fetchCount).toBe(2);
   });
 
   it('reports a remote operator failure as a safe deterministic validation error', async () => {

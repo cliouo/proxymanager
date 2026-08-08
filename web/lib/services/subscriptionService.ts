@@ -6,7 +6,6 @@ import {
 import {
   commitSubscriptionChange,
   commitSubscriptionDelete,
-  commitSubscriptionRuntimePatch,
   getSubscription,
   getSubscriptionByName,
   listSubscriptions,
@@ -19,12 +18,20 @@ import {
   commitUnderPipelineGate,
   consumingProfilesOfSubscription,
 } from '@/lib/services/nodePipelineSaveGate';
-import type {
-  Profile,
-  Subscription,
-  SubscriptionCreate,
-  SubscriptionTraffic,
-  SubscriptionUpdate,
+import {
+  deleteSubscriptionFetchHealth,
+  getSubscriptionFetchHealth,
+  getSubscriptionFetchHealthMany,
+  healthMatchesDefinition,
+} from '@/lib/repos/subscriptionFetchHealthRepo';
+import {
+  effectiveFetchFailurePolicy,
+  type Profile,
+  type Subscription,
+  type SubscriptionAdminView,
+  type SubscriptionCreate,
+  type SubscriptionFetchHealth,
+  type SubscriptionUpdate,
 } from '@/schemas';
 
 /**
@@ -38,9 +45,10 @@ function invalidateSnapshot(): void {
 
 /**
  * Subscription fields that change the rendered output of consuming profiles
- * (nodes, names, provenance aliases, membership). Runtime-only fields set by
- * the refresh paths (last_synced_at / last_traffic / last_error) are written
- * via their own record* helpers and never appear here.
+ * (nodes, names, provenance aliases, membership, fallback policy). P-FFP v1:
+ * the definition row is config-only — the retired runtime fields
+ * (last_synced_at / last_traffic / last_error) are gone, so every non-empty
+ * PATCH is declarative and preflights all consumers.
  */
 const RENDER_AFFECTING_SUBSCRIPTION_FIELDS = new Set([
   'name',
@@ -54,11 +62,65 @@ const RENDER_AFFECTING_SUBSCRIPTION_FIELDS = new Set([
   'content',
   'tags',
   'operators',
+  'fetch_failure_policy',
 ]);
 
 /** True when a PATCH touches at least one render-affecting field. */
 function touchesRenderedOutput(patch: Record<string, unknown>): boolean {
   return Object.keys(patch).some((key) => RENDER_AFFECTING_SUBSCRIPTION_FIELDS.has(key));
+}
+
+/** 422: an explicit policy is remote-only — a resulting local source rejects it. */
+function assertPolicyAllowedForKind(kind: Subscription['kind'], policy: unknown): void {
+  if (kind === 'local' && policy !== undefined) {
+    throw ProblemDetailsError.unprocessable(
+      '本地订阅不支持 fetch_failure_policy（失败策略仅限远程订阅）。',
+    );
+  }
+}
+
+/**
+ * Admin view projection (P-FFP v1): remote rows expose the EFFECTIVE policy
+ * plus the fingerprint-matched health (or null); local rows omit both — even
+ * when a legacy/corrupt local row somehow carries the fields, the projection
+ * drops them (local responses must never consult or expose the policy).
+ */
+export function projectSubscriptionAdminView(
+  subscription: Subscription,
+  health?: SubscriptionFetchHealth | null,
+): SubscriptionAdminView {
+  if (subscription.kind === 'local') {
+    const view: SubscriptionAdminView = { ...subscription };
+    delete view.fetch_failure_policy;
+    delete view.fetch_health;
+    return view;
+  }
+  return {
+    ...subscription,
+    fetch_failure_policy: effectiveFetchFailurePolicy(subscription),
+    fetch_health: healthMatchesDefinition(subscription, health) ? health : null,
+  };
+}
+
+/** Admin views for the whole library (one MGET for all remote healths). */
+export async function listSubscriptionAdminViews(): Promise<SubscriptionAdminView[]> {
+  const subs = await listSubscriptions();
+  const remoteIds = subs.filter((s) => s.kind === 'remote').map((s) => s.id);
+  // Invariant 1: with NO remote sources the health store is never consulted —
+  // not even with an empty key list.
+  const healths = remoteIds.length === 0 ? [] : await getSubscriptionFetchHealthMany(remoteIds);
+  const healthById = new Map(remoteIds.map((id, index) => [id, healths[index] ?? null]));
+  return subs.map((sub) => projectSubscriptionAdminView(sub, healthById.get(sub.id)));
+}
+
+/** Admin view of one subscription (or null when unknown). */
+export async function getSubscriptionAdminView(id: string): Promise<SubscriptionAdminView | null> {
+  const sub = await getSubscription(id);
+  if (!sub) return null;
+  // P-FFP v1 invariant 1: LOCAL sources never consult health storage — the
+  // health read happens only on the remote branch.
+  if (sub.kind === 'local') return projectSubscriptionAdminView(sub);
+  return projectSubscriptionAdminView(sub, await getSubscriptionFetchHealth(id));
 }
 
 export function nowSeconds(): number {
@@ -70,6 +132,9 @@ export function generateSubscriptionId(): string {
 }
 
 export async function createSubscription(input: SubscriptionCreate): Promise<Subscription> {
+  // P-FFP v1: the policy is remote-only — an explicit value on a local create
+  // is rejected before any read/write.
+  assertPolicyAllowedForKind(input.kind, input.fetch_failure_policy);
   // Version bracket FIRST: every read below (dup check, consumer discovery)
   // must belong to the generation the commit will land on.
   const planningVersion = await getConfigVersion();
@@ -121,6 +186,9 @@ export async function replaceSubscription(
   id: string,
   input: SubscriptionCreate,
 ): Promise<Subscription> {
+  // P-FFP v1: the policy is remote-only — an explicit value on a local
+  // candidate is rejected before any read/write.
+  assertPolicyAllowedForKind(input.kind, input.fetch_failure_policy);
   // Version bracket FIRST — the entity read + candidate must belong to the
   // generation the commit lands on.
   const planningVersion = await getConfigVersion();
@@ -151,8 +219,6 @@ export async function replaceSubscription(
     ...input,
     ...(operators !== undefined ? { operators: operators as Subscription['operators'] } : {}),
     id,
-    last_synced_at: current.last_synced_at,
-    last_traffic: current.last_traffic,
     updated_at: nowSeconds(), // P2-2
   };
   // Full replacement changes every consuming profile's rendered output:
@@ -220,12 +286,31 @@ export async function patchSubscription(
       'generic',
     ).storage;
   }
+  // An empty PATCH is a no-op: no write, no version bump, current row returned.
+  if (Object.keys(patch).length === 0) return current;
+
+  // P-FFP v1 policy merge semantics:
+  //   - explicit policy on a resulting LOCAL source → 422 before preflight/write;
+  //   - remote→local WITHOUT an explicit policy → the inherited policy is
+  //     removed from the candidate (local never stores/consults it);
+  //   - local→remote without a policy → effective default applies (nothing stored).
   const next: Subscription = {
     ...current,
     ...patch,
     ...(operators !== undefined ? { operators: operators as Subscription['operators'] } : {}),
     updated_at: nowSeconds(),
   }; // P2-2 bump version
+  if (next.kind === 'local') {
+    // Order matters: an EXPLICIT policy on a resulting local source must 422
+    // before the inherited-policy removal can swallow it.
+    if (patch.fetch_failure_policy !== undefined) {
+      throw ProblemDetailsError.unprocessable(
+        '本地订阅不支持 fetch_failure_policy（失败策略仅限远程订阅）。',
+      );
+    }
+    delete next.fetch_failure_policy;
+  }
+  assertPolicyAllowedForKind(next.kind, next.fetch_failure_policy);
   // P3-7: the create path pins the kind/url/content combo (remote needs url,
   // local needs content), but PATCH merges field-by-field and could break it —
   // e.g. switch kind→local without content, or clear the url of a remote sub.
@@ -237,11 +322,10 @@ export async function patchSubscription(
         : '本地订阅需要内容(content);本次修改会使其为空。',
     );
   }
-  // ANY definitional change (operators, url/content, display_name/name which
-  // feeds the rename-template source alias, enabled, tags…) changes every
-  // consuming profile's rendered output: preflight all consumers against this
-  // exact candidate, then commit under the config version the preflight saw
-  // (AGENTS.md shared-source invariant).
+  // EVERY non-empty valid PATCH is declarative and changes every consuming
+  // profile's rendered output (the runtime row patch was retired): preflight
+  // all consumers against this exact candidate, then commit under the config
+  // version the preflight saw (AGENTS.md shared-source invariant).
   if (touchesRenderedOutput(patch)) {
     const [collections, profiles, allSubs] = await Promise.all([
       listCollections(),
@@ -274,59 +358,9 @@ export async function patchSubscription(
       commit: (version, ordinalGeneration) =>
         commitSubscriptionChange(next, version, ordinalGeneration),
     });
-  } else {
-    const committed = await commitSubscriptionRuntimePatch(next, planningVersion);
-    if (!committed.ok) {
-      throw ProblemDetailsError.preconditionFailed('该资源已被其他人修改,请刷新后重试。');
-    }
   }
   invalidateSnapshot();
   return next;
-}
-
-export async function recordSubscriptionSync(
-  id: string,
-  syncedAt: number,
-  traffic?: SubscriptionTraffic,
-  expectedVersion?: number,
-): Promise<Subscription> {
-  const planningVersion = expectedVersion ?? (await getConfigVersion());
-  const current = await getSubscription(id);
-  if (!current) {
-    throw ProblemDetailsError.notFound(`Subscription ${id} not found.`);
-  }
-  const next: Subscription = {
-    ...current,
-    last_synced_at: syncedAt,
-    last_traffic: traffic ?? current.last_traffic,
-  };
-  // P3-8: a successful sync clears any prior error so the status badge recovers.
-  delete (next as { last_error?: string }).last_error;
-  const committed = await commitSubscriptionRuntimePatch(next, planningVersion);
-  if (!committed.ok) {
-    throw ProblemDetailsError.preconditionFailed('配置在刷新订阅期间发生变化，请重试。');
-  }
-  invalidateSnapshot();
-  return next;
-}
-
-/**
- * P3-8: persist the reason a refresh failed so the UI status badge can show it
- * (the `last_error` field existed but was never written). Best-effort — never
- * let recording the error mask the original failure.
- */
-export async function recordSubscriptionError(
-  id: string,
-  message: string,
-  expectedVersion?: number,
-): Promise<void> {
-  const planningVersion = expectedVersion ?? (await getConfigVersion());
-  const current = await getSubscription(id);
-  if (!current) return;
-  const next: Subscription = { ...current, last_error: message.slice(0, 500) };
-  // Best-effort receipt: a concurrent config/naming write wins. Returning
-  // without a status update is safer than overwriting its newer full row.
-  await commitSubscriptionRuntimePatch(next, planningVersion);
 }
 
 export interface DeleteSubscriptionResult {
@@ -356,6 +390,9 @@ export async function deleteSubscription(id: string): Promise<DeleteSubscription
       commit: (version, ordinalGeneration) =>
         commitSubscriptionDelete(id, version, ordinalGeneration),
     });
+    // P-FFP v1: after the definition CAS, best-effort drop the separate
+    // fetch-health value (idempotent when the row was already gone).
+    await deleteSubscriptionFetchHealth(id);
     return { removed: false, warnings };
   }
   const [profiles, collections, allSubs] = await Promise.all([
@@ -390,6 +427,9 @@ export async function deleteSubscription(id: string): Promise<DeleteSubscription
     commit: (version, ordinalGeneration) =>
       commitSubscriptionDelete(id, version, ordinalGeneration),
   });
+  // P-FFP v1: after the definition CAS, best-effort drop the separate
+  // fetch-health value — a health hiccup never turns a delete into a 500.
+  await deleteSubscriptionFetchHealth(id);
   invalidateSnapshot();
   return { removed: true, warnings };
 }

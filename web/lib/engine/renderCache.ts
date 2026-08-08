@@ -160,8 +160,15 @@ export interface RenderProfileOptions {
   /** Skip reading the cache and force-refresh upstream subs; still writes the cache. */
   noCache?: boolean;
   /**
+   * P-FFP v1: record actual-attempt runtime fetch health. Public profile/
+   * device distribution defaults true; admin profile/device previews, the
+   * base parsed view, AI config reads, device-write previews and mutation
+   * preflight pass false — only real non-preview attempts write health.
+   */
+  recordFetchHealth?: boolean;
+  /**
    * Error to throw when base.yaml is uninitialised. Routes differ (preview/sub
-   * use 404, base/parsed uses 422) and their response shapes must not change.
+   * use 404, base/parsed use 422) and their response shapes must not change.
    */
   missingBaseError?: () => ProblemDetailsError;
 }
@@ -368,6 +375,9 @@ export async function renderProfileConfig(
     // render and leave the previous render-cache entry untouched.
     ignoreFailedSubs: false,
     noCache: opts.noCache,
+    // P-FFP v1: health is recorded only by real serving attempts; preview/
+    // preflight callers disable it at this boundary.
+    recordFetchHealth: opts.recordFetchHealth !== false,
     collections,
     // Profile binding — which subscription(s) this profile injects.
     boundSource: profileRecord.source,

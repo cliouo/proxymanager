@@ -10,7 +10,11 @@ import {
   type OrdinalDomainRegistry,
   type OrdinalPlanningSession,
 } from '@/lib/services/nodeOrdinalService';
-import { validateMihomoProxyList } from '@/lib/proxies/mihomoProxyValidator';
+import {
+  MihomoProxyLimitError,
+  MihomoProxyValidationError,
+  validateMihomoProxyList,
+} from '@/lib/proxies/mihomoProxyValidator';
 import {
   MAX_PROXY_URI_LINES,
   looksLikeProxyUriList,
@@ -25,27 +29,25 @@ import {
 } from '@/lib/repos/fetchCacheRepo';
 import {
   asSubscriptionValidationError,
+  describeSubscriptionFetchFailureCategory,
+  isEligibleFetchFailure,
+  RemoteFetchAttemptError,
   SubscriptionContentValidationError,
   SubscriptionResolutionValidationError,
-  SubscriptionUpstreamUnavailableError,
 } from '@/lib/services/subscriptionResolutionErrors';
 import {
   SubscriptionTrafficSchema,
+  effectiveFetchFailurePolicy,
+  subscriptionUserAgent,
   type Subscription,
+  type SubscriptionFetchHealth,
   type SubscriptionTraffic,
-} from '@/schemas/subscription';
+} from '@/schemas';
+import {
+  computeSubscriptionDefinitionFingerprint,
+  recordSubscriptionFetchHealth,
+} from '@/lib/repos/subscriptionFetchHealthRepo';
 
-const DEFAULT_UA = 'clash.meta/1.18.0';
-
-/**
- * A blank `ua_override` means "not set" (the UI stores the empty field as ''),
- * never "send a blank User-Agent": upstreams vary the payload format by UA,
- * and a blank one gets the degraded share-list variant instead of provider
- * YAML. Used for both the cache key and the actual fetch so they stay aligned.
- */
-function subscriptionUserAgent(sub: Pick<Subscription, 'ua_override'>): string {
-  return sub.ua_override?.trim() ? sub.ua_override : DEFAULT_UA;
-}
 const FETCH_TIMEOUT_MS = 15_000;
 const MAX_SUBSCRIPTION_REDIRECTS = 5;
 /** P2-6: hard cap on an upstream subscription body (a slow/huge source can't OOM or hang the render). */
@@ -99,12 +101,13 @@ export interface SubscriptionResolveOptions {
    */
   writeCache?: boolean;
   /**
-   * Permit a validated but expired cache entry when the upstream refresh
-   * fails. Normal renders keep the existing stale-on-error behaviour;
-   * save-time preflight sets this to false because stale nodes cannot prove a
-   * candidate is valid against the current upstream state.
+   * Record actual-attempt runtime fetch health (P-FFP v1). Defaults to
+   * `writeCache is not false`, so preview/preflight callers (writeCache
+   * false) automatically disable health; public distribution and refresh
+   * keep it on. Health is a separate advisory value — never a definition
+   * row write, never a config:version bump.
    */
-  allowStale?: boolean;
+  recordHealth?: boolean;
   /**
    * Defer the pre-operator list-level name-uniqueness check to managed
    * naming. Preview endpoints pass the CANDIDATE pipeline's state (an
@@ -528,6 +531,20 @@ async function resolveSubscriptionRaw(
     return cachedRaw;
   }
 
+  // P-FFP v1 fetch partition (remote path):
+  //   - a valid fresh cache serves with NO attempt and NO health;
+  //   - an attempt success serves latest, caches when writeCache ≠ false,
+  //     records runtime fresh health;
+  //   - only a TYPED eligible attempt error may fall back / be skipped;
+  //     ineligible and unexpected errors fail unchanged with no receipt;
+  //   - noCache=1 bypasses cache reads, stale and skip for EITHER policy,
+  //     performs the fresh attempt, records bypassed health on failure;
+  //   - tolerant + validated retained cache → stale-serve (LKG), stale-served
+  //     health; strict → fail with policy-blocked/unavailable/invalid health;
+  //   - tolerant + no usable cache → typed failure (a collection stage may
+  //     skip this member; direct/unbound resolution fails).
+  const recordHealth = options.recordHealth ?? options.writeCache !== false;
+  const attemptedAt = Date.now();
   try {
     const fresh = await fetchSubscriptionInternal(sub.url, {
       userAgent: subscriptionUserAgent(sub),
@@ -550,20 +567,93 @@ async function resolveSubscriptionRaw(
         () => undefined,
       );
     }
-
+    if (recordHealth) {
+      const health: SubscriptionFetchHealth = {
+        definition_fingerprint: computeSubscriptionDefinitionFingerprint(sub),
+        state: 'fresh',
+        attempted_at: attemptedAt,
+        observed_at: Date.now(),
+        fresh_at: Date.now(),
+        proxy_count: fresh.proxyCount,
+        ...(fresh.traffic ? { traffic: fresh.traffic } : {}),
+      };
+      await recordSubscriptionFetchHealth(sub, health);
+    }
     return fresh;
   } catch (err) {
-    if (cachedRaw && options.allowStale !== false) {
-      // Stale-on-error: upstream is unreachable but we have a prior fetch.
-      // Only a payload validated above qualifies as last-known-good.
-      const reason = err instanceof Error ? err.message : String(err);
+    // Ineligible/unexpected attempt-path errors: fail unchanged, no
+    // fallback, no skip authorization, no fetch-failure health receipt.
+    if (!isEligibleFetchFailure(err)) throw err;
+    const typed = err as RemoteFetchAttemptError;
+    // Contextualize with the safe source slug so preflight can build its
+    // structured path AFTER resolveConfig had its chance to authorize a
+    // collection skip. The public problem payload is category-fixed, so
+    // reconstruction is lossless.
+    const attemptError =
+      typed.sourceName !== undefined
+        ? typed
+        : new RemoteFetchAttemptError(typed.category, { sourceName: sub.name });
+
+    // Cache state of THIS attempt: missing key / invalid bytes / validated LKG.
+    const cacheState: 'unavailable' | 'invalid' | 'valid' = !cached
+      ? 'unavailable'
+      : cachedRaw
+        ? 'valid'
+        : 'invalid';
+    const noCache = options.noCache === true;
+    const policy = effectiveFetchFailurePolicy(sub);
+    const staleServe = !noCache && policy !== 'fail-closed' && cacheState === 'valid';
+    // failed-no-cache disposition: NEVER 'served'. When the stale path is not
+    // taken, a tolerant policy with a valid cache is impossible (it would be
+    // staleServe), so the tolerant branch maps a (type-only) 'valid' cache
+    // state to 'unavailable' — unreachable for the health write, but it lets
+    // TypeScript collapse the union onto the four non-served values.
+    const failedDisposition: 'unavailable' | 'invalid' | 'policy-blocked' | 'bypassed' = noCache
+      ? 'bypassed'
+      : policy === 'fail-closed'
+        ? cacheState === 'valid'
+          ? 'policy-blocked'
+          : cacheState
+        : cacheState === 'valid'
+          ? 'unavailable'
+          : cacheState;
+
+    if (recordHealth) {
+      const base = {
+        definition_fingerprint: computeSubscriptionDefinitionFingerprint(sub),
+        attempted_at: attemptedAt,
+        observed_at: Date.now(),
+        failure_category: attemptError.category,
+      };
+      if (staleServe) {
+        const health: SubscriptionFetchHealth = {
+          ...base,
+          state: 'stale-served',
+          fresh_at: cached!.fetched_at,
+          cache_disposition: 'served',
+          proxy_count: cachedRaw!.proxyCount,
+          ...(cached!.traffic ? { traffic: cached!.traffic } : {}),
+        };
+        await recordSubscriptionFetchHealth(sub, health);
+      } else {
+        const health: SubscriptionFetchHealth = {
+          ...base,
+          state: 'failed-no-cache',
+          cache_disposition: failedDisposition,
+        };
+        await recordSubscriptionFetchHealth(sub, health);
+      }
+    }
+    if (staleServe) {
+      // Only the still-retained, strictly validated LKG may be served; the
+      // reason is the fixed category sentence, never the raw diagnostic.
       return {
-        ...cachedRaw,
+        ...cachedRaw!,
         stale: true,
-        staleReason: reason,
+        staleReason: describeSubscriptionFetchFailureCategory(attemptError.category),
       };
     }
-    throw err;
+    throw attemptError;
   }
 }
 
@@ -586,7 +676,7 @@ async function fetchSubscriptionInternal(
   } = {},
 ): Promise<RawResolved> {
   const upstreamUrl = parseSubscriptionUrl(url);
-  const userAgent = options.userAgent ?? DEFAULT_UA;
+  const userAgent = options.userAgent ?? subscriptionUserAgent({ ua_override: undefined });
   const timeoutMs = options.timeoutMs ?? FETCH_TIMEOUT_MS;
 
   const controller = new AbortController();
@@ -598,99 +688,91 @@ async function fetchSubscriptionInternal(
     let currentUrl = upstreamUrl;
     let response: Response | undefined;
     for (let hop = 0; hop <= MAX_SUBSCRIPTION_REDIRECTS; hop++) {
-      response = await fetch(currentUrl, {
-        headers: { 'User-Agent': userAgent, ...(options.customHeaders ?? {}) },
-        // Undici strips standard credential headers on a cross-origin redirect,
-        // but forwards arbitrary custom token headers. Handle redirects here so
-        // admin-supplied subscription credentials can never cross an origin.
-        redirect: 'manual',
-        cache: 'no-store',
-        signal: controller.signal,
-      });
+      try {
+        response = await fetch(currentUrl, {
+          headers: { 'User-Agent': userAgent, ...(options.customHeaders ?? {}) },
+          // Undici strips standard credential headers on a cross-origin redirect,
+          // but forwards arbitrary custom token headers. Handle redirects here so
+          // admin-supplied subscription credentials can never cross an origin.
+          redirect: 'manual',
+          cache: 'no-store',
+          signal: controller.signal,
+        });
+      } catch (err) {
+        // P-FFP v1 invariant 4: ONLY the fetch rejection classifies here —
+        // AbortError is timeout, every other fetch rejection is network
+        // (transport). Fetch implementations routinely include the complete
+        // URL (userinfo, path and query) in their error text; the fixed
+        // category sentence is the only public text, so never forward the
+        // underlying diagnostic.
+        if (err instanceof DOMException && err.name === 'AbortError') {
+          throw new RemoteFetchAttemptError('timeout');
+        }
+        throw new RemoteFetchAttemptError('network');
+      }
       if (response.status < 300 || response.status >= 400) break;
 
       const location = response.headers.get('location');
       await response.body?.cancel().catch(() => undefined);
       if (!location) {
-        throw new SubscriptionUpstreamUnavailableError('Upstream redirect is missing Location');
+        // Redirect protocol rejection → http category (fixed public text).
+        throw new RemoteFetchAttemptError('http');
       }
       if (hop === MAX_SUBSCRIPTION_REDIRECTS) {
-        throw new SubscriptionUpstreamUnavailableError('Upstream returned too many redirects');
+        throw new RemoteFetchAttemptError('http');
       }
 
       let nextUrl: URL;
       try {
         nextUrl = parseSubscriptionUrl(new URL(location, currentUrl).toString());
       } catch {
-        throw new SubscriptionUpstreamUnavailableError('Upstream redirect URL is invalid');
+        throw new RemoteFetchAttemptError('http');
       }
       if (nextUrl.origin !== currentUrl.origin) {
-        throw new SubscriptionUpstreamUnavailableError(
-          'Cross-origin upstream redirect is not allowed',
-        );
+        throw new RemoteFetchAttemptError('http');
       }
       currentUrl = nextUrl;
     }
+
+    // Everything below is response PROCESSING: unexpected faults here are
+    // programming errors and must propagate generic (never network/timeout,
+    // never stale/skip/health-eligible). Only the explicit categories below
+    // are typed.
     if (!response) {
-      throw new SubscriptionUpstreamUnavailableError('Upstream fetch failed');
+      throw new RemoteFetchAttemptError('network');
     }
     if (!response.ok) {
-      throw new SubscriptionUpstreamUnavailableError(`Upstream returned HTTP ${response.status}`);
+      throw new RemoteFetchAttemptError('http');
     }
     traffic = parseTrafficHeader(response.headers.get('subscription-userinfo'));
     const declaredLength = Number(response.headers.get('content-length') ?? '');
     if (Number.isFinite(declaredLength) && declaredLength > MAX_SUBSCRIPTION_BODY_BYTES) {
-      throw asSubscriptionValidationError(
-        ProblemDetailsError.badRequest(
-          `Upstream subscription body exceeds ${MAX_SUBSCRIPTION_BODY_BYTES} bytes`,
-        ),
-        'content',
-        'subscription_content_too_large',
-        'Subscription content is too large.',
-      );
+      throw new RemoteFetchAttemptError('response-content-format');
     }
-    // P2-6: the body read must stay INSIDE the same timeout window (don't clear
-    // the timer until it's consumed — a slow-drip upstream could otherwise hang
-    // the render past the platform function limit) and is size-capped so a huge
-    // upstream can't OOM the worker. Reuse safeFetch's capped reader.
-    const { buf, truncated } = await readCapped(response, MAX_SUBSCRIPTION_BODY_BYTES);
+    // P2-6: the body read stays INSIDE the same timeout window (don't clear
+    // the timer until it's consumed — a slow-drip upstream could otherwise
+    // hang the render past the platform function limit). Reuse safeFetch's
+    // capped reader (size-capped so a huge upstream can't OOM the worker).
+    // v2 I3-I4: ONLY the promise-rejection callback maps body transport —
+    // AbortError becomes timeout, every other actual body-promise rejection
+    // becomes network. Synchronous body/getReader/read faults and
+    // post-resolution chunk/assembly faults are NOT caught here: they keep
+    // their exact identity as generic programming faults (no stale, no skip,
+    // no health).
+    const { buf, truncated } = await readCapped(
+      response,
+      MAX_SUBSCRIPTION_BODY_BYTES,
+      mapBodyTransportRejection,
+    );
     if (truncated) {
-      throw asSubscriptionValidationError(
-        ProblemDetailsError.badRequest(
-          `Upstream subscription body exceeds ${MAX_SUBSCRIPTION_BODY_BYTES} bytes`,
-        ),
-        'content',
-        'subscription_content_too_large',
-        'Subscription content is too large.',
-      );
+      throw new RemoteFetchAttemptError('response-content-format');
     }
     try {
       text = new TextDecoder('utf-8', { fatal: true }).decode(buf);
     } catch {
-      throw asSubscriptionValidationError(
-        ProblemDetailsError.badRequest('Upstream subscription body is not valid UTF-8'),
-        'content',
-        'subscription_content_invalid_encoding',
-        'Subscription content is not valid UTF-8.',
-      );
+      // Fatal decode of newly fetched bytes → response-encoding category.
+      throw new RemoteFetchAttemptError('response-encoding');
     }
-  } catch (err) {
-    if (
-      err instanceof SubscriptionResolutionValidationError ||
-      err instanceof SubscriptionUpstreamUnavailableError
-    ) {
-      throw err;
-    }
-    if (err instanceof DOMException && err.name === 'AbortError') {
-      throw new SubscriptionUpstreamUnavailableError(
-        `Upstream fetch timed out after ${timeoutMs}ms`,
-      );
-    }
-    // Fetch implementations routinely include the complete URL (userinfo,
-    // path and query) in their error text. Subscription URLs and custom
-    // headers commonly carry tokens, and this message also feeds staleReason
-    // and persisted last_error, so never forward the underlying diagnostic.
-    throw new SubscriptionUpstreamUnavailableError('Upstream fetch failed');
   } finally {
     clearTimeout(timer);
   }
@@ -700,12 +782,10 @@ async function fetchSubscriptionInternal(
   try {
     ({ proxies, proxyCount } = normaliseToClashProxies(text, options.deferUniqueNames ?? false));
   } catch (error) {
-    throw asSubscriptionValidationError(
-      error,
-      'content',
-      'subscription_content_invalid',
-      'Subscription content is invalid.',
-    );
+    // Whitelist (P-FFP v1): structured content/format failures and proxy-node
+    // rejections of NEWLY FETCHED bytes become typed eligible categories;
+    // unstructured unknown content errors stay ineligible.
+    throw classifyFreshContentError(error);
   }
   return rawFromProxies(proxies, { traffic, proxyCount }, options.deferUniqueNames ?? false);
 }
@@ -739,6 +819,59 @@ function parseSubscriptionUrl(raw: string): URL {
     );
   }
   return parsed;
+}
+
+/**
+ * v2 I3-I4: the EXCLUSIVE mapper for readCapped's promise-rejection-only
+ * transport callback. A DOMException whose name is exactly AbortError is
+ * timeout; every other actual body-read promise rejection is network. This
+ * function is only ever invoked with a rejected body promise — synchronous
+ * and post-resolution faults never reach it and keep their identity.
+ */
+function mapBodyTransportRejection(error: unknown): never {
+  if (error instanceof DOMException && error.name === 'AbortError') {
+    throw new RemoteFetchAttemptError('timeout');
+  }
+  // Fetch implementations routinely include the complete URL (userinfo,
+  // path and query) in their error text; the fixed category sentence is the
+  // only public text, so never forward the underlying diagnostic.
+  throw new RemoteFetchAttemptError('network');
+}
+
+/**
+ * Whitelist classification of a normaliser error raised over NEWLY FETCHED
+ * bytes (P-FFP v1 invariant 4):
+ *
+ *   - structured `uri_list_invalid` and Mihomo node validation issues →
+ *     `proxy-node`;
+ *   - `content_empty`, `content_format_unrecognised`,
+ *     `proxy_node_limit_exceeded`, `uri_input_line_limit_exceeded` and
+ *     `subscription_content_too_large` → `response-content-format`;
+ *   - ANYTHING ELSE stays untouched (ineligible): unstructured unknown
+ *     content errors, operator-stage errors, and programming faults never
+ *     become eligible fetch failures.
+ */
+function classifyFreshContentError(error: unknown): unknown {
+  if (error instanceof SubscriptionContentValidationError) {
+    return new RemoteFetchAttemptError(
+      error.contentIssue.kind === 'uri_list_invalid' ? 'proxy-node' : 'response-content-format',
+    );
+  }
+  if (error instanceof MihomoProxyValidationError) {
+    // The strict validator throws raw (pre-wrap) from the URI and YAML paths.
+    return new RemoteFetchAttemptError('proxy-node');
+  }
+  if (error instanceof MihomoProxyLimitError) {
+    return new RemoteFetchAttemptError('response-content-format');
+  }
+  if (
+    error instanceof SubscriptionResolutionValidationError &&
+    error.stage === 'content' &&
+    error.nodeIssue !== undefined
+  ) {
+    return new RemoteFetchAttemptError('proxy-node');
+  }
+  return error;
 }
 
 export function parseTrafficHeader(value: string | null): SubscriptionTraffic | undefined {

@@ -41,7 +41,10 @@ vi.mock('@/lib/repos/nodeOrdinalRepo', () => ({
 
 import { resolveSubscriptionProxies } from '@/lib/services/subscriptionFetcher';
 import { exportCollectionNodes, exportSubscriptionNodes } from '@/lib/services/nodeExportService';
-import { SubscriptionResolutionValidationError } from '@/lib/services/subscriptionResolutionErrors';
+import {
+  RemoteFetchAttemptError,
+  SubscriptionResolutionValidationError,
+} from '@/lib/services/subscriptionResolutionErrors';
 import { assignOrdinals } from '@/lib/repos/nodeOrdinalRepo';
 
 const fetchMock = resolveSubscriptionProxies as unknown as ReturnType<typeof vi.fn>;
@@ -373,12 +376,25 @@ describe('exportCollectionNodes', () => {
     await expect(exportCollectionNodes(col, [a])).rejects.toThrow(/field "name"/i);
   });
 
-  it('个别成员失败跳过且不在 memberErrors 中反射敏感详情;全员失败抛 400', async () => {
+  it('跳过的是 eligible 类型化失败的宽容成员;ineligible 成员失败立即抛错', async () => {
     const a = makeSub({ name: 'a' });
     const b = makeSub({ name: 'b' });
     const col = makeCollection({ subscription_ids: [a.id, b.id] });
     const secret = 'ss://aes-128-gcm:TOP-SECRET@example.invalid:443';
 
+    // eligible typed failure (tolerant default) → skipped with fixed text only
+    fetchMock.mockImplementation(async (sub: Subscription) => {
+      if (sub.id === a.id) {
+        throw new RemoteFetchAttemptError('network', { sourceName: 'a' });
+      }
+      return { proxies: [proxy('OK')], proxyCount: 1 };
+    });
+    const partial = await exportCollectionNodes(col, [a, b]);
+    expect(partial.memberErrors).toEqual([{ name: 'a', error: 'Upstream fetch failed' }]);
+    expect(JSON.stringify(partial.memberErrors)).not.toContain(secret);
+    expect(partial.proxyCount).toBe(1);
+
+    // ineligible (deterministic validation) member failure → fail in source order
     fetchMock.mockImplementation(async (sub: Subscription) => {
       if (sub.id === a.id) {
         throw new SubscriptionResolutionValidationError('content', 'subscription_content_invalid', {
@@ -390,16 +406,50 @@ describe('exportCollectionNodes', () => {
       }
       return { proxies: [proxy('OK')], proxyCount: 1 };
     });
-    const partial = await exportCollectionNodes(col, [a, b]);
-    expect(partial.memberErrors).toEqual([
-      { name: 'a', error: 'Subscription content is invalid.' },
-    ]);
-    expect(JSON.stringify(partial.memberErrors)).not.toContain(secret);
-    expect(partial.proxyCount).toBe(1);
+    await expect(exportCollectionNodes(col, [a, b])).rejects.toBeInstanceOf(
+      SubscriptionResolutionValidationError,
+    );
 
-    fetchMock.mockRejectedValue(new Error(`boom: ${secret}`));
-    await expect(exportCollectionNodes(col, [a, b])).rejects.toMatchObject({
-      problem: { status: 400, detail: expect.not.stringContaining(secret) },
+    // strict member with an eligible failure → fails (no skip)
+    fetchMock.mockImplementation(async (sub: Subscription) => {
+      if (sub.id === a.id) {
+        throw new RemoteFetchAttemptError('http');
+      }
+      return { proxies: [proxy('OK')], proxyCount: 1 };
+    });
+    const strictA = makeSub({
+      id: a.id,
+      name: 'a',
+      fetch_failure_policy: 'fail-closed',
+    });
+    await expect(exportCollectionNodes(col, [strictA, b])).rejects.toMatchObject({
+      category: 'http',
+    });
+
+    // raw generic failure is INELIGIBLE → fails immediately, unchanged (the
+    // HTTP boundary masks it as a generic 500; the service never aggregates it)
+    const raw = new Error(`boom: ${secret}`);
+    fetchMock.mockRejectedValue(raw);
+    await expect(exportCollectionNodes(col, [a, b])).rejects.toBe(raw);
+  });
+
+  it('全部成员被跳过(宽容+eligible)时抛第一个 typed 失败,不包装成 400', async () => {
+    const a = makeSub({ name: 'a' });
+    const b = makeSub({ name: 'b' });
+    const col = makeCollection({ subscription_ids: [a.id, b.id] });
+    const first = new RemoteFetchAttemptError('network');
+    const second = new RemoteFetchAttemptError('http');
+    fetchMock.mockImplementation(async (sub: Subscription) => {
+      throw sub.name === 'a' ? first : second;
+    });
+
+    await expect(exportCollectionNodes(col, [a, b])).rejects.toBe(first);
+  });
+
+  it('单订阅导出(直接绑定)对 eligible 失败绝不跳过', async () => {
+    fetchMock.mockRejectedValue(new RemoteFetchAttemptError('network'));
+    await expect(exportSubscriptionNodes(makeSub())).rejects.toMatchObject({
+      category: 'network',
     });
   });
 

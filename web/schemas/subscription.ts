@@ -1,6 +1,28 @@
 import { z } from '@/lib/openapi/zod';
-import { MutableOperatorListSchema, StoredOperatorListSchema } from './operator';
+import {
+  MutableOperatorListSchema,
+  StoredOperatorListSchema,
+  type StoredOperator,
+} from './operator';
 import { MAX_SUBSCRIPTION_CONTENT } from './base';
+
+/**
+ * The fixed eligible fetch-failure category values used by the health
+ * union's `failure_category` enum. The RUNTIME classifier enum and the only
+ * eligibility predicate remain owned by
+ * subscriptionResolutionErrors.ts; the two lists are pinned equal by
+ * subscriptionSchema.test.ts. Kept LOCAL to the schema module so the shared
+ * `@/schemas` index never drags server-only imports (node:net, node:crypto)
+ * into client bundles.
+ */
+export const SUBSCRIPTION_FETCH_FAILURE_CATEGORIES = [
+  'network',
+  'timeout',
+  'http',
+  'response-encoding',
+  'response-content-format',
+  'proxy-node',
+] as const;
 
 /**
  * P3-19: restrict remote subscription URLs to http/https. The upstream is
@@ -51,7 +73,121 @@ export const SubscriptionTrafficSchema = z.object({
   expire: z.number().int(),
 });
 
-export const SubscriptionSchema = z.object({
+/**
+ * Per-remote-source fetch failure policy (P-FFP v1):
+ *
+ *   - `use-stale-cache` (effective default): after a fresh attempt fails with
+ *     an eligible typed error, a retained, strictly validated last-known-good
+ *     cache entry may be served; without one, an enabled member of an actual
+ *     bound/exported collection may be skipped (one member, order preserved,
+ *     safe warning). Direct/unbound resolution still fails.
+ *   - `fail-closed`: an eligible failure never stale-serves and never skips —
+ *     the failure propagates (fixed 422/503 at the boundary).
+ *
+ * The field is DECLARATIVE and remote-only: a persisted row/request without
+ * it has effective `use-stale-cache` and reads never rewrite storage. Local
+ * sources omit and never consult it.
+ */
+export const SubscriptionFetchFailurePolicySchema = z.enum(['use-stale-cache', 'fail-closed']);
+export type SubscriptionFetchFailurePolicy = z.infer<typeof SubscriptionFetchFailurePolicySchema>;
+
+/**
+ * Effective policy (missing = documented default). The value is only ever
+ * CONSULTED on the remote path — every call site guards `kind === 'remote'`
+ * first (fetcher remote branch, resolve skip predicate, health fingerprint,
+ * MCP projection, admin view) — so the parameter accepts the subscription
+ * shape without re-narrowing the object type at the call sites.
+ */
+export function effectiveFetchFailurePolicy(
+  sub: Pick<Subscription, 'kind' | 'fetch_failure_policy'>,
+): SubscriptionFetchFailurePolicy {
+  return sub.fetch_failure_policy ?? 'use-stale-cache';
+}
+
+/** Default User-Agent used for remote fetches (blank override = unset). */
+export const DEFAULT_SUBSCRIPTION_UA = 'clash.meta/1.18.0';
+
+/** Effective UA for a subscription — a blank `ua_override` means unset. */
+export function subscriptionUserAgent(sub: Pick<Subscription, 'ua_override'>): string {
+  return sub.ua_override?.trim() ? sub.ua_override : DEFAULT_SUBSCRIPTION_UA;
+}
+
+/** Eligible fetch-failure categories — the fixed closed enum (classifier). */
+export const SubscriptionFetchFailureCategorySchema = z.enum(SUBSCRIPTION_FETCH_FAILURE_CATEGORIES);
+export type SubscriptionFetchFailureCategory = z.infer<
+  typeof SubscriptionFetchFailureCategorySchema
+>;
+
+/**
+ * v2 I12: the definition_fingerprint is ONE canonical unpadded base64url
+ * encoding of exactly 32 SHA-256 bytes — exactly 43 characters from
+ * A-Za-z0-9_-, no padding, decode length 32, and byte-identical
+ * re-encoding. Short, long, padded, plus/slash alphabet, and non-canonical
+ * trailing-bit encodings are invalid.
+ */
+export const CanonicalBase64urlSha256Schema = z
+  .string()
+  .regex(/^[A-Za-z0-9_-]{43}$/u, 'definition_fingerprint 必须是 43 字符的 base64url 编码')
+  .refine((value) => {
+    const decoded = Buffer.from(value, 'base64url');
+    return decoded.length === 32 && decoded.toString('base64url') === value;
+  }, 'definition_fingerprint 必须是 32 字节 SHA-256 的规范无填充 base64url 编码');
+export type CanonicalBase64urlSha256 = z.infer<typeof CanonicalBase64urlSha256Schema>;
+
+/**
+ * Separate, advisory, non-preview runtime fetch health. NOT part of the
+ * definition row: it is stored under its own per-source key, expires seven
+ * days after the last actual attempt, and never changes config:version,
+ * render caches or snapshots. Malformed combinations read absent. Fresh
+ * cache hits and local resolution record no health.
+ */
+export const SubscriptionFetchHealthSchema = z.discriminatedUnion('state', [
+  z
+    .object({
+      definition_fingerprint: CanonicalBase64urlSha256Schema,
+      state: z.literal('fresh'),
+      attempted_at: z.number().int().nonnegative(),
+      observed_at: z.number().int().nonnegative(),
+      fresh_at: z.number().int().nonnegative(),
+      proxy_count: z.number().int().nonnegative(),
+      traffic: SubscriptionTrafficSchema.optional(),
+    })
+    .strict(),
+  z
+    .object({
+      definition_fingerprint: CanonicalBase64urlSha256Schema,
+      state: z.literal('stale-served'),
+      attempted_at: z.number().int().nonnegative(),
+      observed_at: z.number().int().nonnegative(),
+      fresh_at: z.number().int().nonnegative(),
+      failure_category: SubscriptionFetchFailureCategorySchema,
+      cache_disposition: z.literal('served'),
+      proxy_count: z.number().int().nonnegative(),
+      traffic: SubscriptionTrafficSchema.optional(),
+    })
+    .strict(),
+  z
+    .object({
+      definition_fingerprint: CanonicalBase64urlSha256Schema,
+      state: z.literal('failed-no-cache'),
+      attempted_at: z.number().int().nonnegative(),
+      observed_at: z.number().int().nonnegative(),
+      failure_category: SubscriptionFetchFailureCategorySchema,
+      cache_disposition: z.enum(['unavailable', 'invalid', 'policy-blocked', 'bypassed']),
+    })
+    .strict(),
+]);
+export type SubscriptionFetchHealth = z.infer<typeof SubscriptionFetchHealthSchema>;
+export type SubscriptionFetchHealthState = SubscriptionFetchHealth['state'];
+
+/**
+ * The shared stored-row fields. The kind-discriminated branches below add
+ * the kind literal and (remote only) the optional policy, so a LOCAL stored
+ * row that carries a legacy policy decodes successfully with the field
+ * STRIPPED from the in-memory value (zod drops undeclared keys); HGET and
+ * HGETALL reads never rewrite Redis.
+ */
+const StoredSubscriptionFields = {
   id: z.uuid(),
   /**
    * Distribution identifier: `name` is the slug used in public subscription
@@ -71,11 +207,6 @@ export const SubscriptionSchema = z.object({
    */
   display_name: z.string().optional(),
   enabled: z.boolean(),
-  /**
-   * Source type. Defaults to 'remote' so legacy records (which only had
-   * `url`) parse correctly through safeParse.
-   */
-  kind: SubscriptionKindSchema.default('remote'),
   /** Required when kind=remote. */
   url: storedHttpUrl.optional(),
   /** Per-sub UA override (legacy: ua_override). */
@@ -102,13 +233,37 @@ export const SubscriptionSchema = z.object({
    * existed (they simply carry no version until first edited).
    */
   updated_at: z.number().int().optional(),
-  /** Last successful sync time (ms epoch via Date.now). */
-  last_synced_at: z.number().int().optional(),
-  /** Sub-Userinfo header parse from the last successful fetch. */
-  last_traffic: SubscriptionTrafficSchema.optional(),
-  /** Last fetch error message — surfaced in the UI status badge. */
-  last_error: z.string().optional(),
-});
+} as const;
+
+/**
+ * v2 I1: the STORED subscription schema is kind-discriminated. The remote
+ * branch may carry the optional fetch_failure_policy (missing = effective
+ * use-stale-cache, reads never rewrite storage); the local branch does NOT
+ * declare it, so a local row that contains a legacy policy decodes with the
+ * field stripped in memory. A row with a MISSING legacy kind falls through
+ * to the legacy branch and is canonicalized in memory to remote. An invalid
+ * policy enum keeps the existing unparseable-row behavior — never a silent
+ * coercion.
+ */
+export const SubscriptionSchema: z.ZodType<Subscription> = z
+  .discriminatedUnion('kind', [
+    z.object({
+      ...StoredSubscriptionFields,
+      kind: z.literal('remote'),
+      fetch_failure_policy: SubscriptionFetchFailurePolicySchema.optional(),
+    }),
+    z.object({
+      ...StoredSubscriptionFields,
+      kind: z.literal('local'),
+    }),
+  ])
+  .or(
+    z.object({
+      ...StoredSubscriptionFields,
+      kind: SubscriptionKindSchema.default('remote'),
+      fetch_failure_policy: SubscriptionFetchFailurePolicySchema.optional(),
+    }),
+  );
 
 /**
  * Hand-written `create` payload: trim runtime/state fields and pin the
@@ -132,6 +287,9 @@ export const SubscriptionCreateSchema = z
     content: z.string().max(MAX_SUBSCRIPTION_CONTENT, '订阅内容过大').optional(),
     tags: z.array(z.string()).default([]),
     operators: MutableOperatorListSchema.default([]),
+    // Remote-only declarative policy; an explicit value on a LOCAL create is
+    // rejected by the service against the merged candidate (422).
+    fetch_failure_policy: SubscriptionFetchFailurePolicySchema.optional(),
   })
   .refine(
     (s) => (s.kind === 'remote' ? !!s.url : !!s.content),
@@ -154,9 +312,77 @@ export const SubscriptionUpdateSchema = z.object({
   content: z.string().max(MAX_SUBSCRIPTION_CONTENT, '订阅内容过大').optional(),
   tags: z.array(z.string()).optional(),
   operators: MutableOperatorListSchema.optional(),
+  fetch_failure_policy: SubscriptionFetchFailurePolicySchema.optional(),
 });
 
-export type Subscription = z.infer<typeof SubscriptionSchema>;
+/**
+ * Admin-facing view of a subscription (v2 I1): a TRUE remote/local
+ * discriminated union. The remote branch carries the REQUIRED effective
+ * fetch_failure_policy and the REQUIRED nullable fingerprint-joined
+ * fetch_health; the local branch declares neither — a local view input that
+ * carries them parses with the fields stripped (omission), exactly like the
+ * stored schema. The stored row itself stays config-only — health lives in
+ * the separate advisory store.
+ */
+export const SubscriptionAdminViewSchema: z.ZodType<SubscriptionAdminView> = z.discriminatedUnion(
+  'kind',
+  [
+    z.object({
+      ...StoredSubscriptionFields,
+      kind: z.literal('remote'),
+      fetch_failure_policy: SubscriptionFetchFailurePolicySchema,
+      fetch_health: SubscriptionFetchHealthSchema.nullable(),
+    }),
+    z.object({
+      ...StoredSubscriptionFields,
+      kind: z.literal('local'),
+    }),
+  ],
+);
+/**
+ * In-memory view shape. The TRUE remote/local discrimination lives in the
+ * SubscriptionAdminViewSchema union above (remote requires policy + nullable
+ * health; local declares neither) and is enforced at every parse; the
+ * projection guarantees the same invariants at runtime (remote always sets
+ * both, local always omits both). The compile-time shape stays permissive
+ * because the projection's defensive `delete` on the local branch requires
+ * both fields optional on the type.
+ */
+export interface SubscriptionAdminView {
+  id: string;
+  name: string;
+  display_name?: string;
+  enabled: boolean;
+  kind: 'remote' | 'local';
+  url?: string;
+  ua_override?: string;
+  custom_headers?: Record<string, string>;
+  ttl_ms: number;
+  content?: string;
+  tags: string[];
+  operators: StoredOperator[];
+  updated_at?: number;
+  fetch_failure_policy?: SubscriptionFetchFailurePolicy;
+  fetch_health?: SubscriptionFetchHealth | null;
+}
+
+/** In-memory decoded subscription (remote branch may carry the policy). */
+export interface Subscription {
+  id: string;
+  name: string;
+  display_name?: string;
+  enabled: boolean;
+  kind: 'remote' | 'local';
+  url?: string;
+  ua_override?: string;
+  custom_headers?: Record<string, string>;
+  ttl_ms: number;
+  content?: string;
+  tags: string[];
+  operators: StoredOperator[];
+  updated_at?: number;
+  fetch_failure_policy?: 'use-stale-cache' | 'fail-closed';
+}
 export type SubscriptionCreate = z.infer<typeof SubscriptionCreateSchema>;
 export type SubscriptionUpdate = z.infer<typeof SubscriptionUpdateSchema>;
 export type SubscriptionTraffic = z.infer<typeof SubscriptionTrafficSchema>;

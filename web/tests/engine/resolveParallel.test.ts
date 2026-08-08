@@ -49,9 +49,7 @@ function makeSub(over: Partial<Subscription>): Subscription {
   } as Subscription;
 }
 
-function proxiesOf(
-  items: Array<{ name: string; server?: string }>,
-): Record<string, unknown>[] {
+function proxiesOf(items: Array<{ name: string; server?: string }>): Record<string, unknown>[] {
   return items.map((i) => ({
     name: i.name,
     type: 'ss',
@@ -87,7 +85,12 @@ describe('resolveConfig — parallel fetch keeps serial ordering semantics', () 
           proxyCount: 2,
         };
       }
-      return { proxies: proxiesOf([{ name: 'US-01' }]), proxyCount: 1, stale: true, staleReason: 'x' };
+      return {
+        proxies: proxiesOf([{ name: 'US-01' }]),
+        proxyCount: 1,
+        stale: true,
+        staleReason: 'x',
+      };
     });
 
     const result = await resolveConfig(BASE, [], [subA, subB, subC], [], [], {
@@ -138,7 +141,7 @@ describe('resolveConfig — parallel fetch keeps serial ordering semantics', () 
     ).rejects.toThrow('first-in-order failure');
   });
 
-  it('default ignoreFailures records errors per-sub in subscription order and continues', async () => {
+  it('the DEFAULT now fails on any rejection in source order (ignoreFailedSubs retired)', async () => {
     const subA = makeSub({ name: 'air-a' });
     const subB = makeSub({ name: 'air-b' });
 
@@ -150,12 +153,11 @@ describe('resolveConfig — parallel fetch keeps serial ordering semantics', () 
       return { proxies: proxiesOf([{ name: 'US-01' }]), proxyCount: 1 };
     });
 
-    const result = await resolveConfig(BASE, [], [subA, subB], [], [], {
-      persistSnapshot: false,
-    });
-    expect(result.subscriptions.map((s) => s.name)).toEqual(['air-a', 'air-b']);
-    expect(result.subscriptions[0].error).toContain('upstream 502');
-    expect(result.nodeNames).toEqual(['直连', 'US-01']);
+    await expect(
+      resolveConfig(BASE, [], [subA, subB], [], [], {
+        persistSnapshot: false,
+      }),
+    ).rejects.toThrow('upstream 502');
   });
 
   it('caps in-flight fetches at 8 and still fetches every eligible sub exactly once', async () => {
