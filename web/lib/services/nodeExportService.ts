@@ -1,5 +1,9 @@
 import { stringify } from 'yaml';
-import { enabledCollectionMemberSubs, settleWithConcurrencyInOrder } from '@/lib/engine/resolve';
+import {
+  enabledCollectionMemberSubs,
+  maySkipCollectionMember,
+  settleWithConcurrencyInOrder,
+} from '@/lib/engine/resolve';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { MAX_PROXY_NODES, validateMihomoProxyList } from '@/lib/proxies/mihomoProxyValidator';
 import { applyOperators, type ClashProxy } from '@/lib/proxies/operators';
@@ -16,8 +20,9 @@ import {
 import { isActiveCurrentRenameTemplateOperator, isExecutableOperator } from '@/schemas/operator';
 import { resolveSubscriptionProxies } from '@/lib/services/subscriptionFetcher';
 import {
+  describeSubscriptionFetchFailureCategory,
+  RemoteFetchAttemptError,
   SubscriptionResolutionValidationError,
-  SubscriptionUpstreamUnavailableError,
 } from '@/lib/services/subscriptionResolutionErrors';
 import type { Collection, Subscription, SubscriptionTraffic } from '@/schemas';
 
@@ -66,15 +71,19 @@ interface ExportOptions {
 /** 同时在途的成员订阅 fetch 上限,与渲染管线保持一致。 */
 const MEMBER_FETCH_CONCURRENCY = 8;
 
-/** Keep member diagnostics useful without reflecting provider payloads or credentials. */
+/**
+ * Keep member diagnostics useful without reflecting provider payloads or
+ * credentials. P-FFP v1: typed eligible failures surface the fixed category
+ * sentence only; deterministic validation stays its fixed stage text.
+ */
 function safeMemberError(error: unknown): string {
+  if (error instanceof RemoteFetchAttemptError) {
+    return describeSubscriptionFetchFailureCategory(error.category);
+  }
   if (error instanceof SubscriptionResolutionValidationError) {
     if (error.stage === 'definition') return 'Subscription definition is invalid.';
     if (error.stage === 'operators') return 'Subscription operator pipeline is invalid.';
     return 'Subscription content is invalid.';
-  }
-  if (error instanceof SubscriptionUpstreamUnavailableError) {
-    return 'Subscription upstream is unavailable.';
   }
   return 'Subscription member resolution failed.';
 }
@@ -218,6 +227,7 @@ export async function mergeCollectionMemberProxies(
   const merged: Record<string, unknown>[] = [];
   const memberErrors: { name: string; error: string }[] = [];
   let stale = false;
+  let firstSkippedError: RemoteFetchAttemptError | undefined;
   let i = 0;
   for await (const outcome of settleWithConcurrencyInOrder(
     members,
@@ -234,6 +244,19 @@ export async function mergeCollectionMemberProxies(
     const member = members[i];
     i += 1;
     if (outcome.status === 'rejected') {
+      // P-FFP v1: only a tolerant eligible member of this exported collection
+      // may be skipped; strict/ineligible/unexpected failures fail in source
+      // order immediately.
+      if (
+        !maySkipCollectionMember(member, outcome.reason, {
+          isCollection: true,
+          noCache: options.noCache,
+        })
+      ) {
+        throw outcome.reason;
+      }
+      const typed = outcome.reason as RemoteFetchAttemptError;
+      firstSkippedError ??= typed;
       memberErrors.push({
         name: member.name,
         error: safeMemberError(outcome.reason),
@@ -253,12 +276,10 @@ export async function mergeCollectionMemberProxies(
     for (const item of outcome.value.proxies) merged.push(withSource(item, identity));
   }
 
-  if (memberErrors.length === members.length) {
-    throw ProblemDetailsError.badRequest(
-      `聚合订阅 "${collection.name}" 的全部 ${members.length} 个成员拉取失败:${memberErrors
-        .map((e) => `${e.name} → ${e.error}`)
-        .join('; ')}`,
-    );
+  // All enabled members skipped → fail with the FIRST typed failure in stored
+  // order (invariant 10); never a successful-looking empty export.
+  if (memberErrors.length === members.length && firstSkippedError !== undefined) {
+    throw firstSkippedError;
   }
 
   return { merged, memberErrors, stale, ordinalPlanningSession, ordinalDomainRegistry };

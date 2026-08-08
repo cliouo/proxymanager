@@ -89,6 +89,8 @@ const getConfigFull = defineAction({
     const { resolved } = await renderProfileConfig(profile.name, {
       // 与旧 loadBaseContent 的错误语义保持一致(422,而非默认 404)。
       missingBaseError: () => ProblemDetailsError.unprocessable('base.yaml 尚未初始化。'),
+      // P-FFP v1: AI config reads are not real attempts — no fetch health.
+      recordFetchHealth: false,
     });
     return { kind: 'config-full', data: { yaml: fullRedactedYaml(resolved.content) } };
   },

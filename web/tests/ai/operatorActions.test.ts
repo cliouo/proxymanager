@@ -283,6 +283,53 @@ describe('list_node_sources', () => {
     expect(JSON.stringify(env)).not.toContain(SUB_ID);
     expect(JSON.stringify(env)).not.toContain('pool');
   });
+
+  it('exposes the safe fetchFailurePolicy for remote subscriptions only', async () => {
+    const listSources = async () => {
+      const action = getAction('list_node_sources');
+      if (action.risk !== 'read') throw new Error('expected read');
+      return action.run(ctx, {});
+    };
+
+    // remote + explicit strict policy → the policy value is visible
+    seedSub([]);
+    const stored = bucket(REDIS_KEYS.subscriptions).get(SUB_ID) as Subscription;
+    bucket(REDIS_KEYS.subscriptions).set(SUB_ID, {
+      ...stored,
+      fetch_failure_policy: 'fail-closed',
+    });
+    const strictEnv = await listSources();
+    const strictData = strictEnv.data as {
+      subscriptions: Array<{ fetchFailurePolicy?: string }>;
+    };
+    expect(strictData.subscriptions[0].fetchFailurePolicy).toBe('fail-closed');
+
+    // legacy remote row without a policy → effective default is exposed
+    bucket(REDIS_KEYS.subscriptions).set(SUB_ID, stored);
+    const defaultEnv = await listSources();
+    const defaultData = defaultEnv.data as {
+      subscriptions: Array<{ fetchFailurePolicy?: string }>;
+    };
+    expect(defaultData.subscriptions[0].fetchFailurePolicy).toBe('use-stale-cache');
+
+    // local subscriptions never carry the policy — and no health/url/error ever appears
+    bucket(REDIS_KEYS.subscriptions).set(SUB_ID, {
+      ...stored,
+      kind: 'local',
+      url: undefined,
+      content: 'proxies: []\n',
+      fetch_failure_policy: 'fail-closed',
+    });
+    const localEnv = await listSources();
+    const localData = localEnv.data as {
+      subscriptions: Array<{ fetchFailurePolicy?: string }>;
+    };
+    expect(localData.subscriptions[0].fetchFailurePolicy).toBeUndefined();
+    const serialized = JSON.stringify(localEnv);
+    expect(serialized).not.toContain('fetch_health');
+    expect(serialized).not.toContain('last_error');
+    expect(serialized).not.toContain('https://');
+  });
 });
 
 describe('preview_node_operators', () => {

@@ -53,6 +53,7 @@ import {
   FilterTypeOpSchema,
   FilterUselessOpSchema,
   FlagEmojiOpSchema,
+  effectiveFetchFailurePolicy,
   isActiveCurrentRenameTemplateOperator,
   isExecutableOperator,
   isParkedOperator,
@@ -529,6 +530,10 @@ const listNodeSources = defineAction({
             name: safeLabel(s.display_name || s.name),
             enabled: s.enabled,
             kind: s.kind,
+            // P-FFP v1: the safe effective fetch-failure policy is exposed for
+            // REMOTE subscriptions only — never health, URL, error, or cache
+            // identity; local sources omit the field entirely.
+            ...(s.kind === 'remote' ? { fetchFailurePolicy: effectiveFetchFailurePolicy(s) } : {}),
             operatorCount: s.operators.length,
             operators: safeOperatorProjection(s.operators),
           })),

@@ -23,8 +23,9 @@ import { listRuleSets } from '@/lib/repos/ruleSetsRepo';
 import { listSubscriptions } from '@/lib/repos/subscriptionsRepo';
 import {
   describeSubscriptionContentIssue,
+  describeSubscriptionFetchFailureCategory,
+  RemoteFetchAttemptError,
   SubscriptionResolutionValidationError,
-  SubscriptionUpstreamUnavailableError,
 } from '@/lib/services/subscriptionResolutionErrors';
 import { resolveSubscriptionProxies } from '@/lib/services/subscriptionFetcher';
 import type { FetchSubscriptionProxiesResult } from '@/lib/services/subscriptionFetcher';
@@ -137,6 +138,9 @@ function subscriptionSnapshotKey(subscription: Subscription): string {
     content: subscription.content,
     tags: subscription.tags,
     operators: subscription.operators,
+    // P-FFP v1: the fallback policy changes resolution outcomes (stale-serve
+    // vs strict fail vs skippable) — it is part of the snapshot identity.
+    fetch_failure_policy: subscription.fetch_failure_policy,
   };
   return createHash('sha256').update(safeJsonStringify(definition)).digest('base64url');
 }
@@ -153,7 +157,7 @@ export async function resolveSubscriptionForPreflight(
     const resolve = () =>
       resolveSubscriptionProxies(subscription, {
         writeCache: false,
-        allowStale: false,
+        recordHealth: false,
         ordinalPlanningSession: options?.ordinalPlanningSession,
       });
     const snapshot = options?.subscriptionSnapshot;
@@ -167,6 +171,11 @@ export async function resolveSubscriptionForPreflight(
     }
     return await pending;
   } catch (error) {
+    // P-FFP v1: TYPED attempt errors pass through UNTOUCHED — resolveConfig
+    // must see the exact typed error to authorize a collection skip. Only
+    // AFTER resolve (in preflightProfileConfig) do remaining typed errors map
+    // to fixed 422/503.
+    if (error instanceof RemoteFetchAttemptError) throw error;
     if (error instanceof SubscriptionResolutionValidationError) {
       const rootPath = `subscriptions[${subscription.name}]`;
       const issue =
@@ -211,11 +220,6 @@ export async function resolveSubscriptionForPreflight(
         path: issue.path,
         resource: 'subscription',
       });
-    }
-    if (error instanceof SubscriptionUpstreamUnavailableError) {
-      // Never echo the upstream error: it can contain credentials or a URL.
-      // The handler maps this fixed error to a safe 503 response.
-      throw new ConfigPreflightUnavailableError();
     }
     throw error;
   }
@@ -281,8 +285,13 @@ export async function preflightProfileConfig(
         // snapshots, OR persisted node-ordinal assignments.
         persistOrdinals: false,
         ordinalPlanningSession,
-        // The injected resolver is the side-effect boundary: normal renders
-        // retain cache writes and stale fallback, while preflight does neither.
+        // The injected resolver is the SIDE-EFFECT boundary: preflight never
+        // writes the fetch cache, health, snapshots, or ordinal assignments
+        // (writeCache false + recordHealth false inside
+        // resolveSubscriptionForPreflight). v2 I11: preflight MAY read a
+        // fresh or retained validated cache and MAY authorize v1 stale-serve
+        // or collection skip through the shared policy path — it simply never
+        // writes any serving state.
         subscriptionResolver: (subscription, resolverOptions) =>
           resolveSubscriptionForPreflight(subscription, {
             ...(resolverOptions?.ordinalPlanningSession || ordinalPlanningSession
@@ -321,6 +330,24 @@ export async function preflightProfileConfig(
       error instanceof ConfigPreflightUnavailableError
     ) {
       throw error;
+    }
+    // P-FFP v1 response partition: a typed attempt error that survived
+    // resolveConfig (no collection skip was authorized) maps AFTER resolve to
+    // its fixed outcome — transport categories (network/timeout/http carry
+    // problem status 503) become temporarily unavailable; response-content
+    // categories become a fixed 422 at subscriptions[safe-name].content.
+    if (error instanceof RemoteFetchAttemptError) {
+      if (error.problem.status === 503) {
+        // Never echo the upstream error: it can contain credentials or a URL.
+        throw new ConfigPreflightUnavailableError();
+      }
+      throw new ConfigValidationError({
+        code: 'subscription_upstream_response_invalid',
+        message: describeSubscriptionFetchFailureCategory(error.category),
+        section: 'subscriptions',
+        path: `subscriptions[${error.sourceName ?? 'source'}].content`,
+        resource: 'subscription',
+      });
     }
     // Unknown failures are programming/infrastructure errors, not proof that
     // the user's candidate is invalid. Let the central handler keep them a

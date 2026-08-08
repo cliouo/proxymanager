@@ -12,11 +12,15 @@
  * The repo write primitives call {@link restoreRawOperators}: when the record's
  * operators are byte-equivalent to the deterministic decode of the raw array
  * (i.e. the operators field was NOT explicitly edited), the raw bytes are
- * restored before persistence — recordSubscriptionSync / recordSubscriptionError
- * / refresh status writes / ordinary non-operator patches / cosmetic collection
- * patches therefore never touch unknown/malformed rows. An explicit current
- * operator save (which replaces the array with new valid Operators) produces a
- * different array and wins as-is.
+ * restored before persistence — ordinary declarative subscription patches and
+ * cosmetic collection patches therefore never touch unknown/malformed rows. An
+ * explicit current operator save (which replaces the array with new valid
+ * Operators) produces a different array and wins as-is.
+ *
+ * P-FFP v1: the refresh-time row writers (recordSubscriptionSync /
+ * recordSubscriptionError / runtime CAS patch) were retired — refresh writes
+ * no definition row at all; actual attempt health lives in the separate
+ * subscription-fetch-health value.
  */
 
 import { ProblemDetailsError } from '@/lib/http/problem';

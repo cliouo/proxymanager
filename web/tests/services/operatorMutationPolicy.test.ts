@@ -471,10 +471,11 @@ describe('generic PATCH/PUT with a raw naming row (service boundary)', () => {
     expect(storedOperators(REDIS_KEYS.collections, COL_ID)).toEqual([RT_RAW]);
   });
 
-  it('sync/error refresh writes still preserve the raw naming row', async () => {
+  it('declarative non-operator patches still preserve the raw naming row', async () => {
+    // Runtime row helpers were retired with the fetch-health refactor; every
+    // remaining subscription write is a declarative PATCH through the gate.
     seedSubscription([RT_RAW]);
-    await subSvc.recordSubscriptionSync(SUB_ID, 1234);
-    await subSvc.recordSubscriptionError(SUB_ID, 'upstream unavailable');
+    await subSvc.patchSubscription(SUB_ID, { display_name: '新名字' });
     expect(storedOperators(REDIS_KEYS.subscriptions, SUB_ID)).toEqual([RT_RAW]);
   });
 

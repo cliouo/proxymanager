@@ -16,6 +16,7 @@ import { describe, expect, it } from 'vitest';
 import { luaMatch } from '../helpers/luaPattern';
 import { CAS_ENTITY_WITH_HISTORY } from '@/lib/repos/namingCasRepo';
 import { ASSIGN_ORDINALS_LUA } from '@/lib/repos/nodeOrdinalRepo';
+import { CAS_SUBSCRIPTION_FETCH_HEALTH } from '@/lib/repos/subscriptionFetchHealthRepo';
 
 /** Every string.match(<var>, '<pattern>') literal used by a production script. */
 function patternsOf(script: string): string[] {
@@ -130,5 +131,52 @@ describe('production Lua scripts use Lua-valid canonical decimal checks', () => 
     expect(ASSIGN_ORDINALS_LUA).toContain('9007199254740991');
     expect(CAS_ENTITY_WITH_HISTORY).toContain('current > 9007199254740990');
     expect(CAS_ENTITY_WITH_HISTORY).toContain("'version-overflow'");
+  });
+
+  it('the fetch-health CAS pins canonical fingerprint validation and malformed replacement in the real Lua text', () => {
+    const script = CAS_SUBSCRIPTION_FETCH_HEALTH;
+    const healthPatterns = patternsOf(script);
+    for (const pattern of healthPatterns) {
+      // Lua patterns — no JS alternation anywhere (the prior defect class)
+      expect(pattern).not.toContain('|');
+    }
+    // v2 I12: canonical fingerprint — exactly 43 chars from [A-Za-z0-9_-]
+    // with zero padding bits in the final char (canonical re-encoding).
+    expect(healthPatterns).toContain('^[%w_%-]+$');
+    expect(healthPatterns).toContain('[AEIMQUYcgkosw048]$');
+    expect(script).toContain('string.len(fp) == 43');
+    // v2 I13: existing values are timestamp-orderable ONLY after cjson decode
+    // and state-specific validation; malformed values are replaced regardless
+    // of timestamps (the ordering branch sits inside the validation guard).
+    expect(script).toContain('pcall(cjson.decode, existing)');
+    // Exact JSON equivalence: cjson's invalid-number tokens (NaN/Infinity/hex)
+    // are rejected by decode — the process-global setting is read, set strict,
+    // and restored around the protected decode.
+    expect(script).toContain('local priorInvalidNumbers = cjson.decode_invalid_numbers()');
+    expect(script).toContain('cjson.decode_invalid_numbers(false)');
+    expect(script).toContain('cjson.decode_invalid_numbers(priorInvalidNumbers)');
+    // Safe-integer equivalence: Zod 4 .int() bounds at +/-9007199254740991.
+    expect(script).toContain('local function isSafeInt(x, lower)');
+    expect(script).toContain('9007199254740991');
+    // Finiteness: traffic counters reject positive Infinity via math.huge.
+    expect(script).toContain("traffic['upload'] < math.huge");
+    // Exact known-key rejection via next() key enumeration.
+    expect(script).toContain('local allowedKeys = {}');
+    expect(script).toContain('key = next(decoded, key)');
+    expect(script).toContain('if not allowedKeys[key] then');
+    expect(script).toContain("state == 'fresh'");
+    expect(script).toContain("state == 'stale-served'");
+    expect(script).toContain("state == 'failed-no-cache'");
+    expect(script).toContain("disposition == 'policy-blocked'");
+    expect(script).toContain("disposition == 'bypassed'");
+    // failed-no-cache forbids fresh_at, proxy_count AND traffic.
+    expect(script).toContain('freshAt == nil and proxyCount == nil and traffic == nil');
+    expect(script).toContain('newAttempted < attemptedAt then return 0');
+    // the EX TTL is passed through verbatim, never re-formatted
+    expect(script).toContain("redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[4])");
+    expect(script).toContain('return 1');
+    // config-version isolation: the script addresses only its own key
+    expect(script).not.toContain("'config");
+    expect(script).not.toContain('version');
   });
 });

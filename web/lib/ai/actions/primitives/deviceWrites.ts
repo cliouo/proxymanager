@@ -222,6 +222,8 @@ const previewDeviceConfig = defineAction({
 
     const { resolved } = await renderProfileConfig(profile.name, {
       missingBaseError: () => ProblemDetailsError.unprocessable('base.yaml 尚未初始化。'),
+      // P-FFP v1: device-write previews are not real attempts — no fetch health.
+      recordFetchHealth: false,
     });
 
     let deviceYamlText: string | null = null;

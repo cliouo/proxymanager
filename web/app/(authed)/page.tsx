@@ -10,6 +10,7 @@ import { PageTopbar } from '@/components/PageChrome';
 import { ScopePill } from '@/components/Topbar';
 import { useProfiles } from '@/components/profile/ProfileContext';
 import { useSetup } from '@/components/setup/SetupContext';
+import { describeFailedDisposition } from '@/lib/ui/subscriptionFetchHealthCopy';
 import { Placeholder, SkeletonStat } from '@/components/ui/Reveal';
 import {
   TEMPLATE_NOT_DISTRIBUTABLE,
@@ -43,6 +44,21 @@ interface SubStatus {
   stale?: boolean;
   staleReason?: string;
   error?: string;
+}
+
+/** P-FFP v1: server fetch health drives the fetch alerts (never the snapshot). */
+interface SubscriptionHealthSource {
+  name: string;
+  display_name?: string;
+  fetch_health?: FetchHealth | null;
+}
+
+interface FetchHealth {
+  state: 'fresh' | 'stale-served' | 'failed-no-cache';
+  attempted_at: number;
+  observed_at: number;
+  failure_category?: string;
+  cache_disposition?: 'served' | 'unavailable' | 'invalid' | 'policy-blocked' | 'bypassed';
 }
 
 /** /api/v1/resolved-snapshot 的形状(lib/repos/resolvedRepo.ts 的 ResolvedSnapshot 子集)。 */
@@ -138,6 +154,9 @@ export default function DashboardPage() {
   const [groups, setGroups] = useState<ProxyGroup[]>([]);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [snapshotError, setSnapshotError] = useState(false);
+  // P-FFP v1: the subscription list carries fetch_health — the single source
+  // for fetch alerts (seven-day health TTL defines "recent").
+  const [subscriptionHealth, setSubscriptionHealth] = useState<SubscriptionHealthSource[]>([]);
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -173,7 +192,9 @@ export default function DashboardPage() {
         const [metaRes, anchors, subs, sets, pgs, rules, hist, prev] = await Promise.all([
           api<{ data: Meta }>('/api/v1/meta'),
           api<{ data: string[] }>('/api/v1/anchors').catch(() => ({ data: [] as string[] })),
-          api<{ data: unknown[]; meta: { total: number } }>('/api/v1/subscriptions'),
+          api<{ data: SubscriptionHealthSource[]; meta: { total: number } }>(
+            '/api/v1/subscriptions',
+          ),
           api<{ data: RuleSet[]; meta: { total: number } }>('/api/v1/rule-sets'),
           api<{ data: ProxyGroup[]; meta: { total: number } }>('/api/v1/proxy-groups'),
           api<{ meta: { total: number } }>('/api/v1/rules?limit=1'),
@@ -194,6 +215,7 @@ export default function DashboardPage() {
         setEvents(hist.data);
         setSnapshot(prev.data ?? null);
         setSnapshotError(!prev.ok);
+        setSubscriptionHealth(subs.data);
         setCounts({
           anchors: anchors.data.length,
           subscriptions: subs.meta.total,
@@ -244,10 +266,10 @@ export default function DashboardPage() {
   const rulesDesc =
     counts && anchorsApplied > 0 ? `分布于 ${anchorsApplied} 个锚点` : 'base 锚点注入位';
   const subsInjected = snapshot?.subscriptions?.reduce((s, x) => s + (x.injectedCount ?? 0), 0);
+  // P-FFP v1: fetch alerts come from fetch_health; the snapshot warning count
+  // keeps only STRUCTURAL warnings (legacy fields, unmatched anchors, …).
   const snapshotWarningCount =
-    (snapshot?.warnings?.length ?? 0) +
-    (snapshot?.unmatchedAnchors?.length ?? 0) +
-    (snapshot?.subscriptions?.filter((item) => item.error || item.stale).length ?? 0);
+    (snapshot?.warnings?.length ?? 0) + (snapshot?.unmatchedAnchors?.length ?? 0);
   const readiness = meta
     ? deriveDashboardReadiness({
         hasBase: meta.hasBase,
@@ -262,7 +284,13 @@ export default function DashboardPage() {
     : null;
 
   /* ---------- alerts (computed from real conditions) ---------- */
-  const alerts = buildAlerts(meta, snapshot, snapshotError, activeProfile?.source.type ?? null);
+  const alerts = buildAlerts(
+    meta,
+    snapshot,
+    snapshotError,
+    activeProfile?.source.type ?? null,
+    subscriptionHealth,
+  );
 
   return (
     <>
@@ -576,6 +604,7 @@ function buildAlerts(
   snapshot: Snapshot | null,
   snapshotError = false,
   sourceType: 'none' | 'subscription' | 'collection' | null = null,
+  subscriptions: SubscriptionHealthSource[] = [],
 ): Alert[] {
   const out: Alert[] = [];
 
@@ -622,28 +651,33 @@ function buildAlerts(
     });
   }
 
-  // 2) 订阅源拉取失败 / 沿用缓存 — 来自上次渲染快照。
-  for (const s of snapshot?.subscriptions ?? []) {
-    if (s.error) {
+  // 2) 订阅源拉取失败 / 沿用缓存 — P-FFP v1: 来自每个订阅源的 fetch_health
+  // (独立 advisory 值,七天内为 recent),绝不来自渲染快照 —— 失败的渲染因此
+  // 仍然可见,且不会再出现「本次失败却声称已用旧缓存下发」的假象。
+  for (const s of subscriptions) {
+    if (!s.fetch_health) continue;
+    if (s.fetch_health.state === 'failed-no-cache') {
       out.push({
         tone: 'err',
         tag: '拉取失败',
         body: (
           <>
-            订阅源 <code className="mono">{s.name}</code> 本次拉取失败
-            {s.error ? <>（{s.error}）</> : null}，且没有可用缓存。
+            订阅源 <code className="mono">{s.name}</code> 拉取失败
+            {s.fetch_health.failure_category ? <>（{s.fetch_health.failure_category}）</> : null}：
+            {describeFailedDisposition(s.fetch_health.cache_disposition)}。
           </>
         ),
         href: '/subscriptions',
       });
-    } else if (s.stale) {
+    } else if (s.fetch_health.state === 'stale-served') {
       out.push({
         tone: 'warn',
         tag: '沿用缓存',
         body: (
           <>
             订阅源 <code className="mono">{s.name}</code> 刷新失败
-            {s.staleReason ? <>（{s.staleReason}）</> : null}，已沿用上次缓存。
+            {s.fetch_health.failure_category ? <>（{s.fetch_health.failure_category}）</> : null}
+            ，已沿用上次缓存对外下发。
           </>
         ),
         href: '/subscriptions',

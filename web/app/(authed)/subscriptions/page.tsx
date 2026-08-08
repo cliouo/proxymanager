@@ -10,6 +10,7 @@ import { ApiError, api } from '@/lib/client/api';
 import { useToast } from '@/components/ui/Toast';
 import { type Collection } from '@/lib/types/collection';
 import { isActiveCurrentRenameTemplateOperator, type StoredOperator } from '@/schemas/operator';
+import { describeFailedDisposition } from '@/lib/ui/subscriptionFetchHealthCopy';
 import styles from './subscriptions.module.css';
 
 const DEFAULT_TTL_MS = 10 * 60 * 1000;
@@ -25,15 +26,28 @@ interface Subscription {
   ttl_ms: number;
   content?: string;
   tags: string[];
-  last_synced_at?: number;
-  last_traffic?: {
+  /** P-FFP v1: remote-only declarative policy (effective default 沿用缓存). */
+  fetch_failure_policy?: 'use-stale-cache' | 'fail-closed';
+  /** P-FFP v1: separate advisory attempt health (API joins by fingerprint). */
+  fetch_health?: FetchHealth | null;
+  operators?: StoredOperator[];
+}
+
+/** Runtime fetch health — mirrors the server SubscriptionFetchHealth shape. */
+interface FetchHealth {
+  state: 'fresh' | 'stale-served' | 'failed-no-cache';
+  attempted_at: number;
+  observed_at: number;
+  fresh_at?: number;
+  failure_category?: string;
+  cache_disposition?: 'served' | 'unavailable' | 'invalid' | 'policy-blocked' | 'bypassed';
+  proxy_count?: number;
+  traffic?: {
     upload: number;
     download: number;
     total: number;
     expire: number;
   };
-  last_error?: string;
-  operators?: StoredOperator[];
 }
 
 type Tab = 'subs' | 'collections' | 'naming';
@@ -54,6 +68,12 @@ function fmtTime(s: number | undefined): string {
   if (diff < 3600) return `${Math.round(diff / 60)} 分钟前`;
   if (diff < 86400) return `${Math.round(diff / 3600)} 小时前`;
   return new Date(s * 1000).toLocaleString('zh-CN');
+}
+
+/** P-FFP v1: 上次拉取 now comes from health.observed_at (ms epoch). */
+function fmtMs(s: number | undefined): string {
+  if (!s) return '从未';
+  return fmtTime(s / 1000);
 }
 
 export default function SubscriptionsPage() {
@@ -276,13 +296,22 @@ export default function SubscriptionsPage() {
       const kindLabel = s.kind === 'remote' ? '远程订阅' : '本地订阅';
       const meta: { k: string; v: string }[] = [
         { k: '类型', v: s.kind },
-        { k: '上次拉取', v: fmtTime(s.last_synced_at) },
+        { k: '上次拉取', v: fmtMs(s.fetch_health?.observed_at) },
       ];
+      // v2 I15: failed-no-cache projections consume the shared formatter —
+      // no page-local claim may diverge.
+      const fetchLabel = !s.enabled
+        ? '已停用'
+        : s.fetch_health?.state === 'failed-no-cache'
+          ? `拉取失败：${describeFailedDisposition(s.fetch_health.cache_disposition)}`
+          : s.fetch_health?.state === 'stale-served'
+            ? '沿用缓存下发中'
+            : '公开分发中';
       return {
         kind: 'source',
         name: s.display_name || s.name,
         pathSeg: s.name,
-        typeLabel: `${kindLabel} · ${!s.enabled ? '已停用' : s.last_error ? '缓存下发中' : '公开分发中'}`,
+        typeLabel: `${kindLabel} · ${fetchLabel}`,
         enabled: s.enabled,
         meta,
       };
@@ -1232,8 +1261,30 @@ function Dossier({
     );
   }
 
-  const ledTone = sub.last_error ? 'err' : sub.enabled ? 'ok' : 'off';
+  const ledTone =
+    sub.fetch_health?.state === 'failed-no-cache' ? 'err' : sub.enabled ? 'ok' : 'off';
   const opCount = sub.operators?.length ?? 0;
+  // P-FFP v1 health status: failed-no-cache must explicitly say NONE was
+  // served (no false old-cache claims) and distinguish the fixed disposition;
+  // stale-served may claim the cache is served.
+  const fetchAlert =
+    sub.fetch_health?.state === 'failed-no-cache'
+      ? {
+          pill: 'pill err' as const,
+          text: '拉取失败',
+          // v2 I15: the exact disposition sentence comes from the shared
+          // formatter — only unavailable says no cache was found, only
+          // invalid says validation failed, policy-blocked and bypassed
+          // never imply an unusable cache.
+          line: `上次拉取失败：${describeFailedDisposition(sub.fetch_health.cache_disposition)}。`,
+        }
+      : sub.fetch_health?.state === 'stale-served'
+        ? {
+            pill: 'pill warn' as const,
+            text: '沿用缓存',
+            line: `上次拉取失败，已沿用上次缓存对外下发（${sub.fetch_health.failure_category ?? '未知原因'}）。`,
+          }
+        : null;
 
   return (
     <div className={`${styles.subItem}${anyEditing ? ` ${styles.dimmed}` : ''}`}>
@@ -1248,16 +1299,15 @@ function Dossier({
               {t}
             </span>
           ))}
-          {sub.last_error && <span className="pill err">上次拉取失败</span>}
+          {fetchAlert && <span className={fetchAlert.pill}>{fetchAlert.text}</span>}
+          {/* P-FFP v1: 失败时阻断 badge — strict rows only; the default is quiet. */}
+          {sub.kind === 'remote' && sub.fetch_failure_policy === 'fail-closed' && (
+            <span className="pill acc">失败时阻断</span>
+          )}
           {!sub.enabled && <span className="pill idle">已停用</span>}
         </div>
 
-        {sub.last_error && (
-          <div className={styles.errLine}>
-            {sub.last_error}
-            {sub.kind === 'remote' && ' · 公开链接仍以上次缓存对外下发'}
-          </div>
-        )}
+        {fetchAlert && <div className={styles.errLine}>{fetchAlert.line}</div>}
 
         <div className={styles.meta}>
           {sub.kind === 'remote' ? (
@@ -1270,7 +1320,7 @@ function Dossier({
             </span>
           )}
           <span>
-            <span className={styles.k}>上次拉取</span> {fmtTime(sub.last_synced_at)}
+            <span className={styles.k}>上次拉取</span> {fmtMs(sub.fetch_health?.observed_at)}
           </span>
           <span>
             <PipelineLink href={`/subscriptions/${sub.id}/pipeline`} count={opCount} />
@@ -1285,8 +1335,8 @@ function Dossier({
       </div>
 
       <div className={styles.right}>
-        {sub.last_traffic && sub.last_traffic.total > 0 && (
-          <CompactTraffic traffic={sub.last_traffic} />
+        {sub.fetch_health?.traffic && sub.fetch_health.traffic.total > 0 && (
+          <CompactTraffic traffic={sub.fetch_health.traffic} />
         )}
         <DistChip enabled={sub.enabled} onClick={onDistribute} />
         <div className={styles.acts}>
@@ -1403,6 +1453,7 @@ function AddForm({ onAdded, onCancel }: { onAdded: () => void; onCancel: () => v
   const [tagsInput, setTagsInput] = useState('');
   const [ttlSec, setTtlSec] = useState(Math.round(DEFAULT_TTL_MS / 1000));
   const [enabled, setEnabled] = useState(true);
+  const [policy, setPolicy] = useState<'use-stale-cache' | 'fail-closed'>('use-stale-cache');
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -1435,6 +1486,8 @@ function AddForm({ onAdded, onCancel }: { onAdded: () => void; onCancel: () => v
       if (kind === 'remote') {
         body.url = url.trim();
         if (ua.trim()) body.ua_override = ua.trim();
+        // P-FFP v1: remote-only declarative policy (local never sends it).
+        body.fetch_failure_policy = policy;
       } else {
         body.content = content;
       }
@@ -1517,6 +1570,33 @@ function AddForm({ onAdded, onCancel }: { onAdded: () => void; onCancel: () => v
               </label>
               <div className={styles.ctl}>
                 <TtlSeg sec={ttlSec} onChange={setTtlSec} />
+              </div>
+            </div>
+          )}
+
+          {kind === 'remote' && (
+            <div className={styles.frmRow}>
+              <label>
+                失败时处理
+                <span className="h">上游拉取失败时的行为</span>
+              </label>
+              <div className={styles.ctl}>
+                <div className="seg" data-seg="policy">
+                  <button
+                    type="button"
+                    className={`opt${policy === 'use-stale-cache' ? ' on' : ''}`}
+                    onClick={() => setPolicy('use-stale-cache')}
+                  >
+                    沿用缓存（默认）
+                  </button>
+                  <button
+                    type="button"
+                    className={`opt${policy === 'fail-closed' ? ' on' : ''}`}
+                    onClick={() => setPolicy('fail-closed')}
+                  >
+                    阻断聚合
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -1631,6 +1711,9 @@ function EditForm({
   const [tagsInput, setTagsInput] = useState(sub.tags.join(', '));
   const [ttlSec, setTtlSec] = useState(Math.max(1, Math.round(sub.ttl_ms / 1000)));
   const [enabled, setEnabled] = useState(sub.enabled);
+  const [policy, setPolicy] = useState<'use-stale-cache' | 'fail-closed'>(
+    sub.fetch_failure_policy ?? 'use-stale-cache',
+  );
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -1653,6 +1736,8 @@ function EditForm({
       if (sub.kind === 'remote') {
         patch.url = url.trim();
         patch.ua_override = ua.trim();
+        // P-FFP v1: remote-only declarative policy (local never sends it).
+        patch.fetch_failure_policy = policy;
       } else {
         patch.content = content;
       }
@@ -1707,6 +1792,33 @@ function EditForm({
             </label>
             <div className={styles.ctl}>
               <TtlSeg sec={ttlSec} onChange={setTtlSec} />
+            </div>
+          </div>
+        )}
+
+        {sub.kind === 'remote' && (
+          <div className={styles.frmRow}>
+            <label>
+              失败时处理
+              <span className="h">上游拉取失败时的行为</span>
+            </label>
+            <div className={styles.ctl}>
+              <div className="seg" data-seg="policy">
+                <button
+                  type="button"
+                  className={`opt${policy === 'use-stale-cache' ? ' on' : ''}`}
+                  onClick={() => setPolicy('use-stale-cache')}
+                >
+                  沿用缓存（默认）
+                </button>
+                <button
+                  type="button"
+                  className={`opt${policy === 'fail-closed' ? ' on' : ''}`}
+                  onClick={() => setPolicy('fail-closed')}
+                >
+                  阻断聚合
+                </button>
+              </div>
             </div>
           </div>
         )}

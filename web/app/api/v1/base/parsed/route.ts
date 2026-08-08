@@ -26,6 +26,8 @@ export const GET = withProblemDetails(async (request: Request) => {
     {
       missingBaseError: () =>
         ProblemDetailsError.unprocessable('Base config has not been initialized.'),
+      // P-FFP v1: the structured admin view is not a real attempt — no fetch health.
+      recordFetchHealth: false,
     },
   );
   // extractStructured stays at the route layer — it's a cheap projection of

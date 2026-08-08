@@ -20,6 +20,15 @@ export const REDIS_KEYS = {
    */
   devices: (profileId: string): string => `devices:${profileId}`,
   subscriptions: 'subscriptions',
+  /**
+   * Separate, advisory runtime fetch health for remote subscriptions (P-FFP
+   * v1). One standalone key per source id; value is the
+   * SubscriptionFetchHealth record with EX 604800 (seven days after the last
+   * actual attempt). Deliberately NOT in the `subscriptions` hash: health is
+   * not part of the definition row, never bumps config:version, and never
+   * invalidates render caches or snapshots.
+   */
+  subscriptionFetchHealth: (id: string): string => `subscription-fetch-health:${id}`,
   proxies: 'proxies',
   ruleSets: 'rule-sets',
   /**

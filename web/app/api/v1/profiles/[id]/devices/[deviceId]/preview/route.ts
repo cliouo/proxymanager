@@ -30,7 +30,8 @@ export const GET = withProblemDetails(async (_request: Request, ctx: Ctx) => {
   if (!profile) throw ProblemDetailsError.notFound(`profile ${id} 不存在。`);
   const device = await getProfileDevice(id, deviceId);
 
-  const shared = await renderProfileConfig(profile.name);
+  // P-FFP v1: admin previews are not real attempts — no fetch health.
+  const shared = await renderProfileConfig(profile.name, { recordFetchHealth: false });
 
   let deviceYaml: string | null = null;
   const issues: ConfigValidationError['issue'][] = [];

@@ -173,6 +173,61 @@ rules:
     expect(SubscriptionCreateSchema.safeParse(stored).success).toBe(false);
   });
 
+  it('retires runtime rows: legacy last_synced_at/last_traffic/last_error parse away, policy defaults', () => {
+    const stored = {
+      id: SUBSCRIPTION_ID,
+      name: 'legacy-sub',
+      enabled: true,
+      kind: 'remote',
+      url: 'https://example.test/sub',
+      ttl_ms: 600_000,
+      tags: [],
+      operators: [],
+      last_synced_at: 1234,
+      last_traffic: { upload: 1, download: 2, total: 3, expire: 4 },
+      last_error: 'Upstream fetch failed',
+    };
+
+    const parsed = SubscriptionSchema.parse(stored);
+    // Runtime state is no longer part of the definition row: legacy keys are
+    // dropped by the decoder, so a declarative rewrite can never resurrect or
+    // persist them.
+    expect('last_synced_at' in parsed).toBe(false);
+    expect('last_traffic' in parsed).toBe(false);
+    expect('last_error' in parsed).toBe(false);
+    // The fetch-failure policy is declarative with an effective default.
+    expect(parsed.fetch_failure_policy).toBeUndefined();
+  });
+
+  it('strips a legacy policy from a local stored row in memory with zero Redis writes', () => {
+    const rawRow = {
+      id: SUBSCRIPTION_ID,
+      name: 'legacy-local',
+      enabled: true,
+      kind: 'local',
+      content: 'proxies: []\n',
+      ttl_ms: 600_000,
+      tags: [],
+      operators: [],
+      fetch_failure_policy: 'fail-closed',
+    };
+    redisState.hashes.set(REDIS_KEYS.subscriptions, {
+      [SUBSCRIPTION_ID]: rawRow,
+    });
+    const rawBefore = JSON.stringify(rawRow);
+
+    return listSubscriptions().then((subs) => {
+      const sub = subs.find((s) => s.id === SUBSCRIPTION_ID);
+      expect(sub?.kind).toBe('local');
+      expect(sub?.fetch_failure_policy).toBeUndefined();
+      // The fake Redis exposes ONLY reads — any read-time rewrite (HSET/EVAL)
+      // would throw here, and the stored bytes stay byte-identical.
+      expect(
+        JSON.stringify(redisState.hashes.get(REDIS_KEYS.subscriptions)?.[SUBSCRIPTION_ID]),
+      ).toBe(rawBefore);
+    });
+  });
+
   it('parks historical unsafe operators for subscriptions and collections', () => {
     const subscription = SubscriptionSchema.parse({
       id: SUBSCRIPTION_ID,
