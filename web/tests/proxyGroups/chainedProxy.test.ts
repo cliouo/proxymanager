@@ -80,7 +80,9 @@ const fakeRedis = {
     return tx;
   },
   get: async () => null,
-  set: async (_key: string, _value: unknown) => undefined,
+  set: async (...args: [string, unknown]) => {
+    void args;
+  },
 };
 
 vi.mock('@/lib/redis/client', () => ({

@@ -22,6 +22,7 @@ import { matchFilter } from '../../lib/proxies/filterMatch';
 import { parseBase } from '../../lib/engine/parser';
 import { validateBase } from '../../lib/engine/validator';
 import { ProxyGroupCreateSchema } from '../../schemas/proxyGroup';
+import type { Rule } from '../../schemas/rule';
 
 type Check = { name: string; ok: boolean; weight: number; msg: string };
 
@@ -35,7 +36,13 @@ interface ScorerSpec {
   expect_type?: string; // proxy-group `type` the answer should use
   expect_field?: Record<string, unknown>; // exact field equality checks
   // base_yaml extras
-  rules?: Array<{ id?: string; anchor: string; type?: string; value?: string; policy: string }>;
+  rules?: Array<{
+    id?: string;
+    anchor: string;
+    type?: Rule['type'];
+    value?: string;
+    policy: string;
+  }>;
   managed_group_names?: string[];
   provider_names?: string[];
 }
@@ -56,7 +63,7 @@ function extractBlock(artifact: string, prefer: 'json' | 'yaml'): string {
   return artifact.trim();
 }
 
-function parseObject(artifact: string): { obj: any; err: string | null } {
+function parseObject(artifact: string): { obj: unknown; err: string | null } {
   const block = extractBlock(artifact, 'json');
   // try JSON first, then YAML (YAML is a superset and tolerates the mihomo style)
   try {
@@ -69,6 +76,10 @@ function parseObject(artifact: string): { obj: any; err: string | null } {
   } catch (e) {
     return { obj: null, err: e instanceof Error ? e.message : String(e) };
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 function finalize(checks: Check[]): { hard: number; soft: number; detail: string; checks: Check[] } {
@@ -130,23 +141,31 @@ function scoreProxyGroupInput(job: Job): ReturnType<typeof finalize> {
     msg: parsed.success ? 'ProxyGroupCreateSchema ok' : JSON.stringify(parsed.error.issues.slice(0, 3)),
   });
 
+  const fields = isRecord(obj) ? obj : {};
   if (spec.expect_type) {
     checks.push({
       name: 'type',
-      ok: obj.type === spec.expect_type,
+      ok: fields.type === spec.expect_type,
       weight: 1,
-      msg: `got ${JSON.stringify(obj.type)} want ${spec.expect_type}`,
+      msg: `got ${JSON.stringify(fields.type)} want ${spec.expect_type}`,
     });
   }
   for (const [k, v] of Object.entries(spec.expect_field ?? {})) {
     checks.push({
       name: `field:${k}`,
-      ok: JSON.stringify(obj[k]) === JSON.stringify(v),
+      ok: JSON.stringify(fields[k]) === JSON.stringify(v),
       weight: 1,
-      msg: `got ${JSON.stringify(obj[k])} want ${JSON.stringify(v)}`,
+      msg: `got ${JSON.stringify(fields[k])} want ${JSON.stringify(v)}`,
     });
   }
-  if (spec.node_fixture) scoreFilter(obj.filter, obj['exclude-filter'], spec, checks);
+  if (spec.node_fixture) {
+    scoreFilter(
+      typeof fields.filter === 'string' ? fields.filter : undefined,
+      typeof fields['exclude-filter'] === 'string' ? fields['exclude-filter'] : undefined,
+      spec,
+      checks,
+    );
+  }
   return finalize(checks);
 }
 
@@ -156,12 +175,25 @@ function scoreRegexFilter(job: Job): ReturnType<typeof finalize> {
   // accept either a bare regex line, or an object {filter, exclude-filter}
   let filter: string | undefined;
   let exclude: string | undefined;
+  let fieldError: string | null = null;
   const { obj } = parseObject(job.artifact);
-  if (obj && typeof obj === 'object') {
-    filter = obj.filter ?? obj['filter'];
-    exclude = obj['exclude-filter'] ?? obj.exclude_filter;
-  }
-  if (!filter) {
+  if (isRecord(obj)) {
+    if (typeof obj.filter === 'string') {
+      filter = obj.filter;
+    } else {
+      fieldError = 'filter must be a string';
+    }
+
+    const excludeFields = ['exclude-filter', 'exclude_filter'] as const;
+    for (const field of excludeFields) {
+      if (!Object.hasOwn(obj, field)) continue;
+      if (typeof obj[field] !== 'string') {
+        fieldError = `${field} must be a string`;
+        break;
+      }
+      exclude ??= obj[field];
+    }
+  } else {
     // bare regex: drop any <answer>-style wrapper tags, take the last real line
     const lines = job.artifact
       .replace(/<\/?answer>/gi, '\n')
@@ -171,7 +203,11 @@ function scoreRegexFilter(job: Job): ReturnType<typeof finalize> {
     filter = lines[lines.length - 1];
   }
   checks.push({ name: 'has-filter', ok: !!filter, weight: 1, msg: filter ? `filter=${filter}` : 'no filter found' });
-  if (filter) scoreFilter(filter, exclude, spec, checks);
+  if (fieldError) {
+    checks.push({ name: 'filter-fields-valid', ok: false, weight: 2, msg: fieldError });
+  } else if (filter) {
+    scoreFilter(filter, exclude, spec, checks);
+  }
   return finalize(checks);
 }
 
@@ -187,13 +223,17 @@ function scoreBaseYaml(job: Job): ReturnType<typeof finalize> {
     checks.push({ name: 'base-parses', ok: false, weight: 2, msg: e instanceof Error ? e.message : String(e) });
     return finalize(checks);
   }
-  const rules = (spec.rules ?? []).map((r, i) => ({
+  const rules: Rule[] = (spec.rules ?? []).map((r, i) => ({
     id: r.id ?? `r${i}`,
     anchor: r.anchor,
-    type: (r.type as any) ?? 'DOMAIN',
-    value: r.value,
+    type: r.type ?? 'DOMAIN',
+    value: r.value ?? '',
     policy: r.policy,
-  })) as any;
+    rank: i,
+    source: 'manual',
+    added_at: 0,
+    updated_at: 0,
+  }));
   const result = validateBase(
     parsedBase,
     rules,
