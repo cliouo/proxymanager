@@ -8,7 +8,9 @@ vi.mock('@/lib/repos/fetchCacheRepo', () => ({
 }));
 
 const healthMock = vi.hoisted(() => ({
-  recordSubscriptionFetchHealth: vi.fn(async (_sub: Subscription, _health: unknown) => undefined),
+  recordSubscriptionFetchHealth: vi.fn<(sub: Subscription, health: unknown) => Promise<void>>(
+    async () => undefined,
+  ),
 }));
 vi.mock('@/lib/repos/subscriptionFetchHealthRepo', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/repos/subscriptionFetchHealthRepo')>();

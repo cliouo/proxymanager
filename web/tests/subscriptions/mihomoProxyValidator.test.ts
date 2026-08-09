@@ -2,7 +2,6 @@ import { generateKeyPairSync } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import {
-  MAX_HYSTERIA_PORT_CANDIDATES,
   MAX_PROXY_NAME_LENGTH,
   MAX_PROXY_NODES,
   validateMihomoProxyList,

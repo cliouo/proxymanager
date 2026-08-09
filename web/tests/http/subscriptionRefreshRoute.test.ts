@@ -16,7 +16,7 @@ import { RemoteFetchAttemptError } from '@/lib/services/subscriptionResolutionEr
 
 const fetchHealthRepo = vi.hoisted(() => ({
   // Loosely typed so both null and matching-health payloads are assignable.
-  getSubscriptionFetchHealth: vi.fn(async (_id: string): Promise<unknown> => null),
+  getSubscriptionFetchHealth: vi.fn<(id: string) => Promise<unknown>>(async () => null),
 }));
 
 const repos = vi.hoisted(() => ({

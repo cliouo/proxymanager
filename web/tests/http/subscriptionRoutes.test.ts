@@ -26,17 +26,15 @@ const healthRepo = vi.hoisted(() => {
 });
 
 const repo = vi.hoisted(() => ({
-  getSubscription: vi.fn(async (id: string) => null as Subscription | null),
-  getSubscriptionByName: vi.fn(async (name: string) => null as Subscription | null),
+  getSubscription: vi.fn<(id: string) => Promise<Subscription | null>>(async () => null),
+  getSubscriptionByName: vi.fn<(name: string) => Promise<Subscription | null>>(async () => null),
   listSubscriptions: vi.fn(async () => [] as Subscription[]),
-  commitSubscriptionChange: vi.fn(async (next: Subscription, _expectedVersion: number) => ({
-    ok: true,
-    currentVersion: 1,
-  })),
-  commitSubscriptionDelete: vi.fn(async (id: string, _expectedVersion: number) => ({
-    ok: true,
-    currentVersion: 1,
-  })),
+  commitSubscriptionChange: vi.fn<
+    (next: Subscription, expectedVersion: number) => Promise<{ ok: true; currentVersion: number }>
+  >(async () => ({ ok: true, currentVersion: 1 })),
+  commitSubscriptionDelete: vi.fn<
+    (id: string, expectedVersion: number) => Promise<{ ok: true; currentVersion: number }>
+  >(async () => ({ ok: true, currentVersion: 1 })),
   deleteSubscription: vi.fn(async () => true),
 }));
 

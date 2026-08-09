@@ -187,8 +187,9 @@ export default function ProxyGroupsPage() {
     setDraggingId(null);
     const order = dragOrder[section];
     setDragOrder((prev) => {
-      const { [section]: _drop, ...rest } = prev;
-      return rest;
+      const next = { ...prev };
+      delete next[section];
+      return next;
     });
     if (cancelled || !id || !order) return;
 

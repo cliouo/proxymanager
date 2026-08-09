@@ -164,7 +164,7 @@ function isValidHealthRecord(decoded: Record<string, unknown>): boolean {
 const fakeRedis = {
   get: async (key: string) => decode(key),
   mget: async (...keys: string[]) => keys.map((key) => decode(key)),
-  set: async (key: string, value: unknown, _opts?: { ex?: number }) => {
+  set: async (key: string, value: unknown) => {
     raw.set(key, JSON.stringify(value));
   },
   del: async (key: string) => Number(raw.delete(key)),
