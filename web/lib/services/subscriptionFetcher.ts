@@ -23,10 +23,17 @@ import {
 } from '@/lib/proxies/uriToClash';
 import {
   buildCacheKey,
+  FETCH_CACHE_STALE_RETENTION_MS,
   getFetchCache,
+  MAX_REMOTE_SUBSCRIPTION_BODY_BYTES,
   setFetchCache,
   type FetchCacheEntry,
 } from '@/lib/repos/fetchCacheRepo';
+import {
+  ManualSnapshotIntegrityError,
+  parseSubscriptionManualSnapshotMeta,
+  readVerifiedSubscriptionManualSnapshot,
+} from '@/lib/repos/subscriptionManualSnapshotRepo';
 import {
   asSubscriptionValidationError,
   describeSubscriptionFetchFailureCategory,
@@ -38,6 +45,8 @@ import {
 import {
   SubscriptionTrafficSchema,
   effectiveFetchFailurePolicy,
+  effectiveSubscriptionCustomHeaders,
+  effectiveSubscriptionRefreshMode,
   subscriptionUserAgent,
   type Subscription,
   type SubscriptionFetchHealth,
@@ -50,15 +59,8 @@ import {
 
 const FETCH_TIMEOUT_MS = 15_000;
 const MAX_SUBSCRIPTION_REDIRECTS = 5;
-/** P2-6: hard cap on an upstream subscription body (a slow/huge source can't OOM or hang the render). */
-const MAX_SUBSCRIPTION_BODY_BYTES = 10 * 1024 * 1024;
-/**
- * Upper bound on how long we keep a stale cache entry around as a fallback
- * for stale-on-error. The Redis EX is set to `max(ttl_ms, STALE_TTL_MS)` so
- * the key survives past the freshness window; freshness is judged separately
- * via `fetched_at`.
- */
-const STALE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+/** Browser/manual uploads are capped separately at 4 MiB by their input boundary. */
+const MAX_SUBSCRIPTION_BODY_BYTES = MAX_REMOTE_SUBSCRIPTION_BODY_BYTES;
 
 export interface FetchSubscriptionResult {
   /** Normalised Clash provider YAML: `proxies:` block only. */
@@ -122,6 +124,12 @@ export interface SubscriptionResolveOptions {
   ordinalPlanningSession?: OrdinalPlanningSession;
   /** Complete raw domains shared by serving collection stages. */
   ordinalDomainRegistry?: OrdinalDomainRegistry;
+  /**
+   * Operation-local raw bytes keyed by subscription id. Import and the
+   * manual→auto transition pass one immutable map through every affected
+   * profile so validation never rereads the network or uncommitted storage.
+   */
+  contentOverrides?: ReadonlyMap<string, string>;
 }
 
 /**
@@ -434,6 +442,38 @@ export async function resolveSubscriptionProxiesRaw(
   };
 }
 
+function resolveRawText(
+  text: string,
+  deferUniqueNames: boolean,
+  requireNonEmpty: boolean,
+): RawResolved {
+  try {
+    const { proxies, proxyCount } = normaliseToClashProxies(text, deferUniqueNames);
+    if (requireNonEmpty && proxyCount === 0) {
+      throw ProblemDetailsError.unprocessable(
+        'A manual subscription must contain at least one node.',
+      );
+    }
+    return rawFromProxies(proxies, { proxyCount, traffic: undefined }, deferUniqueNames);
+  } catch (error) {
+    throw asSubscriptionValidationError(
+      error,
+      'content',
+      'subscription_content_invalid',
+      'Subscription content is invalid.',
+    );
+  }
+}
+
+/** Manual-only parser boundary: existing formats, plus the non-empty invariant. */
+export function validateManualSubscriptionContent(
+  content: string,
+  deferUniqueNames = false,
+): FetchSubscriptionProxiesResult {
+  const raw = resolveRawText(content, deferUniqueNames, true);
+  return { proxies: raw.getProxies(), proxyCount: raw.proxyCount };
+}
+
 /**
  * Core raw resolver (dual-view result, see {@link RawResolved}).
  *
@@ -453,37 +493,64 @@ async function resolveSubscriptionRaw(
   sub: Subscription,
   options: SubscriptionResolveOptions = {},
 ): Promise<RawResolved> {
+  const deferUniqueNames = options.deferUniqueNames ?? hasActiveManagedNaming(sub.operators);
+  const overridePresent = options.contentOverrides?.has(sub.id) === true;
+  if (overridePresent) {
+    const raw = resolveRawText(
+      options.contentOverrides!.get(sub.id)!,
+      deferUniqueNames,
+      sub.kind === 'remote' && effectiveSubscriptionRefreshMode(sub) === 'manual',
+    );
+    if (sub.kind === 'remote' && effectiveSubscriptionRefreshMode(sub) === 'manual') {
+      const meta = parseSubscriptionManualSnapshotMeta(sub);
+      if (meta && meta.proxy_count !== raw.proxyCount) {
+        throw asSubscriptionValidationError(
+          ProblemDetailsError.unprocessable('Manual subscription snapshot metadata is invalid.'),
+          'definition',
+          'subscription_manual_snapshot_invalid',
+          'Manual subscription snapshot metadata is invalid.',
+        );
+      }
+    }
+    return raw;
+  }
+
   if (sub.kind === 'local') {
     if (!sub.content) {
       throw asSubscriptionValidationError(
-        ProblemDetailsError.unprocessable(
-          `Subscription "${sub.name}" is kind=local but has no content.`,
-        ),
+        ProblemDetailsError.unprocessable('A local subscription has no content.'),
         'definition',
         'subscription_content_missing',
         'A local subscription has no content.',
       );
     }
-    let proxies: Record<string, unknown>[];
-    let proxyCount: number;
+    return resolveRawText(sub.content, deferUniqueNames, false);
+  }
+
+  if (effectiveSubscriptionRefreshMode(sub) === 'manual') {
+    let content: string;
     try {
-      ({ proxies, proxyCount } = normaliseToClashProxies(
-        sub.content,
-        options.deferUniqueNames ?? hasActiveManagedNaming(sub.operators),
-      ));
+      content = await readVerifiedSubscriptionManualSnapshot(sub);
     } catch (error) {
+      if (!(error instanceof ManualSnapshotIntegrityError)) throw error;
       throw asSubscriptionValidationError(
-        error,
-        'content',
-        'subscription_content_invalid',
-        'Subscription content is invalid.',
+        ProblemDetailsError.unprocessable('Manual subscription snapshot is unavailable.'),
+        'definition',
+        'subscription_manual_snapshot_invalid',
+        'Manual subscription snapshot is unavailable.',
       );
     }
-    return rawFromProxies(
-      proxies,
-      { proxyCount, traffic: undefined },
-      options.deferUniqueNames ?? hasActiveManagedNaming(sub.operators),
-    );
+    const raw = resolveRawText(content, deferUniqueNames, true);
+    const meta = parseSubscriptionManualSnapshotMeta(sub);
+    if (!meta || meta.proxy_count !== raw.proxyCount) {
+      throw asSubscriptionValidationError(
+        ProblemDetailsError.unprocessable('Manual subscription snapshot metadata is invalid.'),
+        'definition',
+        'subscription_manual_snapshot_invalid',
+        'Manual subscription snapshot metadata is invalid.',
+      );
+    }
+    return raw;
   }
 
   if (!sub.url) {
@@ -497,13 +564,12 @@ async function resolveSubscriptionRaw(
     );
   }
 
+  const customHeaders = effectiveSubscriptionCustomHeaders(sub);
   const cacheKey = buildCacheKey({
     url: sub.url,
     userAgent: subscriptionUserAgent(sub),
-    headers: sub.custom_headers,
+    headers: customHeaders,
   });
-
-  const deferUniqueNames = options.deferUniqueNames ?? hasActiveManagedNaming(sub.operators);
 
   // Read once up front — we may use it as fresh, or as the stale fallback.
   // Validate the payload before either decision: cache age/envelope validity
@@ -549,7 +615,7 @@ async function resolveSubscriptionRaw(
     const fresh = await fetchSubscriptionInternal(sub.url, {
       userAgent: subscriptionUserAgent(sub),
       timeoutMs: options.timeoutMs ?? FETCH_TIMEOUT_MS,
-      customHeaders: sub.custom_headers,
+      customHeaders,
       deferUniqueNames,
     });
 
@@ -563,9 +629,11 @@ async function resolveSubscriptionRaw(
     };
     // Keep the entry around long enough to back stale-on-error reads.
     if (options.writeCache !== false) {
-      await setFetchCache(cacheKey, entry, Math.max(sub.ttl_ms, STALE_TTL_MS)).catch(
-        () => undefined,
-      );
+      await setFetchCache(
+        cacheKey,
+        entry,
+        Math.max(sub.ttl_ms, FETCH_CACHE_STALE_RETENTION_MS),
+      ).catch(() => undefined);
     }
     if (recordHealth) {
       const health: SubscriptionFetchHealth = {
@@ -678,6 +746,9 @@ async function fetchSubscriptionInternal(
   const upstreamUrl = parseSubscriptionUrl(url);
   const userAgent = options.userAgent ?? subscriptionUserAgent({ ua_override: undefined });
   const timeoutMs = options.timeoutMs ?? FETCH_TIMEOUT_MS;
+  const customHeaders = effectiveSubscriptionCustomHeaders({
+    custom_headers: options.customHeaders,
+  });
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -690,7 +761,7 @@ async function fetchSubscriptionInternal(
     for (let hop = 0; hop <= MAX_SUBSCRIPTION_REDIRECTS; hop++) {
       try {
         response = await fetch(currentUrl, {
-          headers: { 'User-Agent': userAgent, ...(options.customHeaders ?? {}) },
+          headers: { ...(customHeaders ?? {}), 'User-Agent': userAgent },
           // Undici strips standard credential headers on a cross-origin redirect,
           // but forwards arbitrary custom token headers. Handle redirects here so
           // admin-supplied subscription credentials can never cross an origin.
@@ -747,6 +818,7 @@ async function fetchSubscriptionInternal(
     traffic = parseTrafficHeader(response.headers.get('subscription-userinfo'));
     const declaredLength = Number(response.headers.get('content-length') ?? '');
     if (Number.isFinite(declaredLength) && declaredLength > MAX_SUBSCRIPTION_BODY_BYTES) {
+      await response.body?.cancel().catch(() => undefined);
       throw new RemoteFetchAttemptError('response-content-format');
     }
     // P2-6: the body read stays INSIDE the same timeout window (don't clear

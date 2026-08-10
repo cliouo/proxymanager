@@ -66,7 +66,6 @@ vi.mock('@/lib/repos/subscriptionFetchHealthRepo', async (importOriginal) => {
   return {
     getSubscriptionFetchHealth: fetchHealthRepo.getSubscriptionFetchHealth,
     getSubscriptionFetchHealthMany: vi.fn(async () => []),
-    deleteSubscriptionFetchHealth: vi.fn(async () => undefined),
     recordSubscriptionFetchHealth: vi.fn(async () => undefined),
     computeSubscriptionDefinitionFingerprint: actual.computeSubscriptionDefinitionFingerprint,
     // Pure fingerprint-join used by the view projection — must be real.

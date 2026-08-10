@@ -10,6 +10,7 @@ import {
   SubscriptionSchema,
   SubscriptionUpdateSchema,
   effectiveFetchFailurePolicy,
+  effectiveSubscriptionRefreshMode,
 } from '@/schemas';
 import { SUBSCRIPTION_FETCH_FAILURE_CATEGORIES } from '@/lib/services/subscriptionResolutionErrors';
 
@@ -120,6 +121,67 @@ describe('fetch failure policy — declarative remote-only field', () => {
   });
 });
 
+describe('remote refresh mode and manual snapshot storage', () => {
+  it('keeps legacy remote rows on server-auto without rewriting storage', () => {
+    const stored = SubscriptionSchema.parse({
+      id: '00000000-0000-4000-8000-000000000000',
+      name: 'air',
+      enabled: true,
+      kind: 'remote',
+      url: 'https://up.example/sub',
+      ttl_ms: 60_000,
+      tags: [],
+    });
+    expect(stored.refresh_mode).toBeUndefined();
+    expect(effectiveSubscriptionRefreshMode(stored)).toBe('server-auto');
+  });
+
+  it('keeps bounded manual metadata only on remote stored rows and never decodes raw bytes', () => {
+    const manualSnapshotMeta = {
+      updated_at: 7,
+      proxy_count: 1,
+      origin: 'web',
+      fetch_identity_revision: 3,
+      content_sha256: 'a'.repeat(64),
+    };
+    const remote = SubscriptionSchema.parse({
+      id: '00000000-0000-4000-8000-000000000000',
+      name: 'air',
+      enabled: true,
+      kind: 'remote',
+      url: 'https://up.example/sub',
+      ttl_ms: 60_000,
+      tags: [],
+      refresh_mode: 'manual',
+      fetch_identity_revision: 3,
+      manual_snapshot_meta: manualSnapshotMeta,
+      manual_content: 'must-be-stripped',
+    });
+    expect(remote.refresh_mode).toBe('manual');
+    expect(remote.manual_snapshot_meta).toEqual(manualSnapshotMeta);
+    expect('manual_content' in remote).toBe(false);
+
+    const local = SubscriptionSchema.parse({
+      ...remote,
+      kind: 'local',
+      content: 'proxies: []\n',
+    });
+    expect(local.refresh_mode).toBeUndefined();
+    expect(local.manual_snapshot_meta).toBeUndefined();
+    expect(local.fetch_identity_revision).toBeUndefined();
+  });
+
+  it('only permits the explicit manual to server-auto transition through PATCH', () => {
+    expect(SubscriptionUpdateSchema.safeParse({ refresh_mode: 'server-auto' }).success).toBe(true);
+    expect(SubscriptionUpdateSchema.safeParse({ refresh_mode: 'manual' }).success).toBe(false);
+    const hostile = SubscriptionUpdateSchema.parse({
+      manual_content: 'proxies: []',
+      manual_snapshot_meta: { content_sha256: 'secret' },
+    });
+    expect(hostile).toEqual({});
+  });
+});
+
 describe('kind-discriminated stored schema (v2 I1)', () => {
   const baseRow = {
     id: '00000000-0000-4000-8000-000000000000',
@@ -192,6 +254,8 @@ describe('admin view — TRUE remote/local discriminated union (v2 F1)', () => {
         kind: 'remote',
         fetch_failure_policy: 'use-stale-cache',
         fetch_health: null,
+        refresh_mode: 'server-auto',
+        manual_snapshot: null,
       }).success,
     ).toBe(true);
     // Missing policy or health fails the remote branch.
@@ -204,6 +268,8 @@ describe('admin view — TRUE remote/local discriminated union (v2 F1)', () => {
         ...viewBase,
         kind: 'remote',
         fetch_failure_policy: 'fail-closed',
+        refresh_mode: 'server-auto',
+        manual_snapshot: null,
       }).success,
     ).toBe(false);
   });

@@ -2,7 +2,12 @@
 
 Browser companion to [ProxyManager](../web). Collects domains from the active
 tab, runs a per-region latency comparison via your local Clash/Mihomo external
-controller, and writes the winning rule back to the ProxyManager backend.
+controller, writes the winning rule back to the ProxyManager backend, and can
+optionally fetch a subscription through the browser's local network.
+
+The extension is not required for subscription management. The web app always
+supports pasting raw subscription text or choosing a downloaded file. Installing
+and configuring this extension only adds the one-click local-fetch action.
 
 ## Install (development build)
 
@@ -50,6 +55,20 @@ For hot-reload during development, run `npm run dev` instead — it produces
 7. Reload your Clash client (Mihomo will fetch your subscription URL the next
    time it refreshes — interval defaults to 24h) or use Clash's UI to force a
    reload.
+
+## Optional local subscription refresh
+
+1. Configure the extension's Backend URL and Admin key as described above.
+2. Open ProxyManager's **Subscriptions** page and click **Import update** or
+   **Update content** on a remote source.
+3. When the page reports that the extension is connected, click **Fetch with
+   extension**.
+4. The background service worker reads the source URL from the authenticated
+   backend, fetches it through your current local network, then uploads the raw
+   response for server-side parsing, full-config preflight, and atomic storage.
+
+The page bridge sends only the opaque subscription id. It never receives the
+extension's Admin key or the source URL. Imported content is capped at 4 MiB.
 
 ## How it routes around Mixed Content
 

@@ -21,6 +21,11 @@ export const REDIS_KEYS = {
   devices: (profileId: string): string => `devices:${profileId}`,
   subscriptions: 'subscriptions',
   /**
+   * One checksum-verified manual snapshot per subscription. The value has no
+   * TTL and is mutated only by the subscription definition CAS.
+   */
+  subscriptionManualSnapshot: (id: string): string => `subscription-manual-snapshot:${id}`,
+  /**
    * Separate, advisory runtime fetch health for remote subscriptions (P-FFP
    * v1). One standalone key per source id; value is the
    * SubscriptionFetchHealth record with EX 604800 (seven days after the last

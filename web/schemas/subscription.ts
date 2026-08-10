@@ -92,6 +92,84 @@ export const SubscriptionFetchFailurePolicySchema = z.enum(['use-stale-cache', '
 export type SubscriptionFetchFailurePolicy = z.infer<typeof SubscriptionFetchFailurePolicySchema>;
 
 /**
+ * How a remote source obtains its current bytes:
+ *
+ *   - server-auto: the deployed backend fetches the upstream URL and uses the
+ *     normal fetch cache / failure policy.
+ *   - manual: one checksum-verified snapshot from the dedicated Redis key is
+ *     the only source of bytes. Missing stays server-auto for legacy rows.
+ */
+export const SubscriptionRefreshModeSchema = z.enum(['server-auto', 'manual']);
+export type SubscriptionRefreshMode = z.infer<typeof SubscriptionRefreshModeSchema>;
+
+export const SubscriptionManualUpdateOriginSchema = z.enum(['web', 'extension']);
+export type SubscriptionManualUpdateOrigin = z.infer<typeof SubscriptionManualUpdateOriginSchema>;
+
+/** Bounded metadata stored with the definition; raw bytes are always separate. */
+export const SubscriptionManualSnapshotMetaSchema = z
+  .object({
+    updated_at: z.number().int().nonnegative(),
+    proxy_count: z.number().int().positive(),
+    origin: SubscriptionManualUpdateOriginSchema,
+    fetch_identity_revision: z.number().int().nonnegative(),
+    content_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+  })
+  .strict();
+export type SubscriptionManualSnapshotMeta = z.infer<typeof SubscriptionManualSnapshotMetaSchema>;
+
+/** Secret-free admin projection of the stored manual snapshot metadata. */
+export const SubscriptionManualSnapshotSchema = z
+  .object({
+    updated_at: z.number().int().nonnegative(),
+    proxy_count: z.number().int().positive(),
+    origin: SubscriptionManualUpdateOriginSchema,
+    source_changed: z.boolean(),
+  })
+  .strict();
+export type SubscriptionManualSnapshot = z.infer<typeof SubscriptionManualSnapshotSchema>;
+
+/** Authenticated, no-store fetch inputs consumed only by the page or extension background. */
+export const SubscriptionLocalFetchSpecSchema = z
+  .object({
+    subscriptionId: z.uuid(),
+    url: storedHttpUrl,
+    userAgent: z.string(),
+    customHeaders: z.record(z.string(), z.string()),
+    updatedAt: z.number().int().nonnegative(),
+    fetchIdentityRevision: z.number().int().nonnegative(),
+  })
+  .strict();
+export type SubscriptionLocalFetchSpec = z.infer<typeof SubscriptionLocalFetchSpecSchema>;
+
+/** The only successful manual-import receipt. */
+export const ManualSubscriptionRefreshReceiptSchema = z
+  .object({
+    data: z
+      .object({
+        proxyCount: z.number().int().positive(),
+        updatedAt: z.number().int().nonnegative(),
+      })
+      .strict(),
+  })
+  .strict();
+export type ManualSubscriptionRefreshReceipt = z.infer<
+  typeof ManualSubscriptionRefreshReceiptSchema
+>;
+
+export function effectiveSubscriptionRefreshMode(
+  sub: Pick<Subscription, 'kind' | 'refresh_mode'>,
+): SubscriptionRefreshMode {
+  return sub.refresh_mode ?? 'server-auto';
+}
+
+/** Missing legacy revisions are observed as zero and are never rewritten on read. */
+export function effectiveFetchIdentityRevision(
+  sub: Pick<Subscription, 'fetch_identity_revision'>,
+): number {
+  return sub.fetch_identity_revision ?? 0;
+}
+
+/**
  * Effective policy (missing = documented default). The value is only ever
  * CONSULTED on the remote path — every call site guards `kind === 'remote'`
  * first (fetcher remote branch, resolve skip predicate, health fingerprint,
@@ -107,9 +185,24 @@ export function effectiveFetchFailurePolicy(
 /** Default User-Agent used for remote fetches (blank override = unset). */
 export const DEFAULT_SUBSCRIPTION_UA = 'clash.meta/1.18.0';
 
-/** Effective UA for a subscription — a blank `ua_override` means unset. */
+/** Effective UA for a subscription — whitespace-only means default; stored text is trimmed. */
 export function subscriptionUserAgent(sub: Pick<Subscription, 'ua_override'>): string {
-  return sub.ua_override?.trim() ? sub.ua_override : DEFAULT_SUBSCRIPTION_UA;
+  return sub.ua_override?.trim() || DEFAULT_SUBSCRIPTION_UA;
+}
+
+/**
+ * Effective non-User-Agent request headers. The dedicated `ua_override`
+ * channel is authoritative, so every casing of a custom User-Agent is
+ * ignored. Sorting keeps cache, health and optimistic identity byte-stable.
+ */
+export function effectiveSubscriptionCustomHeaders(
+  sub: Pick<Subscription, 'custom_headers'>,
+): Record<string, string> | undefined {
+  if (!sub.custom_headers) return undefined;
+  const entries = Object.entries(sub.custom_headers)
+    .filter(([name]) => name.toLowerCase() !== 'user-agent')
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 
 /** Eligible fetch-failure categories — the fixed closed enum (classifier). */
@@ -251,6 +344,11 @@ export const SubscriptionSchema: z.ZodType<Subscription> = z
       ...StoredSubscriptionFields,
       kind: z.literal('remote'),
       fetch_failure_policy: SubscriptionFetchFailurePolicySchema.optional(),
+      refresh_mode: SubscriptionRefreshModeSchema.optional(),
+      fetch_identity_revision: z.number().int().nonnegative().optional(),
+      // Preserve malformed legacy/corrupt metadata so a manual source reaches
+      // the resolver and fails the whole consumer closed instead of vanishing.
+      manual_snapshot_meta: z.unknown().optional(),
     }),
     z.object({
       ...StoredSubscriptionFields,
@@ -262,6 +360,9 @@ export const SubscriptionSchema: z.ZodType<Subscription> = z
       ...StoredSubscriptionFields,
       kind: SubscriptionKindSchema.default('remote'),
       fetch_failure_policy: SubscriptionFetchFailurePolicySchema.optional(),
+      refresh_mode: SubscriptionRefreshModeSchema.optional(),
+      fetch_identity_revision: z.number().int().nonnegative().optional(),
+      manual_snapshot_meta: z.unknown().optional(),
     }),
   );
 
@@ -313,6 +414,9 @@ export const SubscriptionUpdateSchema = z.object({
   tags: z.array(z.string()).optional(),
   operators: MutableOperatorListSchema.optional(),
   fetch_failure_policy: SubscriptionFetchFailurePolicySchema.optional(),
+  // Import is the sole transition into manual mode. Generic PATCH can only
+  // request the validated manual → server-auto transition.
+  refresh_mode: z.literal('server-auto').optional(),
 });
 
 /**
@@ -332,6 +436,8 @@ export const SubscriptionAdminViewSchema: z.ZodType<SubscriptionAdminView> = z.d
       kind: z.literal('remote'),
       fetch_failure_policy: SubscriptionFetchFailurePolicySchema,
       fetch_health: SubscriptionFetchHealthSchema.nullable(),
+      refresh_mode: SubscriptionRefreshModeSchema,
+      manual_snapshot: SubscriptionManualSnapshotSchema.nullable(),
     }),
     z.object({
       ...StoredSubscriptionFields,
@@ -364,6 +470,8 @@ export interface SubscriptionAdminView {
   updated_at?: number;
   fetch_failure_policy?: SubscriptionFetchFailurePolicy;
   fetch_health?: SubscriptionFetchHealth | null;
+  refresh_mode?: SubscriptionRefreshMode;
+  manual_snapshot?: SubscriptionManualSnapshot | null;
 }
 
 /** In-memory decoded subscription (remote branch may carry the policy). */
@@ -382,6 +490,11 @@ export interface Subscription {
   operators: StoredOperator[];
   updated_at?: number;
   fetch_failure_policy?: 'use-stale-cache' | 'fail-closed';
+  refresh_mode?: SubscriptionRefreshMode;
+  /** Server-owned optimistic identity. Missing legacy values are effective zero. */
+  fetch_identity_revision?: number;
+  /** Bounded definition metadata. Readers validate this unknown value before use. */
+  manual_snapshot_meta?: unknown;
 }
 export type SubscriptionCreate = z.infer<typeof SubscriptionCreateSchema>;
 export type SubscriptionUpdate = z.infer<typeof SubscriptionUpdateSchema>;

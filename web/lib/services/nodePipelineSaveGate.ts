@@ -86,6 +86,8 @@ export interface PipelineSavePlan {
   candidateSubscriptions?: (current: Subscription[]) => Subscription[];
   /** Derive the candidate collections list from the bracketed snapshot. */
   candidateCollections?: (current: Collection[]) => Collection[];
+  /** Raw bytes that exist only for this operation, shared by every consumer. */
+  contentOverrides?: ReadonlyMap<string, string>;
 }
 
 function assertSameGeneration(observed: number, expected: number | undefined): void {
@@ -154,7 +156,11 @@ export async function preflightPipelineSave(plan: PipelineSavePlan): Promise<Pip
           ? { collections: plan.candidateCollections(state.collections) }
           : {}),
       }),
-      { ordinalPlanningSession, subscriptionSnapshot },
+      {
+        ordinalPlanningSession,
+        subscriptionSnapshot,
+        ...(plan.contentOverrides ? { contentOverrides: plan.contentOverrides } : {}),
+      },
     ).catch((error: unknown) => {
       if (error instanceof Error && !(error instanceof ProblemDetailsError)) {
         error.message = `配置文件「${profile.name}」会被这次节点处理改动破坏：${error.message}`;
@@ -208,6 +214,7 @@ export async function commitUnderPipelineGate(options: {
   affected: readonly Profile[];
   candidateSubscriptions?: (current: Subscription[]) => Subscription[];
   candidateCollections?: (current: Collection[]) => Collection[];
+  contentOverrides?: ReadonlyMap<string, string>;
   commit: (version: number, ordinalPlan: OrdinalReservationPlan) => Promise<{ ok: boolean }>;
 }): Promise<void> {
   const bracket = await preflightPipelineSave({
@@ -215,6 +222,7 @@ export async function commitUnderPipelineGate(options: {
     affected: options.affected,
     candidateSubscriptions: options.candidateSubscriptions,
     candidateCollections: options.candidateCollections,
+    contentOverrides: options.contentOverrides,
   });
   const committed = await options.commit(bracket.configVersion, bracket.ordinalPlan);
   if (!committed.ok) {

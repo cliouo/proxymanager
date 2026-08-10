@@ -33,6 +33,11 @@ export interface CacheKeyParts {
   headers?: Record<string, string>;
 }
 
+/** Server-side fetches retain their historical 10 MiB response contract. */
+export const MAX_REMOTE_SUBSCRIPTION_BODY_BYTES = 10 * 1024 * 1024;
+/** Retain a validated last-known-good entry for stale-on-error fallback. */
+export const FETCH_CACHE_STALE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+
 /** Small tolerance for host skew; farther-future entries cannot be trusted as fresh. */
 const MAX_CACHE_CLOCK_SKEW_MS = 5 * 60 * 1000;
 

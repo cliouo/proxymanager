@@ -92,6 +92,8 @@ export interface ConfigPreflightOptions {
    * make those profiles plan against different raw domains.
    */
   subscriptionSnapshot?: SubscriptionPreflightSnapshot;
+  /** One operation-local raw-content override shared by every affected profile. */
+  contentOverrides?: ReadonlyMap<string, string>;
   /**
    * Candidate profile to use only when the stable storage snapshot has no
    * profile record. Atomic bootstrap is the sole intended caller.
@@ -118,9 +120,9 @@ const SNAPSHOT_READ_ATTEMPTS = 3;
 export type SubscriptionPreflightSnapshot = Map<string, Promise<FetchSubscriptionProxiesResult>>;
 
 function subscriptionSnapshotKey(subscription: Subscription): string {
-  // Runtime sync/error fields do not affect a render. Keep the key bounded to
-  // the candidate definition and use a fixed property order; headers are the
-  // only record-shaped field and are sorted explicitly.
+  // Runtime sync/error fields and raw snapshot bytes do not belong here. The
+  // bounded definition metadata/checksum identifies manual candidates without
+  // copying secret content into the memoization key.
   const definition = {
     id: subscription.id,
     name: subscription.name,
@@ -138,9 +140,10 @@ function subscriptionSnapshotKey(subscription: Subscription): string {
     content: subscription.content,
     tags: subscription.tags,
     operators: subscription.operators,
-    // P-FFP v1: the fallback policy changes resolution outcomes (stale-serve
-    // vs strict fail vs skippable) — it is part of the snapshot identity.
     fetch_failure_policy: subscription.fetch_failure_policy,
+    refresh_mode: subscription.refresh_mode,
+    fetch_identity_revision: subscription.fetch_identity_revision,
+    manual_snapshot_meta: subscription.manual_snapshot_meta,
   };
   return createHash('sha256').update(safeJsonStringify(definition)).digest('base64url');
 }
@@ -151,6 +154,7 @@ export async function resolveSubscriptionForPreflight(
   options?: {
     ordinalPlanningSession?: OrdinalPlanningSession;
     subscriptionSnapshot?: SubscriptionPreflightSnapshot;
+    contentOverrides?: ReadonlyMap<string, string>;
   },
 ): Promise<FetchSubscriptionProxiesResult> {
   try {
@@ -159,6 +163,7 @@ export async function resolveSubscriptionForPreflight(
         writeCache: false,
         recordHealth: false,
         ordinalPlanningSession: options?.ordinalPlanningSession,
+        contentOverrides: options?.contentOverrides,
       });
     const snapshot = options?.subscriptionSnapshot;
     if (!snapshot) return await resolve();
@@ -303,6 +308,7 @@ export async function preflightProfileConfig(
             ...(options.subscriptionSnapshot
               ? { subscriptionSnapshot: options.subscriptionSnapshot }
               : {}),
+            ...(options.contentOverrides ? { contentOverrides: options.contentOverrides } : {}),
           }),
       },
     );

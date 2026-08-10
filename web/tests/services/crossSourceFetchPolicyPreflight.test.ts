@@ -43,7 +43,6 @@ const mocks = vi.hoisted(() => ({
   recordSubscriptionFetchHealth: vi.fn(),
   getSubscriptionFetchHealth: vi.fn(),
   getSubscriptionFetchHealthMany: vi.fn(),
-  deleteSubscriptionFetchHealth: vi.fn(),
   readOrdinalStore: vi.fn(),
   setResolvedSnapshot: vi.fn(async () => undefined),
   invalidateResolvedSnapshot: vi.fn(async () => undefined),
@@ -157,7 +156,6 @@ vi.mock('@/lib/repos/subscriptionFetchHealthRepo', async (importOriginal) => {
     recordSubscriptionFetchHealth: mocks.recordSubscriptionFetchHealth,
     getSubscriptionFetchHealth: mocks.getSubscriptionFetchHealth,
     getSubscriptionFetchHealthMany: mocks.getSubscriptionFetchHealthMany,
-    deleteSubscriptionFetchHealth: mocks.deleteSubscriptionFetchHealth,
   };
 });
 
@@ -329,7 +327,6 @@ beforeEach(() => {
   mocks.recordSubscriptionFetchHealth.mockResolvedValue(undefined);
   mocks.getSubscriptionFetchHealth.mockResolvedValue(null);
   mocks.getSubscriptionFetchHealthMany.mockResolvedValue([]);
-  mocks.deleteSubscriptionFetchHealth.mockResolvedValue(undefined);
 });
 
 /** Capture the error of a single rejected call and assert instance + shape. */

@@ -90,6 +90,8 @@ describe('generateOpenApiDocument', () => {
       kind: 'remote',
       fetch_failure_policy: 'use-stale-cache',
       fetch_health: null,
+      refresh_mode: 'server-auto',
+      manual_snapshot: null,
     });
     expect(remote.fetch_failure_policy).toBe('use-stale-cache');
     expect('fetch_health' in remote).toBe(true);
@@ -111,6 +113,16 @@ describe('generateOpenApiDocument', () => {
       422: expect.any(Object),
       503: expect.any(Object),
     });
+    expect(doc.paths?.['/api/v1/subscriptions/{id}/manual-refresh']?.post?.responses).toMatchObject(
+      {
+        412: expect.any(Object),
+        422: expect.any(Object),
+        503: expect.any(Object),
+      },
+    );
+    expect(
+      doc.paths?.['/api/v1/subscriptions/{id}/local-fetch-spec']?.get?.responses,
+    ).toHaveProperty('200');
 
     for (const path of ['/api/sub/{token}/source/{name}', '/api/sub/{token}/collection/{name}']) {
       const operation = doc.paths?.[path]?.get;
@@ -124,6 +136,26 @@ describe('generateOpenApiDocument', () => {
         503: expect.any(Object),
       });
     }
+  });
+
+  it('documents the manual-refresh limit as UTF-8 encoded bytes, not characters', () => {
+    const doc = generateOpenApiDocument();
+    const requestBody = doc.paths?.['/api/v1/subscriptions/{id}/manual-refresh']?.post
+      ?.requestBody as
+      | {
+          content?: {
+            'text/plain'?: {
+              schema?: { description?: string; maxLength?: number };
+            };
+          };
+        }
+      | undefined;
+    const schema = requestBody?.content?.['text/plain']?.schema;
+
+    expect(schema?.maxLength).toBeUndefined();
+    expect(schema?.description).toContain('4,194,304');
+    expect(schema?.description).toMatch(/UTF-8 encoded bytes/u);
+    expect(schema?.description).toMatch(/not a character-count guarantee/u);
   });
 
   it('documents setup status and atomic bootstrap contracts', () => {

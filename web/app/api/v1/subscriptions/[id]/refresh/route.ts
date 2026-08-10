@@ -4,6 +4,7 @@ import { resolveSubscriptionContent } from '@/lib/services/subscriptionFetcher';
 import { getSubscription, projectSubscriptionAdminView } from '@/lib/services/subscriptionService';
 import { getSubscriptionFetchHealth } from '@/lib/repos/subscriptionFetchHealthRepo';
 import { getConfigVersion } from '@/lib/repos/configVersionRepo';
+import { effectiveSubscriptionRefreshMode } from '@/schemas';
 
 export const dynamic = 'force-dynamic';
 
@@ -34,6 +35,11 @@ export const POST = withProblemDetails(async (_request: Request, ctx: Ctx) => {
   if (!sub.enabled) {
     throw ProblemDetailsError.unprocessable(`Subscription "${sub.name}" is disabled.`);
   }
+  if (sub.kind === 'remote' && effectiveSubscriptionRefreshMode(sub) === 'manual') {
+    throw ProblemDetailsError.unprocessable(
+      '该订阅由手动内容维护，请使用“手动更新”导入新内容，或先改回平台自动拉取。',
+    );
+  }
 
   const { proxyCount } = await resolveSubscriptionContent(sub, {
     noCache: true,
@@ -48,7 +54,7 @@ export const POST = withProblemDetails(async (_request: Request, ctx: Ctx) => {
   if (!current) throw ProblemDetailsError.notFound(`Subscription ${id} not found.`);
 
   const view =
-    current.kind === 'remote'
+    current.kind === 'remote' && effectiveSubscriptionRefreshMode(current) === 'server-auto'
       ? projectSubscriptionAdminView(current, await getSubscriptionFetchHealth(current.id))
       : projectSubscriptionAdminView(current);
 

@@ -3,43 +3,52 @@ import { safeEqual } from '@/lib/auth';
 import { problemResponse } from '@/lib/http/problem';
 import { clientIp, registerAuthFailure } from '@/lib/rateLimit';
 
-const PUBLIC_API_PATHS = new Set(['/api/v1/health', '/api/v1/openapi.json']);
+const PUBLIC_API_PATHS: Record<string, true> = {
+  '/api/v1/health': true,
+  '/api/v1/openapi.json': true,
+};
+const NO_STORE_API_PATH = /^\/api\/v1\/subscriptions\/[^/]+\/(?:local-fetch-spec|manual-refresh)$/;
 
 const CORS_HEADERS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'Authorization, Content-Type, If-Match',
+  'Access-Control-Allow-Headers':
+    'Authorization, Content-Type, If-Match, X-Fetch-Identity-Revision, X-Source',
   'Access-Control-Expose-Headers': 'ETag, X-Build-Id, Location',
   'Access-Control-Max-Age': '86400',
 };
 
-function applyCors(response: NextResponse): NextResponse {
+function applyCors(response: NextResponse, request: NextRequest): NextResponse {
   for (const [name, value] of Object.entries(CORS_HEADERS)) {
     response.headers.set(name, value);
+  }
+  if (NO_STORE_API_PATH.test(request.nextUrl.pathname)) {
+    response.headers.set('Cache-Control', 'no-store');
   }
   return response;
 }
 
-function corsPreflight(): NextResponse {
-  const response = new NextResponse(null, { status: 204 });
-  return applyCors(response);
+function corsPreflight(request: NextRequest): NextResponse {
+  return applyCors(new NextResponse(null, { status: 204 }), request);
 }
 
-function unauthorized(detail: string): NextResponse {
+function unauthorized(detail: string, request: NextRequest): NextResponse {
   const response = problemResponse({
     type: 'https://proxymanager.dev/errors/unauthorized',
     title: 'Unauthorized',
     status: 401,
     detail,
   });
-  const nextResponse = new NextResponse(response.body, {
-    status: response.status,
-    headers: response.headers,
-  });
-  return applyCors(nextResponse);
+  return applyCors(
+    new NextResponse(response.body, {
+      status: response.status,
+      headers: response.headers,
+    }),
+    request,
+  );
 }
 
-function tooManyRequests(): NextResponse {
+function tooManyRequests(request: NextRequest): NextResponse {
   const response = problemResponse({
     type: 'https://proxymanager.dev/errors/rate-limited',
     title: 'Too Many Requests',
@@ -51,50 +60,49 @@ function tooManyRequests(): NextResponse {
     headers: response.headers,
   });
   nextResponse.headers.set('Retry-After', '300');
-  return applyCors(nextResponse);
+  return applyCors(nextResponse, request);
 }
 
-function misconfigured(): NextResponse {
+function misconfigured(request: NextRequest): NextResponse {
   const response = problemResponse({
     type: 'https://proxymanager.dev/errors/internal',
     title: 'Internal Server Error',
     status: 500,
     detail: 'Server misconfigured: ADMIN_KEY environment variable is not set.',
   });
-  const nextResponse = new NextResponse(response.body, {
-    status: response.status,
-    headers: response.headers,
-  });
-  return applyCors(nextResponse);
+  return applyCors(
+    new NextResponse(response.body, {
+      status: response.status,
+      headers: response.headers,
+    }),
+    request,
+  );
 }
 
 export async function proxy(request: NextRequest): Promise<NextResponse> {
   if (request.method === 'OPTIONS') {
-    return corsPreflight();
+    return corsPreflight(request);
   }
 
   const { pathname } = request.nextUrl;
-
-  if (PUBLIC_API_PATHS.has(pathname)) {
-    return applyCors(NextResponse.next());
+  if (PUBLIC_API_PATHS[pathname]) {
+    return applyCors(NextResponse.next(), request);
   }
 
   const adminKey = process.env.ADMIN_KEY;
   if (!adminKey) {
-    return misconfigured();
+    return misconfigured(request);
   }
 
   const authHeader = request.headers.get('authorization') ?? '';
   const match = /^Bearer\s+(.+)$/i.exec(authHeader);
   if (!match || !safeEqual(match[1], adminKey)) {
-    // P1-2: throttle brute-force. Only failed attempts touch Redis; a valid key
-    // never pays the round-trip. Fail-open on limiter error (returns 401).
     const blocked = await registerAuthFailure('admin', clientIp(request));
-    if (blocked) return tooManyRequests();
-    return unauthorized('Valid `Authorization: Bearer <ADMIN_KEY>` header is required.');
+    if (blocked) return tooManyRequests(request);
+    return unauthorized('Valid `Authorization: Bearer <ADMIN_KEY>` header is required.', request);
   }
 
-  return applyCors(NextResponse.next());
+  return applyCors(NextResponse.next(), request);
 }
 
 export const config = {

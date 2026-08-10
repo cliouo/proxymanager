@@ -1,6 +1,7 @@
+import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { REDIS_KEYS } from '@/lib/redis/keys';
-import type { Rule, Subscription } from '@/schemas';
+import type { Rule } from '@/schemas';
 
 /**
  * Repo writes that affect the rendered config must bump config:version in
@@ -125,15 +126,16 @@ const PID = 'prof-test';
 
 let rulesRepo: typeof import('@/lib/repos/rulesRepo');
 let baseRepo: typeof import('@/lib/repos/baseRepo');
-let subsRepo: typeof import('@/lib/repos/subscriptionsRepo');
-
+// Import after the hoisted Redis mock so runtime export inspection cannot bind
+// the production client before the test fixture is installed.
+let subscriptionsRepo: typeof import('@/lib/repos/subscriptionsRepo');
 beforeEach(async () => {
   stores.clear();
   kv.clear();
   counters.clear();
   rulesRepo = await import('@/lib/repos/rulesRepo');
   baseRepo = await import('@/lib/repos/baseRepo');
-  subsRepo = await import('@/lib/repos/subscriptionsRepo');
+  subscriptionsRepo = await import('@/lib/repos/subscriptionsRepo');
 });
 afterEach(() => vi.restoreAllMocks());
 
@@ -155,16 +157,22 @@ function makeRule(id: string): Rule {
   };
 }
 
-const SUB: Subscription = {
-  id: '11111111-1111-4111-8111-111111111111',
-  name: 'airport-a',
-  enabled: true,
-  kind: 'remote',
-  url: 'https://example.com/sub',
-  ttl_ms: 600_000,
-  tags: [],
-  operators: [],
-};
+describe('subscriptionsRepo mutation surface', () => {
+  it('exposes only CAS-backed definition writers at runtime and in source', () => {
+    expect('upsertSubscription' in subscriptionsRepo).toBe(false);
+    expect('deleteSubscription' in subscriptionsRepo).toBe(false);
+    expect(subscriptionsRepo.commitSubscriptionChange).toBeTypeOf('function');
+    expect(subscriptionsRepo.commitSubscriptionDelete).toBeTypeOf('function');
+
+    const source = readFileSync(
+      new URL('../../lib/repos/subscriptionsRepo.ts', import.meta.url),
+      'utf8',
+    );
+    expect(source).not.toMatch(
+      /export\s+async\s+function\s+(?:upsertSubscription|deleteSubscription)\b/u,
+    );
+  });
+});
 
 describe('rulesRepo bumps config:version', () => {
   it('upsertRule / upsertRules / deleteRule / deleteRules / clearRules / batch', async () => {
@@ -293,14 +301,5 @@ describe('baseRepo bumps config:version', () => {
     });
     expect(version()).toBe(1);
     expect(kv.get(REDIS_KEYS.base.content(PID))).toMatch(/^proxies: \[(a|b)\]$/);
-  });
-});
-
-describe('subscriptionsRepo bumps config:version', () => {
-  it('upsertSubscription and deleteSubscription bump', async () => {
-    await subsRepo.upsertSubscription(SUB);
-    expect(version()).toBe(1);
-    expect(await subsRepo.deleteSubscription(SUB.id)).toBe(true);
-    expect(version()).toBe(2);
   });
 });

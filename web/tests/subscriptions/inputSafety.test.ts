@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { readCapped } from '@/lib/net/safeFetch';
+import { MAX_SUBSCRIPTION_CONTENT } from '@/schemas/base';
+import { MAX_REMOTE_SUBSCRIPTION_BODY_BYTES } from '@/lib/repos/fetchCacheRepo';
 import { fetchSubscription, parseTrafficHeader } from '@/lib/services/subscriptionFetcher';
 import { SubscriptionSchema, SubscriptionTrafficSchema } from '@/schemas/subscription';
 
-const MAX_SUBSCRIPTION_BODY_BYTES = 10 * 1024 * 1024;
+const MAX_SUBSCRIPTION_BODY_BYTES = MAX_REMOTE_SUBSCRIPTION_BODY_BYTES;
 const PROVIDER_PREFIX = `proxies:
   - name: SAFE-FAKE
     type: ss
@@ -240,6 +242,11 @@ describe('readCapped v2 body-transport boundary (I3)', () => {
 });
 
 describe('remote subscription input safety', () => {
+  it('keeps the 10 MiB server fetch limit independent from 4 MiB manual uploads', () => {
+    expect(MAX_SUBSCRIPTION_BODY_BYTES).toBe(10 * 1024 * 1024);
+    expect(MAX_SUBSCRIPTION_CONTENT).toBe(4 * 1024 * 1024);
+  });
+
   const realFetch = globalThis.fetch;
 
   beforeEach(() => {

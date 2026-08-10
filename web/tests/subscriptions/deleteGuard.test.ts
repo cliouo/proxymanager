@@ -8,10 +8,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  */
 
 const SUB = { id: 's1', name: 'air-hk', display_name: '香港机场' };
+let currentSub: typeof SUB | null = SUB;
 
 let profiles: Array<{ id: string; name: string; source: { type: string; id?: string } }>;
 let collections: Array<{ id: string; name: string; subscription_ids: string[] }>;
-const repoDeleteMock = vi.fn(async () => true);
 const commitDeleteMock = vi.fn(async (id: string, version: number, plan?: unknown) => {
   void plan;
   return {
@@ -23,17 +23,15 @@ const healthDeleteMock = vi.fn(async () => undefined);
 const ordinalPlan = { expectedGeneration: 0, expectedGlobalSize: 0, sources: [] };
 
 vi.mock('@/lib/repos/subscriptionsRepo', () => ({
-  getSubscription: async (id: string) => (id === SUB.id ? SUB : null),
+  getSubscription: async (id: string) => (id === SUB.id ? currentSub : null),
   getSubscriptionByName: async () => null,
   listSubscriptions: async () => [SUB],
-  upsertSubscription: async () => undefined,
-  deleteSubscription: () => repoDeleteMock(),
   commitSubscriptionDelete: (id: string, version: number, plan: typeof ordinalPlan) =>
     commitDeleteMock(id, version, plan),
 }));
-// F6: the REAL repository-owned best-effort delete path stays unmocked — the
-// underlying Redis operation rejects instead, exercising the catch inside
-// subscriptionFetchHealthRepo.deleteSubscriptionFetchHealth.
+// A standalone health deletion would hit this Redis mock. The committed delete
+// CAS must own cleanup, so both successful and already-absent deletes leave it
+// untouched.
 vi.mock('@/lib/redis/client', () => ({
   getRedis: () => ({ del: healthDeleteMock }),
 }));
@@ -65,6 +63,7 @@ let svc: typeof import('@/lib/services/subscriptionService');
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  currentSub = SUB;
   profiles = [];
   collections = [];
   svc = await import('@/lib/services/subscriptionService');
@@ -100,19 +99,14 @@ describe('deleteSubscription reference warnings (P0-2)', () => {
     expect(commitDeleteMock).toHaveBeenCalledWith('s1', 7, ordinalPlan);
   });
 
-  it('best-effort deletes the separate fetch health after the definition CAS (REAL repository path)', async () => {
-    // The real subscriptionFetchHealthRepo.deleteSubscriptionFetchHealth runs
-    // here; only the underlying Redis del is mocked.
-    healthDeleteMock.mockRejectedValue(new Error('redis down'));
-
-    // The rejected Redis op must be swallowed by the repository's own catch —
-    // a successful delete can never become a 500 over health cleanup.
+  it('uses the delete CAS exactly once without a standalone fetch-health delete', async () => {
     await expect(svc.deleteSubscription('s1')).resolves.toMatchObject({ removed: true });
     expect(commitDeleteMock).toHaveBeenCalledTimes(1);
-    expect(healthDeleteMock).toHaveBeenCalledWith('subscription-fetch-health:s1');
+    expect(healthDeleteMock).not.toHaveBeenCalled();
 
-    // The same real path still invokes Redis del after a successful CAS.
-    await svc.deleteSubscription('s1');
-    expect(healthDeleteMock).toHaveBeenCalledTimes(2);
+    currentSub = null;
+    await expect(svc.deleteSubscription('s1')).resolves.toMatchObject({ removed: false });
+    expect(commitDeleteMock).toHaveBeenCalledTimes(2);
+    expect(healthDeleteMock).not.toHaveBeenCalled();
   });
 });

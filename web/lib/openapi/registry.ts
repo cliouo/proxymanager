@@ -27,8 +27,10 @@ import {
   SetupBootstrapResponseSchema,
   SetupStatusSchema,
   StringArrayResponseSchema,
+  ManualSubscriptionRefreshReceiptSchema,
   SubscriptionCreateSchema,
   SubscriptionListResponseSchema,
+  SubscriptionLocalFetchSpecSchema,
   SubscriptionRefreshResponseSchema,
   SubscriptionResponseSchema,
   SubscriptionSchema,
@@ -389,6 +391,70 @@ registry.registerPath({
     404: { description: 'Not found' },
     422: { description: 'Subscription disabled, or invalid upstream response (fixed detail)' },
     503: { description: 'Upstream fetch unavailable (fixed detail)' },
+  },
+});
+
+registry.registerPath({
+  method: 'post',
+  path: '/api/v1/subscriptions/{id}/manual-refresh',
+  summary: 'Import and activate manually fetched subscription content',
+  description:
+    'Accepts a bounded UTF-8 text body, validates every node and affected profile/device without network or cache side effects, then atomically stores a separate checksum-bound snapshot and switches the remote source to manual mode.',
+  tags: ['subscriptions'],
+  request: {
+    params: z.object({ id: z.string() }),
+    headers: z.object({
+      'if-match': z.string(),
+      'x-fetch-identity-revision': z.string(),
+      'x-source': z.enum(['web', 'extension']).optional(),
+    }),
+    body: {
+      content: {
+        'text/plain': {
+          schema: z
+            .string()
+            .describe(
+              'Maximum 4,194,304 UTF-8 encoded bytes; this byte limit is not a character-count guarantee.',
+            ),
+        },
+      },
+    },
+  },
+  responses: {
+    200: {
+      description: 'Imported and activated',
+      content: { 'application/json': { schema: ManualSubscriptionRefreshReceiptSchema } },
+    },
+    400: { description: 'Missing or malformed precondition header' },
+    404: { description: 'Not found' },
+    412: { description: 'Definition, fetch identity, config version, or ordinal race' },
+    413: { description: 'Decoded body exceeds 4 MiB' },
+    415: { description: 'Content-Type is not text/plain' },
+    422: { description: 'Invalid UTF-8, empty/invalid content, or non-remote subscription' },
+    500: { description: 'Invalid persisted state or unexpected failure' },
+    503: { description: 'Save-time rendered-config validation unavailable' },
+  },
+});
+
+registry.registerPath({
+  method: 'get',
+  path: '/api/v1/subscriptions/{id}/local-fetch-spec',
+  summary: 'Read one authenticated no-store local-fetch input',
+  description:
+    'Returns only the remote fetch inputs and both optimistic revisions. This response can contain subscription credentials and must never be persisted, logged, or forwarded through the page bridge.',
+  tags: ['subscriptions'],
+  request: { params: z.object({ id: z.string() }) },
+  responses: {
+    200: {
+      description: 'Local-fetch input',
+      content: {
+        'application/json': {
+          schema: z.object({ data: SubscriptionLocalFetchSpecSchema }),
+        },
+      },
+    },
+    404: { description: 'Not found' },
+    422: { description: 'Not a remote subscription' },
   },
 });
 
