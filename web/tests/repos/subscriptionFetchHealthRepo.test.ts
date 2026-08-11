@@ -17,6 +17,7 @@
  * schema validation sees objects — never strings.
  */
 
+import { readFileSync } from 'node:fs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { REDIS_KEYS } from '@/lib/redis/keys';
 import { SubscriptionFetchHealthSchema } from '@/schemas';
@@ -167,7 +168,6 @@ const fakeRedis = {
   set: async (key: string, value: unknown) => {
     raw.set(key, JSON.stringify(value));
   },
-  del: async (key: string) => Number(raw.delete(key)),
   eval: async (script: string, keys: string[], args: string[]) => {
     evals.push({ script, keys, args });
     const key = keys[0];
@@ -206,11 +206,11 @@ vi.mock('@/lib/redis/client', () => ({ getRedis: () => fakeRedis }));
 import {
   CAS_SUBSCRIPTION_FETCH_HEALTH,
   computeSubscriptionDefinitionFingerprint,
-  deleteSubscriptionFetchHealth,
   getSubscriptionFetchHealth,
   getSubscriptionFetchHealthMany,
   recordSubscriptionFetchHealth,
 } from '@/lib/repos/subscriptionFetchHealthRepo';
+import * as fetchHealthRepo from '@/lib/repos/subscriptionFetchHealthRepo';
 
 const SUB_ID = '11111111-1111-4111-8111-111111111111';
 
@@ -281,6 +281,33 @@ describe('definition fingerprint', () => {
     ).toBe(computeSubscriptionDefinitionFingerprint(sub({ custom_headers: { b: '1', a: '2' } })));
   });
 
+  it.each(['User-Agent', 'user-agent', 'uSeR-aGeNt'])(
+    'ignores custom %s while retaining dedicated-UA and other-header identity',
+    (headerName) => {
+      const base = computeSubscriptionDefinitionFingerprint(
+        sub({ custom_headers: { 'X-Test': 'retained' } }),
+      );
+      expect(
+        computeSubscriptionDefinitionFingerprint(
+          sub({
+            custom_headers: {
+              [headerName]: 'sentinel-ignored-ua',
+              'X-Test': 'retained',
+            },
+          }),
+        ),
+      ).toBe(base);
+      expect(
+        computeSubscriptionDefinitionFingerprint(sub({ custom_headers: { 'X-Test': 'changed' } })),
+      ).not.toBe(base);
+      expect(
+        computeSubscriptionDefinitionFingerprint(
+          sub({ ua_override: 'dedicated-change', custom_headers: { 'X-Test': 'retained' } }),
+        ),
+      ).not.toBe(base);
+    },
+  );
+
   it('never embeds the URL, headers or policy in cleartext (hash only)', () => {
     const fp = computeSubscriptionDefinitionFingerprint(
       sub({ url: 'https://token:secret@upstream.example/sub?k=v', custom_headers: { A: 'x' } }),
@@ -328,10 +355,19 @@ describe('record + read round trip', () => {
     expect(await getSubscriptionFetchHealth(SUB_ID)).toMatchObject({ state: 'fresh' });
   });
 
-  it('delete removes the key best-effort', async () => {
-    await recordSubscriptionFetchHealth(sub(), health());
-    await deleteSubscriptionFetchHealth(SUB_ID);
-    expect(raw.has(REDIS_KEYS.subscriptionFetchHealth(SUB_ID))).toBe(false);
+  it('does not expose a standalone fetch-health delete surface', () => {
+    const exportName = ['delete', 'Subscription', 'Fetch', 'Health'].join('');
+    const repoSource = readFileSync(
+      new URL('../../lib/repos/subscriptionFetchHealthRepo.ts', import.meta.url),
+      'utf8',
+    );
+    const exportedFunction = new RegExp(
+      `export\\s+(?:async\\s+)?function\\s+${exportName}\\b`,
+      'u',
+    );
+
+    expect(Object.prototype.hasOwnProperty.call(fetchHealthRepo, exportName)).toBe(false);
+    expect(repoSource).not.toMatch(exportedFunction);
   });
 });
 

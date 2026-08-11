@@ -22,6 +22,7 @@ import { safeJsonStringify } from '@/lib/security/safeJson';
 import {
   SubscriptionFetchHealthSchema,
   effectiveFetchFailurePolicy,
+  effectiveSubscriptionCustomHeaders,
   subscriptionUserAgent,
   type Subscription,
   type SubscriptionFetchHealth,
@@ -169,11 +170,7 @@ return 1
  * ttl_ms or policy: the input is hashed, never emitted.
  */
 export function computeSubscriptionDefinitionFingerprint(subscription: Subscription): string {
-  const customHeaders = subscription.custom_headers
-    ? Object.fromEntries(
-        Object.entries(subscription.custom_headers).sort(([a], [b]) => a.localeCompare(b)),
-      )
-    : undefined;
+  const customHeaders = effectiveSubscriptionCustomHeaders(subscription);
   const definition = {
     id: subscription.id,
     kind: subscription.kind,
@@ -251,13 +248,4 @@ export async function getSubscriptionFetchHealthMany(
     ...ids.map((id) => REDIS_KEYS.subscriptionFetchHealth(id)),
   );
   return values.map(parseFetchHealth);
-}
-
-/** Best-effort cleanup after a successful definition CAS delete. */
-export async function deleteSubscriptionFetchHealth(id: string): Promise<void> {
-  try {
-    await getRedis().del(REDIS_KEYS.subscriptionFetchHealth(id));
-  } catch {
-    // best-effort by contract
-  }
 }

@@ -1,5 +1,5 @@
-import type { BackendRule } from './messages';
-import type { Settings } from './settings';
+import type { BackendRule } from "./messages";
+import type { Settings } from "./settings";
 
 export class BackendError extends Error {
   constructor(
@@ -8,18 +8,25 @@ export class BackendError extends Error {
     public readonly detail?: string,
   ) {
     super(message);
-    this.name = 'BackendError';
+    this.name = "BackendError";
   }
 }
 
 function ensureBackend(settings: Settings): { url: string; key: string } {
   if (!settings.backendUrl) {
-    throw new BackendError('Backend URL is not configured. Open the options page.');
+    throw new BackendError(
+      "Backend URL is not configured. Open the options page.",
+    );
   }
   if (!settings.adminKey) {
-    throw new BackendError('ADMIN_KEY is not configured. Open the options page.');
+    throw new BackendError(
+      "ADMIN_KEY is not configured. Open the options page.",
+    );
   }
-  return { url: settings.backendUrl.replace(/\/+$/, ''), key: settings.adminKey };
+  return {
+    url: settings.backendUrl.replace(/\/+$/, ""),
+    key: settings.adminKey,
+  };
 }
 
 async function call<T>(
@@ -30,11 +37,11 @@ async function call<T>(
   const { url, key } = ensureBackend(settings);
   const headers: Record<string, string> = {
     Authorization: `Bearer ${key}`,
-    'X-Source': 'extension',
+    "X-Source": "extension",
     ...((init?.headers as Record<string, string> | undefined) ?? {}),
   };
-  if (init?.body && !('Content-Type' in headers)) {
-    headers['Content-Type'] = 'application/json';
+  if (init?.body && !("Content-Type" in headers)) {
+    headers["Content-Type"] = "application/json";
   }
   const res = await fetch(`${url}${path}`, { ...init, headers });
   const text = await res.text();
@@ -60,25 +67,74 @@ async function call<T>(
 export async function backendHealth(settings: Settings): Promise<unknown> {
   const { url } = ensureBackend(settings);
   const res = await fetch(`${url}/api/v1/health`);
-  if (!res.ok) throw new BackendError(`Backend health HTTP ${res.status}`, res.status);
+  if (!res.ok)
+    throw new BackendError(`Backend health HTTP ${res.status}`, res.status);
   return res.json();
 }
 
 export async function backendAnchors(settings: Settings): Promise<string[]> {
-  const res = await call<{ data: string[] }>(settings, '/api/v1/anchors');
+  const res = await call<{ data: string[] }>(settings, "/api/v1/anchors");
   return res.data;
 }
 
 export async function backendPolicies(settings: Settings): Promise<string[]> {
-  const res = await call<{ data: string[] }>(settings, '/api/v1/policies');
+  const res = await call<{ data: string[] }>(settings, "/api/v1/policies");
   return res.data;
+}
+
+export interface SubscriptionLocalFetchSpec {
+  subscriptionId: string;
+  url: string;
+  userAgent: string;
+  customHeaders: Record<string, string>;
+  updatedAt: number;
+  fetchIdentityRevision: number;
+}
+
+export interface ManualSubscriptionRefreshResult {
+  data: {
+    proxyCount: number;
+    updatedAt: number;
+  };
+}
+
+export async function backendSubscriptionLocalFetchSpec(
+  settings: Settings,
+  subscriptionId: string,
+): Promise<SubscriptionLocalFetchSpec> {
+  const res = await call<{ data: SubscriptionLocalFetchSpec }>(
+    settings,
+    `/api/v1/subscriptions/${encodeURIComponent(subscriptionId)}/local-fetch-spec`,
+    { cache: "no-store" },
+  );
+  return res.data;
+}
+
+export async function backendImportManualSubscription(
+  settings: Settings,
+  spec: SubscriptionLocalFetchSpec,
+  content: string,
+): Promise<ManualSubscriptionRefreshResult> {
+  return call<ManualSubscriptionRefreshResult>(
+    settings,
+    `/api/v1/subscriptions/${encodeURIComponent(spec.subscriptionId)}/manual-refresh`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "text/plain; charset=utf-8",
+        "If-Match": String(spec.updatedAt),
+        "X-Fetch-Identity-Revision": String(spec.fetchIdentityRevision),
+      },
+      body: content,
+    },
+  );
 }
 
 export async function backendListRulesByAnchor(
   settings: Settings,
   anchor: string,
 ): Promise<BackendRule[]> {
-  const qs = new URLSearchParams({ anchor, limit: '500' });
+  const qs = new URLSearchParams({ anchor, limit: "500" });
   const res = await call<{ data: BackendRule[] }>(
     settings,
     `/api/v1/rules?${qs.toString()}`,
@@ -91,7 +147,7 @@ export async function backendDeleteRule(
   ruleId: string,
 ): Promise<void> {
   await call<unknown>(settings, `/api/v1/rules/${encodeURIComponent(ruleId)}`, {
-    method: 'DELETE',
+    method: "DELETE",
   });
 }
 
@@ -99,15 +155,15 @@ export async function backendCreateRule(
   settings: Settings,
   rule: {
     anchor: string;
-    type: 'DOMAIN' | 'DOMAIN-SUFFIX';
+    type: "DOMAIN" | "DOMAIN-SUFFIX";
     value: string;
     policy: string;
-    source: 'speedtest' | 'manual';
+    source: "speedtest" | "manual";
     note?: string;
   },
 ): Promise<{ id: string }> {
-  const res = await call<{ data: { id: string } }>(settings, '/api/v1/rules', {
-    method: 'POST',
+  const res = await call<{ data: { id: string } }>(settings, "/api/v1/rules", {
+    method: "POST",
     body: JSON.stringify(rule),
   });
   return res.data;
@@ -115,18 +171,17 @@ export async function backendCreateRule(
 
 export interface NewRuleInput {
   anchor: string;
-  type: 'DOMAIN' | 'DOMAIN-SUFFIX';
+  type: "DOMAIN" | "DOMAIN-SUFFIX";
   value: string;
   policy: string;
-  source: 'speedtest' | 'manual';
+  source: "speedtest" | "manual";
   note?: string;
 }
 
 export interface BatchCreateResult {
   /** Per-input outcome — index matches the input array order. */
   outcomes: Array<
-    | { status: 'ok'; ruleId: string }
-    | { status: 'err'; message: string }
+    { status: "ok"; ruleId: string } | { status: "err"; message: string }
   >;
 }
 
@@ -134,23 +189,23 @@ export async function backendCreateRulesBatch(
   settings: Settings,
   rules: NewRuleInput[],
 ): Promise<BatchCreateResult> {
-  const ops = rules.map((rule) => ({ op: 'create' as const, rule }));
+  const ops = rules.map((rule) => ({ op: "create" as const, rule }));
   const res = await call<{
     results: Array<{
       status: number;
       data?: { id: string };
       error?: { title: string; detail?: string };
     }>;
-  }>(settings, '/api/v1/rules/batch', {
-    method: 'POST',
+  }>(settings, "/api/v1/rules/batch", {
+    method: "POST",
     body: JSON.stringify({ ops }),
   });
   const outcomes = res.results.map((r) => {
     if (r.status >= 200 && r.status < 300 && r.data?.id) {
-      return { status: 'ok' as const, ruleId: r.data.id };
+      return { status: "ok" as const, ruleId: r.data.id };
     }
     return {
-      status: 'err' as const,
+      status: "err" as const,
       message: r.error?.detail ?? r.error?.title ?? `HTTP ${r.status}`,
     };
   });

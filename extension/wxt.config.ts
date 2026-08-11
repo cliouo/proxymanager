@@ -10,7 +10,12 @@ export default defineConfig({
     name: 'ProxyManager',
     description:
       'Tag any domain with a per-region proxy: collect from the current tab, speedtest via local Clash, write the rule to ProxyManager.',
-    permissions: ['storage', 'tabs', 'webRequest'],
+    permissions: [
+      'storage',
+      'tabs',
+      'webRequest',
+      'declarativeNetRequestWithHostAccess',
+    ],
     // `<all_urls>` is needed both for the webRequest listener that collects
     // hostnames per tab AND for fetching arbitrary `localhost:9090` + the
     // user-configured backend host without per-origin allowlisting at install

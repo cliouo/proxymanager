@@ -9,11 +9,23 @@ import {
   replaceSubscription,
 } from '@/lib/services/subscriptionService';
 import { getSubscriptionFetchHealth } from '@/lib/repos/subscriptionFetchHealthRepo';
-import { SubscriptionCreateSchema, SubscriptionUpdateSchema } from '@/schemas';
+import {
+  effectiveSubscriptionRefreshMode,
+  SubscriptionCreateSchema,
+  SubscriptionUpdateSchema,
+  type Subscription,
+} from '@/schemas';
 
 export const dynamic = 'force-dynamic';
 
 type Ctx = RouteContext<'/api/v1/subscriptions/[id]'>;
+
+async function projectCommittedSubscriptionAdminView(next: Subscription) {
+  if (next.kind === 'remote' && effectiveSubscriptionRefreshMode(next) === 'server-auto') {
+    return projectSubscriptionAdminView(next, await getSubscriptionFetchHealth(next.id));
+  }
+  return projectSubscriptionAdminView(next);
+}
 
 export const GET = withProblemDetails(async (_request: Request, ctx: Ctx) => {
   const { id } = await ctx.params;
@@ -40,13 +52,9 @@ export const PUT = withProblemDetails(async (request: Request, ctx: Ctx) => {
   });
   const input = SubscriptionCreateSchema.parse(raw);
   const next = await replaceSubscription(id, input);
-  // P-FFP v1: the admin view is projected from the COMMITTED candidate (no
-  // re-read race); health is fingerprint-joined and null when absent. LOCAL
-  // sources never consult health storage (invariant 1).
-  const view =
-    next.kind === 'local'
-      ? projectSubscriptionAdminView(next)
-      : projectSubscriptionAdminView(next, await getSubscriptionFetchHealth(next.id));
+  // Project only the committed candidate: local/manual rows are health-inert,
+  // while effective server-auto rows retain the fingerprint-joined health read.
+  const view = await projectCommittedSubscriptionAdminView(next);
   return Response.json({ data: view });
 });
 
@@ -62,13 +70,9 @@ export const PATCH = withProblemDetails(async (request: Request, ctx: Ctx) => {
   const parsed = ifMatch ? Number(ifMatch.replace(/^W\//, '').replace(/^"|"$/g, '')) : NaN;
   const expectedUpdatedAt = Number.isFinite(parsed) ? parsed : undefined;
   const next = await patchSubscription(id, patch, expectedUpdatedAt);
-  // P-FFP v1: the admin view is projected from the COMMITTED candidate (no
-  // re-read race); health is fingerprint-joined and null when absent. LOCAL
-  // sources never consult health storage (invariant 1).
-  const view =
-    next.kind === 'local'
-      ? projectSubscriptionAdminView(next)
-      : projectSubscriptionAdminView(next, await getSubscriptionFetchHealth(next.id));
+  // Project only the committed candidate: local/manual rows are health-inert,
+  // while effective server-auto rows retain the fingerprint-joined health read.
+  const view = await projectCommittedSubscriptionAdminView(next);
   return Response.json({ data: view });
 });
 

@@ -1,3 +1,4 @@
+import { browser } from 'wxt/browser';
 import { z } from 'zod';
 
 export const SettingsSchema = z.object({

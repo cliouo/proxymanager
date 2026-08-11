@@ -1,7 +1,9 @@
+import { createServer } from 'node:http';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Subscription } from '@/schemas';
 
-vi.mock('@/lib/repos/fetchCacheRepo', () => ({
+vi.mock('@/lib/repos/fetchCacheRepo', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/repos/fetchCacheRepo')>()),
   buildCacheKey: vi.fn(() => 'fixed-cache-key'),
   getFetchCache: vi.fn(),
   setFetchCache: vi.fn(async () => undefined),
@@ -21,7 +23,7 @@ vi.mock('@/lib/repos/subscriptionFetchHealthRepo', async (importOriginal) => {
 });
 
 import { resolveSubscriptionContent } from '@/lib/services/subscriptionFetcher';
-import { getFetchCache, setFetchCache } from '@/lib/repos/fetchCacheRepo';
+import { buildCacheKey, getFetchCache, setFetchCache } from '@/lib/repos/fetchCacheRepo';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import {
   RemoteFetchAttemptError,
@@ -29,6 +31,7 @@ import {
   isEligibleFetchFailure,
 } from '@/lib/services/subscriptionResolutionErrors';
 
+const buildCacheMock = buildCacheKey as unknown as ReturnType<typeof vi.fn>;
 const getCacheMock = getFetchCache as unknown as ReturnType<typeof vi.fn>;
 const setCacheMock = setFetchCache as unknown as ReturnType<typeof vi.fn>;
 
@@ -62,6 +65,7 @@ describe('resolveSubscriptionContent — fetch failure policy (v1)', () => {
   beforeEach(() => {
     getCacheMock.mockReset();
     setCacheMock.mockClear();
+    buildCacheMock.mockClear();
     healthMock.recordSubscriptionFetchHealth.mockClear();
     globalThis.fetch = vi.fn() as unknown as typeof fetch;
   });
@@ -69,6 +73,55 @@ describe('resolveSubscriptionContent — fetch failure policy (v1)', () => {
     globalThis.fetch = realFetch;
     vi.restoreAllMocks();
   });
+
+  it.each(['User-Agent', 'user-agent', 'uSeR-aGeNt'])(
+    'sends the dedicated UA and retained headers while excluding custom %s from cache identity',
+    async (headerName) => {
+      let observedUserAgent: string | undefined;
+      let observedTestHeader: string | undefined;
+      const server = createServer((request, response) => {
+        const rawUserAgent = request.headers['user-agent'];
+        const rawTestHeader = request.headers['x-test'];
+        observedUserAgent = Array.isArray(rawUserAgent) ? rawUserAgent[0] : rawUserAgent;
+        observedTestHeader = Array.isArray(rawTestHeader) ? rawTestHeader[0] : rawTestHeader;
+        response.writeHead(200, { 'Content-Type': 'text/plain' });
+        response.end(ENTRY_YAML);
+      });
+      await new Promise<void>((resolve, reject) => {
+        server.once('error', reject);
+        server.listen(0, '127.0.0.1', () => resolve());
+      });
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('loopback server unavailable');
+
+      try {
+        globalThis.fetch = realFetch;
+        getCacheMock.mockResolvedValueOnce(null);
+        await resolveSubscriptionContent(
+          makeSub({
+            url: `http://127.0.0.1:${address.port}/subscription`,
+            ua_override: 'dedicated-test-ua',
+            custom_headers: {
+              [headerName]: 'sentinel-ignored-ua',
+              'X-Test': 'retained',
+            },
+          }),
+        );
+
+        expect(observedUserAgent).toBe('dedicated-test-ua');
+        expect(observedTestHeader).toBe('retained');
+        expect(buildCacheMock).toHaveBeenCalledWith({
+          url: `http://127.0.0.1:${address.port}/subscription`,
+          userAgent: 'dedicated-test-ua',
+          headers: { 'X-Test': 'retained' },
+        });
+      } finally {
+        await new Promise<void>((resolve, reject) => {
+          server.close((error) => (error ? reject(error) : resolve()));
+        });
+      }
+    },
+  );
 
   describe('fresh-attempt classification — real bytes for all six categories', () => {
     it('network: a fetch rejection classifies as network (503)', async () => {
@@ -540,6 +593,18 @@ describe('resolveSubscriptionContent — fetch failure policy (v1)', () => {
     expect(result.yaml).toContain('HK-01');
     expect(setCacheMock).not.toHaveBeenCalled();
     expect(healthMock.recordSubscriptionFetchHealth).not.toHaveBeenCalled();
+  });
+
+  it('keeps the historical 10 MiB server-fetch contract independent from 4 MiB uploads', async () => {
+    getCacheMock.mockResolvedValueOnce(null);
+    const overManualLimit = `${ENTRY_YAML}#${'x'.repeat(4 * 1024 * 1024)}`;
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      new Response(overManualLimit, { status: 200 }),
+    );
+
+    await expect(
+      resolveSubscriptionContent(makeSub(), { writeCache: false, recordHealth: false }),
+    ).resolves.toMatchObject({ proxyCount: 1 });
   });
 
   it('rejects a cross-origin redirect before custom subscription headers can be forwarded', async () => {

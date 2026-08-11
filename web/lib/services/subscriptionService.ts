@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import {
   applyOperatorMutation,
@@ -9,38 +10,98 @@ import {
   getSubscription,
   getSubscriptionByName,
   listSubscriptions,
+  type SubscriptionManualSnapshotAction,
 } from '@/lib/repos/subscriptionsRepo';
 import { listProfiles } from '@/lib/repos/profilesRepo';
 import { listCollections } from '@/lib/repos/collectionsRepo';
 import { getConfigVersion } from '@/lib/repos/configVersionRepo';
-import { invalidateResolvedSnapshot } from '@/lib/repos/resolvedRepo';
 import {
   commitUnderPipelineGate,
   consumingProfilesOfSubscription,
 } from '@/lib/services/nodePipelineSaveGate';
 import {
-  deleteSubscriptionFetchHealth,
+  computeSubscriptionDefinitionFingerprint,
   getSubscriptionFetchHealth,
   getSubscriptionFetchHealthMany,
   healthMatchesDefinition,
 } from '@/lib/repos/subscriptionFetchHealthRepo';
+import { parseSubscriptionManualSnapshotMeta } from '@/lib/repos/subscriptionManualSnapshotRepo';
+import {
+  buildCacheKey,
+  FETCH_CACHE_STALE_RETENTION_MS,
+  type FetchCacheEntry,
+} from '@/lib/repos/fetchCacheRepo';
 import {
   effectiveFetchFailurePolicy,
+  effectiveFetchIdentityRevision,
+  effectiveSubscriptionCustomHeaders,
+  effectiveSubscriptionRefreshMode,
+  MAX_SUBSCRIPTION_CONTENT,
+  subscriptionUserAgent,
   type Profile,
   type Subscription,
   type SubscriptionAdminView,
   type SubscriptionCreate,
   type SubscriptionFetchHealth,
+  type SubscriptionManualUpdateOrigin,
   type SubscriptionUpdate,
 } from '@/schemas';
+import {
+  resolveSubscriptionContentRaw,
+  validateManualSubscriptionContent,
+} from '@/lib/services/subscriptionFetcher';
+import { isActiveCurrentRenameTemplateOperator } from '@/schemas/operator';
+import {
+  describeSubscriptionContentIssue,
+  SubscriptionResolutionValidationError,
+} from '@/lib/services/subscriptionResolutionErrors';
 
-/**
- * Fire-and-forget snapshot invalidation. Snapshot reads have a long Redis
- * EX as a safety net, so a missed invalidation is bounded; never let a
- * Redis hiccup here turn a successful mutation into a 500.
- */
-function invalidateSnapshot(): void {
-  invalidateResolvedSnapshot().catch(() => undefined);
+function nextUpdatedAt(current: Pick<Subscription, 'updated_at'>): number {
+  return Math.max(nowSeconds(), (current.updated_at ?? 0) + 1);
+}
+
+function canonicalFetchIdentity(subscription: Subscription): string {
+  const customHeaders = effectiveSubscriptionCustomHeaders(subscription);
+  return JSON.stringify({
+    kind: subscription.kind,
+    url: subscription.url,
+    userAgent: subscriptionUserAgent(subscription),
+    customHeaders,
+  });
+}
+
+function applyFetchIdentityRevision(
+  current: Subscription | null,
+  candidate: Subscription,
+): Subscription {
+  if (candidate.kind === 'local') {
+    delete candidate.fetch_identity_revision;
+    return candidate;
+  }
+  if (!current || current.kind === 'local') {
+    candidate.fetch_identity_revision = 1;
+    return candidate;
+  }
+  if (canonicalFetchIdentity(current) !== canonicalFetchIdentity(candidate)) {
+    candidate.fetch_identity_revision = effectiveFetchIdentityRevision(current) + 1;
+  } else if (current.fetch_identity_revision === undefined) {
+    delete candidate.fetch_identity_revision;
+  } else {
+    candidate.fetch_identity_revision = current.fetch_identity_revision;
+  }
+  return candidate;
+}
+
+function fetchHealthMustClear(current: Subscription | null, candidate: Subscription): boolean {
+  if (current === null) return false;
+  if (current.kind !== 'remote' || candidate.kind !== 'remote') return current !== null;
+  if (effectiveSubscriptionRefreshMode(current) !== effectiveSubscriptionRefreshMode(candidate)) {
+    return true;
+  }
+  return (
+    computeSubscriptionDefinitionFingerprint(current) !==
+    computeSubscriptionDefinitionFingerprint(candidate)
+  );
 }
 
 /**
@@ -63,6 +124,7 @@ const RENDER_AFFECTING_SUBSCRIPTION_FIELDS = new Set([
   'tags',
   'operators',
   'fetch_failure_policy',
+  'refresh_mode',
 ]);
 
 /** True when a PATCH touches at least one render-affecting field. */
@@ -79,6 +141,13 @@ function assertPolicyAllowedForKind(kind: Subscription['kind'], policy: unknown)
   }
 }
 
+/** 422: refresh mode and imported snapshots are remote-source concepts. */
+function assertRefreshModeAllowedForKind(kind: Subscription['kind'], refreshMode: unknown): void {
+  if (kind === 'local' && refreshMode !== undefined) {
+    throw ProblemDetailsError.unprocessable('本地订阅不支持 refresh_mode。');
+  }
+}
+
 /**
  * Admin view projection (P-FFP v1): remote rows expose the EFFECTIVE policy
  * plus the fingerprint-matched health (or null); local rows omit both — even
@@ -89,23 +158,47 @@ export function projectSubscriptionAdminView(
   subscription: Subscription,
   health?: SubscriptionFetchHealth | null,
 ): SubscriptionAdminView {
+  const view = { ...subscription } as SubscriptionAdminView & Partial<Subscription>;
+  delete view.fetch_identity_revision;
+  delete view.manual_snapshot_meta;
+  delete view.manual_snapshot;
+
   if (subscription.kind === 'local') {
-    const view: SubscriptionAdminView = { ...subscription };
     delete view.fetch_failure_policy;
     delete view.fetch_health;
+    delete view.refresh_mode;
     return view;
   }
+  delete view.content;
+
+  const refreshMode = effectiveSubscriptionRefreshMode(subscription);
+  const meta = parseSubscriptionManualSnapshotMeta(subscription);
   return {
-    ...subscription,
+    ...view,
     fetch_failure_policy: effectiveFetchFailurePolicy(subscription),
-    fetch_health: healthMatchesDefinition(subscription, health) ? health : null,
+    fetch_health:
+      refreshMode === 'server-auto' && healthMatchesDefinition(subscription, health)
+        ? health
+        : null,
+    refresh_mode: refreshMode,
+    manual_snapshot: meta
+      ? {
+          updated_at: meta.updated_at,
+          proxy_count: meta.proxy_count,
+          origin: meta.origin,
+          source_changed:
+            meta.fetch_identity_revision !== effectiveFetchIdentityRevision(subscription),
+        }
+      : null,
   };
 }
 
 /** Admin views for the whole library (one MGET for all remote healths). */
 export async function listSubscriptionAdminViews(): Promise<SubscriptionAdminView[]> {
   const subs = await listSubscriptions();
-  const remoteIds = subs.filter((s) => s.kind === 'remote').map((s) => s.id);
+  const remoteIds = subs
+    .filter((s) => s.kind === 'remote' && effectiveSubscriptionRefreshMode(s) === 'server-auto')
+    .map((s) => s.id);
   // Invariant 1: with NO remote sources the health store is never consulted —
   // not even with an empty key list.
   const healths = remoteIds.length === 0 ? [] : await getSubscriptionFetchHealthMany(remoteIds);
@@ -120,6 +213,9 @@ export async function getSubscriptionAdminView(id: string): Promise<Subscription
   // P-FFP v1 invariant 1: LOCAL sources never consult health storage — the
   // health read happens only on the remote branch.
   if (sub.kind === 'local') return projectSubscriptionAdminView(sub);
+  if (effectiveSubscriptionRefreshMode(sub) === 'manual') {
+    return projectSubscriptionAdminView(sub);
+  }
   return projectSubscriptionAdminView(sub, await getSubscriptionFetchHealth(id));
 }
 
@@ -132,19 +228,12 @@ export function generateSubscriptionId(): string {
 }
 
 export async function createSubscription(input: SubscriptionCreate): Promise<Subscription> {
-  // P-FFP v1: the policy is remote-only — an explicit value on a local create
-  // is rejected before any read/write.
   assertPolicyAllowedForKind(input.kind, input.fetch_failure_policy);
-  // Version bracket FIRST: every read below (dup check, consumer discovery)
-  // must belong to the generation the commit will land on.
   const planningVersion = await getConfigVersion();
   const dup = await getSubscriptionByName(input.name);
   if (dup) {
     throw ProblemDetailsError.conflict(`Subscription name "${input.name}" already exists.`);
   }
-  // pass-8 blocker 2: creating a rename-template row through a GENERIC
-  // create is naming-row creation — the dedicated gate error (the mutation
-  // policy owns the invariant; a fresh record has no raw rows).
   let operators: unknown[] | undefined;
   if (input.operators !== undefined) {
     operators = applyOperatorMutation(
@@ -153,17 +242,14 @@ export async function createSubscription(input: SubscriptionCreate): Promise<Sub
       'generic',
     ).storage;
   }
-  const sub: Subscription = {
+  const sub = applyFetchIdentityRevision(null, {
     ...input,
     ...(operators !== undefined ? { operators: operators as Subscription['operators'] } : {}),
+    ...(input.kind === 'remote' ? { refresh_mode: 'server-auto' as const } : {}),
     id: generateSubscriptionId(),
     updated_at: nowSeconds(),
-  }; // P2-2
-  // A brand-new sub can already match tag-based collections that profiles are
-  // bound to — those consumers must be preflighted before the insert. Tag
-  // membership is resolved against the CANDIDATE universe (allSubs + the new
-  // sub), never the pre-insert list, or the new source commits without its
-  // newly-matching consumer ever being preflighted.
+  });
+  if (sub.kind === 'remote') delete sub.content;
   const [collections, profiles, allSubs] = await Promise.all([
     listCollections(),
     listProfiles(),
@@ -175,10 +261,11 @@ export async function createSubscription(input: SubscriptionCreate): Promise<Sub
     planningVersion,
     affected,
     candidateSubscriptions: (subs) => [...subs, sub],
-    commit: (version, ordinalGeneration) =>
-      commitSubscriptionChange(sub, version, ordinalGeneration),
+    commit: (version, ordinalPlan) =>
+      commitSubscriptionChange(sub, version, ordinalPlan, {
+        manualSnapshot: sub.kind === 'local' ? { type: 'delete' } : { type: 'keep' },
+      }),
   });
-  invalidateSnapshot();
   return sub;
 }
 
@@ -186,11 +273,7 @@ export async function replaceSubscription(
   id: string,
   input: SubscriptionCreate,
 ): Promise<Subscription> {
-  // P-FFP v1: the policy is remote-only — an explicit value on a local
-  // candidate is rejected before any read/write.
   assertPolicyAllowedForKind(input.kind, input.fetch_failure_policy);
-  // Version bracket FIRST — the entity read + candidate must belong to the
-  // generation the commit lands on.
   const planningVersion = await getConfigVersion();
   const current = await getSubscription(id);
   if (!current) {
@@ -202,11 +285,6 @@ export async function replaceSubscription(
       throw ProblemDetailsError.conflict(`Subscription name "${input.name}" already exists.`);
     }
   }
-  // pass-10 blocker 2: generic PUT/replace is a NAMING-ROW mutation surface —
-  // the mutation policy runs the shared current-vs-candidate invariant
-  // before any write/audit and derives the exact raw storage list (untouched
-  // rows — including the naming row — survive byte-for-byte with their
-  // unknown fields; key-order-only differences are semantically equal).
   let operators: unknown[] | undefined;
   if (input.operators !== undefined) {
     operators = applyOperatorMutation(
@@ -215,14 +293,24 @@ export async function replaceSubscription(
       'generic',
     ).storage;
   }
-  const next: Subscription = {
+  const next = applyFetchIdentityRevision(current, {
     ...input,
     ...(operators !== undefined ? { operators: operators as Subscription['operators'] } : {}),
+    ...(input.kind === 'remote'
+      ? {
+          refresh_mode:
+            current.kind === 'remote'
+              ? effectiveSubscriptionRefreshMode(current)
+              : ('server-auto' as const),
+          ...(current.kind === 'remote' && current.manual_snapshot_meta !== undefined
+            ? { manual_snapshot_meta: current.manual_snapshot_meta }
+            : {}),
+        }
+      : {}),
     id,
-    updated_at: nowSeconds(), // P2-2
-  };
-  // Full replacement changes every consuming profile's rendered output:
-  // preflight the union of current + candidate consumers, CAS commit.
+    updated_at: nextUpdatedAt(current),
+  });
+  if (next.kind === 'remote') delete next.content;
   const [collections, profiles, allSubs] = await Promise.all([
     listCollections(),
     listProfiles(),
@@ -232,35 +320,35 @@ export async function replaceSubscription(
   const nextSubs = allSubs.map((sub) => (sub.id === id ? next : sub));
   const candidateConsumers = consumingProfilesOfSubscription(next, collections, nextSubs, profiles);
   const byId = new Map<string, Profile>();
-  for (const p of [...currentConsumers, ...candidateConsumers]) byId.set(p.id, p);
+  for (const profile of [...currentConsumers, ...candidateConsumers]) {
+    byId.set(profile.id, profile);
+  }
+  const manualSnapshot: SubscriptionManualSnapshotAction =
+    next.kind === 'local' ? { type: 'delete' } : { type: 'keep' };
   await commitUnderPipelineGate({
     planningVersion,
     affected: [...byId.values()],
     candidateSubscriptions: (subs) => subs.map((sub) => (sub.id === id ? next : sub)),
-    commit: (version, ordinalGeneration) =>
-      commitSubscriptionChange(next, version, ordinalGeneration),
+    commit: (version, ordinalPlan) =>
+      commitSubscriptionChange(next, version, ordinalPlan, {
+        manualSnapshot,
+        clearFetchHealth: fetchHealthMustClear(current, next),
+      }),
   });
-  invalidateSnapshot();
   return next;
 }
 
 export async function patchSubscription(
   id: string,
   patch: SubscriptionUpdate,
-  expectedUpdatedAt?: number, // P2-2
+  expectedUpdatedAt?: number,
 ): Promise<Subscription> {
-  // Version bracket FIRST: the entity read, candidate construction, consumer
-  // discovery and preflight must all observe the generation the commit lands
-  // on — any concurrent write in between is a 412, never a stale commit.
   const planningVersion = await getConfigVersion();
   const current = await getSubscription(id);
   if (!current) {
     throw ProblemDetailsError.notFound(`Subscription ${id} not found.`);
   }
-  // P2-2: optimistic concurrency. When the caller passes their last-known
-  // updated_at (via If-Match), refuse if the record moved since — otherwise two
-  // concurrent editors (two tabs / human + AI) silently overwrite each other.
-  if (expectedUpdatedAt !== undefined && current.updated_at !== expectedUpdatedAt) {
+  if (expectedUpdatedAt !== undefined && (current.updated_at ?? 0) !== expectedUpdatedAt) {
     throw ProblemDetailsError.preconditionFailed('该资源已被其他人修改,请刷新后重试。');
   }
   if (patch.name && patch.name !== current.name) {
@@ -269,15 +357,6 @@ export async function patchSubscription(
       throw ProblemDetailsError.conflict(`Subscription name "${patch.name}" already exists.`);
     }
   }
-  // pass-8 blocker 2: generic mutations may edit NON-name rows freely, but
-  // every existing rename-template row must survive LOGICALLY unchanged
-  // (key-order-insensitive) and never move across a surviving operator —
-  // creation/touch/delete/move of a naming row fails the one bounded gate
-  // error before any write/audit. The profile-bound naming apply service is
-  // the ONLY rename-template mutation path. The policy also derives the
-  // exact raw storage list: untouched rows (naming row included) keep their
-  // raw bytes + unknown fields; edited same-kind rows merge known fields
-  // while retaining unknown ones.
   let operators: unknown[] | undefined;
   if (patch.operators !== undefined) {
     operators = applyOperatorMutation(
@@ -286,35 +365,34 @@ export async function patchSubscription(
       'generic',
     ).storage;
   }
-  // An empty PATCH is a no-op: no write, no version bump, current row returned.
   if (Object.keys(patch).length === 0) return current;
 
-  // P-FFP v1 policy merge semantics:
-  //   - explicit policy on a resulting LOCAL source → 422 before preflight/write;
-  //   - remote→local WITHOUT an explicit policy → the inherited policy is
-  //     removed from the candidate (local never stores/consults it);
-  //   - local→remote without a policy → effective default applies (nothing stored).
-  const next: Subscription = {
+  let next: Subscription = {
     ...current,
     ...patch,
     ...(operators !== undefined ? { operators: operators as Subscription['operators'] } : {}),
-    updated_at: nowSeconds(),
-  }; // P2-2 bump version
+    updated_at: nextUpdatedAt(current),
+  };
   if (next.kind === 'local') {
-    // Order matters: an EXPLICIT policy on a resulting local source must 422
-    // before the inherited-policy removal can swallow it.
     if (patch.fetch_failure_policy !== undefined) {
       throw ProblemDetailsError.unprocessable(
         '本地订阅不支持 fetch_failure_policy（失败策略仅限远程订阅）。',
       );
     }
+    if (patch.refresh_mode !== undefined) {
+      throw ProblemDetailsError.unprocessable('本地订阅不支持 refresh_mode。');
+    }
     delete next.fetch_failure_policy;
+    delete next.refresh_mode;
+    delete next.manual_snapshot_meta;
+  } else {
+    delete next.content;
+    if (current.kind === 'local' && next.refresh_mode === undefined) {
+      next.refresh_mode = 'server-auto';
+    }
   }
   assertPolicyAllowedForKind(next.kind, next.fetch_failure_policy);
-  // P3-7: the create path pins the kind/url/content combo (remote needs url,
-  // local needs content), but PATCH merges field-by-field and could break it —
-  // e.g. switch kind→local without content, or clear the url of a remote sub.
-  // Re-check the merged record before persisting.
+  assertRefreshModeAllowedForKind(next.kind, next.refresh_mode);
   if (next.kind === 'remote' ? !next.url : !next.content) {
     throw ProblemDetailsError.unprocessable(
       next.kind === 'remote'
@@ -322,20 +400,50 @@ export async function patchSubscription(
         : '本地订阅需要内容(content);本次修改会使其为空。',
     );
   }
-  // EVERY non-empty valid PATCH is declarative and changes every consuming
-  // profile's rendered output (the runtime row patch was retired): preflight
-  // all consumers against this exact candidate, then commit under the config
-  // version the preflight saw (AGENTS.md shared-source invariant).
+  next = applyFetchIdentityRevision(current, next);
+
+  let contentOverrides: ReadonlyMap<string, string> | undefined;
+  let fetchCache:
+    | { cacheKey: string; entry: FetchCacheEntry; ttlMs: number }
+    | undefined;
+  if (
+    current.kind === 'remote' &&
+    effectiveSubscriptionRefreshMode(current) === 'manual' &&
+    next.kind === 'remote' &&
+    effectiveSubscriptionRefreshMode(next) === 'server-auto'
+  ) {
+    if (!next.url) {
+      throw ProblemDetailsError.unprocessable('远程订阅需要 URL。');
+    }
+    const fresh = await resolveSubscriptionContentRaw(next, {
+      noCache: true,
+      writeCache: false,
+      recordHealth: false,
+    });
+    contentOverrides = new Map([[id, fresh.yaml]]);
+    const customHeaders = effectiveSubscriptionCustomHeaders(next);
+    fetchCache = {
+      cacheKey: buildCacheKey({
+        url: next.url,
+        userAgent: subscriptionUserAgent(next),
+        headers: customHeaders,
+      }),
+      entry: {
+        content: fresh.yaml,
+        ...(fresh.traffic ? { traffic: fresh.traffic } : {}),
+        proxy_count: fresh.proxyCount,
+        fetched_at: Date.now(),
+      },
+      ttlMs: Math.max(next.ttl_ms, FETCH_CACHE_STALE_RETENTION_MS),
+    };
+  }
+
   if (touchesRenderedOutput(patch)) {
     const [collections, profiles, allSubs] = await Promise.all([
       listCollections(),
       listProfiles(),
       listSubscriptions(),
     ]);
-    // Consumers are the UNION of current-membership consumers and
-    // candidate-membership consumers: a tags patch can make this sub newly
-    // match a tag-based collection that a profile is bound to — that profile
-    // must be preflighted even though it consumes nothing today.
     const currentConsumers = consumingProfilesOfSubscription(
       current,
       collections,
@@ -350,17 +458,119 @@ export async function patchSubscription(
       profiles,
     );
     const byId = new Map<string, Profile>();
-    for (const p of [...currentConsumers, ...candidateConsumers]) byId.set(p.id, p);
+    for (const profile of [...currentConsumers, ...candidateConsumers]) {
+      byId.set(profile.id, profile);
+    }
+    const manualSnapshot: SubscriptionManualSnapshotAction =
+      next.kind === 'local' ? { type: 'delete' } : { type: 'keep' };
     await commitUnderPipelineGate({
       planningVersion,
       affected: [...byId.values()],
       candidateSubscriptions: (subs) => subs.map((sub) => (sub.id === id ? next : sub)),
-      commit: (version, ordinalGeneration) =>
-        commitSubscriptionChange(next, version, ordinalGeneration),
+      contentOverrides,
+      commit: (version, ordinalPlan) =>
+        commitSubscriptionChange(next, version, ordinalPlan, {
+          manualSnapshot,
+          clearFetchHealth: fetchHealthMustClear(current, next),
+          fetchCache,
+        }),
     });
   }
-  invalidateSnapshot();
   return next;
+}
+
+export interface ManualSubscriptionImportResult {
+  proxyCount: number;
+  updatedAt: number;
+}
+
+/** Validate, preflight and atomically activate one separately stored manual snapshot. */
+export async function importManualSubscriptionContent(
+  id: string,
+  content: string,
+  origin: SubscriptionManualUpdateOrigin,
+  expectedUpdatedAt: number,
+  expectedFetchIdentityRevision: number,
+): Promise<ManualSubscriptionImportResult> {
+  if (Buffer.byteLength(content, 'utf8') > MAX_SUBSCRIPTION_CONTENT) {
+    throw ProblemDetailsError.payloadTooLarge('订阅内容过大，最大支持 4 MiB。');
+  }
+
+  const planningVersion = await getConfigVersion();
+  const current = await getSubscription(id);
+  if (!current) throw ProblemDetailsError.notFound(`Subscription ${id} not found.`);
+  if (current.kind !== 'remote') {
+    throw ProblemDetailsError.unprocessable('只有远程订阅可以导入手动更新内容。');
+  }
+  if (
+    (current.updated_at ?? 0) !== expectedUpdatedAt ||
+    effectiveFetchIdentityRevision(current) !== expectedFetchIdentityRevision
+  ) {
+    throw ProblemDetailsError.preconditionFailed('该资源已被其他人修改,请刷新后重试。');
+  }
+
+  const validated = (() => {
+    try {
+      return validateManualSubscriptionContent(
+        content,
+        (current.operators ?? []).some(isActiveCurrentRenameTemplateOperator),
+      );
+    } catch (error) {
+      if (!(error instanceof SubscriptionResolutionValidationError)) throw error;
+      if (error.contentIssue) {
+        throw ProblemDetailsError.unprocessable(
+          describeSubscriptionContentIssue(error.contentIssue),
+        );
+      }
+      if (error.nodeIssue) {
+        const { index, field, reason } = error.nodeIssue;
+        throw ProblemDetailsError.unprocessable(
+          `订阅内容包含无效节点：第 ${index + 1} 个节点的字段 "${field}" ${reason}。`,
+        );
+      }
+      throw ProblemDetailsError.unprocessable('订阅内容无效。');
+    }
+  })();
+  const importedAt = nextUpdatedAt(current);
+  const next: Subscription = {
+    ...current,
+    refresh_mode: 'manual',
+    manual_snapshot_meta: {
+      updated_at: importedAt,
+      proxy_count: validated.proxyCount,
+      origin,
+      fetch_identity_revision: effectiveFetchIdentityRevision(current),
+      content_sha256: createHash('sha256').update(content, 'utf8').digest('hex'),
+    },
+    updated_at: importedAt,
+  };
+  const contentOverrides = new Map<string, string>([[id, content]]);
+  const [collections, profiles, allSubs] = await Promise.all([
+    listCollections(),
+    listProfiles(),
+    listSubscriptions(),
+  ]);
+  const currentConsumers = consumingProfilesOfSubscription(current, collections, allSubs, profiles);
+  const nextSubs = allSubs.map((sub) => (sub.id === id ? next : sub));
+  const candidateConsumers = consumingProfilesOfSubscription(next, collections, nextSubs, profiles);
+  const byId = new Map<string, Profile>();
+  for (const profile of [...currentConsumers, ...candidateConsumers]) {
+    byId.set(profile.id, profile);
+  }
+
+  await commitUnderPipelineGate({
+    planningVersion,
+    affected: [...byId.values()],
+    candidateSubscriptions: (subs) => subs.map((sub) => (sub.id === id ? next : sub)),
+    contentOverrides,
+    commit: (version, ordinalPlan) =>
+      commitSubscriptionChange(next, version, ordinalPlan, {
+        manualSnapshot: { type: 'set', content },
+        clearFetchHealth: fetchHealthMustClear(current, next),
+      }),
+  });
+
+  return { proxyCount: validated.proxyCount, updatedAt: importedAt };
 }
 
 export interface DeleteSubscriptionResult {
@@ -390,9 +600,6 @@ export async function deleteSubscription(id: string): Promise<DeleteSubscription
       commit: (version, ordinalGeneration) =>
         commitSubscriptionDelete(id, version, ordinalGeneration),
     });
-    // P-FFP v1: after the definition CAS, best-effort drop the separate
-    // fetch-health value (idempotent when the row was already gone).
-    await deleteSubscriptionFetchHealth(id);
     return { removed: false, warnings };
   }
   const [profiles, collections, allSubs] = await Promise.all([
@@ -427,10 +634,6 @@ export async function deleteSubscription(id: string): Promise<DeleteSubscription
     commit: (version, ordinalGeneration) =>
       commitSubscriptionDelete(id, version, ordinalGeneration),
   });
-  // P-FFP v1: after the definition CAS, best-effort drop the separate
-  // fetch-health value — a health hiccup never turns a delete into a 500.
-  await deleteSubscriptionFetchHealth(id);
-  invalidateSnapshot();
   return { removed: true, warnings };
 }
 

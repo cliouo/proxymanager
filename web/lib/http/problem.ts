@@ -74,6 +74,24 @@ export class ProblemDetailsError extends Error {
     });
   }
 
+  static payloadTooLarge(detail?: string): ProblemDetailsError {
+    return new ProblemDetailsError({
+      type: `${PROBLEM_BASE_URL}/payload-too-large`,
+      title: 'Payload Too Large',
+      status: 413,
+      detail,
+    });
+  }
+
+  static unsupportedMediaType(detail?: string): ProblemDetailsError {
+    return new ProblemDetailsError({
+      type: `${PROBLEM_BASE_URL}/unsupported-media-type`,
+      title: 'Unsupported Media Type',
+      status: 415,
+      detail,
+    });
+  }
+
   static unprocessable(detail?: string, errors?: unknown[]): ProblemDetailsError {
     return new ProblemDetailsError({
       type: `${PROBLEM_BASE_URL}/unprocessable-entity`,

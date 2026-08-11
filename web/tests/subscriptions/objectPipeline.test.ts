@@ -9,7 +9,8 @@ import type { Operator, Subscription } from '@/schemas';
  * 重复的 parse/stringify,等价性是它存在的前提。
  */
 
-vi.mock('@/lib/repos/fetchCacheRepo', () => ({
+vi.mock('@/lib/repos/fetchCacheRepo', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/repos/fetchCacheRepo')>()),
   buildCacheKey: vi.fn(() => 'fixed-cache-key'),
   getFetchCache: vi.fn(),
   setFetchCache: vi.fn(async () => undefined),

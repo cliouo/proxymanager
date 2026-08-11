@@ -1,3 +1,5 @@
+import { browser } from "wxt/browser";
+
 /**
  * RPC contract between popup/options ↔ background service worker.
  *
@@ -7,13 +9,13 @@
  */
 
 export type Request =
-  | { type: 'listDomains'; tabId: number }
-  | { type: 'listUrlsForDomain'; tabId: number; domain: string }
-  | { type: 'clearDomains'; tabId: number }
-  | { type: 'getPolicies' }
-  | { type: 'getAnchors' }
+  | { type: "listDomains"; tabId: number }
+  | { type: "listUrlsForDomain"; tabId: number; domain: string }
+  | { type: "clearDomains"; tabId: number }
+  | { type: "getPolicies" }
+  | { type: "getAnchors" }
   | {
-      type: 'speedtestBatch';
+      type: "speedtestBatch";
       /**
        * Each target is tested across every group. `label` becomes the result
        * card's `domain` (rule value when the user writes). `url` is passed
@@ -24,23 +26,35 @@ export type Request =
       groups: string[];
     }
   | {
-      type: 'createRule';
+      type: "createRule";
       anchor: string;
-      ruleType: 'DOMAIN' | 'DOMAIN-SUFFIX';
+      ruleType: "DOMAIN" | "DOMAIN-SUFFIX";
       value: string;
       policy: string;
       note?: string;
     }
-  | { type: 'reloadClash' }
-  | { type: 'pingBackend' }
-  | { type: 'pingClash' }
-  | { type: 'listRulesByAnchor'; anchor: string }
-  | { type: 'deleteRule'; ruleId: string }
+  | { type: "reloadClash" }
+  | { type: "pingBackend" }
+  | { type: "pingClash" }
+  | { type: "subscriptionBridgeStatus"; pageOrigin: string }
   | {
-      type: 'createRulesBatch';
+      type: "issueSubscriptionRefreshActivation";
+      pageOrigin: string;
+      subscriptionId: string;
+    }
+  | {
+      type: "refreshSubscriptionLocally";
+      pageOrigin: string;
+      subscriptionId: string;
+      activation: string;
+    }
+  | { type: "listRulesByAnchor"; anchor: string }
+  | { type: "deleteRule"; ruleId: string }
+  | {
+      type: "createRulesBatch";
       rules: Array<{
         anchor: string;
-        ruleType: 'DOMAIN' | 'DOMAIN-SUFFIX';
+        ruleType: "DOMAIN" | "DOMAIN-SUFFIX";
         value: string;
         policy: string;
         note?: string;
@@ -50,7 +64,7 @@ export type Request =
 export interface BackendRule {
   id: string;
   anchor: string;
-  type: 'DOMAIN' | 'DOMAIN-SUFFIX' | string;
+  type: "DOMAIN" | "DOMAIN-SUFFIX" | string;
   value: string;
   policy: string;
 }
@@ -58,7 +72,7 @@ export interface BackendRule {
 export interface BatchCreateOutcome {
   /** Index in the original request array. */
   index: number;
-  status: 'ok' | 'err';
+  status: "ok" | "err";
   ruleId?: string;
   message?: string;
 }
@@ -79,11 +93,11 @@ export interface SpeedtestForDomain {
 }
 
 export type Response =
-  | { ok: true; data: unknown }
-  | { ok: false; error: string };
+  { ok: true; data: unknown } | { ok: false; error: string };
 
 export async function send<T = unknown>(req: Request): Promise<T> {
   const res = (await browser.runtime.sendMessage(req)) as Response;
-  if (!res || !res.ok) throw new Error(res?.error ?? 'No response from background');
+  if (!res || !res.ok)
+    throw new Error(res?.error ?? "No response from background");
   return res.data as T;
 }

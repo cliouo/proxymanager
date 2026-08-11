@@ -117,6 +117,119 @@
   padding: 6px 10px;
   word-break: break-word;
 }
+.sourceChanged {
+  margin-top: 9px;
+  padding: 7px 10px;
+  border: 1px solid color-mix(in srgb, var(--warn) 32%, var(--border));
+  border-radius: var(--r-sm);
+  background: var(--warn-dim);
+  color: var(--muted);
+  font: 11.5px/1.55 var(--font-mono);
+  overflow-wrap: anywhere;
+}
+.manualPanel {
+  margin-top: 16px;
+  padding: 14px;
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  overscroll-behavior: contain;
+}
+.manualHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 12px;
+}
+.manualHead b {
+  display: block;
+  font: 600 13px var(--font-mono);
+  color: var(--fg);
+}
+.manualHead p {
+  max-width: 68ch;
+  margin: 5px 0 0;
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--muted);
+  text-wrap: pretty;
+}
+.manualLimit {
+  flex: none;
+  font: 10.5px var(--font-mono);
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+.localFetchCallout {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+}
+.localFetchCallout .extensionLine {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.localFetchCallout button {
+  flex: none;
+  min-height: 40px;
+}
+.manualActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 11px;
+}
+.fileInput {
+  display: none;
+}
+.extensionLine {
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  color: var(--muted);
+  font: 11.5px var(--font-mono);
+}
+.extensionLine > span:nth-child(2) {
+  flex: 1;
+}
+.extensionDot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--faint);
+}
+.extensionDot.ready {
+  background: var(--ok);
+  box-shadow: 0 0 0 3px var(--ok-dim);
+}
+.extensionDot.checking {
+  background: var(--warn);
+}
+.extensionDot.absent {
+  background: var(--faint);
+}
+.manualError {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
+  background: var(--danger-dim);
+  color: var(--danger);
+  font: 11.5px/1.55 var(--font-mono);
+  word-break: break-word;
+}
 .acts {
   flex: none;
   display: flex;
@@ -208,6 +321,39 @@
   }
   .head {
     row-gap: 6px;
+  }
+  .manualPanel {
+    margin-left: 0;
+    padding: 12px;
+    overflow: hidden;
+  }
+  .manualHead {
+    display: block;
+  }
+  .manualLimit {
+    display: block;
+    margin-top: 6px;
+  }
+  .manualActions button,
+  .localFetchCallout button {
+    min-height: 40px;
+  }
+  .manualActions button {
+    flex: 1 1 auto;
+  }
+  .localFetchCallout {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .extensionLine {
+    align-items: flex-start;
+    padding-top: 8px;
+  }
+  .extensionDot {
+    margin-top: 5px;
+  }
+  .localFetchCallout button {
+    width: 100%;
   }
 }
 

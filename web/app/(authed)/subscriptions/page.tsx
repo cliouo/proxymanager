@@ -11,9 +11,21 @@ import { useToast } from '@/components/ui/Toast';
 import { type Collection } from '@/lib/types/collection';
 import { isActiveCurrentRenameTemplateOperator, type StoredOperator } from '@/schemas/operator';
 import { describeFailedDisposition } from '@/lib/ui/subscriptionFetchHealthCopy';
+import {
+  callSubscriptionBridge,
+  createAddFormMutationController,
+  createManualRefreshOperationController,
+  getSubscriptionLocalFetchSpec,
+  refreshSubscriptionFromLocalNetwork,
+  uploadManualSubscription,
+  type AddFormMutationLease,
+  type ManualRefreshOperationKind,
+  type ManualRefreshOperationLease,
+} from '@/lib/client/subscriptionLocalRefresh';
 import styles from './subscriptions.module.css';
 
 const DEFAULT_TTL_MS = 10 * 60 * 1000;
+const MAX_MANUAL_SUBSCRIPTION_BYTES = 4 * 1024 * 1024;
 
 interface Subscription {
   id: string;
@@ -30,6 +42,14 @@ interface Subscription {
   fetch_failure_policy?: 'use-stale-cache' | 'fail-closed';
   /** P-FFP v1: separate advisory attempt health (API joins by fingerprint). */
   fetch_health?: FetchHealth | null;
+  refresh_mode?: 'server-auto' | 'manual';
+  manual_snapshot?: {
+    updated_at: number;
+    proxy_count: number;
+    origin: 'web' | 'extension';
+    source_changed: boolean;
+  } | null;
+  updated_at?: number;
   operators?: StoredOperator[];
 }
 
@@ -83,6 +103,9 @@ export default function SubscriptionsPage() {
   const [error, setError] = useState<string | null>(null);
   const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [manualUpdatingId, setManualUpdatingId] = useState<string | null>(null);
+  const [manualOperation, setManualOperation] = useState<ManualRefreshOperationLease | null>(null);
+  const [addFormOperation, setAddFormOperation] = useState<AddFormMutationLease | null>(null);
   const [adding, setAdding] = useState(false);
   const [collectionAdding, setCollectionAdding] = useState(false);
   const [collectionEditingId, setCollectionEditingId] = useState<string | null>(null);
@@ -91,6 +114,13 @@ export default function SubscriptionsPage() {
   const [query, setQuery] = useState('');
   const [subBase, setSubBase] = useState<string | null>(null);
   const [dist, setDist] = useState<DistRef | null>(null);
+  const pageAliveRef = useRef(false);
+  const manualOperationControllerRef = useRef<ReturnType<
+    typeof createManualRefreshOperationController
+  > | null>(null);
+  const addFormMutationControllerRef = useRef<ReturnType<
+    typeof createAddFormMutationController
+  > | null>(null);
   const tabsId = useId();
   const subsTabRef = useRef<HTMLButtonElement>(null);
   const collectionsTabRef = useRef<HTMLButtonElement>(null);
@@ -99,8 +129,23 @@ export default function SubscriptionsPage() {
   const tabRef = (t: Tab): RefObject<HTMLButtonElement | null> =>
     t === 'subs' ? subsTabRef : t === 'collections' ? collectionsTabRef : namingTabRef;
 
+  const pageMutationIsActive = useCallback(
+    () =>
+      manualOperationControllerRef.current?.current() !== null ||
+      addFormMutationControllerRef.current?.current() !== null,
+    [],
+  );
+  const guardPageAction = useCallback(
+    (action: () => void): boolean => {
+      if (pageMutationIsActive()) return false;
+      action();
+      return true;
+    },
+    [pageMutationIsActive],
+  );
   const handleTablistKey = useCallback(
     (e: React.KeyboardEvent<HTMLDivElement>) => {
+      if (pageMutationIsActive()) return;
       if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
         e.preventDefault();
         const dir = e.key === 'ArrowRight' ? 1 : -1;
@@ -118,8 +163,31 @@ export default function SubscriptionsPage() {
         requestAnimationFrame(() => namingTabRef.current?.focus());
       }
     },
-    [tab],
+    [pageMutationIsActive, tab],
   );
+
+  useEffect(() => {
+    pageAliveRef.current = true;
+    const manualController = createManualRefreshOperationController((operation) => {
+      if (pageAliveRef.current) setManualOperation(operation);
+    });
+    const addFormController = createAddFormMutationController((operation) => {
+      if (pageAliveRef.current) setAddFormOperation(operation);
+    });
+    manualOperationControllerRef.current = manualController;
+    addFormMutationControllerRef.current = addFormController;
+    return () => {
+      pageAliveRef.current = false;
+      manualController.dispose();
+      addFormController.dispose();
+      if (manualOperationControllerRef.current === manualController) {
+        manualOperationControllerRef.current = null;
+      }
+      if (addFormMutationControllerRef.current === addFormController) {
+        addFormMutationControllerRef.current = null;
+      }
+    };
+  }, []);
 
   const startBusy = useCallback((id: string) => {
     setBusyIds((prev) => {
@@ -141,6 +209,7 @@ export default function SubscriptionsPage() {
   // Tab 切换时，避免另一 tab 里残留的"编辑/新增"状态泄漏回来
   useEffect(() => {
     setEditingId(null);
+    setManualUpdatingId(null);
     setAdding(false);
     setCollectionAdding(false);
     setCollectionEditingId(null);
@@ -152,7 +221,7 @@ export default function SubscriptionsPage() {
   const reloadSeq = useRef(0);
   const reload = useCallback(async () => {
     const seq = ++reloadSeq.current;
-    setError(null);
+    if (pageAliveRef.current) setError(null);
     try {
       const [list, cl, meta] = await Promise.all([
         api<{ data: Subscription[] }>('/api/v1/subscriptions'),
@@ -160,15 +229,15 @@ export default function SubscriptionsPage() {
         // 分发链接前缀(含 SUB_TOKEN)。失败不挡列表,抽屉里显示占位。
         api<{ data: { subBase?: string } }>('/api/v1/meta').catch(() => null),
       ]);
-      if (seq !== reloadSeq.current) return; // a newer reload superseded this one
+      if (!pageAliveRef.current || seq !== reloadSeq.current) return;
       setSubs(list.data);
       setCollections(cl.data);
       if (meta?.data.subBase) setSubBase(meta.data.subBase);
     } catch (err) {
-      if (seq !== reloadSeq.current) return;
+      if (!pageAliveRef.current || seq !== reloadSeq.current) return;
       setError(err instanceof ApiError ? err.message : String(err));
     } finally {
-      if (seq === reloadSeq.current) setLoaded(true);
+      if (pageAliveRef.current && seq === reloadSeq.current) setLoaded(true);
     }
   }, []);
 
@@ -176,7 +245,74 @@ export default function SubscriptionsPage() {
     reload();
   }, [reload]);
 
+  const globalMutationBusy = manualOperation !== null || addFormOperation !== null;
+
+  function onManualOperationStart(
+    subscriptionId: string,
+    kind: ManualRefreshOperationKind,
+  ): ManualRefreshOperationLease | null {
+    const manualController = manualOperationControllerRef.current;
+    const addFormController = addFormMutationControllerRef.current;
+    if (
+      !manualController ||
+      !addFormController ||
+      manualController.current() ||
+      addFormController.current()
+    ) {
+      return null;
+    }
+    return manualController.start(subscriptionId, kind);
+  }
+
+  function onManualOperationFinish(lease: ManualRefreshOperationLease): void {
+    if (!pageAliveRef.current) return;
+    manualOperationControllerRef.current?.finish(lease);
+  }
+
+  async function onManualOperationCommitted(
+    lease: ManualRefreshOperationLease,
+    fixedNotice: string,
+  ): Promise<void> {
+    const controller = manualOperationControllerRef.current;
+    if (!pageAliveRef.current || !controller?.owns(lease)) return;
+    toast(fixedNotice);
+    await reload();
+    if (!pageAliveRef.current || !controller.owns(lease)) return;
+    setManualUpdatingId(null);
+    controller.finish(lease);
+  }
+
+  function onAddFormOperationStart(): AddFormMutationLease | null {
+    const manualController = manualOperationControllerRef.current;
+    const addFormController = addFormMutationControllerRef.current;
+    if (
+      !manualController ||
+      !addFormController ||
+      manualController.current() ||
+      addFormController.current()
+    ) {
+      return null;
+    }
+    return addFormController.start();
+  }
+
+  function onAddFormOperationFinish(lease: AddFormMutationLease): void {
+    addFormMutationControllerRef.current?.finish(lease);
+  }
+
+  async function onAddFormCommitted(lease: AddFormMutationLease): Promise<void> {
+    const controller = addFormMutationControllerRef.current;
+    if (!pageAliveRef.current || !controller?.owns(lease)) return;
+    setAdding(false);
+    try {
+      await reload();
+    } finally {
+      controller.finish(lease);
+    }
+  }
+
   async function onRefresh(id: string) {
+    if (pageMutationIsActive()) return;
     startBusy(id);
     try {
       await api(`/api/v1/subscriptions/${id}/refresh`, { method: 'POST' });
@@ -188,7 +324,26 @@ export default function SubscriptionsPage() {
     }
   }
 
+  async function onUseServerAuto(sub: Subscription) {
+    if (pageMutationIsActive()) return;
+    startBusy(sub.id);
+    try {
+      const res = await api<{ data: Subscription }>(`/api/v1/subscriptions/${sub.id}`, {
+        method: 'PATCH',
+        body: { refresh_mode: 'server-auto' },
+        headers: { 'If-Match': String(sub.updated_at ?? 0) },
+      });
+      setSubs((prev) => prev.map((item) => (item.id === sub.id ? res.data : item)));
+      toast(`「${sub.display_name?.trim() || sub.name}」已改回平台自动拉取`);
+    } catch (err) {
+      setError(err instanceof ApiError ? (err.problem.detail ?? err.message) : String(err));
+    } finally {
+      endBusy(sub.id);
+    }
+  }
+
   async function onDelete(id: string) {
+    if (pageMutationIsActive()) return;
     // P1-12: name the resource + state the consequence (the old confirm was the
     // weakest in the app — no name, and repo delete has no reference block).
     const sub = subs.find((s) => s.id === id);
@@ -219,6 +374,7 @@ export default function SubscriptionsPage() {
   }
 
   async function onToggle(sub: Subscription) {
+    if (pageMutationIsActive()) return;
     startBusy(sub.id);
     try {
       const res = await api<{ data: Subscription }>(`/api/v1/subscriptions/${sub.id}`, {
@@ -234,6 +390,7 @@ export default function SubscriptionsPage() {
   }
 
   async function onSaveEdit(id: string, patch: Record<string, unknown>) {
+    if (pageMutationIsActive()) return;
     startBusy(id);
     try {
       const res = await api<{ data: Subscription }>(`/api/v1/subscriptions/${id}`, {
@@ -252,16 +409,19 @@ export default function SubscriptionsPage() {
   }
 
   async function onCollectionCreate(input: Record<string, unknown>) {
+    if (pageMutationIsActive()) return;
     await api('/api/v1/collections', { method: 'POST', body: input });
     setCollectionAdding(false);
     await reload();
   }
   async function onCollectionSave(id: string, input: Record<string, unknown>) {
+    if (pageMutationIsActive()) return;
     await api(`/api/v1/collections/${id}`, { method: 'PATCH', body: input });
     setCollectionEditingId(null);
     await reload();
   }
   async function onCollectionDelete(id: string) {
+    if (pageMutationIsActive()) return;
     if (!confirm('确定删除该聚合订阅？')) return;
     try {
       await api(`/api/v1/collections/${id}`, { method: 'DELETE' });
@@ -273,6 +433,7 @@ export default function SubscriptionsPage() {
   }
 
   async function onCollectionToggle(c: Collection) {
+    if (pageMutationIsActive()) return;
     startBusy(c.id);
     try {
       const res = await api<{ data: Collection }>(`/api/v1/collections/${c.id}`, {
@@ -334,16 +495,17 @@ export default function SubscriptionsPage() {
     };
   }, [dist, subs, collections]);
 
-  const onDistToggle = useMemo(() => {
-    if (!dist) return undefined;
+  const onDistToggle = useCallback(() => {
+    if (pageMutationIsActive() || !dist) return;
     if (dist.kind === 'source') {
-      const s = subs.find((x) => x.id === dist.id);
-      return s ? () => onToggle(s) : undefined;
+      const sub = subs.find((item) => item.id === dist.id);
+      if (sub) void onToggle(sub);
+      return;
     }
-    const c = collections.find((x) => x.id === dist.id);
-    return c ? () => onCollectionToggle(c) : undefined;
+    const collection = collections.find((item) => item.id === dist.id);
+    if (collection) void onCollectionToggle(collection);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dist, subs, collections]);
+  }, [dist, subs, collections, pageMutationIsActive]);
 
   const editingCollection =
     collectionEditingId !== null
@@ -385,17 +547,25 @@ export default function SubscriptionsPage() {
         )}
         <div className="grow" />
         {tab === 'subs' ? (
-          <button type="button" className="btn primary" onClick={() => setAdding((v) => !v)}>
+          <button
+            type="button"
+            className="btn primary"
+            onClick={() => guardPageAction(() => setAdding((v) => !v))}
+            disabled={globalMutationBusy}
+          >
             {adding ? '取消' : '＋ 新建'}
           </button>
         ) : (
           <button
             type="button"
             className="btn primary"
-            onClick={() => {
-              setCollectionEditingId(null);
-              setCollectionAdding((v) => !v);
-            }}
+            onClick={() =>
+              guardPageAction(() => {
+                setCollectionEditingId(null);
+                setCollectionAdding((v) => !v);
+              })
+            }
+            disabled={globalMutationBusy}
           >
             {collectionAdding ? '取消' : '＋ 新建聚合订阅'}
           </button>
@@ -408,7 +578,8 @@ export default function SubscriptionsPage() {
           <TabButton
             ref={subsTabRef}
             active={tab === 'subs'}
-            onClick={() => setTab('subs')}
+            onClick={() => guardPageAction(() => setTab('subs'))}
+            disabled={globalMutationBusy}
             count={subs.length}
             controlsId={`${tabsId}-panel-subs`}
             tabId={`${tabsId}-tab-subs`}
@@ -418,7 +589,8 @@ export default function SubscriptionsPage() {
           <TabButton
             ref={collectionsTabRef}
             active={tab === 'collections'}
-            onClick={() => setTab('collections')}
+            onClick={() => guardPageAction(() => setTab('collections'))}
+            disabled={globalMutationBusy}
             count={collections.length}
             controlsId={`${tabsId}-panel-collections`}
             tabId={`${tabsId}-tab-collections`}
@@ -428,7 +600,8 @@ export default function SubscriptionsPage() {
           <TabButton
             ref={namingTabRef}
             active={tab === 'naming'}
-            onClick={() => setTab('naming')}
+            onClick={() => guardPageAction(() => setTab('naming'))}
+            disabled={globalMutationBusy}
             count={subs.length + collections.length}
             controlsId={`${tabsId}-panel-naming`}
             tabId={`${tabsId}-tab-naming`}
@@ -442,7 +615,8 @@ export default function SubscriptionsPage() {
             className="input"
             placeholder="搜索名称 / 标签…"
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(event) => guardPageAction(() => setQuery(event.target.value))}
+            disabled={globalMutationBusy}
           />
         </div>
       </div>
@@ -460,10 +634,11 @@ export default function SubscriptionsPage() {
           </div>
           {adding && (
             <AddForm
-              onAdded={() => {
-                setAdding(false);
-                reload();
-              }}
+              operationBusy={globalMutationBusy}
+              isOperationActive={pageMutationIsActive}
+              onOperationStart={onAddFormOperationStart}
+              onOperationFinish={onAddFormOperationFinish}
+              onAdded={onAddFormCommitted}
               onCancel={() => setAdding(false)}
             />
           )}
@@ -488,14 +663,46 @@ export default function SubscriptionsPage() {
                   sub={sub}
                   pending={busyIds.has(sub.id)}
                   editing={editingId === sub.id}
-                  anyEditing={editingId !== null}
+                  manualUpdating={manualUpdatingId === sub.id}
+                  operation={manualOperation?.[0] === sub.id ? manualOperation : null}
+                  activeRowBusy={manualOperation?.[0] === sub.id}
+                  globalMutationBusy={globalMutationBusy}
+                  operationKind={manualOperation?.[0] === sub.id ? manualOperation[2] : null}
+                  isOperationActive={pageMutationIsActive}
+                  anyEditing={
+                    editingId !== null || (manualUpdatingId !== null && manualUpdatingId !== sub.id)
+                  }
                   onRefresh={() => onRefresh(sub.id)}
+                  onManualStart={() =>
+                    guardPageAction(() => {
+                      setEditingId(null);
+                      setManualUpdatingId(sub.id);
+                    })
+                  }
+                  onManualCancel={() =>
+                    guardPageAction(() => {
+                      setManualUpdatingId(null);
+                    })
+                  }
+                  onOperationStart={(kind) => onManualOperationStart(sub.id, kind)}
+                  onOperationFinish={onManualOperationFinish}
+                  onOperationCommitted={onManualOperationCommitted}
+                  onUseServerAuto={() => onUseServerAuto(sub)}
                   onDelete={() => onDelete(sub.id)}
                   onToggle={() => onToggle(sub)}
-                  onEditStart={() => setEditingId(sub.id)}
+                  onEditStart={() =>
+                    guardPageAction(() => {
+                      setManualUpdatingId(null);
+                      setEditingId(sub.id);
+                    })
+                  }
                   onEditCancel={() => setEditingId(null)}
                   onEditSave={(patch) => onSaveEdit(sub.id, patch)}
-                  onDistribute={() => setDist({ kind: 'source', id: sub.id })}
+                  onDistribute={() => {
+                    const active = manualOperationControllerRef.current?.current();
+                    if (active?.[0] === sub.id) return;
+                    setDist({ kind: 'source', id: sub.id });
+                  }}
                 />
               ))}
             </div>
@@ -554,10 +761,14 @@ export default function SubscriptionsPage() {
                   editing={collectionEditingId === c.id}
                   anyEditing={collectionEditingId !== null || collectionAdding}
                   pending={busyIds.has(c.id)}
-                  onEdit={() => {
-                    setCollectionAdding(false);
-                    setCollectionEditingId(c.id);
-                  }}
+                  locked={globalMutationBusy}
+                  onEdit={() =>
+                    guardPageAction(() => {
+                      setCollectionAdding(false);
+                      setCollectionEditingId(c.id);
+                    })
+                  }
+                  isOperationActive={pageMutationIsActive}
                   onDelete={() => onCollectionDelete(c.id)}
                   onToggle={() => onCollectionToggle(c)}
                   onDistribute={() => setDist({ kind: 'collection', id: c.id })}
@@ -599,6 +810,8 @@ export default function SubscriptionsPage() {
                   sublabel="订阅源"
                   href={`/subscriptions/${sub.id}/naming`}
                   managed={hasManagedNaming(sub.operators)}
+                  disabled={globalMutationBusy}
+                  isOperationActive={pageMutationIsActive}
                 />
               ))}
               {collections.map((c) => (
@@ -608,6 +821,8 @@ export default function SubscriptionsPage() {
                   sublabel="聚合订阅"
                   href={`/subscriptions/collection/${c.id}/naming`}
                   managed={hasManagedNaming(c.operators)}
+                  disabled={globalMutationBusy}
+                  isOperationActive={pageMutationIsActive}
                 />
               ))}
             </div>
@@ -619,10 +834,10 @@ export default function SubscriptionsPage() {
         target={distTarget}
         subBase={subBase}
         onClose={() => setDist(null)}
-        onToggleEnabled={onDistToggle && (() => onDistToggle())}
-        // P2-9: disable the toggle while its PATCH is in flight (the row switch
-        // already had this guard; the drawer switch was missing it).
-        pending={dist ? busyIds.has(dist.id) : false}
+        onToggleEnabled={dist ? onDistToggle : undefined}
+        // P2-9 + v8 I7: the drawer remains readable, but public-access
+        // mutation is blocked for the full manual operation lifetime.
+        pending={globalMutationBusy || (dist ? busyIds.has(dist.id) : false)}
       />
     </>
   );
@@ -636,6 +851,7 @@ function TabButton({
   controlsId,
   tabId,
   children,
+  disabled,
 }: {
   ref?: RefObject<HTMLButtonElement | null>;
   active: boolean;
@@ -643,6 +859,7 @@ function TabButton({
   count: number;
   controlsId: string;
   tabId: string;
+  disabled: boolean;
   children: React.ReactNode;
 }) {
   return (
@@ -653,8 +870,12 @@ function TabButton({
       id={tabId}
       aria-selected={active}
       aria-controls={controlsId}
-      tabIndex={active ? 0 : -1}
-      onClick={onClick}
+      tabIndex={disabled ? -1 : active ? 0 : -1}
+      onClick={() => {
+        if (disabled) return;
+        onClick();
+      }}
+      disabled={disabled}
       className={`tab${active ? ' on' : ''}`}
     >
       {children}
@@ -684,12 +905,22 @@ function CollectionEmpty({ onAdd }: { onAdd: () => void }) {
  * 不明文展示令牌,点开抽屉再按需查看 / 复制。停用 = 未分发,仍可点开
  * 抽屉查看说明并在里面启用。
  */
-function DistChip({ enabled, onClick }: { enabled: boolean; onClick: () => void }) {
+function DistChip({
+  enabled,
+  onClick,
+  disabled = false,
+}: {
+  enabled: boolean;
+  onClick: () => void;
+  disabled?: boolean;
+}) {
   return (
     <button
       type="button"
       className={`dist-chip${enabled ? '' : ' off'}`}
       style={enabled ? undefined : { cursor: 'pointer' }}
+      disabled={disabled}
+      aria-disabled={disabled || undefined}
       onClick={onClick}
       title={enabled ? '查看公开节点链接' : '已停用 · 点开可查看并启用'}
     >
@@ -711,6 +942,8 @@ function CollectionCard({
   editing,
   anyEditing,
   pending,
+  locked,
+  isOperationActive,
   onEdit,
   onDelete,
   onToggle,
@@ -721,6 +954,8 @@ function CollectionCard({
   editing: boolean;
   anyEditing: boolean;
   pending: boolean;
+  locked: boolean;
+  isOperationActive: () => boolean;
   onEdit: () => void;
   onDelete: () => void;
   onToggle: () => void;
@@ -800,12 +1035,16 @@ function CollectionCard({
             <PipelineLink
               href={`/subscriptions/collection/${c.id}/pipeline`}
               count={c.operators?.length ?? 0}
+              disabled={locked}
+              blocked={isOperationActive}
             />
           </span>
           <span>
             <NamingLink
               href={`/subscriptions/collection/${c.id}/naming`}
               managed={hasManagedNaming(c.operators)}
+              disabled={locked}
+              blocked={isOperationActive}
             />
           </span>
         </div>
@@ -820,7 +1059,7 @@ function CollectionCard({
       <div className={styles.right}>
         <DistChip enabled={c.enabled} onClick={onDistribute} />
         <div className={styles.acts}>
-          <button type="button" className="btn sm" onClick={onEdit} disabled={anyEditing}>
+          <button type="button" className="btn sm" onClick={onEdit} disabled={locked || anyEditing}>
             编辑
           </button>
           <button
@@ -828,10 +1067,15 @@ function CollectionCard({
             className="switch"
             aria-pressed={c.enabled}
             onClick={onToggle}
-            disabled={pending || anyEditing}
+            disabled={locked || pending || anyEditing}
             title={c.enabled ? '停用' : '启用'}
           />
-          <button type="button" className="btn sm danger" onClick={onDelete} disabled={anyEditing}>
+          <button
+            type="button"
+            className="btn sm danger"
+            onClick={onDelete}
+            disabled={locked || anyEditing}
+          >
             删除
           </button>
         </div>
@@ -841,12 +1085,28 @@ function CollectionCard({
 }
 
 /** 节点处理入口 —— 跳转全屏工作台；有处理步骤时挂 accent 计数。 */
-function PipelineLink({ href, count }: { href: string; count: number }) {
+function PipelineLink({
+  href,
+  count,
+  disabled = false,
+  blocked,
+}: {
+  href: string;
+  count: number;
+  disabled?: boolean;
+  blocked?: () => boolean;
+}) {
   const router = useRouter();
   return (
     <a
-      href={href}
+      href={disabled ? undefined : href}
+      aria-disabled={disabled || undefined}
+      tabIndex={disabled ? -1 : undefined}
       onClick={(e) => {
+        if (disabled || blocked?.()) {
+          e.preventDefault();
+          return;
+        }
         // P3-32: don't hijack modified clicks / non-left buttons — let the
         // browser open a new tab (Cmd/Ctrl/middle click). Only plain left
         // clicks get SPA navigation.
@@ -866,12 +1126,28 @@ function hasManagedNaming(operators: StoredOperator[] | undefined): boolean {
 }
 
 /** 上下文链接：单订阅 / 聚合卡片上的「智能命名」入口。 */
-function NamingLink({ href, managed }: { href: string; managed: boolean }) {
+function NamingLink({
+  href,
+  managed,
+  disabled = false,
+  blocked,
+}: {
+  href: string;
+  managed: boolean;
+  disabled?: boolean;
+  blocked?: () => boolean;
+}) {
   const router = useRouter();
   return (
     <a
-      href={href}
+      href={disabled ? undefined : href}
+      aria-disabled={disabled || undefined}
+      tabIndex={disabled ? -1 : undefined}
       onClick={(e) => {
+        if (disabled || blocked?.()) {
+          e.preventDefault();
+          return;
+        }
         if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
         e.preventDefault();
         router.push(href);
@@ -888,11 +1164,15 @@ function NamingTargetRow({
   sublabel,
   href,
   managed,
+  disabled,
+  isOperationActive,
 }: {
   label: string;
   sublabel: string;
   href: string;
   managed: boolean;
+  disabled: boolean;
+  isOperationActive: () => boolean;
 }) {
   return (
     <div className={styles.namingRow}>
@@ -902,7 +1182,7 @@ function NamingTargetRow({
       <span className={styles.namingState}>
         {managed ? '已启用模板命名' : '未启用 · 有确定性推荐模板'}
       </span>
-      <NamingLink href={href} managed={managed} />
+      <NamingLink href={href} managed={managed} disabled={disabled} blocked={isOperationActive} />
     </div>
   );
 }
@@ -1232,8 +1512,20 @@ function Dossier({
   sub,
   pending,
   editing,
+  manualUpdating,
+  operation,
+  activeRowBusy,
+  globalMutationBusy,
+  operationKind,
+  isOperationActive,
   anyEditing,
   onRefresh,
+  onManualStart,
+  onManualCancel,
+  onOperationStart,
+  onOperationFinish,
+  onOperationCommitted,
+  onUseServerAuto,
   onDelete,
   onToggle,
   onEditStart,
@@ -1244,8 +1536,20 @@ function Dossier({
   sub: Subscription;
   pending: boolean;
   editing: boolean;
+  manualUpdating: boolean;
+  operation: ManualRefreshOperationLease | null;
+  activeRowBusy: boolean;
+  globalMutationBusy: boolean;
+  operationKind: ManualRefreshOperationKind | null;
+  isOperationActive: () => boolean;
   anyEditing: boolean;
   onRefresh: () => void;
+  onManualStart: () => void;
+  onManualCancel: () => void;
+  onOperationStart: (kind: ManualRefreshOperationKind) => ManualRefreshOperationLease | null;
+  onOperationFinish: (lease: ManualRefreshOperationLease) => void;
+  onOperationCommitted: (lease: ManualRefreshOperationLease, fixedNotice: string) => Promise<void>;
+  onUseServerAuto: () => void;
   onDelete: () => void;
   onToggle: () => void;
   onEditStart: () => void;
@@ -1261,9 +1565,15 @@ function Dossier({
     );
   }
 
+  const refreshMode = sub.refresh_mode ?? 'server-auto';
   const ledTone =
-    sub.fetch_health?.state === 'failed-no-cache' ? 'err' : sub.enabled ? 'ok' : 'off';
+    refreshMode === 'server-auto' && sub.fetch_health?.state === 'failed-no-cache'
+      ? 'err'
+      : sub.enabled
+        ? 'ok'
+        : 'off';
   const opCount = sub.operators?.length ?? 0;
+  const rowControlsDisabled = pending || anyEditing || globalMutationBusy;
   // P-FFP v1 health status: failed-no-cache must explicitly say NONE was
   // served (no false old-cache claims) and distinguish the fixed disposition;
   // stale-served may claim the cache is served.
@@ -1287,7 +1597,11 @@ function Dossier({
         : null;
 
   return (
-    <div className={`${styles.subItem}${anyEditing ? ` ${styles.dimmed}` : ''}`}>
+    <div
+      className={`${styles.subItem}${anyEditing ? ` ${styles.dimmed}` : ''}`}
+      aria-busy={activeRowBusy || undefined}
+      data-operation-kind={activeRowBusy ? operationKind : undefined}
+    >
       <span className={`${styles.led} ${styles[ledTone]}`} />
       <div className={styles.subMain}>
         <div className={styles.head}>
@@ -1304,13 +1618,28 @@ function Dossier({
           {sub.kind === 'remote' && sub.fetch_failure_policy === 'fail-closed' && (
             <span className="pill acc">失败时阻断</span>
           )}
+          {sub.kind === 'remote' && refreshMode === 'manual' && (
+            <span className="pill acc">手动维护</span>
+          )}
           {!sub.enabled && <span className="pill idle">已停用</span>}
         </div>
 
         {fetchAlert && <div className={styles.errLine}>{fetchAlert.line}</div>}
+        {refreshMode === 'manual' && sub.manual_snapshot?.source_changed && (
+          <div className={styles.sourceChanged} role="status">
+            上游设置已变化；当前仍使用上次校验通过的快照。请从本机更新以确认新来源。
+          </div>
+        )}
 
         <div className={styles.meta}>
-          {sub.kind === 'remote' ? (
+          {sub.kind === 'remote' && refreshMode === 'manual' ? (
+            <span>
+              <span className={styles.k}>手动快照</span>{' '}
+              {sub.manual_snapshot
+                ? `${sub.manual_snapshot.proxy_count} 节点 · ${fmtTime(sub.manual_snapshot.updated_at)}`
+                : '尚未导入'}
+            </span>
+          ) : sub.kind === 'remote' ? (
             <span>
               <span className={styles.k}>缓存 TTL</span> {Math.round(sub.ttl_ms / 1000)}s
             </span>
@@ -1319,43 +1648,85 @@ function Dossier({
               <span className={styles.k}>内容</span> 内联 YAML
             </span>
           )}
+          {sub.kind !== 'remote' || refreshMode === 'server-auto' ? (
+            <span>
+              <span className={styles.k}>上次拉取</span> {fmtMs(sub.fetch_health?.observed_at)}
+            </span>
+          ) : null}
           <span>
-            <span className={styles.k}>上次拉取</span> {fmtMs(sub.fetch_health?.observed_at)}
-          </span>
-          <span>
-            <PipelineLink href={`/subscriptions/${sub.id}/pipeline`} count={opCount} />
+            <PipelineLink
+              href={`/subscriptions/${sub.id}/pipeline`}
+              count={opCount}
+              disabled={globalMutationBusy}
+              blocked={isOperationActive}
+            />
           </span>
           <span>
             <NamingLink
               href={`/subscriptions/${sub.id}/naming`}
               managed={hasManagedNaming(sub.operators)}
+              disabled={globalMutationBusy}
+              blocked={isOperationActive}
             />
           </span>
         </div>
+
+        {manualUpdating && (
+          <ManualRefreshPanel
+            sub={sub}
+            operation={operation}
+            operationBusy={globalMutationBusy}
+            isOperationActive={isOperationActive}
+            onCancel={onManualCancel}
+            onOperationStart={onOperationStart}
+            onOperationFinish={onOperationFinish}
+            onOperationCommitted={onOperationCommitted}
+          />
+        )}
       </div>
 
       <div className={styles.right}>
         {sub.fetch_health?.traffic && sub.fetch_health.traffic.total > 0 && (
           <CompactTraffic traffic={sub.fetch_health.traffic} />
         )}
-        <DistChip enabled={sub.enabled} onClick={onDistribute} />
+        <DistChip enabled={sub.enabled} onClick={onDistribute} disabled={activeRowBusy} />
         <div className={styles.acts}>
           <button
             type="button"
             className="btn sm"
             onClick={onEditStart}
-            disabled={pending || anyEditing}
+            disabled={rowControlsDisabled}
           >
             编辑
           </button>
-          {sub.kind === 'remote' && (
+          {sub.kind === 'remote' && refreshMode === 'server-auto' && (
             <button
               type="button"
               className="btn sm"
               onClick={onRefresh}
-              disabled={pending || anyEditing || !sub.enabled}
+              disabled={rowControlsDisabled || !sub.enabled}
             >
               刷新
+            </button>
+          )}
+          {sub.kind === 'remote' && (
+            <button
+              type="button"
+              className="btn sm"
+              onClick={onManualStart}
+              disabled={rowControlsDisabled || manualUpdating}
+            >
+              {refreshMode === 'manual' ? '更新内容' : '导入更新'}
+            </button>
+          )}
+          {sub.kind === 'remote' && refreshMode === 'manual' && (
+            <button
+              type="button"
+              className="btn ghost sm"
+              onClick={onUseServerAuto}
+              disabled={rowControlsDisabled || manualUpdating || !sub.enabled}
+            >
+              改回自动
             </button>
           )}
           <button
@@ -1363,20 +1734,293 @@ function Dossier({
             className="switch"
             aria-pressed={sub.enabled}
             onClick={onToggle}
-            disabled={pending || anyEditing}
+            disabled={rowControlsDisabled}
             title={sub.enabled ? '停用' : '启用'}
           />
           <button
             type="button"
             className="btn sm danger"
             onClick={onDelete}
-            disabled={pending || anyEditing}
+            disabled={rowControlsDisabled}
           >
             删除
           </button>
         </div>
       </div>
     </div>
+  );
+}
+
+function ManualRefreshPanel({
+  sub,
+  operation,
+  operationBusy,
+  isOperationActive,
+  onCancel,
+  onOperationStart,
+  onOperationFinish,
+  onOperationCommitted,
+}: {
+  sub: Subscription;
+  operation: ManualRefreshOperationLease | null;
+  operationBusy: boolean;
+  isOperationActive: () => boolean;
+  onCancel: () => void;
+  onOperationStart: (kind: ManualRefreshOperationKind) => ManualRefreshOperationLease | null;
+  onOperationFinish: (lease: ManualRefreshOperationLease) => void;
+  onOperationCommitted: (lease: ManualRefreshOperationLease, fixedNotice: string) => Promise<void>;
+}) {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const aliveRef = useRef(true);
+  const manualLeaseRef = useRef<ManualRefreshOperationLease | null>(operation);
+  const [content, setContent] = useState('');
+  const [fileName, setFileName] = useState<string | null>(null);
+  const [extensionState, setExtensionState] = useState<'checking' | 'ready' | 'absent'>('checking');
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    void callSubscriptionBridge('probe')
+      .then((data) => {
+        if (aliveRef.current) setExtensionState(data.ready ? 'ready' : 'absent');
+      })
+      .catch(() => {
+        if (aliveRef.current) setExtensionState('absent');
+      });
+  }, []);
+
+  function startManualOperation(
+    kind: ManualRefreshOperationKind,
+  ): ManualRefreshOperationLease | null {
+    if (manualLeaseRef.current || isOperationActive()) return null;
+    const lease = onOperationStart(kind);
+    if (lease) manualLeaseRef.current = lease;
+    return lease;
+  }
+
+  function finishManualOperation(lease: ManualRefreshOperationLease): void {
+    onOperationFinish(lease);
+    if (manualLeaseRef.current === lease) manualLeaseRef.current = null;
+  }
+
+  async function readFile(file: File | undefined) {
+    if (!file || manualLeaseRef.current || isOperationActive()) return;
+    const lease = startManualOperation('file-import');
+    if (!lease) return;
+    if (aliveRef.current && manualLeaseRef.current === lease) setError(null);
+
+    if (file.size > MAX_MANUAL_SUBSCRIPTION_BYTES) {
+      if (aliveRef.current && manualLeaseRef.current === lease) {
+        setError('文件超过 4 MiB，请选择更小的订阅文件。');
+      }
+      finishManualOperation(lease);
+      return;
+    }
+
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+      if (aliveRef.current && manualLeaseRef.current === lease) {
+        setContent(text);
+        setFileName(file.name);
+      }
+      finishManualOperation(lease);
+    } catch {
+      if (aliveRef.current && manualLeaseRef.current === lease) {
+        setError('文件不是有效的 UTF-8 文本。');
+      }
+      finishManualOperation(lease);
+    }
+  }
+
+  async function fetchCurrentSpec() {
+    const spec = await getSubscriptionLocalFetchSpec(sub.id);
+    if (spec.updatedAt !== (sub.updated_at ?? 0)) {
+      throw new Error('订阅已被修改，请刷新页面后再更新。');
+    }
+    return spec;
+  }
+
+  async function importContent() {
+    if (manualLeaseRef.current || isOperationActive()) return;
+    if (!content.trim()) {
+      if (aliveRef.current) setError('请粘贴订阅内容，或先选择一个文件。');
+      return;
+    }
+    if (new TextEncoder().encode(content).byteLength > MAX_MANUAL_SUBSCRIPTION_BYTES) {
+      if (aliveRef.current) setError('订阅内容超过 4 MiB。');
+      return;
+    }
+
+    const lease = startManualOperation('paste-submit');
+    if (!lease) return;
+    if (aliveRef.current && manualLeaseRef.current === lease) setError(null);
+    try {
+      const spec = await fetchCurrentSpec();
+      const receipt = await uploadManualSubscription(spec, content);
+      await onOperationCommitted(lease, `已校验并保存 ${receipt.proxyCount} 个节点`);
+      return;
+    } catch (caught) {
+      if (aliveRef.current && manualLeaseRef.current === lease) {
+        setError(
+          caught instanceof ApiError || caught instanceof Error ? caught.message : '更新失败。',
+        );
+      }
+      finishManualOperation(lease);
+    }
+  }
+
+  async function refreshFromLocalNetwork() {
+    if (manualLeaseRef.current || isOperationActive()) return;
+    const lease = startManualOperation('local-refresh');
+    if (!lease) return;
+    if (aliveRef.current && manualLeaseRef.current === lease) setError(null);
+    try {
+      let useExtension = extensionState === 'ready';
+      if (extensionState === 'checking') {
+        useExtension = await callSubscriptionBridge('probe')
+          .then((data) => data.ready)
+          .catch(() => false);
+        if (aliveRef.current && manualLeaseRef.current === lease) {
+          setExtensionState(useExtension ? 'ready' : 'absent');
+        }
+      }
+      const refreshWithExtension = useExtension
+        ? () => callSubscriptionBridge('refresh', sub.id, 60_000)
+        : null;
+      const receipt = await refreshSubscriptionFromLocalNetwork(
+        sub.id,
+        sub.updated_at ?? 0,
+        refreshWithExtension,
+      );
+      await onOperationCommitted(lease, `已从本地网络保存 ${receipt.proxyCount} 个节点`);
+      return;
+    } catch (caught) {
+      if (aliveRef.current && manualLeaseRef.current === lease) {
+        setError(
+          caught instanceof ApiError || caught instanceof Error ? caught.message : '本地更新失败。',
+        );
+      }
+      finishManualOperation(lease);
+    }
+  }
+
+  const filePending = operation?.[2] === 'file-import';
+  const pastePending = operation?.[2] === 'paste-submit';
+  const localFetchPending = operation?.[2] === 'local-refresh';
+
+  return (
+    <form
+      className={styles.manualPanel}
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (manualLeaseRef.current) return;
+        void importContent();
+      }}
+    >
+      <div className={styles.manualHead}>
+        <div>
+          <b>从本机更新</b>
+          <p>可直接从本地网络拉取，也可粘贴原始订阅或选择 UTF-8 文件。校验成功后才会保存。</p>
+        </div>
+        <span className={styles.manualLimit}>最大 4 MiB</span>
+      </div>
+
+      <div className={styles.localFetchCallout}>
+        <div className={styles.extensionLine} role="status">
+          <span className={`${styles.extensionDot} ${styles[extensionState]}`} aria-hidden="true" />
+          <span>
+            {extensionState === 'ready'
+              ? '浏览器扩展已就绪，将优先通过扩展拉取。'
+              : extensionState === 'checking'
+                ? '正在检测可选浏览器扩展；未就绪时将尝试浏览器直连。'
+                : '未检测到扩展，将尝试浏览器直连；若受 CORS 限制仍可粘贴或选文件。'}
+          </span>
+        </div>
+        <button
+          type="button"
+          className="btn primary"
+          data-pm-local-refresh-id={sub.id}
+          onClick={() => {
+            if (!manualLeaseRef.current && !isOperationActive()) void refreshFromLocalNetwork();
+          }}
+          disabled={operationBusy}
+          aria-busy={localFetchPending}
+        >
+          {localFetchPending ? '本机拉取中…' : '从本机拉取'}
+        </button>
+      </div>
+
+      <CodeEditor
+        value={content}
+        onChange={(value) => {
+          if (manualLeaseRef.current || isOperationActive()) return;
+          setContent(value);
+          setFileName(null);
+        }}
+        onSave={() => {
+          if (!manualLeaseRef.current && !isOperationActive()) void importContent();
+        }}
+        label={fileName ? `已选择 · ${fileName}` : '订阅内容 · yaml / links / base64'}
+        minHeight={180}
+        hint="可直接粘贴"
+        readOnly={operationBusy}
+      />
+
+      <div className={styles.manualActions}>
+        <input
+          ref={fileRef}
+          className={styles.fileInput}
+          type="file"
+          accept=".yaml,.yml,.txt,text/plain,application/yaml,text/yaml"
+          disabled={operationBusy}
+          onChange={(event) => {
+            if (!manualLeaseRef.current) void readFile(event.target.files?.[0]);
+          }}
+        />
+        <button
+          type="button"
+          className="btn"
+          onClick={() => {
+            if (!manualLeaseRef.current && !isOperationActive()) fileRef.current?.click();
+          }}
+          disabled={operationBusy}
+          aria-busy={filePending}
+        >
+          {filePending ? '读取文件中…' : '选择文件'}
+        </button>
+        <button
+          type="submit"
+          className="btn"
+          disabled={operationBusy || !content.trim()}
+          aria-busy={pastePending}
+        >
+          {pastePending ? '校验并保存中…' : '校验并更新粘贴内容'}
+        </button>
+        <button
+          type="button"
+          className="btn ghost"
+          onClick={() => {
+            if (!manualLeaseRef.current && !isOperationActive()) onCancel();
+          }}
+          disabled={operationBusy}
+        >
+          收起
+        </button>
+      </div>
+
+      {error && (
+        <div className={styles.manualError} role="alert">
+          {error}
+        </div>
+      )}
+    </form>
   );
 }
 
@@ -1443,7 +2087,22 @@ function TtlSeg({
   );
 }
 
-function AddForm({ onAdded, onCancel }: { onAdded: () => void; onCancel: () => void }) {
+function AddForm({
+  onAdded,
+  onCancel,
+  operationBusy,
+  isOperationActive,
+  onOperationStart,
+  onOperationFinish,
+}: {
+  onAdded: (lease: AddFormMutationLease) => Promise<void>;
+  onCancel: () => void;
+  operationBusy: boolean;
+  isOperationActive: () => boolean;
+  onOperationStart: () => AddFormMutationLease | null;
+  onOperationFinish: (lease: AddFormMutationLease) => void;
+}) {
+  const aliveRef = useRef(true);
   const [kind, setKind] = useState<'remote' | 'local'>('remote');
   const [name, setName] = useState('');
   const [displayName, setDisplayName] = useState('');
@@ -1457,20 +2116,39 @@ function AddForm({ onAdded, onCancel }: { onAdded: () => void; onCancel: () => v
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+    };
+  }, []);
+
+  function guardAddFormAction(action: () => void): void {
+    if (!aliveRef.current || isOperationActive()) return;
+    action();
+  }
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    const slug = name.trim();
-    if (!slug) {
-      setError('请填写标识');
-      return;
-    }
-    if (!/^[a-z0-9-]+$/.test(slug)) {
-      setError('标识只能包含小写字母、数字和短横线（-），不能有空格、大写或中文');
-      return;
-    }
-    setPending(true);
-    setError(null);
+    const lease = onOperationStart();
+    if (!lease) return;
+    let committed = false;
     try {
+      const slug = name.trim();
+      if (!slug) {
+        if (aliveRef.current) setError('请填写标识');
+        return;
+      }
+      if (!/^[a-z0-9-]+$/.test(slug)) {
+        if (aliveRef.current) {
+          setError('标识只能包含小写字母、数字和短横线（-），不能有空格、大写或中文');
+        }
+        return;
+      }
+      if (aliveRef.current) {
+        setPending(true);
+        setError(null);
+      }
       const tags = tagsInput
         .split(',')
         .map((t) => t.trim())
@@ -1492,11 +2170,15 @@ function AddForm({ onAdded, onCancel }: { onAdded: () => void; onCancel: () => v
         body.content = content;
       }
       await api('/api/v1/subscriptions', { method: 'POST', body });
-      onAdded();
+      committed = true;
+      await onAdded(lease);
     } catch (err) {
-      setError(err instanceof ApiError ? (err.problem.detail ?? err.message) : String(err));
+      if (aliveRef.current) {
+        setError(err instanceof ApiError ? (err.problem.detail ?? err.message) : String(err));
+      }
     } finally {
-      setPending(false);
+      if (!committed) onOperationFinish(lease);
+      if (aliveRef.current) setPending(false);
     }
   }
 
@@ -1515,14 +2197,16 @@ function AddForm({ onAdded, onCancel }: { onAdded: () => void; onCancel: () => v
                 <button
                   type="button"
                   className={`opt${kind === 'remote' ? ' on' : ''}`}
-                  onClick={() => setKind('remote')}
+                  onClick={() => guardAddFormAction(() => setKind('remote'))}
+                  disabled={operationBusy}
                 >
                   远程 URL
                 </button>
                 <button
                   type="button"
                   className={`opt${kind === 'local' ? ' on' : ''}`}
-                  onClick={() => setKind('local')}
+                  onClick={() => guardAddFormAction(() => setKind('local'))}
+                  disabled={operationBusy}
                 >
                   内联 YAML
                 </button>
@@ -1540,7 +2224,8 @@ function AddForm({ onAdded, onCancel }: { onAdded: () => void; onCancel: () => v
                 className="input"
                 placeholder="如:A 机场（香港）"
                 value={displayName}
-                onChange={(e) => setDisplayName(e.target.value)}
+                onChange={(e) => guardAddFormAction(() => setDisplayName(e.target.value))}
+                readOnly={operationBusy}
               />
             </div>
           </div>
@@ -1555,7 +2240,8 @@ function AddForm({ onAdded, onCancel }: { onAdded: () => void; onCancel: () => v
                 className="input mono"
                 placeholder="airport-a"
                 value={name}
-                onChange={(e) => setName(e.target.value)}
+                onChange={(e) => guardAddFormAction(() => setName(e.target.value))}
+                readOnly={operationBusy}
                 pattern="[a-z0-9-]+"
                 required
               />
@@ -1569,7 +2255,11 @@ function AddForm({ onAdded, onCancel }: { onAdded: () => void; onCancel: () => v
                 <span className="h">拉取间隔</span>
               </label>
               <div className={styles.ctl}>
-                <TtlSeg sec={ttlSec} onChange={setTtlSec} />
+                <TtlSeg
+                  sec={ttlSec}
+                  onChange={(sec) => guardAddFormAction(() => setTtlSec(sec))}
+                  disabled={operationBusy}
+                />
               </div>
             </div>
           )}
@@ -1585,14 +2275,16 @@ function AddForm({ onAdded, onCancel }: { onAdded: () => void; onCancel: () => v
                   <button
                     type="button"
                     className={`opt${policy === 'use-stale-cache' ? ' on' : ''}`}
-                    onClick={() => setPolicy('use-stale-cache')}
+                    onClick={() => guardAddFormAction(() => setPolicy('use-stale-cache'))}
+                    disabled={operationBusy}
                   >
                     沿用缓存（默认）
                   </button>
                   <button
                     type="button"
                     className={`opt${policy === 'fail-closed' ? ' on' : ''}`}
-                    onClick={() => setPolicy('fail-closed')}
+                    onClick={() => guardAddFormAction(() => setPolicy('fail-closed'))}
+                    disabled={operationBusy}
                   >
                     阻断聚合
                   </button>
@@ -1608,7 +2300,8 @@ function AddForm({ onAdded, onCancel }: { onAdded: () => void; onCancel: () => v
                 className="input mono"
                 placeholder="premium, asia"
                 value={tagsInput}
-                onChange={(e) => setTagsInput(e.target.value)}
+                onChange={(e) => guardAddFormAction(() => setTagsInput(e.target.value))}
+                readOnly={operationBusy}
               />
             </div>
           </div>
@@ -1618,7 +2311,7 @@ function AddForm({ onAdded, onCancel }: { onAdded: () => void; onCancel: () => v
               <div className={styles.frmRow}>
                 <label>
                   上游 URL
-                  <span className="h">仅平台拉取</span>
+                  <span className="h">平台自动拉取，或供可选扩展在本地拉取</span>
                 </label>
                 <div className={styles.ctl}>
                   <input
@@ -1626,7 +2319,8 @@ function AddForm({ onAdded, onCancel }: { onAdded: () => void; onCancel: () => v
                     type="url"
                     placeholder="https://airport/sub?token=…"
                     value={url}
-                    onChange={(e) => setUrl(e.target.value)}
+                    onChange={(e) => guardAddFormAction(() => setUrl(e.target.value))}
+                    readOnly={operationBusy}
                     required
                   />
                 </div>
@@ -1638,7 +2332,8 @@ function AddForm({ onAdded, onCancel }: { onAdded: () => void; onCancel: () => v
                     className="input mono"
                     placeholder="可选，如 clash.meta/1.18.0"
                     value={ua}
-                    onChange={(e) => setUa(e.target.value)}
+                    onChange={(e) => guardAddFormAction(() => setUa(e.target.value))}
+                    readOnly={operationBusy}
                   />
                 </div>
               </div>
@@ -1654,10 +2349,11 @@ function AddForm({ onAdded, onCancel }: { onAdded: () => void; onCancel: () => v
               <div className={styles.ctl}>
                 <CodeEditor
                   value={content}
-                  onChange={setContent}
+                  onChange={(value) => guardAddFormAction(() => setContent(value))}
                   label="content · yaml / links"
                   minHeight={200}
                   hint="粘贴节点链接或 Clash YAML"
+                  readOnly={operationBusy}
                 />
               </div>
             </div>
@@ -1670,7 +2366,8 @@ function AddForm({ onAdded, onCancel }: { onAdded: () => void; onCancel: () => v
                 type="button"
                 className="switch"
                 aria-pressed={enabled}
-                onClick={() => setEnabled((v) => !v)}
+                onClick={() => guardAddFormAction(() => setEnabled((v) => !v))}
+                disabled={operationBusy}
               />
               <span className={styles.swNote}>{enabled ? '立即启用' : '创建后停用'}</span>
             </div>
@@ -1679,10 +2376,15 @@ function AddForm({ onAdded, onCancel }: { onAdded: () => void; onCancel: () => v
       </section>
 
       <div className={styles.editActs}>
-        <button type="submit" className="btn primary" disabled={pending || !name}>
+        <button type="submit" className="btn primary" disabled={operationBusy || pending || !name}>
           {pending ? '提交中…' : '创建'}
         </button>
-        <button type="button" className="btn" onClick={onCancel} disabled={pending}>
+        <button
+          type="button"
+          className="btn"
+          onClick={() => guardAddFormAction(onCancel)}
+          disabled={operationBusy || pending}
+        >
           取消
         </button>
       </div>
@@ -1840,7 +2542,7 @@ function EditForm({
             <div className={styles.frmRow}>
               <label>
                 上游 URL
-                <span className="h">仅平台拉取</span>
+                <span className="h">平台自动拉取，或供可选扩展在本地拉取</span>
               </label>
               <div className={styles.ctl}>
                 <input

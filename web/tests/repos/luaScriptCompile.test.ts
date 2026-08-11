@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { compileLua51, luaRuntimeError, runLua51 } from '../helpers/lua51';
 import { CAS_ENTITY_WITH_HISTORY } from '@/lib/repos/namingCasRepo';
-import { CAS_SUBSCRIPTION_CHANGE, CAS_SUBSCRIPTION_DELETE } from '@/lib/repos/subscriptionsRepo';
+import {
+  CAS_SUBSCRIPTION_CHANGE,
+  CAS_SUBSCRIPTION_DELETE,
+  CAS_SUBSCRIPTION_MUTATION,
+} from '@/lib/repos/subscriptionsRepo';
 import { CAS_SUBSCRIPTION_FETCH_HEALTH } from '@/lib/repos/subscriptionFetchHealthRepo';
 import { CAS_COLLECTION_CHANGE, CAS_COLLECTION_DELETE } from '@/lib/repos/collectionsRepo';
 import {
@@ -179,6 +183,71 @@ function runGeneric(
     { KEYS: keys, ARGV: args },
     redis,
   ) as unknown[];
+}
+
+function subscriptionEntityJson(): string {
+  return JSON.stringify({
+    id: 'entity-1',
+    kind: 'remote',
+    url: 'https://upstream.example/sub',
+    refresh_mode: 'manual',
+    fetch_identity_revision: 1,
+    manual_snapshot_meta: {
+      updated_at: 8,
+      proxy_count: 1,
+      origin: 'web',
+      fetch_identity_revision: 1,
+      content_sha256: 'a1d0ec66e897879f5c02474d3ca5de8db43d438a7e45c697f6eb0bf0ad1c615e',
+    },
+  });
+}
+
+function runSubscription(
+  ordinalPlan: OrdinalReservationPlan,
+  options: {
+    entityAction?: 'set' | 'delete';
+    snapshotAction?: 'keep' | 'set' | 'delete';
+    healthAction?: 'keep' | 'delete';
+    fetchCacheAction?: 'keep' | 'set';
+    mutate?: (keys: string[], args: string[]) => void;
+  } = {},
+): unknown[] {
+  const encoded = encodeOrdinalReservationPlan(ordinalPlan);
+  const entityAction = options.entityAction ?? 'set';
+  const snapshotAction = options.snapshotAction ?? 'set';
+  const healthAction = options.healthAction ?? 'delete';
+  const fetchCacheAction = options.fetchCacheAction ?? 'keep';
+  const keys = [
+    ...KEYS,
+    'manual-snapshot',
+    'fetch-health',
+    'resolved-snapshot',
+    'fetch-cache',
+    ...encoded.counterKeys,
+  ];
+  const args = [
+    '7',
+    'entity-1',
+    entityAction === 'set' ? subscriptionEntityJson() : '',
+    entityAction,
+    snapshotAction,
+    snapshotAction === 'set' ? JSON.stringify('raw-content') : '',
+    healthAction,
+    entityAction === 'delete' ? 'subscription:entity-1' : '',
+    fetchCacheAction,
+    fetchCacheAction === 'set'
+      ? JSON.stringify({ content: 'proxies: []', fetched_at: 9, proxy_count: 0 })
+      : '',
+    fetchCacheAction === 'set' ? '604800' : '',
+    ...encoded.args,
+  ];
+  options.mutate?.(keys, args);
+  return runLua51(CAS_SUBSCRIPTION_MUTATION, { KEYS: keys, ARGV: args }, redis, {
+    globals: {
+      ...LUA_GLOBALS,
+      'cjson.decode': LUA_GLOBALS.cjson.decode,
+    } as never,
+  }) as unknown[];
 }
 
 function auditPayload(): string {
@@ -458,6 +527,144 @@ describe('atomic entity + ordinal reservation script', () => {
     });
     const before = snapshot();
     expect(runGeneric(hostile)).toEqual([2, 'ordinal-existing-duplicate']);
+    expect(snapshot()).toBe(before);
+  });
+});
+
+describe('subscription definition + separate snapshot fail-first CAS', () => {
+  function seedSubscriptionState(): void {
+    hash('entities').set('entity-1', '{"id":"old"}');
+    hash('history').set('subscription:entity-1', '{"prior":true}');
+    hash('resolved-snapshot').set('profile-a', '{"buildId":"old"}');
+    values.set('manual-snapshot', 'old-raw');
+    values.set('fetch-health', '{"state":"fresh"}');
+    values.set('render:profile-a', '{"configVersion":7}');
+  }
+
+  it('commits definition, raw action, health cleanup, resolved invalidation and version once', () => {
+    seedSubscriptionState();
+    expect(runSubscription(plan({ sources: [] }))).toEqual([1, '8']);
+    expect(hash('entities').get('entity-1')).toBe(subscriptionEntityJson());
+    expect(values.get('manual-snapshot')).toBe('raw-content');
+    expect(values.has('fetch-health')).toBe(false);
+    expect(hashes.has('resolved-snapshot')).toBe(false);
+    expect(hash('history').get('subscription:entity-1')).toBe('{"prior":true}');
+    expect(values.get('version')).toBe('8');
+    expect(values.get('render:profile-a')).toBe('{"configVersion":7}');
+  });
+
+  it('atomically replaces the preflighted server-auto fetch cache', () => {
+    seedSubscriptionState();
+    values.set('fetch-cache', '{"content":"old"}');
+    const autoEntity = JSON.stringify({
+      id: 'entity-1',
+      kind: 'remote',
+      url: 'https://upstream.example/sub',
+      refresh_mode: 'server-auto',
+      fetch_identity_revision: 1,
+    });
+
+    expect(
+      runSubscription(plan({ sources: [] }), {
+        snapshotAction: 'keep',
+        healthAction: 'delete',
+        fetchCacheAction: 'set',
+        mutate: (_keys, args) => {
+          args[2] = autoEntity;
+        },
+      }),
+    ).toEqual([1, '8']);
+    expect(values.get('fetch-cache')).toBe(
+      JSON.stringify({ content: 'proxies: []', fetched_at: 9, proxy_count: 0 }),
+    );
+    expect(hash('entities').get('entity-1')).toBe(autoEntity);
+    expect(values.get('version')).toBe('8');
+  });
+
+  it('allows one version winner and keeps the subsequent losing write byte-identical', () => {
+    seedSubscriptionState();
+    expect(runSubscription(plan({ sources: [] }))).toEqual([1, '8']);
+    const afterWinner = snapshot();
+
+    expect(values.get('version')).toBe('8');
+    expect(values.get('render:profile-a')).toBe('{"configVersion":7}');
+    expect(runSubscription(plan({ sources: [] }))).toEqual([0, '8']);
+    expect(snapshot()).toBe(afterWinner);
+    expect(values.get('render:profile-a')).toBe('{"configVersion":7}');
+  });
+
+  it('keeps a current render cache byte-valid when an ordinal precondition loses', () => {
+    seedSubscriptionState();
+    values.set('ordinal-generation', '1');
+    const before = snapshot();
+
+    expect(runSubscription(plan({ sources: [] }))).toEqual([0, 'ordinal-generation-mismatch']);
+    expect(snapshot()).toBe(before);
+    expect(values.get('version')).toBe('7');
+    expect(values.get('render:profile-a')).toBe('{"configVersion":7}');
+  });
+
+  it('delete removes definition, raw, health, resolved snapshot and naming history atomically', () => {
+    seedSubscriptionState();
+    expect(
+      runSubscription(plan({ sources: [] }), {
+        entityAction: 'delete',
+        snapshotAction: 'delete',
+      }),
+    ).toEqual([1, '8']);
+    expect(hash('entities').has('entity-1')).toBe(false);
+    expect(hash('history').has('subscription:entity-1')).toBe(false);
+    expect(values.has('manual-snapshot')).toBe(false);
+    expect(values.has('fetch-health')).toBe(false);
+    expect(hashes.has('resolved-snapshot')).toBe(false);
+  });
+
+  it.each([
+    ['version wrongtype', () => types.set('version', 'hash')],
+    ['definition wrongtype', () => types.set('entities', 'string')],
+    ['history wrongtype', () => types.set('history', 'string')],
+    ['ordinal wrongtype', () => types.set('ordinals', 'string')],
+    ['generation wrongtype', () => types.set('ordinal-generation', 'hash')],
+    ['snapshot wrongtype', () => types.set('manual-snapshot', 'hash')],
+    ['health wrongtype', () => types.set('fetch-health', 'hash')],
+    ['resolved snapshot wrongtype', () => types.set('resolved-snapshot', 'string')],
+    ['malformed version', () => values.set('version', '07')],
+  ])('%s returns infrastructure failure with byte-exact zero writes', (_label, arrange) => {
+    seedSubscriptionState();
+    arrange();
+    const before = snapshot();
+    expect(runSubscription(plan({ sources: [] }))[0]).toBe(2);
+    expect(snapshot()).toBe(before);
+  });
+
+  it.each([
+    ['stale config version', () => values.set('version', '8'), plan({ sources: [] })],
+    ['ordinal generation race', () => values.set('ordinal-generation', '1'), plan({ sources: [] })],
+    [
+      'ordinal global-size race',
+      () => hash('ordinals').set('other:fp', '1'),
+      plan({ sources: [] }),
+    ],
+    ['ordinal counter race', () => values.set('node-ordinal-counter:airport-a', '9'), plan()],
+  ])('%s returns a race with byte-exact zero writes', (_label, arrange, ordinalPlan) => {
+    seedSubscriptionState();
+    arrange();
+    const before = snapshot();
+    expect(runSubscription(ordinalPlan)[0]).toBe(0);
+    expect(snapshot()).toBe(before);
+    expect(values.get('render:profile-a')).toBe('{"configVersion":7}');
+  });
+
+  it.each([
+    ['bad snapshot action', (_keys: string[], args: string[]) => (args[4] = 'write')],
+    ['bad health action', (_keys: string[], args: string[]) => (args[6] = 'clear')],
+    ['bad fetch-cache action', (_keys: string[], args: string[]) => (args[8] = 'write')],
+    ['trailing argument', (_keys: string[], args: string[]) => args.push('extra')],
+    ['missing key', (keys: string[]) => keys.pop()],
+  ])('%s is rejected before any write', (_label, mutate) => {
+    seedSubscriptionState();
+    const before = snapshot();
+    expect(runSubscription(plan({ sources: [] }), { mutate })[0]).toBe(2);
     expect(snapshot()).toBe(before);
   });
 });
