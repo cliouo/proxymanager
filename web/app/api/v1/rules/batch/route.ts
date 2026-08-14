@@ -112,8 +112,15 @@ export const POST = withProblemDetails(async (request: Request) => {
         // P2-3 / P2-4: a PATCH can empty a non-MATCH value or smuggle a newline;
         // re-validate the MERGED rule (not just the patch fragment) before commit.
         assertMergedRuleRenderable(merged);
-        // P0-3: RULE-SET reference must stay valid after the merge, too.
-        if (merged.type === 'RULE-SET') ensureValidRuleSetRef(merged, providerNames);
+        // Match the single-rule PATCH path: rank/note/enabled-only edits do not
+        // introduce a new provider reference, so they must not validate against
+        // the intentionally-unloaded (empty) provider-name set.
+        if (
+          (op.patch.type !== undefined || op.patch.value !== undefined) &&
+          merged.type === 'RULE-SET'
+        ) {
+          ensureValidRuleSetRef(merged, providerNames);
+        }
         writes.push(merged);
         pendingEvents.push({ op: 'rule.update', before: current, after: merged });
         results.push({ status: 200, data: merged });
