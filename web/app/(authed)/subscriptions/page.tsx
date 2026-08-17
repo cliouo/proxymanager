@@ -315,8 +315,10 @@ export default function SubscriptionsPage() {
     if (pageMutationIsActive()) return;
     startBusy(id);
     try {
-      await api(`/api/v1/subscriptions/${id}/refresh`, { method: 'POST' });
-      await reload();
+      const res = await api<{ data: Subscription }>(`/api/v1/subscriptions/${id}/refresh`, {
+        method: 'POST',
+      });
+      setSubs((prev) => prev.map((item) => (item.id === id ? res.data : item)));
     } catch (err) {
       setError(err instanceof ApiError ? (err.problem.detail ?? err.message) : String(err));
     } finally {

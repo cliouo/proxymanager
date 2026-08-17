@@ -2,9 +2,13 @@ import { withProblemDetails } from '@/lib/http/handler';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { resolveSubscriptionContent } from '@/lib/services/subscriptionFetcher';
 import { getSubscription, projectSubscriptionAdminView } from '@/lib/services/subscriptionService';
-import { getSubscriptionFetchHealth } from '@/lib/repos/subscriptionFetchHealthRepo';
+import {
+  computeSubscriptionDefinitionFingerprint,
+  getSubscriptionFetchHealth,
+  recordSubscriptionFetchHealth,
+} from '@/lib/repos/subscriptionFetchHealthRepo';
 import { getConfigVersion } from '@/lib/repos/configVersionRepo';
-import { effectiveSubscriptionRefreshMode } from '@/schemas';
+import { effectiveSubscriptionRefreshMode, type SubscriptionFetchHealth } from '@/schemas';
 
 export const dynamic = 'force-dynamic';
 
@@ -41,7 +45,7 @@ export const POST = withProblemDetails(async (_request: Request, ctx: Ctx) => {
     );
   }
 
-  const { proxyCount } = await resolveSubscriptionContent(sub, {
+  const resolved = await resolveSubscriptionContent(sub, {
     noCache: true,
     ordinalConfigVersion: configVersion,
     recordHealth: true,
@@ -53,10 +57,34 @@ export const POST = withProblemDetails(async (_request: Request, ctx: Ctx) => {
   const current = await getSubscription(id);
   if (!current) throw ProblemDetailsError.notFound(`Subscription ${id} not found.`);
 
-  const view =
-    current.kind === 'remote' && effectiveSubscriptionRefreshMode(current) === 'server-auto'
-      ? projectSubscriptionAdminView(current, await getSubscriptionFetchHealth(current.id))
-      : projectSubscriptionAdminView(current);
+  let view;
+  if (current.kind === 'remote' && effectiveSubscriptionRefreshMode(current) === 'server-auto') {
+    const storedHealth = await getSubscriptionFetchHealth(current.id);
+    // The resolve path already records fresh health, but a slow Redis read
+    // (or a failed CAS write) must never make a successful refresh return a
+    // stale-served/failed health object. If the read is not a matching fresh
+    // record for this attempt, synthesize the successful-attempt health and
+    // persist it directly so the UI clears immediately.
+    const isFreshForThisAttempt =
+      storedHealth?.state === 'fresh' && storedHealth.proxy_count === resolved.proxyCount;
+    const health: SubscriptionFetchHealth = isFreshForThisAttempt
+      ? storedHealth
+      : {
+          definition_fingerprint: computeSubscriptionDefinitionFingerprint(current),
+          state: 'fresh',
+          attempted_at: Date.now(),
+          observed_at: Date.now(),
+          fresh_at: Date.now(),
+          proxy_count: resolved.proxyCount,
+          ...(resolved.traffic ? { traffic: resolved.traffic } : {}),
+        };
+    if (!isFreshForThisAttempt) {
+      await recordSubscriptionFetchHealth(current, health);
+    }
+    view = projectSubscriptionAdminView(current, health);
+  } else {
+    view = projectSubscriptionAdminView(current);
+  }
 
-  return Response.json({ data: view, meta: { proxyCount } });
+  return Response.json({ data: view, meta: { proxyCount: resolved.proxyCount } });
 });
