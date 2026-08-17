@@ -162,6 +162,8 @@ function isValidHealthRecord(decoded: Record<string, unknown>): boolean {
   return true;
 }
 
+let evalError = false;
+
 const fakeRedis = {
   get: async (key: string) => decode(key),
   mget: async (...keys: string[]) => keys.map((key) => decode(key)),
@@ -169,6 +171,7 @@ const fakeRedis = {
     raw.set(key, JSON.stringify(value));
   },
   eval: async (script: string, keys: string[], args: string[]) => {
+    if (evalError) throw new Error('eval down');
     evals.push({ script, keys, args });
     const key = keys[0];
     const existing = raw.get(key);
@@ -243,6 +246,7 @@ function health(over: Partial<SubscriptionFetchHealth> = {}): SubscriptionFetchH
 beforeEach(() => {
   raw.clear();
   evals.length = 0;
+  evalError = false;
 });
 
 describe('definition fingerprint', () => {
@@ -331,6 +335,13 @@ describe('record + read round trip', () => {
 
     // get() returns the JSON-DECODED object (Upstash semantics) so the repo's
     // schema validation sees an object, not a string.
+    const read = await getSubscriptionFetchHealth(SUB_ID);
+    expect(read).toMatchObject({ state: 'fresh', proxy_count: 3 });
+  });
+
+  it('falls back to a direct SET when the CAS script cannot run', async () => {
+    evalError = true;
+    await recordSubscriptionFetchHealth(sub(), health({ attempted_at: 10, observed_at: 10 }));
     const read = await getSubscriptionFetchHealth(SUB_ID);
     expect(read).toMatchObject({ state: 'fresh', proxy_count: 3 });
   });
