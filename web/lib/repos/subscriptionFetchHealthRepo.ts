@@ -218,16 +218,25 @@ export async function recordSubscriptionFetchHealth(
   try {
     const parsed = SubscriptionFetchHealthSchema.safeParse(health);
     if (!parsed.success) return;
-    await getRedis().eval(
-      CAS_SUBSCRIPTION_FETCH_HEALTH,
-      [REDIS_KEYS.subscriptionFetchHealth(subscription.id)],
-      [
-        safeJsonStringify(parsed.data),
-        String(parsed.data.attempted_at),
-        String(parsed.data.observed_at),
-        String(HEALTH_TTL_SECONDS),
-      ],
-    );
+    const key = REDIS_KEYS.subscriptionFetchHealth(subscription.id);
+    const args: string[] = [
+      safeJsonStringify(parsed.data),
+      String(parsed.data.attempted_at),
+      String(parsed.data.observed_at),
+      String(HEALTH_TTL_SECONDS),
+    ];
+    try {
+      await getRedis().eval(CAS_SUBSCRIPTION_FETCH_HEALTH, [key], args);
+    } catch {
+      // The CAS script is the normal path; if the Redis Lua surface cannot run
+      // it (older/limited Redis, platform-specific Lua restrictions), fall
+      // back to a direct SET. The CAS timestamp ordering is a best-effort
+      // optimisation for advisory health — losing it on this fallback is far
+      // better than leaving a stale-served warning on screen forever after a
+      // successful refresh. A normal CAS drop (eval returns 0) is NOT an
+      // exception and never reaches this fallback.
+      await getRedis().set(key, parsed.data, { ex: HEALTH_TTL_SECONDS });
+    }
   } catch {
     // best-effort by contract — a health hiccup never masks serving outcome
   }

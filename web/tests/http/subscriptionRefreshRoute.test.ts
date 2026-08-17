@@ -210,6 +210,27 @@ describe('POST /api/v1/subscriptions/{id}/refresh (v2 I14)', () => {
     expect(fetchHealthRepo.getSubscriptionFetchHealth).toHaveBeenCalledTimes(2);
   });
 
+  it('returns fresh health after a successful refresh even when Redis still holds stale-served', async () => {
+    fetchHealthRepo.getSubscriptionFetchHealth.mockResolvedValue({
+      definition_fingerprint: computeSubscriptionDefinitionFingerprint(sub()),
+      state: 'stale-served',
+      attempted_at: 1_700_000_000_000,
+      observed_at: 1_700_000_000_001,
+      fresh_at: 1_600_000_000_000,
+      failure_category: 'proxy-node',
+      cache_disposition: 'served',
+      proxy_count: 300,
+    });
+
+    const res = await POST(new Request('https://pm.test/x'), {
+      params: Promise.resolve({ id: SUB_ID }),
+    } as never);
+    const body = (await json(res)) as { data: SubscriptionAdminView };
+    expect(body.data.fetch_health).toMatchObject({ state: 'fresh', proxy_count: 3 });
+    expect(fetchHealthRepo.getSubscriptionFetchHealth).toHaveBeenCalledTimes(1);
+    expect(fetchHealthRepo.getSubscriptionFetchHealth).toHaveBeenCalledWith(SUB_ID);
+  });
+
   it('a captured LOCAL row performs ZERO health reads and omits policy and health', async () => {
     repos.getSubscription.mockResolvedValue(
       sub({
