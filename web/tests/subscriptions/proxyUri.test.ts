@@ -215,6 +215,21 @@ describe('parseProxyUriList per protocol', () => {
     expect(proxies[0]).not.toHaveProperty('ws-opts');
   });
 
+  it('vless://: tolerates a bare "/" before the query (vless-bare-slash)', () => {
+    const uri =
+      'vless://00000000-0000-0000-0000-000000000000@example.com:80/' +
+      '?encryption=none&type=ws&host=cdn.example&path=%2F&packetEncoding=xudp#VL-Slash';
+    const { proxies, errors } = parseProxyUriList(uri);
+    expect(errors).toHaveLength(0);
+    expect(proxies[0]).toMatchObject({
+      name: 'VL-Slash',
+      type: 'vless',
+      network: 'ws',
+      'ws-opts': { path: '/', headers: { Host: 'cdn.example' } },
+      'packet-encoding': 'xudp',
+    });
+  });
+
   it('parses vless:// ws with a redundant headerType=none', () => {
     const uri =
       'vless://00000000-0000-0000-0000-000000000000@example.com:443?encryption=none&security=tls&sni=cdn.example&type=ws&headerType=none&path=%2Fws&host=cdn.example#VL-WS-HT';
@@ -1091,17 +1106,23 @@ describe('normaliseToClashProviderYaml — URI fallback', () => {
     }
   });
 
-  it('rejects a mixed URI list instead of silently dropping failed nodes', () => {
+  it('keeps usable nodes from a mixed URI list while dropping failed lines', () => {
     const valid = 'vless://00000000-0000-0000-0000-000000000000@example.com:443?type=tcp#good';
     const invalid = 'trojan://FAKE_SECRET_DO_NOT_LOG@example.com:not-a-port#broken';
-    expect(() => normaliseToClashProviderYaml(`${valid}\n${invalid}`)).toThrow(ProblemDetailsError);
+    const result = normaliseToClashProviderYaml(`${valid}
+${invalid}`);
+    expect(result.proxyCount).toBe(1);
+    expect(result.yaml).toContain('name: good');
+    expect(result.yaml).not.toContain('FAKE_SECRET_DO_NOT_LOG');
   });
 
-  it('rejects non-comment text mixed into a URI list', () => {
+  it('keeps usable nodes when non-comment text is mixed into a URI list', () => {
     const valid = 'vless://00000000-0000-0000-0000-000000000000@example.com:443?type=tcp#good';
-    expect(() => normaliseToClashProviderYaml(`NOTICE: maintenance\n${valid}`)).toThrow(
-      ProblemDetailsError,
-    );
+    const result = normaliseToClashProviderYaml(`NOTICE: maintenance
+${valid}`);
+    expect(result.proxyCount).toBe(1);
+    expect(result.yaml).toContain('name: good');
+    expect(result.yaml).not.toContain('NOTICE: maintenance');
   });
 
   it('keeps the fallback error support list in sync with the parser registry', () => {
@@ -2297,6 +2318,24 @@ describe('QUIC URI hardening — Snell, SOCKS, HTTP(S), and AnyTLS', () => {
     });
   });
 
+  it('anytls://: ignores security/allowInsecure exporter noise and maps the alias', () => {
+    const uri =
+      'anytls://secret@any.example:443?security=none&type=tcp&allowInsecure=1&sni=cdn.example&insecure=1#HKG%2002';
+    const { proxies, errors } = parseProxyUriList(uri);
+    expect(errors).toHaveLength(0);
+    expect(proxies[0]).toMatchObject({
+      name: 'HKG 02',
+      type: 'anytls',
+      server: 'any.example',
+      port: 443,
+      sni: 'cdn.example',
+      'skip-cert-verify': true,
+      udp: true,
+    });
+    expect(proxies[0]).not.toHaveProperty('security');
+    expect(proxies[0]).not.toHaveProperty('allowInsecure');
+  });
+
   it('anytls://: tolerates a bare "/" and ignores group/type=tcp exporter noise (anytls-bare-slash-metadata)', () => {
     // Real-world 3x-ui/NekoBox shape: `host:port/?addons` plus provider
     // metadata `group` (base64) and a redundant `type=tcp`.
@@ -2327,6 +2366,8 @@ describe('QUIC URI hardening — Snell, SOCKS, HTTP(S), and AnyTLS', () => {
     ['overflowing idle timeout', 'anytls://secret@any.example?idle-session-timeout=9223372037'],
     ['excess retained sessions', 'anytls://secret@any.example?min-idle-session=257'],
     ['duplicate canonical key', 'anytls://secret@any.example?sni=one.example&sni=two.example'],
+    ['conflicting insecure aliases', 'anytls://secret@any.example?allowInsecure=1&insecure=0'],
+    ['non-tls security noise', 'anytls://secret@any.example?security=reality'],
   ])('anytls://: rejects %s', (_case, uri) => {
     const { proxies, errors } = parseProxyUriList(uri);
     expect(proxies).toHaveLength(0);

@@ -799,7 +799,9 @@ function assertVmessHeaderType(value: string, allowed: readonly string[], transp
 
 function parseVLESS(uri: string): ClashProxy {
   const u = safeUrl(uri);
-  assertNoUriPath(u, 'vless');
+  // Some exporters emit `host:port/?params` on every VLESS link; a bare slash
+  // before the query carries no path information, so tolerate exactly that.
+  assertNoUriPath(u, 'vless', true);
   assertSingleComponentUserinfo(uri, 'vless');
   assertVlessQueryIntegrity(u.searchParams);
   const uuid = safeDecode(u.username);
@@ -2147,6 +2149,7 @@ function parseAnyTLS(uri: string): ClashProxy {
     'peer',
     'alpn',
     'insecure',
+    'allowInsecure',
     'fp',
     'udp',
     'tfo',
@@ -2155,6 +2158,7 @@ function parseAnyTLS(uri: string): ClashProxy {
     'idle-session-timeout',
     'min-idle-session',
     // Accepted-and-ignored exporter noise; see the checks below the loop.
+    'security',
     'group',
     'type',
   ]);
@@ -2165,13 +2169,30 @@ function parseAnyTLS(uri: string): ClashProxy {
     if (Object.hasOwn(params, key)) throw new Error(`duplicate anytls query parameter ${key}`);
     params[key] = value;
   }
-  assertNoAliasCollision(params, [['sni', 'peer']], 'anytls query');
+  assertNoAliasCollision(
+    params,
+    [
+      ['sni', 'peer'],
+      ['allowInsecure', 'insecure'],
+    ],
+    'anytls query',
+  );
   // `group` is provider metadata with no Mihomo field (same class as SSR's
   // group, an intentional metadata omission), and `type=tcp` merely restates
   // AnyTLS's fixed TCP session layer. NekoBox-style exporters emit both on
   // every link, so ignore them; any other `type` value is a real conflict.
   if (Object.hasOwn(params, 'type') && params.type !== 'tcp') {
     throw new Error('unsupported anytls transport type');
+  }
+  // Generic exporter templates also restate `security` on AnyTLS links.
+  // AnyTLS has no non-TLS mode, so both the `none` and `tls` constants are
+  // no-ops for Mihomo; anything else is a real conflict.
+  if (
+    Object.hasOwn(params, 'security') &&
+    params.security !== 'none' &&
+    params.security !== 'tls'
+  ) {
+    throw new Error('unsupported anytls security');
   }
   const proxy: ClashProxy = {
     name: safeDecode(u.hash.slice(1)) || `${host}:${port}`,
@@ -2191,9 +2212,10 @@ function parseAnyTLS(uri: string): ClashProxy {
     if (alpn.length === 0) throw new Error('invalid anytls alpn');
     proxy.alpn = alpn;
   }
+  const insecureKey = Object.hasOwn(params, 'allowInsecure') ? 'allowInsecure' : 'insecure';
   if (
-    Object.hasOwn(params, 'insecure') &&
-    parseZeroOneBoolean(params.insecure, 'anytls insecure')
+    Object.hasOwn(params, insecureKey) &&
+    parseZeroOneBoolean(params[insecureKey], 'anytls insecure')
   ) {
     proxy['skip-cert-verify'] = true;
   }

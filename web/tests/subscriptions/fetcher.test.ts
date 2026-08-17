@@ -212,7 +212,8 @@ describe('normaliseToClashProviderYaml', () => {
     let error: unknown;
     try {
       normaliseToClashProviderYaml(
-        `trojan://safe@example.invalid:443#valid\n${marker}://credential@example.invalid:443#bad`,
+        `${marker}://credential@example.invalid:443#bad\n` +
+          'trojan://FAKE_SECRET_DO_NOT_LOG@example.com:not-a-port#broken',
       );
     } catch (caught) {
       error = caught;
@@ -221,12 +222,17 @@ describe('normaliseToClashProviderYaml', () => {
     expect(error).toBeInstanceOf(SubscriptionContentValidationError);
     expect((error as SubscriptionContentValidationError).contentIssue).toEqual({
       kind: 'uri_list_invalid',
-      failed: 1,
+      failed: 2,
       total: 2,
       samples: [
         {
           category: 'unsupported_scheme',
+          line: 1,
+        },
+        {
+          category: 'parser_rejected',
           line: 2,
+          scheme: 'trojan',
         },
       ],
     });
@@ -234,6 +240,16 @@ describe('normaliseToClashProviderYaml', () => {
     expect(
       JSON.stringify((error as SubscriptionContentValidationError).contentIssue),
     ).not.toContain(marker);
+  });
+
+  it('keeps usable nodes from a partially invalid URI list', () => {
+    const result = normaliseToClashProviderYaml(
+      'vless://00000000-0000-0000-0000-000000000000@example.com:443?type=tcp#good\n' +
+        'trojan://FAKE_SECRET_DO_NOT_LOG@example.com:not-a-port#broken',
+    );
+    expect(result.proxyCount).toBe(1);
+    expect(result.yaml).toContain('name: good');
+    expect(result.yaml).not.toContain('FAKE_SECRET_DO_NOT_LOG');
   });
 });
 

@@ -190,8 +190,8 @@ describe('resolveSubscriptionContent — fetch failure policy (v1)', () => {
     it('proxy-node: a structured invalid URI entry classifies as proxy-node (422)', async () => {
       getCacheMock.mockResolvedValueOnce(null);
       const badList =
-        'trojan://safe@example.invalid:443#valid\n' +
-        'juicity-secretmarker://credential@example.invalid:443#bad';
+        'juicity-secretmarker://credential@example.invalid:443#bad\n' +
+        'trojan://safe@example.invalid:not-a-port#bad';
       (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
         new Response(badList, { status: 200 }),
       );
