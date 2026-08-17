@@ -992,11 +992,11 @@ export function normaliseToClashProviderYaml(text: string): { yaml: string; prox
 /**
  * Parse a local subscription's `content` into its proxy objects, accepting
  * the same shapes as the resolver (Clash `proxies:` YAML / URI list / base64).
- * Invalid or non-object entries reject the entire source. Used by the
- * assistant's local-node tools to list + rename source nodes; the editor
- * re-serialises the result back through {@link serialiseLocalProxies},
- * normalising the stored content to a `proxies:` YAML block (fields preserved,
- * formatting may change).
+ * URI-list entries that fail to parse are skipped as long as at least one
+ * usable node remains; YAML proxy entries stay strict. Used by the assistant's
+ * local-node tools to list + rename source nodes; the editor re-serialises the
+ * result back through {@link serialiseLocalProxies}, normalising the stored
+ * content to a `proxies:` YAML block (fields preserved, formatting may change).
  */
 export function parseLocalProxies(content: string): Record<string, unknown>[] {
   const { proxies } = normaliseToClashProxies(content);
@@ -1011,8 +1011,8 @@ export function serialiseLocalProxies(proxies: Record<string, unknown>[]): strin
 /**
  * Object-level normaliser: same recognition rules as
  * {@link normaliseToClashProviderYaml} but stops at the parsed proxy list —
- * no stringify. The returned list is strict and complete: any malformed entry
- * rejects the whole input so string/object consumers cannot diverge.
+ * no stringify. YAML proxy entries stay strict; a URI-list input with a few
+ * malformed lines keeps every usable node and only an all-invalid list rejects.
  */
 function normaliseToClashProxies(
   text: string,
@@ -1053,6 +1053,13 @@ function normaliseToClashProxies(
   }
   if (looksLikeProxyUriList(uriText)) {
     const { proxies, errors } = parseProxyUriList(uriText);
+    // P-FFP v1 tolerant URI-list policy: a handful of broken/unknown lines is
+    // common exporter noise. Keep every parsable node and only fail closed
+    // when the response contains no usable node at all.
+    if (proxies.length > 0) {
+      const validated = validateProviderProxyList(proxies, deferUniqueNames);
+      return { proxies: validated, proxyCount: validated.length };
+    }
     if (errors.length > 0) {
       if (errors.length === 1 && errors[0].issue.category === 'input_line_limit') {
         throw new SubscriptionContentValidationError({
@@ -1063,13 +1070,9 @@ function normaliseToClashProxies(
       throw new SubscriptionContentValidationError({
         kind: 'uri_list_invalid',
         failed: errors.length,
-        total: proxies.length + errors.length,
+        total: errors.length,
         samples: errors.slice(0, 3).map(({ issue }) => issue),
       });
-    }
-    if (proxies.length > 0) {
-      const validated = validateProviderProxyList(proxies, deferUniqueNames);
-      return { proxies: validated, proxyCount: validated.length };
     }
   }
 
