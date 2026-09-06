@@ -1952,6 +1952,10 @@ textarea.input {
   left: 10px;
   right: 10px;
   top: calc(100% - 2px);
+  display: flex;
+  flex-direction: column;
+  max-height: min(32rem, var(--profile-pop-max-height, 100dvh));
+  overflow: hidden;
   z-index: 60;
   background: var(--surface);
   border: 1px solid var(--border-2);
@@ -1970,6 +1974,18 @@ textarea.input {
   opacity: 1;
   visibility: visible;
   translate: 0 0;
+}
+.profile-pop .pp-scroll {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  scrollbar-gutter: stable;
+}
+.profile-pop .pp-footer {
+  flex: none;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
 }
 .profile-pop .pp-label {
   padding: 6px 8px 4px;
