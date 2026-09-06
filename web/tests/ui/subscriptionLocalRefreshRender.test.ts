@@ -165,7 +165,7 @@ describe('subscription local refresh interaction', () => {
     expect(addFormSource).toContain('guardAddFormAction(() => setUa(e.target.value))');
     expect(addFormSource).toContain('guardAddFormAction(() => setContent(value))');
     expect(addFormSource).toContain('guardAddFormAction(() => setEnabled((v) => !v))');
-    expect(addFormSource).toContain('onClick={() => guardAddFormAction(onCancel)}');
+    expect(addFormSource).toMatch(/guardAddFormAction\(\(\) => [\s\S]*?confirmUnsavedChanges\(\)[\s\S]*?onCancel\(\)/);
     expect(addFormSource).not.toContain("onClick={() => setKind('");
     expect(addFormSource).not.toContain('onClick={() => setPolicy(');
     expect(addFormSource).not.toContain('onClick={() => setEnabled(');

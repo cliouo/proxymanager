@@ -95,6 +95,7 @@ export function SetupWizard() {
     try {
       const result = await bootstrap(request);
       setCompletion(result);
+      sessionStorage.setItem('pm.profileId', result.profile.id);
       document.cookie = `pm.active_profile=${encodeURIComponent(result.profile.name)}; path=/; max-age=31536000; SameSite=Lax`;
       sessionStorage.removeItem(SETUP_DRAFT_KEY);
     } catch (caught) {

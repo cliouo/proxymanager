@@ -60,7 +60,8 @@ export default function ProxyGroupsPage() {
   const {
     groups,
     templates,
-    rules,
+    ruleSummary,
+    configVersion,
     ruleSets,
     anchors,
     subs,
@@ -145,7 +146,8 @@ export default function ProxyGroupsPage() {
   // P2-12: with a search/kind filter active the section shows a SUBSET, so
   // recomputing ranks from the visible order would collide with hidden rows /
   // cross partitions. Disable reordering until the filter is cleared.
-  const dragDisabled = query.trim().length > 0 || kindFilter !== null;
+  const [sorting, setSorting] = useState(false);
+  const dragDisabled = sorting || configVersion === null || query.trim().length > 0 || kindFilter !== null;
 
   const onDragStart = (section: string, id: string) => {
     if (dragDisabled) return;
@@ -195,44 +197,23 @@ export default function ProxyGroupsPage() {
 
     const sec = sections.find((s) => s.section === section);
     if (!sec) return;
-    const base = sec.minRank;
-    // Recompute ranks for this section: step 10 from the section's min rank.
-    const byId = new Map(sec.items.map((g) => [g.id, g] as const));
-    const changes: { id: string; rank: number }[] = [];
-    order.forEach((gid, i) => {
-      const g = byId.get(gid);
-      if (!g) return;
-      const nextRank = base + i * 10;
-      if (nextRank !== g.rank) changes.push({ id: gid, rank: nextRank });
-    });
-    if (changes.length === 0) return;
-
-    // Optimistic overlay so the order sticks while the PATCHes resolve.
-    setRankOverride((prev) => {
-      const next = { ...prev };
-      for (const c of changes) next[c.id] = c.rank;
-      return next;
-    });
-
+    const members = new Set(order);
+    let cursor = 0;
+    const orderedIds = [...groups].sort((a, b) => a.rank - b.rank || a.id.localeCompare(b.id))
+      .map((g) => members.has(g.id) ? order[cursor++] : g.id);
+    if (configVersion === null) return;
+    setSorting(true);
+    setRankOverride(Object.fromEntries(orderedIds.map((gid, i) => [gid, (i + 1) * 10])));
     try {
-      await Promise.all(
-        changes.map((c) =>
-          api(`/api/v1/proxy-groups/${c.id}`, { method: 'PATCH', body: { rank: c.rank } }),
-        ),
-      );
-      showToast(`渲染顺序已更新 · 已写入 ${changes.length} 个组的 rank`);
+      await api('/api/v1/proxy-groups/reorder', { method: 'POST', body: { orderedIds, expectedVersion: configVersion } });
+      showToast('渲染顺序已完整保存');
       await reload();
-      setRankOverride({});
     } catch (err) {
-      // P2-12: some PATCHes may already have landed, so this isn't a clean
-      // rollback — reload to the server truth and say so.
-      showToast(
-        err instanceof ApiError
-          ? `保存失败:${err.message} · 已刷新为最新顺序`
-          : '保存失败 · 部分顺序可能已保存,已刷新为最新',
-      );
-      setRankOverride({});
+      showToast(err instanceof ApiError ? `排序未保存：${err.message}` : '排序未保存，请重新读取后重试');
       await reload();
+    } finally {
+      setRankOverride({});
+      setSorting(false);
     }
   };
 
@@ -281,7 +262,7 @@ export default function ProxyGroupsPage() {
         <div className={styles.flow}>
           <FlowCol header="规则入口">
             <Link className={styles.flItem} href="/rules">
-              <b>{rules.length} 条规则</b>
+              <b>{ruleSummary ? `${ruleSummary.total} 条规则` : '规则统计暂不可用'}</b>
               <span className="ct">{anchors.length} 锚点</span>
             </Link>
             <Link className={`${styles.flItem} ${styles.pool}`} href="/rule-sets">
@@ -482,6 +463,7 @@ function FlowArrow() {
 
 /** One-liner for a flow chip's count column (real refs / member kind). */
 function flowNote(g: ProxyGroup, rules: number): string {
+  if (!Number.isFinite(rules)) return '统计暂不可用';
   if (rules > 0) return `${rules} 规则`;
   if (g.kind === 'filter') return '正则筛选';
   if (g.kind === 'all') return '全量节点';
@@ -497,6 +479,7 @@ function deriveDesc(g: ProxyGroup, summary: string): string {
 /** Refs column: rule refs + reverse group-ref count (real). */
 function refLabel(s: { rules: number; refIn: string[] }): string {
   const parts: string[] = [];
+  if (!Number.isFinite(s.rules)) parts.push('规则统计暂不可用');
   if (s.rules > 0) parts.push(`${s.rules} 规则引用`);
   if (s.refIn.length > 0) parts.push(`被 ${s.refIn.length} 组引用`);
   return parts.length > 0 ? parts.join(' · ') : '无引用';

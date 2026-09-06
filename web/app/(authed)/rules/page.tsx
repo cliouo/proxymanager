@@ -1,6 +1,8 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useUnsavedGuard, confirmUnsavedChanges } from '@/lib/client/useUnsavedGuard';
+import type { RuleSummary } from '@/lib/client/rule-summary';
 import { ApiError, api } from '@/lib/client/api';
 import { PageTopbar } from '@/components/PageChrome';
 import { ScopePill } from '@/components/Topbar';
@@ -80,45 +82,60 @@ export default function RulesPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
 
+  const [offset, setOffset] = useState(0);
+  const [summary, setSummary] = useState<RuleSummary | null>(null);
+  const [configVersion, setConfigVersion] = useState<number | null>(null);
+  const [debouncedQuery, setDebouncedQuery] = useState('');
+  const [fetching, setFetching] = useState(false);
+  const requestGeneration = useRef(0);
+  useEffect(() => { const timer = setTimeout(() => setDebouncedQuery(query.trim()), 250); return () => clearTimeout(timer); }, [query]);
+  function changeFilter(action: () => void) {
+    if (!confirmUnsavedChanges()) return;
+    setEditingId(null); setAdding(false); setOffset(0); action();
+  }
+  function changePage(next: number) {
+    if (!confirmUnsavedChanges()) return;
+    setEditingId(null); setAdding(false); setOffset(next);
+  }
   const reload = useCallback(async () => {
+    const generation = ++requestGeneration.current;
+    setFetching(true);
+    const params = new URLSearchParams({ limit: '100', offset: String(offset), sort: 'rank:asc' });
+    if (filterAnchor) params.set('anchor', filterAnchor);
+    if (filterPolicy) params.set('policy', filterPolicy);
+    if (filterType) params.set('type', filterType);
+    if (!showDisabled) params.set('enabled', 'true');
+    if (debouncedQuery) params.set('q', debouncedQuery);
     setError(null);
     try {
-      const [r, a, p, rs] = await Promise.all([
-        api<{ data: Rule[]; meta?: { total: number } }>('/api/v1/rules?limit=500&sort=rank:asc'),
+      const [r, a, p, rs, sums] = await Promise.all([
+        api<{ data: Rule[]; meta: { total: number; configVersion: number } }>(`/api/v1/rules?${params}`),
         api<{ data: string[] }>('/api/v1/anchors').catch(() => ({ data: [] as string[] })),
         api<{ data: string[] }>('/api/v1/policies').catch(() => ({ data: [] as string[] })),
         api<{ data: { name: string }[] }>('/api/v1/rule-sets').catch(() => ({ data: [] as { name: string }[] })),
+        api<{ data: RuleSummary }>('/api/v1/rules/summary').catch(() => null),
       ]);
+      if (generation !== requestGeneration.current) return;
+      if (offset > 0 && offset >= r.meta.total) { setOffset(Math.max(0, Math.ceil(r.meta.total / 100) - 1) * 100); return; }
+      setSummary(sums?.data ?? null);
+      setConfigVersion(r.meta.configVersion);
       setRules(r.data);
       setServerTotal(r.meta?.total ?? r.data.length);
       setAnchors(a.data);
       setPolicies(p.data);
       setRuleSets(rs.data.map((s) => s.name));
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : String(err));
+      if (generation === requestGeneration.current) { setError(err instanceof Error ? err.message : String(err)); setConfigVersion(null); }
     } finally {
-      setLoaded(true);
+      if (generation === requestGeneration.current) { setLoaded(true); setFetching(false); }
     }
-  }, []);
+  }, [offset, filterAnchor, filterPolicy, filterType, showDisabled, debouncedQuery]);
 
   useEffect(() => {
     reload();
   }, [reload]);
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return rules.filter((r) => {
-      if (!showDisabled && !isActive(r)) return false;
-      if (filterAnchor && r.anchor !== filterAnchor) return false;
-      if (filterPolicy && r.policy !== filterPolicy) return false;
-      if (filterType && r.type !== filterType) return false;
-      if (q) {
-        const hay = `${r.value} ${r.note ?? ''} ${(r.options ?? []).join(' ')}`.toLowerCase();
-        if (!hay.includes(q)) return false;
-      }
-      return true;
-    });
-  }, [rules, filterAnchor, filterPolicy, filterType, query, showDisabled]);
+  const filtered = rules;
 
   /** Filtered rules grouped per anchor, anchors in base.yaml order. */
   const groups = useMemo(() => {
@@ -137,17 +154,8 @@ export default function RulesPage() {
     }));
   }, [filtered, anchors, rules]);
 
-  const counts = useMemo(() => {
-    const active = rules.filter(isActive).length;
-    return { total: rules.length, active, disabled: rules.length - active };
-  }, [rules]);
-
-  /** Per-anchor totals, for the anchor filter chips. */
-  const anchorCounts = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const r of rules) m.set(r.anchor, (m.get(r.anchor) ?? 0) + 1);
-    return m;
-  }, [rules]);
+  const counts = summary ?? { total: 0, active: 0, disabled: 0 };
+  const anchorCounts = new Map(Object.entries(summary?.anchors ?? {}).map(([name, stats]) => [name, stats.total]));
 
   /* ── mutations ──────────────────────────────────────────────── */
 
@@ -156,7 +164,7 @@ export default function RulesPage() {
     setBusy(true);
     try {
       await api(`/api/v1/rules/${id}`, { method: 'DELETE' });
-      setRules((prev) => prev.filter((r) => r.id !== id));
+      await reload();
       if (editingId === id) setEditingId(null);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
@@ -168,7 +176,8 @@ export default function RulesPage() {
   async function onPatch(id: string, patch: Partial<Rule>) {
     try {
       const res = await api<{ data: Rule }>(`/api/v1/rules/${id}`, { method: 'PATCH', body: patch });
-      setRules((prev) => prev.map((r) => (r.id === id ? res.data : r)));
+      void res;
+      await reload();
       return true;
     } catch (err) {
       setError(err instanceof ApiError ? (err.problem.detail ?? err.message) : String(err));
@@ -195,27 +204,10 @@ export default function RulesPage() {
       setError('筛选/搜索激活时无法用 ↑↓ 排序(会与隐藏的规则错位)。请先清除筛选。');
       return;
     }
-    const siblings = rules.filter((r) => r.anchor === rule.anchor).sort((a, b) => a.rank - b.rank);
-    const i = siblings.findIndex((r) => r.id === rule.id);
-    const j = dir === 'up' ? i - 1 : i + 1;
-    if (j < 0 || j >= siblings.length) return;
-    const other = siblings[j];
-    // P3-28: identical ranks make a swap a no-op — give the two rows distinct
-    // ranks (rule takes other's slot, other is nudged one step the other way).
-    const ranksEqual = other.rank === rule.rank;
-    const ruleRank = other.rank;
-    const otherRank = ranksEqual ? (dir === 'up' ? other.rank + 1 : other.rank - 1) : rule.rank;
+    if (configVersion === null) return;
     setBusy(true);
     try {
-      await api('/api/v1/rules/batch', {
-        method: 'POST',
-        body: {
-          ops: [
-            { op: 'update', id: rule.id, patch: { rank: ruleRank } },
-            { op: 'update', id: other.id, patch: { rank: otherRank } },
-          ],
-        },
-      });
+      await api(`/api/v1/rules/${rule.id}/move`, { method: 'POST', body: { direction: dir, expectedVersion: configVersion } });
       await reload();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
@@ -275,7 +267,7 @@ export default function RulesPage() {
         <ScopePill />
         {loaded && (
           <span className="crumb num">
-            {counts.active} 生效
+            {summary ? `${counts.active} 生效` : '统计暂不可用'}
             {counts.disabled > 0 && ` · ${counts.disabled} 停用`}
             {` · ${groups.length} 个锚点`}
           </span>
@@ -285,6 +277,7 @@ export default function RulesPage() {
           type="button"
           className="btn primary"
           onClick={() => {
+            if (!confirmUnsavedChanges()) return;
             setAdding((v) => !v);
             setEditingId(null);
           }}
@@ -301,9 +294,9 @@ export default function RulesPage() {
               key={a}
               type="button"
               className={`chip${filterAnchor === a ? ' on' : ''}`}
-              onClick={() => setFilterAnchor((v) => (v === a ? '' : a))}
+              onClick={() => changeFilter(() => setFilterAnchor((v) => (v === a ? '' : a)))}
             >
-              {a} · {anchorCounts.get(a) ?? 0}
+              {a} · {anchorCounts.get(a) ?? '—'}
             </button>
           ))}
           <span style={{ width: 10 }} />
@@ -313,7 +306,7 @@ export default function RulesPage() {
               key={t}
               type="button"
               className={`chip${filterType === t ? ' on' : ''}`}
-              onClick={() => setFilterType((v) => (v === t ? '' : t))}
+              onClick={() => changeFilter(() => setFilterType((v) => (v === t ? '' : t)))}
             >
               {t}
             </button>
@@ -324,7 +317,7 @@ export default function RulesPage() {
           <select
             className="input"
             value={filterPolicy}
-            onChange={(e) => setFilterPolicy(e.target.value)}
+            onChange={(e) => changeFilter(() => setFilterPolicy(e.target.value))}
             style={{ width: 150 }}
           >
             <option value="">全部策略</option>
@@ -337,7 +330,7 @@ export default function RulesPage() {
           <input
             type="checkbox"
             checked={showDisabled}
-            onChange={(e) => setShowDisabled(e.target.checked)}
+            onChange={(e) => changeFilter(() => setShowDisabled(e.target.checked))}
           />
           显示停用
         </label>
@@ -346,6 +339,8 @@ export default function RulesPage() {
             type="button"
             className="btn ghost sm"
             onClick={() => {
+              if (!confirmUnsavedChanges()) return;
+              setOffset(0); setEditingId(null); setAdding(false);
               setFilterAnchor('');
               setFilterPolicy('');
               setFilterType('');
@@ -361,7 +356,7 @@ export default function RulesPage() {
             className="input"
             placeholder="搜索值 / 备注 / 修饰符…"
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => changeFilter(() => setQuery(e.target.value))}
           />
         </div>
       </div>
@@ -386,7 +381,7 @@ export default function RulesPage() {
               policies={policies}
               ruleSets={ruleSets}
               onSubmit={onCreate}
-              onCancel={() => setAdding(false)}
+              onCancel={() => { if (confirmUnsavedChanges()) setAdding(false); }}
             />
           </div>
         </div>
@@ -435,22 +430,21 @@ export default function RulesPage() {
 
             {loaded
               ? groups.map(({ anchor, rules: groupRules }) => {
-                  const allInAnchor = rules.filter((r) => r.anchor === anchor);
-                  const activeN = allInAnchor.filter(isActive).length;
                   return (
                     <GroupBody
                       key={anchor}
                       anchor={anchor}
-                      activeN={activeN}
-                      totalN={allInAnchor.length}
+                      activeN={summary?.anchors[anchor]?.active ?? null}
+                      totalN={summary?.anchors[anchor]?.total ?? null}
                       groupRules={groupRules}
-                      siblings={allInAnchor.sort((a, b) => a.rank - b.rank)}
                       policies={policies}
                       anchors={anchors}
                       ruleSets={ruleSets}
-                      busy={busy}
+                      busy={busy || fetching || configVersion === null}
+                      moveDisabled={Boolean(filtersOn)}
                       editingId={editingId}
                       onSetEditing={(id) => {
+                        if (!confirmUnsavedChanges()) return;
                         setEditingId(id);
                         setAdding(false);
                       }}
@@ -470,7 +464,7 @@ export default function RulesPage() {
                 <td colSpan={7}>
                   {/* P2-16: distinguish "no rules at all" from "filter matched none". */}
                   <div className={styles.empty}>
-                    {rules.length === 0
+                    {!filtersOn && summary?.total === 0
                       ? '还没有任何规则。用上方「新增规则」开始添加。'
                       : '没有匹配当前筛选条件的规则。'}
                   </div>
@@ -482,11 +476,11 @@ export default function RulesPage() {
       </div>
 
       <div className={styles.foot}>
-        {/* P3-26: show the true server total; flag when only the first 500 loaded. */}
-        {serverTotal !== null && serverTotal > rules.length
-          ? `已加载 ${rules.length} / 共 ${serverTotal} 条`
-          : `共 ${serverTotal ?? counts.total} 条`}{' '}
-        · {groups.length} 个锚点 · 点「编辑」修改规则，↑↓ 在同锚点内调整顺序
+        <span>{serverTotal ? `${offset + 1}–${offset + rules.length}` : '0'} / 共 {serverTotal ?? 0} 条 · 每页 100 条</span>
+        <button className="btn sm" disabled={fetching || offset === 0} onClick={() => changePage(Math.max(0, offset - 100))}>上一页</button>
+        <button className="btn sm" disabled={fetching || offset + 100 >= (serverTotal ?? 0)} onClick={() => changePage(offset + 100)}>下一页</button>
+        {filtersOn && <span>筛选期间暂停排序，清除筛选后可跨页移动。</span>}
+
       </div>
     </>
   );
@@ -499,7 +493,7 @@ function GroupBody({
   activeN,
   totalN,
   groupRules,
-  siblings,
+  moveDisabled,
   policies,
   anchors,
   ruleSets,
@@ -514,10 +508,10 @@ function GroupBody({
   onEdit,
 }: {
   anchor: string;
-  activeN: number;
-  totalN: number;
+  activeN: number | null;
+  totalN: number | null;
   groupRules: Rule[];
-  siblings: Rule[];
+  moveDisabled: boolean;
   policies: string[];
   anchors: string[];
   ruleSets: string[];
@@ -538,7 +532,7 @@ function GroupBody({
           <div className={styles.inner}>
             <span className={styles.anchorChip}>{anchor}</span>
             <span className={styles.gmeta}>
-              {activeN} 生效{totalN > activeN ? ` · ${totalN - activeN} 停用` : ''}
+              {activeN === null || totalN === null ? '统计暂不可用' : `${activeN} 生效${totalN > activeN ? ` · ${totalN - activeN} 停用` : ''}`}
             </span>
             <button
               type="button"
@@ -554,7 +548,6 @@ function GroupBody({
       </tr>
 
       {groupRules.map((r) => {
-        const i = siblings.findIndex((s) => s.id === r.id);
         const active = isActive(r);
         const editing = editingId === r.id;
         return (
@@ -565,7 +558,7 @@ function GroupBody({
                   type="button"
                   className={styles.move}
                   onClick={() => onMove(r, 'up')}
-                  disabled={busy || i <= 0}
+                  disabled={busy || moveDisabled}
                   title="上移"
                 >
                   ↑
@@ -574,7 +567,7 @@ function GroupBody({
                   type="button"
                   className={styles.move}
                   onClick={() => onMove(r, 'down')}
-                  disabled={busy || i < 0 || i >= siblings.length - 1}
+                  disabled={busy || moveDisabled}
                   title="下移"
                 >
                   ↓
@@ -711,6 +704,9 @@ function RuleForm({
     if (!initial && policies.length && !policy) setPolicy(policies[0]);
   }, [anchors, policies, anchor, policy, initial]);
 
+  useUnsavedGuard(initial
+    ? anchor !== initial.anchor || type !== initial.type || value !== initial.value || policy !== initial.policy || optionsStr !== (initial.options ?? []).join(', ') || note !== (initial.note ?? '') || enabled !== (initial.enabled !== false)
+    : value !== '' || note !== '' || optionsStr !== '' || type !== 'DOMAIN-SUFFIX' || !enabled);
   const noValue = NO_VALUE_TYPES.has(type);
   const isRuleSet = type === 'RULE-SET';
 

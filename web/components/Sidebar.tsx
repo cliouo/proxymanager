@@ -1,8 +1,10 @@
 'use client';
 
+import { useModalSurface } from '@/lib/client/useModalSurface';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { navigateWithUnsavedGuard } from '@/lib/client/useUnsavedGuard';
 import { api } from '@/lib/client/api';
 import { clearAdminKey } from '@/lib/client/auth-storage';
 import {
@@ -36,6 +38,8 @@ import {
  * `components/nav.ts` 这一处真相源,不按场景注册表动态拼装。
  */
 export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const modalRef = useRef<HTMLElement>(null);
+  useModalSurface(modalRef, open, onClose, '(max-width: 1100px)');
   const pathname = usePathname();
   const { activeProfile, loading: profilesLoading, error: profilesError } = useProfiles();
   const [meta, setMeta] = useState<{ buildId: string | null; hasBase: boolean } | null>(null);
@@ -51,8 +55,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   }, []);
 
   function signOut() {
-    clearAdminKey();
-    window.location.href = '/login';
+    navigateWithUnsavedGuard(() => { clearAdminKey(); window.location.href = '/login'; }, true);
   }
 
   // 设备详情页路由挂在 /profiles/[id]/devices/* 下,但按 IA 属于「设备」——
@@ -85,7 +88,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
         : undefined;
 
   return (
-    <aside className={`side${open ? ' open' : ''}`} aria-label="主导航">
+    <aside ref={modalRef} className={`side${open ? ' open' : ''}`} aria-label="主导航">
       <div className="side-brand">
         <Link href="/" className="logo" onClick={onClose} aria-label="ProxyManager">
           PM
@@ -285,7 +288,8 @@ function ProfileSwitcher({ onNavigate }: { onNavigate: () => void }) {
           </div>
         ) : error ? (
           <div className="pp-li" style={{ cursor: 'default', display: 'block' }} role="alert">
-            <span style={{ color: 'var(--danger)', display: 'block' }}>配置文件读取失败</span>
+            <span style={{ color: 'var(--danger)', display: 'block' }}>{error}</span>
+            {normal.map(row)}
             <button
               type="button"
               className="btn sm"

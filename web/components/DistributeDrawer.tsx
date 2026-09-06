@@ -1,7 +1,9 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useModalSurface } from '@/lib/client/useModalSurface';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { api } from '@/lib/client/api';
 import { useToast } from '@/components/ui/Toast';
 
 /**
@@ -19,6 +21,7 @@ import { useToast } from '@/components/ui/Toast';
  */
 
 export interface DistributeTarget {
+  id: string;
   /** 路径段:single → /source/{pathSeg},collection → /collection/{pathSeg}。 */
   kind: 'source' | 'collection';
   /** 展示名(可中文 / 显示名)—— 仅用于抽屉标题,不进 URL。 */
@@ -52,7 +55,35 @@ export function DistributeDrawer({
   /** P2-9: 该资源的翻转请求进行中 —— 禁用开关,避免连点造成两次 PATCH 抵消。 */
   pending?: boolean;
 }) {
+  const modalRef = useRef<HTMLElement>(null);
+  useModalSurface(modalRef, Boolean(target), onClose);
   const toast = useToast();
+  const [usage, setUsage] = useState<{
+    profiles: { id: string; name: string }[];
+    collections: { id: string; name: string }[];
+  } | null>(null);
+  const [usageError, setUsageError] = useState(false);
+  const usageId = target?.id,
+    usageKind = target?.kind,
+    usageEnabled = target?.enabled;
+  useEffect(() => {
+    if (!usageId) return;
+    let alive = true;
+    setUsage(null);
+    setUsageError(false);
+    api<{ data: NonNullable<typeof usage> }>(
+      `/api/v1/${usageKind === 'source' ? 'subscriptions' : 'collections'}/${usageId}/usage`,
+    )
+      .then((r) => {
+        if (alive) setUsage(r.data);
+      })
+      .catch(() => {
+        if (alive) setUsageError(true);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [usageId, usageKind, usageEnabled]);
   const [reveal, setReveal] = useState(false);
   const [fmt, setFmt] = useState<'clash' | 'base64'>('clash');
   // 原型同款入场:先以关闭态挂载,下一帧加 .open 触发滑入过渡。
@@ -72,15 +103,6 @@ export function DistributeDrawer({
     setFmt('clash');
   }, [target?.kind, target?.pathSeg]);
 
-  useEffect(() => {
-    if (!target) return;
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose();
-    }
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [target, onClose]);
-
   const { realUrl, shownUrl } = useMemo(() => {
     if (!target) return { realUrl: '', shownUrl: '' };
     const suffix = fmt === 'base64' ? '?format=base64' : '';
@@ -94,7 +116,7 @@ export function DistributeDrawer({
   }, [target, subBase, reveal, fmt]);
 
   async function copy() {
-    if (!realUrl) return;
+    if (!realUrl || !target?.enabled) return;
     try {
       await navigator.clipboard.writeText(realUrl);
       toast('已复制公开节点链接 · 可直接拿去其它客户端订阅');
@@ -114,7 +136,7 @@ export function DistributeDrawer({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <aside className="dist" role="dialog" aria-modal="true" aria-label="分发设置">
+      <aside ref={modalRef} className="dist" role="dialog" aria-modal="true" aria-label="分发设置">
         <header className="dist-head">
           <div className="dh-id">
             <span className="dh-ic">{target.kind === 'collection' ? '⊕' : '⇅'}</span>
@@ -130,23 +152,41 @@ export function DistributeDrawer({
 
         <div className="dist-access">
           <div>
-            <b>公开访问</b>
+            <b>来源状态</b>
             <span className="da-sub">
               {target.enabled
-                ? '开启中 · 任何持链接者都可订阅这组节点'
-                : '已停用 · 此链接当前对外 404'}
+                ? '已启用 · 可用于配置节点及分发链接'
+                : '已停用 · 节点不再供配置使用，分发链接也不可用'}
             </span>
           </div>
           <button
             type="button"
             className="switch"
-            aria-label="公开访问开关"
+            aria-label={target.kind === 'source' ? '启用订阅源' : '启用聚合'}
             aria-pressed={target.enabled}
             disabled={!onToggleEnabled || pending}
-            onClick={() => onToggleEnabled?.(!target.enabled)}
+            onClick={() => {
+              if (
+                target.enabled &&
+                !window.confirm(
+                  `停用${target.kind === 'source' ? '订阅源' : '聚合'}会影响节点使用与分发链接。${usage ? `涉及配置：${usage.profiles.map((p) => p.name).join('、') || '无当前绑定'}；聚合：${usage.collections.map((c) => c.name).join('、') || '无'}。` : '影响范围暂不可用，保存时仍会校验相关配置。'}确定停用？`,
+                )
+              )
+                return;
+              onToggleEnabled?.(!target.enabled);
+            }}
           />
         </div>
 
+        <p className="df-h" style={{ padding: '0 20px' }}>
+          {usage
+            ? `使用范围 · 配置：${usage.profiles.map((p) => p.name).join('、') || '无当前绑定'}；聚合：${usage.collections.map((c) => c.name).join('、') || '无当前成员关系'}`
+            : usageError
+              ? '影响范围暂不可用'
+              : '正在读取影响范围…'}
+          <br />
+          停用会改变配置中的可用节点；保存时会检查所有受影响配置。
+        </p>
         <div className={`dist-body${target.enabled ? '' : ' off'}`}>
           {/* P3-41: 去孤儿类 dist-fld(无 CSS 定义,纯 no-op 包裹) */}
           <div>
@@ -196,14 +236,19 @@ export function DistributeDrawer({
               </button>
             </div>
             <div className="dist-acts">
-              <button type="button" className="btn primary sm" onClick={copy} disabled={!realUrl}>
+              <button
+                type="button"
+                className="btn primary sm"
+                onClick={copy}
+                disabled={!realUrl || !target.enabled}
+              >
                 复制链接
               </button>
               <button
                 type="button"
                 className="btn sm"
                 onClick={() => realUrl && window.open(realUrl, '_blank', 'noopener')}
-                disabled={!realUrl}
+                disabled={!realUrl || !target.enabled}
               >
                 打开
               </button>

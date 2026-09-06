@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useId, useMemo, useState } from 'react';
 import { ApiError, api } from '@/lib/client/api';
-import { useUnsavedGuard } from '@/lib/client/useUnsavedGuard';
+import { useUnsavedGuard, navigateAfterSave } from '@/lib/client/useUnsavedGuard';
 import { PageTopbar } from '@/components/PageChrome';
 import { useProfiles } from '@/components/profile/ProfileContext';
 import { useToast } from '@/components/ui/Toast';
@@ -252,13 +252,6 @@ export default function ProfileDetailPage() {
           notes: notes.trim() ? notes.trim() : null,
         },
       });
-      // P1-8: if we just renamed the profile that's currently active, the
-      // `pm.active_profile` cookie still holds the OLD name → every scoped
-      // request (/base, /proxy-groups, /scenarios/*) would 404. Re-point the
-      // cookie at the new name so the scope stays consistent.
-      if (activeProfile?.id === id && res.data.name !== activeProfile.name) {
-        setActiveProfile(res.data.name);
-      }
       hydrate(res.data);
       void reloadSwitcher();
       setSaveMsg('已保存');
@@ -278,8 +271,6 @@ export default function ProfileDetailPage() {
     sourceKind,
     hydrate,
     reloadSwitcher,
-    activeProfile,
-    setActiveProfile,
   ]);
 
   const remove = useCallback(async () => {
@@ -291,7 +282,7 @@ export default function ProfileDetailPage() {
       // 删的是当前活动配置文件 → 清掉 cookie,免得后续作用域请求 404。
       if (activeProfile?.id === id) clearActiveProfile();
       void reloadSwitcher();
-      router.push('/profiles');
+      navigateAfterSave(() => router.push('/profiles'));
     } catch (e) {
       setError(e instanceof ApiError ? e.message : '删除失败');
       setDeleting(false);

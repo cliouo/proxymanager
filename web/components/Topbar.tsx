@@ -1,5 +1,15 @@
 'use client';
 
+import {
+  Children,
+  cloneElement,
+  isValidElement,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
+import { isProfileScopedPath } from '@/components/nav';
 import { usePathname } from 'next/navigation';
 import { useAssistant } from '@/components/assistant/AssistantContext';
 import { NavIcon } from '@/components/NavIcon';
@@ -38,7 +48,7 @@ export function ScopePill({ shared, neutral }: { shared?: boolean; neutral?: boo
   }
   if (!activeProfile) return null;
   return (
-    <span className="pill acc plain" title="正在编辑的配置文件">
+    <span className="pill acc plain" title={`正在编辑的配置文件 · ${activeProfile.name}`}>
       <span className="scope-prefix">配置 · </span>
       {activeProfile.name}
     </span>
@@ -58,8 +68,60 @@ export function Topbar({ onMenu }: { onMenu: () => void }) {
   const pathname = usePathname();
   const title = titleForPath(pathname);
   const assistant = useAssistant();
-  const { activeProfile } = useProfiles();
+  const { activeProfile, scopeConfirmed } = useProfiles();
   const chrome = usePageChrome();
+  const [compact, setCompact] = useState(false);
+  const menuRef = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    const mq = matchMedia('(max-width: 600px)');
+    const update = () => setCompact(mq.matches);
+    update();
+    mq.addEventListener('change', update);
+    const close = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node))
+        menuRef.current.open = false;
+    };
+    const key = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && menuRef.current?.open) {
+        menuRef.current.open = false;
+        menuRef.current.querySelector('summary')?.focus();
+      }
+    };
+    document.addEventListener('click', close);
+    document.addEventListener('keydown', key);
+    return () => {
+      mq.removeEventListener('change', update);
+      document.removeEventListener('click', close);
+      document.removeEventListener('keydown', key);
+    };
+  }, []);
+  function gated(actions: ReactNode) {
+    if (!isProfileScopedPath(pathname) || scopeConfirmed) return actions;
+    return Children.map(actions, (action) =>
+      isValidElement<{ disabled?: boolean }>(action)
+        ? cloneElement(action, { disabled: true })
+        : action,
+    );
+  }
+  const secondary = (
+    <>
+      {gated(chrome?.secondaryActions)}
+      <ThemeToggle />
+      <button
+        type="button"
+        className="ai-fab"
+        onClick={() => {
+          assistant.toggle();
+        }}
+        aria-label="配置助手"
+        aria-expanded={assistant.open}
+        disabled={!scopeConfirmed}
+      >
+        <NavIcon name="assistant" size={17} />
+        <span className="ai-label">配置助手</span>
+      </button>
+    </>
+  );
 
   const shared = SHARED_PREFIXES.some((p) => pathname.startsWith(p));
   // 管理/系统页(配置文件总览、AI 配置、API 文档)不挂作用域标签,避免暗示错误的归属。
@@ -73,39 +135,42 @@ export function Topbar({ onMenu }: { onMenu: () => void }) {
       <button type="button" className="btn ghost menu-btn" onClick={onMenu} aria-label="打开导航">
         <NavIcon name="menu" />
       </button>
-      {chrome?.topbar ?? (
-        <>
-          <h1>{title}</h1>
-          {/* P3-41: 去孤儿类 tb-scope(无 CSS 定义) */}
-          {shared ? (
-            <span className="pill ai plain" title="账户级共享资源 · 所有配置文件共用">
-              共享资源
-            </span>
-          ) : (
-            !managementOnly &&
-            activeProfile && (
-              <span className="pill acc plain" title="正在编辑的配置文件">
-                <span className="scope-prefix">配置 · </span>
-                {activeProfile.name}
+      <div className="topbar-title">
+        {chrome?.topbar ?? (
+          <>
+            <h1>{title}</h1>
+            {/* P3-41: 去孤儿类 tb-scope(无 CSS 定义) */}
+            {shared ? (
+              <span className="pill ai plain" title="账户级共享资源 · 所有配置文件共用">
+                共享资源
               </span>
-            )
-          )}
-          <div className="grow" />
-        </>
+            ) : (
+              !managementOnly &&
+              activeProfile && (
+                <span
+                  className="pill acc plain"
+                  title={`正在编辑的配置文件 · ${activeProfile.name}`}
+                >
+                  <span className="scope-prefix">配置 · </span>
+                  {activeProfile.name}
+                </span>
+              )
+            )}
+            <div className="grow" />
+          </>
+        )}
+      </div>
+      <div className="topbar-primary">{gated(chrome?.primaryAction)}</div>
+      {compact ? (
+        <details className="topbar-more" ref={menuRef}>
+          <summary className="btn ghost" aria-label="更多操作">
+            更多
+          </summary>
+          <div className="topbar-more-pop">{secondary}</div>
+        </details>
+      ) : (
+        <div className="topbar-secondary">{secondary}</div>
       )}
-      <ThemeToggle />
-      <button
-        type="button"
-        className="ai-fab"
-        onClick={assistant.toggle}
-        aria-label="配置助手"
-        aria-expanded={assistant.open}
-      >
-        <span className="spark">
-          <NavIcon name="assistant" size={17} />
-        </span>
-        <span className="ai-label">配置助手</span>
-      </button>
     </header>
   );
 }

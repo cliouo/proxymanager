@@ -1,8 +1,9 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { ApiError, api } from '@/lib/client/api';
 import type { ProxyGroup, ProxyGroupTemplate } from '@/schemas';
+import type { RuleSummary } from '@/lib/client/rule-summary';
 import type { RefSummary } from '../_components/GroupEditor';
 import {
   memberStat,
@@ -26,16 +27,12 @@ import type { SubscriptionLite } from './model';
  * failing the whole page.
  */
 
-interface RuleLite {
-  id: string;
-  policy: string;
-}
-
 export interface ProxyGroupsData {
   groups: ProxyGroup[];
   templates: ProxyGroupTemplate[];
   subs: SubscriptionLite[];
-  rules: RuleLite[];
+  ruleSummary: RuleSummary | null;
+  configVersion: number | null;
   ruleSets: { id: string }[];
   anchors: string[];
   nodeNames: string[];
@@ -54,7 +51,8 @@ export function useProxyGroupsData(): ProxyGroupsData {
   const [groups, setGroups] = useState<ProxyGroup[]>([]);
   const [templates, setTemplates] = useState<ProxyGroupTemplate[]>([]);
   const [subs, setSubs] = useState<SubscriptionLite[]>([]);
-  const [rules, setRules] = useState<RuleLite[]>([]);
+  const [ruleSummary, setRuleSummary] = useState<RuleSummary | null>(null);
+  const [configVersion, setConfigVersion] = useState<number | null>(null);
   const [ruleSets, setRuleSets] = useState<{ id: string }[]>([]);
   const [anchors, setAnchors] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -65,12 +63,13 @@ export function useProxyGroupsData(): ProxyGroupsData {
   const reload = useCallback(async () => {
     try {
       const [gs, ts, ss, rs] = await Promise.all([
-        api<{ data: ProxyGroup[] }>('/api/v1/proxy-groups'),
+        api<{ data: ProxyGroup[]; meta: { configVersion: number } }>('/api/v1/proxy-groups'),
         api<{ data: ProxyGroupTemplate[] }>('/api/v1/proxy-group-templates'),
         api<{ data: SubscriptionLite[] }>('/api/v1/subscriptions'),
-        api<{ data: RuleLite[] }>('/api/v1/rules'),
+        api<{ data: RuleSummary }>('/api/v1/rules/summary').catch(() => ({ data: null })),
       ]);
       setGroups(gs.data);
+      setConfigVersion(gs.meta.configVersion);
       setTemplates(ts.data);
       setSubs(
         ss.data.map((s) => ({
@@ -81,7 +80,7 @@ export function useProxyGroupsData(): ProxyGroupsData {
           tags: s.tags ?? [],
         })),
       );
-      setRules(rs.data.map((r) => ({ id: r.id, policy: r.policy })));
+      setRuleSummary(rs.data);
       setError(null);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
@@ -108,13 +107,7 @@ export function useProxyGroupsData(): ProxyGroupsData {
     reload();
   }, [reload]);
 
-  const ruleRefCount = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const r of rules) m.set(r.policy, (m.get(r.policy) ?? 0) + 1);
-    return m;
-  }, [rules]);
-
-  const refCount = useCallback((name: string) => ruleRefCount.get(name) ?? 0, [ruleRefCount]);
+  const refCount = useCallback((name: string) => ruleSummary ? ruleSummary.policies[name] ?? 0 : NaN, [ruleSummary]);
 
   const refSummaryFor = useCallback(
     (g: ProxyGroup): RefSummary => {
@@ -142,7 +135,8 @@ export function useProxyGroupsData(): ProxyGroupsData {
     groups,
     templates,
     subs,
-    rules,
+    ruleSummary,
+    configVersion,
     ruleSets,
     anchors,
     nodeNames,

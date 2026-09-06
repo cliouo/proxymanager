@@ -10,9 +10,11 @@
  * cards, the model's streaming Markdown, and a retryable error banner.
  */
 
+import { useModalSurface } from '@/lib/client/useModalSurface';
 import { useEffect, useRef, useState } from 'react';
 import type { ChatMessage } from '@/lib/ai/deepseek';
 import { api } from '@/lib/client/api';
+import { getProfileSessionId } from '@/lib/client/profile-session';
 import { AssistantNotConfiguredError, runAgentTurn } from '@/lib/client/assistantAgent';
 import { loadAssistantConfig } from '@/lib/client/assistant-config';
 import { useAssistant } from './AssistantContext';
@@ -93,7 +95,7 @@ interface Restored {
 function loadPersisted(): Restored | null {
   if (typeof window === 'undefined') return null;
   try {
-    const raw = window.localStorage.getItem(STORE_KEY);
+    const raw = window.localStorage.getItem(`${STORE_KEY}:${sessionStorage.getItem('pm.profileId') ?? 'unbound'}`);
     if (!raw) return null;
     const p = JSON.parse(raw) as Persisted;
     if (!p || !CID_RE.test(p.conversationId) || !Array.isArray(p.messages)) return null;
@@ -123,7 +125,7 @@ function persist(conversationId: string, messages: UiMessage[], convo: ChatMessa
   if (typeof window === 'undefined') return;
   const write = (msgs: UiMessage[], cv: ChatMessage[]) =>
     window.localStorage.setItem(
-      STORE_KEY,
+      `${STORE_KEY}:${sessionStorage.getItem('pm.profileId') ?? 'unbound'}`,
       JSON.stringify({
         conversationId,
         messages: msgs,
@@ -147,6 +149,8 @@ export function AssistantPanel() {
   // Open state now lives in context so the topbar `.ai-fab` can toggle the
   // drawer; the panel itself stays always-mounted (the stream survives close).
   const { open, setOpen } = useAssistant();
+  const modalRef = useRef<HTMLElement>(null);
+  useModalSurface(modalRef, open, () => setOpen(false));
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -413,6 +417,7 @@ export function AssistantPanel() {
       // error/abort it throws and we keep the prior transcript (so the failed
       // turn isn't persisted and a resend is clean).
       const next = await runAgentTurn({
+        profileId: getProfileSessionId(),
         priorMessages: convo,
         userMessage: message,
         signal: controller.signal,
@@ -486,7 +491,7 @@ export function AssistantPanel() {
   // in-flight stream keeps running in the background. The trigger lives in the
   // topbar (`.ai-fab`), wired through AssistantContext.
   return (
-    <aside className={`ai-drawer${open ? ' open' : ''}`} aria-hidden={!open}>
+    <aside ref={modalRef} aria-label="配置助手" className={`ai-drawer${open ? ' open' : ''}`} aria-hidden={!open}>
       <div className="ai-head">
         <div className="ident">✦</div>
         <div>

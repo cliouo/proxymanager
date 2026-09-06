@@ -8,12 +8,15 @@ import { browser } from "wxt/browser";
  * unlike fetch from a popup script running inside an https origin chain.
  */
 
+export interface BackendTarget { origin: string; profileId: string; profileName: string }
+export interface BackendProfile { id: string; name: string }
 export type Request =
+  | { type: "getProfiles" }
   | { type: "listDomains"; tabId: number }
   | { type: "listUrlsForDomain"; tabId: number; domain: string }
   | { type: "clearDomains"; tabId: number }
-  | { type: "getPolicies" }
-  | { type: "getAnchors" }
+  | { type: "getPolicies"; target: BackendTarget }
+  | { type: "getAnchors"; target: BackendTarget }
   | {
       type: "speedtestBatch";
       /**
@@ -27,6 +30,7 @@ export type Request =
     }
   | {
       type: "createRule";
+      target: BackendTarget;
       anchor: string;
       ruleType: "DOMAIN" | "DOMAIN-SUFFIX";
       value: string;
@@ -48,10 +52,11 @@ export type Request =
       subscriptionId: string;
       activation: string;
     }
-  | { type: "listRulesByAnchor"; anchor: string }
-  | { type: "deleteRule"; ruleId: string }
+  | { type: "listRulesByAnchor"; target: BackendTarget; anchor: string }
+  | { type: "deleteRule"; target: BackendTarget; ruleId: string }
   | {
       type: "createRulesBatch";
+      target: BackendTarget;
       rules: Array<{
         anchor: string;
         ruleType: "DOMAIN" | "DOMAIN-SUFFIX";

@@ -2,14 +2,15 @@ import { withProblemDetails } from '@/lib/http/handler';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { resolveScopeProfile } from '@/lib/profileScope';
 import { createProxyGroup, listProxyGroups } from '@/lib/services/proxyGroupService';
+import { versionedRead } from '@/lib/services/versionedRead';
 import { ProxyGroupCreateSchema } from '@/schemas';
 
 export const dynamic = 'force-dynamic';
 
 export const GET = withProblemDetails(async (request: Request) => {
   const { id: profileId } = await resolveScopeProfile(request);
-  const data = await listProxyGroups(profileId);
-  return Response.json({ data, meta: { total: data.length } });
+  const { data, configVersion } = await versionedRead(() => listProxyGroups(profileId));
+  return Response.json({ data, meta: { total: data.length, configVersion, profileId } });
 });
 
 export const POST = withProblemDetails(async (request: Request) => {

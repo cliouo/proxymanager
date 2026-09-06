@@ -3,16 +3,8 @@
 import { useEffect, useState } from 'react';
 import { ThemeToggle } from '@/components/theme/ThemeToggle';
 import { getAdminKey, setAdminKey } from '@/lib/client/auth-storage';
+import { safeNext } from '@/lib/client/safeNext';
 import styles from './login.module.css';
-
-/**
- * P3-30: only follow a `next` that is a same-origin absolute path. A raw
- * `next` (e.g. `//evil.com` or `https://evil.com`) would be an open redirect
- * that a phisher could point the login link at.
- */
-function safeNext(raw: string | null): string {
-  return raw && /^\/(?!\/)/.test(raw) ? raw : '/';
-}
 
 export default function LoginPage() {
   const [key, setKey] = useState('');
@@ -22,7 +14,7 @@ export default function LoginPage() {
   // P3-30: already authenticated → skip the form, go straight to the target.
   useEffect(() => {
     if (getAdminKey()) {
-      const next = safeNext(new URL(window.location.href).searchParams.get('next'));
+      const next = safeNext(new URL(window.location.href).searchParams.get('next'), window.location.origin);
       window.location.href = next;
     }
   }, []);
@@ -49,7 +41,7 @@ export default function LoginPage() {
       }
       setAdminKey(key.trim());
       const url = new URL(window.location.href);
-      window.location.href = safeNext(url.searchParams.get('next'));
+      window.location.href = safeNext(url.searchParams.get('next'), window.location.origin);
     } catch (err) {
       setError(err instanceof Error ? err.message : '未知错误');
     } finally {

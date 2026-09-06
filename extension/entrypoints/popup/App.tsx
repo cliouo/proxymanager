@@ -9,7 +9,8 @@ import {
   Input,
   Select,
 } from '@/components/ui';
-import { send, type BackendRule, type SpeedtestForDomain } from '@/lib/messages';
+import { targetFromSettings } from '@/lib/backend';
+import { send, type BackendProfile, type BackendRule, type SpeedtestForDomain } from '@/lib/messages';
 import {
   clearRecentWrites,
   getRecentWrites,
@@ -17,7 +18,7 @@ import {
   updateRecentWrite,
   type RecentWrite,
 } from '@/lib/recent-writes';
-import { getSettings, type Settings } from '@/lib/settings';
+import { getSettings, saveSettings, type Settings } from '@/lib/settings';
 
 interface ActiveTab {
   id: number;
@@ -32,6 +33,11 @@ interface ExtraResult {
 
 export default function PopupApp() {
   const [settings, setSettings] = useState<Settings | null>(null);
+  const [profiles, setProfiles] = useState<BackendProfile[]>([]);
+  const [targetPolicies, setTargetPolicies] = useState<string[]>([]);
+  const [targetAnchors, setTargetAnchors] = useState<string[]>([]);
+  const [targetReady, setTargetReady] = useState(false);
+  const profileSequence = useRef(0);
   const [tab, setTab] = useState<ActiveTab | null>(null);
   const [domains, setDomains] = useState<string[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -81,6 +87,15 @@ export default function PopupApp() {
     (async () => {
       const s = await getSettings();
       setSettings(s);
+      if (s.backendUrl && s.adminKey) {
+        try {
+          const available = await send<BackendProfile[]>({ type: 'getProfiles' });
+          setProfiles(available);
+          const profile = s.profileId ? available.find((p) => p.id === s.profileId) : available.find((p) => p.name === 'default');
+          if (profile) await bindProfile(s, profile);
+          else setError('请选择目标 Profile；当前选择不存在时不会自动回退。');
+        } catch (err) { setError(String(err)); }
+      }
 
       getRecentWrites().then(setRecentWrites).catch(() => undefined);
 
@@ -102,13 +117,31 @@ export default function PopupApp() {
     })().catch((err) => setError(err instanceof Error ? err.message : String(err)));
   }, []);
 
+  async function bindProfile(current: Settings, profile: BackendProfile) {
+    const seq = ++profileSequence.current;
+    setTargetReady(false); setTargetPolicies([]); setTargetAnchors([]);
+    setResults(null); setExtraResults([]); setSubmissions(new Map()); setBatchStatus({ kind: 'idle' });
+    const changed = current.profileId !== profile.id;
+    const next = { ...current, profileId: profile.id, profileName: profile.name, candidateGroups: changed ? [] : current.candidateGroups, defaultAnchor: changed ? '' : current.defaultAnchor };
+    setSettings(next);
+    try {
+      await saveSettings(next);
+      const target = targetFromSettings(next);
+      const [policies, anchors] = await Promise.all([send<string[]>({ type: 'getPolicies', target }), send<string[]>({ type: 'getAnchors', target })]);
+      if (seq !== profileSequence.current) return;
+      const verified = { ...next, candidateGroups: next.candidateGroups.filter((p) => policies.includes(p)), defaultAnchor: anchors.includes(next.defaultAnchor) ? next.defaultAnchor : '' };
+      setSettings(verified); await saveSettings(verified);
+      setTargetPolicies(policies); setTargetAnchors(anchors); setTargetReady(true); setError(null);
+    } catch (err) { if (seq === profileSequence.current) setError(String(err)); }
+  }
+
   const configured = useMemo(
     () =>
-      !!settings?.backendUrl &&
+      targetReady && !!settings?.backendUrl &&
       !!settings.adminKey &&
       !!settings.clashUrl &&
-      settings.candidateGroups.length > 0,
-    [settings],
+      settings.candidateGroups.length > 0 && targetAnchors.includes(settings.defaultAnchor),
+    [settings, targetReady, targetAnchors],
   );
 
   const toggle = useCallback((domain: string) => {
@@ -269,6 +302,7 @@ export default function PopupApp() {
     setBatchPending(true);
     setBatchStatus({ kind: 'idle' });
     try {
+      const target = targetFromSettings(settings);
       const res = await send<{
         outcomes: Array<
           | { status: 'ok'; ruleId: string }
@@ -276,6 +310,7 @@ export default function PopupApp() {
         >;
       }>({
         type: 'createRulesBatch',
+        target,
         rules: items.map(([, s]) => ({
           anchor: s.anchor,
           ruleType: s.ruleType,
@@ -295,6 +330,7 @@ export default function PopupApp() {
           okCount += 1;
           writtenCardIds.push(cardId);
           fresh.push({
+            target,
             id: crypto.randomUUID(),
             ts: Date.now(),
             anchor: s.anchor,
@@ -370,19 +406,6 @@ export default function PopupApp() {
     );
   }
 
-  if (!configured) {
-    return (
-      <main className="p-4 space-y-3">
-        <h1 className="text-sm font-semibold">ProxyManager</h1>
-        <p className="text-xs text-[var(--color-muted)]">
-          Set the backend URL, admin key, Clash controller URL and at least one candidate
-          proxy-group before using.
-        </p>
-        <Button onClick={() => browser.runtime.openOptionsPage()}>Open options</Button>
-      </main>
-    );
-  }
-
   return (
     <main className="p-3 space-y-3">
       <header className="flex items-start justify-between gap-3">
@@ -406,12 +429,35 @@ export default function PopupApp() {
         </button>
       </header>
 
+      {!configured && <Card><CardBody className="text-xs">请确认目标配置、锚点与候选策略。连接设置可在 <button onClick={() => browser.runtime.openOptionsPage()}>Options</button> 中修改。</CardBody></Card>}
       {error && (
         <Card className="border-[var(--color-danger)]/40">
           <CardBody className="text-xs text-[var(--color-danger)]">{error}</CardBody>
         </Card>
       )}
 
+        <Card>
+          <CardBody className="space-y-2">
+            <label className="text-xs">写入配置 · {settings?.profileName || '未选择'}</label>
+            <Select aria-label="写入 Profile" disabled={testing || batchPending || pasteTesting} value={settings?.profileId ?? ''} onChange={(e) => {
+              const profile = profiles.find((p) => p.id === e.target.value);
+              if (settings && profile) void bindProfile(settings, profile);
+            }}>
+              <option value="">请选择 Profile</option>
+              {profiles.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </Select>
+            {settings && targetReady && <>
+              <Select aria-label="目标锚点" value={settings.defaultAnchor} onChange={(e) => { const next = { ...settings, defaultAnchor: e.target.value }; setSettings(next); void saveSettings(next); }}>
+                <option value="">选择锚点</option>{targetAnchors.map((a) => <option key={a}>{a}</option>)}
+              </Select>
+              <label className="text-xs">候选策略（可多选）</label>
+              <select className="w-full" multiple aria-label="候选策略" value={settings.candidateGroups} onChange={(e) => {
+                const next = { ...settings, candidateGroups: [...e.target.selectedOptions].map((o) => o.value) }; setSettings(next); void saveSettings(next);
+              }}>{targetPolicies.map((policy) => <option key={policy}>{policy}</option>)}</select>
+            </>}
+            <p className="text-xs">规则写入此配置；客户端重载结果单独反馈。</p>
+          </CardBody>
+        </Card>
       {recentWrites.length > 0 && (
         <RecentWritesCard
           entries={recentWrites}
@@ -582,7 +628,7 @@ export default function PopupApp() {
             </span>
             <Button
               onClick={runTest}
-              disabled={testing || selected.size === 0}
+              disabled={!configured || testing || selected.size === 0}
               className="shrink-0"
             >
               {testing ? 'Testing…' : selected.size > 0 ? `Speedtest (${selected.size})` : 'Speedtest'}
@@ -606,7 +652,7 @@ export default function PopupApp() {
             />
             <Button
               type="submit"
-              disabled={pasteTesting || !pastedUrl.trim()}
+              disabled={!configured || pasteTesting || !pastedUrl.trim()}
               className="shrink-0"
             >
               {pasteTesting ? '…' : 'Test'}
@@ -788,7 +834,7 @@ function ResultCard({
     const seq = ++anchorFetchSeq.current;
     setExistingRules(null);
     const timer = window.setTimeout(() => {
-      send<BackendRule[]>({ type: 'listRulesByAnchor', anchor: trimmedAnchor })
+      send<BackendRule[]>({ type: 'listRulesByAnchor', anchor: trimmedAnchor, target: targetFromSettings(settings) })
         .then((rules) => {
           if (seq === anchorFetchSeq.current) setExistingRules(rules);
         })
@@ -797,7 +843,7 @@ function ResultCard({
         });
     }, 250);
     return () => window.clearTimeout(timer);
-  }, [trimmedAnchor]);
+  }, [trimmedAnchor, settings]);
 
   const covering = useMemo(
     () => (existingRules ? findCoveringRule(result.domain, ruleType, existingRules) : null),
@@ -896,8 +942,10 @@ function ResultCard({
     setPending(true);
     setDone(null);
     try {
+      const target = targetFromSettings(settings);
       const created = await send<{ id: string }>({
         type: 'createRule',
+        target,
         anchor: trimmedAnchor,
         ruleType,
         value: result.domain,
@@ -917,6 +965,7 @@ function ResultCard({
       }
 
       const entry: RecentWrite = {
+        target,
         id: crypto.randomUUID(),
         ts: Date.now(),
         anchor: trimmedAnchor,
@@ -1213,7 +1262,7 @@ function RecentWritesCard({
   const latest = entries[0];
 
   async function runUndo(entry: RecentWrite) {
-    if (!entry.ruleId || entry.undone) return;
+    if (!entry.ruleId || entry.undone || !entry.target) return;
     setPending((prev) => new Set(prev).add(entry.id));
     setErrors((prev) => {
       if (!prev.has(entry.id)) return prev;
@@ -1222,7 +1271,7 @@ function RecentWritesCard({
       return next;
     });
     try {
-      await send({ type: 'deleteRule', ruleId: entry.ruleId });
+      await send({ type: 'deleteRule', ruleId: entry.ruleId, target: entry.target });
 
       let reloaded = false;
       let reloadError: string | undefined;
@@ -1312,7 +1361,7 @@ function RecentWriteRow({
   onUndo: () => void;
 }) {
   const undone = !!entry.undone;
-  const canUndo = !!entry.ruleId && !undone;
+  const canUndo = !!entry.ruleId && !!entry.target && !undone;
   return (
     <div className="space-y-1">
       <div className="text-[11px] flex items-center gap-2 min-w-0">
@@ -1362,12 +1411,13 @@ function RecentWriteRow({
         ) : (
           <span
             className="shrink-0 text-[10px] text-[var(--color-muted)]/60"
-            title="Rule id not captured at write time — can't undo this entry"
+            title="原始目标或规则 ID 未记录，无法安全撤销"
           >
             —
           </span>
         )}
       </div>
+      <p className="text-[10px] text-[var(--color-muted)]" title={entry.target?.origin}>{entry.target ? `${entry.target.profileName} · ${entry.target.origin}` : '原始目标未记录，无法安全撤销'}</p>
       {error && (
         <p className="text-[10px] text-[var(--color-danger)] pl-3 truncate" title={error}>
           undo failed: {error}

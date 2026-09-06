@@ -1,8 +1,9 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useModalSurface } from '@/lib/client/useModalSurface';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiError, api } from '@/lib/client/api';
-import { useUnsavedGuard } from '@/lib/client/useUnsavedGuard';
+import { useUnsavedGuard, confirmUnsavedChanges } from '@/lib/client/useUnsavedGuard';
 import { PageTopbar } from '@/components/PageChrome';
 import { ScopePill } from '@/components/Topbar';
 import { CodeEditor } from '@/components/ui/CodeEditor';
@@ -76,10 +77,12 @@ export default function BasePage() {
   const [validation, setValidation] = useState<ValidationResult | null>(null);
   const [busy, setBusy] = useState<'save' | 'validate' | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [reading, setReading] = useState(true);
   const [inspOpen, setInspOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoadError(null);
+    setReading(true);
     try {
       const res = await api<{ data: BaseData }>('/api/v1/base');
       setData(res.data);
@@ -110,6 +113,7 @@ export default function BasePage() {
       }
     } finally {
       setLoaded(true);
+      setReading(false);
     }
   }, []);
 
@@ -158,13 +162,14 @@ export default function BasePage() {
     try {
       const headers: Record<string, string> = {};
       if (etag) headers['If-Match'] = `"${etag}"`;
-      await api('/api/v1/base', {
+      const res = await api<{ data: Omit<BaseData, 'content'> }>('/api/v1/base', {
         method: 'PUT',
         body: { content },
         headers,
       });
       setStatus({ kind: 'success', message: '已保存' });
-      await load();
+      setData({ ...res.data, content });
+      setEtag(res.data.etag);
     } catch (err) {
       const { message, issues } = errorDetail(err);
       setStatus({ kind: 'error', message });
@@ -179,14 +184,14 @@ export default function BasePage() {
     } finally {
       setBusy(null);
     }
-  }, [content, etag, load]);
+  }, [content, etag]);
 
   // ⌘S / Ctrl+S 保存 —— 由 CodeEditor 内部的 CodeMirror keymap 触发(Prec.high
   // + preventDefault),页面不再挂自己的 keydown 监听,保证只触发一次;
   // busy / dirty 守卫保持与旧 textarea 监听一致。
   const onEditorSave = useCallback(() => {
-    if (busy === null && dirty) onSave();
-  }, [busy, dirty, onSave]);
+    if (!reading && !loadError && busy === null && dirty) onSave();
+  }, [busy, dirty, onSave, reading, loadError]);
 
   return (
     <div className={styles.workbench}>
@@ -205,10 +210,10 @@ export default function BasePage() {
           {loaded ? ` · ${lineCount} 行` : ''}
         </span>
         <div className="grow" />
-        <button className="btn" onClick={onValidate} disabled={busy !== null}>
+        <button className="btn" onClick={onValidate} disabled={reading || busy !== null}>
           {busy === 'validate' ? '校验中…' : '校验'}
         </button>
-        <button className="btn primary" onClick={onSave} disabled={busy !== null || !dirty}>
+        <button className="btn primary" onClick={onSave} disabled={reading || !!loadError || busy !== null || !dirty}>
           {busy === 'save' ? '保存中…' : '保存'}{' '}
           <span className="kbd" style={{ background: 'rgba(0,0,0,.2)', color: 'var(--accent-on)' }}>
             ⌘S
@@ -254,6 +259,7 @@ export default function BasePage() {
             }`}
           >
             {loadError ?? status?.message}
+            {(loadError || status?.kind === 'error') && <button className="btn sm" disabled={reading || busy !== null} onClick={() => { if (confirmUnsavedChanges()) void load(); }}>重新读取远端</button>}
           </div>
         )}
 
@@ -262,6 +268,7 @@ export default function BasePage() {
         <div className={styles.editorFill}>
           <CodeEditor
             value={content}
+            readOnly={reading}
             onChange={setContent}
             onSave={onEditorSave}
             dirty={dirty}
@@ -292,12 +299,14 @@ function Inspector({
   open: boolean;
   onClose: () => void;
 }) {
+  const modalRef = useRef<HTMLElement>(null);
+  useModalSurface(modalRef, open, onClose, '(max-width: 960px)');
   const anchors = validation?.anchors.length ? validation.anchors : (data?.anchors ?? []);
   const policies = validation?.policies.length ? validation.policies : (data?.policies ?? []);
   const orphans = validation?.orphans ?? [];
 
   return (
-    <aside className={`${styles.inspector}${open ? ` ${styles.open}` : ''}`}>
+    <aside ref={modalRef} aria-label="锚点与检查" className={`${styles.inspector}${open ? ` ${styles.open}` : ''}`}>
       <button className={`btn ghost sm ${styles.inspClose}`} onClick={onClose}>
         关闭
       </button>

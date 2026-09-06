@@ -1,7 +1,8 @@
 'use client';
 
+import { useModalSurface } from '@/lib/client/useModalSurface';
 import Link from 'next/link';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ApiError, api } from '@/lib/client/api';
 import { copyText } from '@/lib/client/clipboard';
 import { PageTopbar } from '@/components/PageChrome';
@@ -39,35 +40,47 @@ export default function ConfigPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [tab, setTab] = useState<Tab>('yaml');
   const [inspOpen, setInspOpen] = useState(false);
+  const modalRef = useRef<HTMLElement>(null);
+  useModalSurface(modalRef, inspOpen, () => setInspOpen(false), '(max-width: 900px)');
   const [urlRevealed, setUrlRevealed] = useState(false);
+  const [generatedAt, setGeneratedAt] = useState<string | null>(null);
+  const [copyError, setCopyError] = useState<string | null>(null);
+  const generation = useRef(0);
 
   const load = useCallback(
     async (opts?: { silent?: boolean }) => {
+      const seq = ++generation.current;
+      setRefreshing(true);
       if (!opts?.silent) setLoadError(null);
       try {
         const [previewRes, metaRes] = await Promise.all([
           api<{ data: PreviewData }>(`/api/v1/preview/${encodeURIComponent(activeName)}`),
           api<{ data: Meta }>('/api/v1/meta').catch(() => null),
         ]);
+        if (seq !== generation.current) return;
         setPreview(previewRes.data);
-        if (metaRes) setMeta(metaRes.data);
+        setGeneratedAt(new Date().toLocaleString());
+        setMeta(metaRes?.data ?? null);
         setLoadError(null);
       } catch (err) {
+        if (seq !== generation.current) return;
         if (err instanceof ApiError && err.status === 404) {
-          setPreview(null);
           setLoadError('尚未设置基础配置。先填写端口、DNS 等基础内容，才能生成完整配置。');
         } else {
           setLoadError(err instanceof Error ? err.message : String(err));
         }
       } finally {
-        setLoaded(true);
+        if (seq === generation.current) { setLoaded(true); setRefreshing(false); }
       }
     },
     [activeName],
   );
 
   useEffect(() => {
-    load();
+    setPreview(null); setMeta(null); setLoaded(false); setGeneratedAt(null);
+    void load();
+    const activeGeneration = generation;
+    return () => { activeGeneration.current++; };
   }, [load]);
 
   // 实时反映：从规则页 / 结构页改完切回来时自动拉最新渲染结果。
@@ -80,12 +93,12 @@ export default function ConfigPage() {
   }, [load]);
 
   const refresh = useCallback(async () => {
-    setRefreshing(true);
     await load();
-    setRefreshing(false);
   }, [load]);
 
   const content = preview?.content ?? '';
+  const ready = loaded && !refreshing && !loadError && !!content;
+  const stale = !!preview && (!!loadError || refreshing);
   // 渲染产物可能几 MB —— 行数 / 字节数只在内容变化时算一次
   const { lineCount, byteLen } = useMemo(
     () => ({
@@ -107,27 +120,29 @@ export default function ConfigPage() {
   const needsBase = loadError?.startsWith('尚未设置基础配置') ?? false;
 
   async function copyConfig() {
-    if (!content) return;
+    if (!ready) return;
     // P3-31: don't flash "已复制" when the clipboard write actually failed.
-    if (!(await copyText(content))) return;
+    if (!(await copyText(content))) { setCopyError('无法复制，请下载 YAML 或手动选择内容复制。'); return; }
+    setCopyError(null);
     setCopied('config');
     setTimeout(() => setCopied(null), 1500);
   }
 
   async function copyUrl() {
-    if (isTemplate || !subUrl) return;
-    if (!(await copyText(subUrl))) return;
+    if (!ready || isTemplate || !subUrl) return;
+    if (!(await copyText(subUrl))) { setCopyError('无法复制订阅地址，请重试。'); return; }
+    setCopyError(null);
     setCopied('url');
     setTimeout(() => setCopied(null), 1500);
   }
 
-  function download() {
-    if (!content) return;
+  function download(lastSuccessful = false) {
+    if (!content || (!lastSuccessful && !ready)) return;
     const blob = new Blob([content], { type: 'text/yaml;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${activeName}.yaml`;
+    a.download = `${activeName}${lastSuccessful ? `-last-success-${preview?.build_id.slice(0, 8)}` : ''}.yaml`;
     a.click();
     URL.revokeObjectURL(url);
   }
@@ -152,10 +167,10 @@ export default function ConfigPage() {
           </div>
           <div className={styles.readinessCopy}>
             <h2>
-              {!loaded
+              {refreshing
                 ? '正在生成配置'
                 : loadError
-                  ? '配置暂不可用'
+                  ? preview ? '上次成功版本，最新检查失败' : '配置暂不可用'
                   : isTemplate
                     ? '模版预览已就绪'
                     : '配置已就绪'}
@@ -185,17 +200,22 @@ export default function ConfigPage() {
             >
               {refreshing ? '检查中…' : '重新检查'}
             </button>
-            <button className="btn" onClick={download} disabled={!content}>
+            <button className="btn" onClick={() => download()} disabled={!ready}>
               下载 YAML
             </button>
             {!isTemplate && (
-              <button className="btn primary" onClick={copyUrl} disabled={!subUrl || !!loadError}>
+              <button className="btn primary" onClick={copyUrl} disabled={!ready || !subUrl}>
                 {copied === 'url' ? '地址已复制' : '复制订阅地址'}
               </button>
             )}
           </div>
         </section>
 
+        {stale && <div role="status" className="panel" style={{ padding: 12 }}>
+          当前显示上次成功版本 · {activeName} · {generatedAt} · build {preview?.build_id.slice(0, 8)}
+          <button className="btn sm" onClick={() => download(true)}>导出上次成功版本</button>
+        </div>}
+        {copyError && <p role="alert">{copyError}</p>}
         <div className={styles.bar}>
           <div className="tabs" role="tablist" aria-label="配置预览视图">
             <button
@@ -218,7 +238,7 @@ export default function ConfigPage() {
           <div className={styles.barGrow} />
           <span className={styles.note}>只读预览，修改请前往对应配置页面</span>
           {tab === 'yaml' && (
-            <button className="btn sm" onClick={copyConfig} disabled={!content}>
+            <button className="btn sm" onClick={copyConfig} disabled={!ready}>
               {copied === 'config' ? 'YAML 已复制' : '复制 YAML'}
             </button>
           )}
@@ -231,7 +251,7 @@ export default function ConfigPage() {
           <div className={`codebox ${styles.code}`}>
             {!loaded ? (
               <div className={styles.loadingState}>正在组合最终配置…</div>
-            ) : loadError ? (
+            ) : loadError && !preview ? (
               <div className={styles.emptyState}>
                 <span className={styles.emptyMark}>!</span>
                 <div>
@@ -253,7 +273,7 @@ export default function ConfigPage() {
             <section className={styles.summaryCard}>
               <div className={styles.summaryHead}>
                 <div>
-                  <h2>本次生成结果</h2>
+                  <h2>{stale ? '上次成功生成结果' : '本次生成结果'}</h2>
                   <p>
                     {isTemplate
                       ? '这些数据用于检查模版内容，不代表存在可分发的订阅地址。'
@@ -301,11 +321,11 @@ export default function ConfigPage() {
 
       <button
         type="button"
-        className={`${styles.inspectorScrim}${inspOpen ? ` ${styles.open}` : ''}`}
+        data-modal-backdrop className={`${styles.inspectorScrim}${inspOpen ? ` ${styles.open}` : ''}`}
         onClick={() => setInspOpen(false)}
         aria-label="关闭检查详情"
       />
-      <aside
+      <aside ref={modalRef}
         className={`${styles.inspector}${inspOpen ? ` ${styles.open}` : ''}`}
         aria-label="配置检查详情"
       >
@@ -374,7 +394,7 @@ export default function ConfigPage() {
                 {urlRevealed ? '隐藏' : '显示'}
               </button>
             </div>
-            <button className={`btn primary ${styles.copyUrl}`} onClick={copyUrl}>
+            <button className={`btn primary ${styles.copyUrl}`} onClick={copyUrl} disabled={!ready || !subUrl}>
               {copied === 'url' ? '地址已复制' : '复制订阅地址'}
             </button>
             <p className={styles.credentialHint}>持有此地址即可拉取配置，请按访问凭证保管。</p>

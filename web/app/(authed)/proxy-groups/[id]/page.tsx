@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ApiError, api } from '@/lib/client/api';
-import { useUnsavedGuard } from '@/lib/client/useUnsavedGuard';
+import { useUnsavedGuard, navigateWithUnsavedGuard, navigateAfterSave } from '@/lib/client/useUnsavedGuard';
 import { PageTopbar } from '@/components/PageChrome';
 import type { ProxyGroup } from '@/schemas';
 import { GroupEditor } from '../_components/GroupEditor';
@@ -120,7 +120,7 @@ export default function ProxyGroupDetailPage() {
     setError(null);
     try {
       await api(`/api/v1/proxy-groups/${group.id}`, { method: 'DELETE' });
-      router.push('/proxy-groups');
+      navigateAfterSave(() => router.push('/proxy-groups'));
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
       setBusy(false);
@@ -201,7 +201,7 @@ export default function ProxyGroupDetailPage() {
         refSummary={refSummary}
         busy={busy}
         onSubmit={onSubmit}
-        onCancel={() => router.push('/proxy-groups')}
+        onCancel={() => navigateWithUnsavedGuard(() => router.push('/proxy-groups'))}
         dangerZone={
           <section className={`panel ${styles.dangerZone}`}>
             <div className={`panel-head ${styles.panelHead}`}>

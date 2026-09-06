@@ -92,7 +92,7 @@ export default function DevicesPage() {
         api<{ data: DeviceRecord[] }>(`/api/v1/profiles/${activeProfile.id}/devices`),
         api<{ data: { subBase: string } }>('/api/v1/meta').catch(() => null),
         api<{ data: { legacy: LegacyTailscale } }>(
-          `/api/v1/scenarios/tailscale?profile=${encodeURIComponent(activeProfile.name)}`,
+          `/api/v1/scenarios/tailscale?profileId=${encodeURIComponent(activeProfile.id)}`,
         ).catch(() => null),
       ]);
       if (requestId !== requestSequence.current) return;

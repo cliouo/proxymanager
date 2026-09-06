@@ -24,6 +24,7 @@ import { BackendError } from '../../../extension/lib/backend';
 const ID = '11111111-1111-4111-8111-111111111111';
 const EXTENSION_ID = 'abcdefghijklmnopabcdefghijklmnop';
 const SETTINGS = {
+  profileId: '', profileName: '',
   backendUrl: 'https://pm.example/app',
   adminKey: 'sentinel-admin',
   clashUrl: '',

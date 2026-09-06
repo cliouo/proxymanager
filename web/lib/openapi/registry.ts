@@ -1,3 +1,5 @@
+import { ProxyGroupReorderSchema, RuleMoveSchema } from '@/schemas/reorder';
+import { ProxyGroupSchema } from '@/schemas/proxyGroup';
 import { OpenAPIRegistry } from '@asteasolutions/zod-to-openapi';
 import { z } from './zod';
 
@@ -648,3 +650,215 @@ registry.registerPath({
     200: { description: 'Snapshot, or null when never rendered' },
   },
 });
+
+// Stable profile IDs are the preferred editing contract. Cookie/name scope is
+// retained only for compatibility with clients predating explicit ID support.
+const ProfileScopeQuery = z.object({
+  profileId: z
+    .uuid()
+    .optional()
+    .describe('Stable editing profile ID. Invalid/missing records never fall back to default.'),
+  profile: z
+    .string()
+    .min(1)
+    .optional()
+    .describe('Legacy profile name. When ID is also supplied both must identify the same profile.'),
+});
+const versionMeta = z.object({
+  profileId: z.uuid(),
+  configVersion: z.number().int().nonnegative(),
+});
+const countMap = z.record(z.string(), z.number().int().nonnegative());
+const ruleSummary = z.object({
+  total: z.number(),
+  active: z.number(),
+  disabled: z.number(),
+  policies: countMap,
+  ruleSets: countMap,
+  anchors: z.record(z.string(), z.object({ total: z.number(), active: z.number() })),
+});
+registry.register('ProxyGroupReorder', ProxyGroupReorderSchema);
+registry.register('RuleMove', RuleMoveSchema);
+registry.register('RuleSummary', ruleSummary);
+registry.registerPath({
+  method: 'get',
+  path: '/api/v1/meta',
+  summary: 'Instance and profile metadata',
+  request: { query: ProfileScopeQuery },
+  responses: {
+    200: {
+      description: 'Includes profile ID capability; available before a default base exists.',
+      content: {
+        'application/json': {
+          schema: z.object({
+            data: z.object({
+              capabilities: z.object({ profileIdScope: z.literal(true) }),
+              hasBase: z.boolean(),
+              subBase: z.string(),
+              subscriptionUrl: z.string(),
+              buildId: z.string().nullable(),
+            }),
+          }),
+        },
+      },
+    },
+    400: { description: 'Invalid or conflicting explicit profile scope' },
+    404: { description: 'Explicit profile missing' },
+  },
+});
+registry.registerPath({
+  method: 'get',
+  path: '/api/v1/rules',
+  summary: 'Page rules in a stable config snapshot',
+  request: {
+    query: ProfileScopeQuery.extend({
+      limit: z.coerce.number().min(1).max(500).optional(),
+      offset: z.coerce.number().min(0).optional(),
+      q: z.string().optional().describe('Search value, note and options'),
+      anchor: z.string().optional(),
+      policy: z.string().optional(),
+      type: z.string().optional(),
+      enabled: z.enum(['true', 'false']).optional(),
+      sort: z.string().optional(),
+    }),
+  },
+  responses: {
+    200: {
+      description: 'Filtered page with stable ID tie-breaking',
+      content: {
+        'application/json': {
+          schema: z.object({
+            data: z.array(RuleSchema),
+            meta: versionMeta.extend({ total: z.number(), limit: z.number(), offset: z.number() }),
+          }),
+        },
+      },
+    },
+    412: { description: 'Concurrent changes prevented a stable read; retry' },
+  },
+});
+registry.registerPath({
+  method: 'get',
+  path: '/api/v1/rules/summary',
+  summary: 'Complete rule counts for the current profile',
+  request: { query: ProfileScopeQuery },
+  responses: {
+    200: {
+      description: 'Includes all rules regardless of page limit, including disabled references',
+      content: {
+        'application/json': { schema: z.object({ data: ruleSummary, meta: versionMeta }) },
+      },
+    },
+    412: { description: 'Concurrent changes prevented a stable read' },
+  },
+});
+registry.registerPath({
+  method: 'post',
+  path: '/api/v1/rules/batch',
+  summary: 'Apply distinct rule operations in one final candidate',
+  description:
+    'Repeated update/delete IDs reject the entire batch with 422 before preflight, storage or audit. Merge fields into one patch. Distinct IDs retain 200/207 semantics.',
+  request: {
+    query: ProfileScopeQuery,
+    body: { required: true, content: { 'application/json': { schema: BatchRequestSchema } } },
+  },
+  responses: {
+    200: {
+      description: 'All operations applied',
+      content: { 'application/json': { schema: BatchResponseSchema } },
+    },
+    207: { description: 'Per-operation results; successful candidates committed together' },
+    422: { description: 'Duplicate IDs or final configuration invalid' },
+    412: { description: 'Concurrent modification; no candidate writes applied' },
+  },
+});
+registry.registerPath({
+  method: 'get',
+  path: '/api/v1/proxy-groups',
+  summary: 'Read all profile groups with a stable configuration version',
+  request: { query: ProfileScopeQuery },
+  responses: {
+    200: {
+      description: 'Group order and version for atomic reorder',
+      content: {
+        'application/json': {
+          schema: z.object({
+            data: z.array(ProxyGroupSchema),
+            meta: versionMeta.extend({ total: z.number() }),
+          }),
+        },
+      },
+    },
+    412: { description: 'Concurrent changes prevented a stable read' },
+  },
+});
+registry.registerPath({
+  method: 'post',
+  path: '/api/v1/proxy-groups/reorder',
+  summary: 'Atomically reorder every group in a profile',
+  description:
+    'orderedIds must contain the full profile group set exactly once. Validates the final rendered config, commits once with CAS, and records one non-undoable audit.',
+  request: {
+    query: ProfileScopeQuery,
+    body: { required: true, content: { 'application/json': { schema: ProxyGroupReorderSchema } } },
+  },
+  responses: {
+    200: {
+      description: 'Complete new group order',
+      content: { 'application/json': { schema: z.object({ data: z.array(ProxyGroupSchema) }) } },
+    },
+    412: { description: 'Stale version; order unchanged' },
+    422: { description: 'Invalid ID set or final configuration' },
+  },
+});
+registry.registerPath({
+  method: 'post',
+  path: '/api/v1/rules/{id}/move',
+  summary: 'Move a rule against its true anchor neighbor across pages',
+  request: {
+    query: ProfileScopeQuery,
+    params: z.object({ id: z.uuid() }),
+    body: { required: true, content: { 'application/json': { schema: RuleMoveSchema } } },
+  },
+  responses: {
+    200: {
+      description: 'Complete new same-anchor sequence (no-op at the edge)',
+      content: { 'application/json': { schema: z.object({ data: z.array(RuleSchema) }) } },
+    },
+    404: { description: 'Rule not in this profile' },
+    412: { description: 'Stale version; order unchanged' },
+    422: { description: 'Invalid final configuration or MATCH terminal violation' },
+  },
+});
+for (const resource of ['subscriptions', 'collections'])
+  registry.registerPath({
+    method: 'get',
+    path: `/api/v1/${resource}/{id}/usage`,
+    summary: 'Read safe source usage relationships',
+    request: { params: z.object({ id: z.uuid() }) },
+    responses: {
+      200: {
+        description: 'Profile and collection names/IDs only; no source credentials',
+        content: {
+          'application/json': {
+            schema: z.object({
+              data: z.object({
+                profiles: z.array(z.object({ id: z.uuid(), name: z.string() })),
+                collections: z.array(z.object({ id: z.uuid(), name: z.string() })),
+              }),
+              meta: z.object({ configVersion: z.number() }),
+            }),
+          },
+        },
+      },
+      404: { description: 'Source missing' },
+      412: { description: 'Concurrent changes prevented a stable read' },
+    },
+  });
+for (const definition of registry.definitions) {
+  if (definition.type !== 'route') continue;
+  const route = definition.route;
+  if (!/^\/api\/v1\/(?:base|anchors|policies|rule-sets|resolved-snapshot)(?:\/|$)/.test(route.path))
+    continue;
+  route.request = { ...route.request, query: ProfileScopeQuery };
+}

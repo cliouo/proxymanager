@@ -41,7 +41,7 @@ function valueToSource(v: string): ProfileSource {
 }
 
 export function ProfileBindingBar() {
-  const { activeProfile, reload } = useProfiles();
+  const { activeProfile, reload, scopeConfirmed } = useProfiles();
   const [subs, setSubs] = useState<SubLite[]>([]);
   const [collections, setCollections] = useState<Collection[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -77,7 +77,7 @@ export function ProfileBindingBar() {
   }, [load]);
 
   const change = async (value: string) => {
-    if (!profile || busy) return;
+    if (!profile || busy || !scopeConfirmed) return;
     const next = valueToSource(value);
     setPendingSource(next);
     setBusy(true);
@@ -130,7 +130,7 @@ export function ProfileBindingBar() {
         style={{ width: 256, flex: 'none' }}
         value={sourceToValue(source)}
         onChange={(e) => change(e.target.value)}
-        disabled={busy}
+        disabled={busy || !scopeConfirmed}
       >
         <option value={NONE_VALUE}>未绑定(不注入订阅节点)</option>
         {subs.length > 0 && (
@@ -153,7 +153,7 @@ export function ProfileBindingBar() {
           </optgroup>
         )}
       </select>
-      <span className={styles.summary}>{summary}</span>
+      <span className={styles.summary}>{summary} · 选择立即保存，YAML 需单独保存</span>
       {collections.length === 0 && (
         <span className={styles.hintRight}>
           想合并多个机场?到「订阅源 › 聚合订阅」建一个再来选

@@ -1,3 +1,4 @@
+import { resolveScopeProfile } from '@/lib/profileScope';
 import { renderProfileConfig } from '@/lib/engine/renderCache';
 import { withProblemDetails } from '@/lib/http/handler';
 
@@ -9,7 +10,9 @@ export const maxDuration = 60;
 type Ctx = RouteContext<'/api/v1/preview/[profile]'>;
 
 export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
-  const { profile } = await ctx.params;
+  const { profile: pathProfile } = await ctx.params;
+  const profile = new URL(request.url).searchParams.has('profileId')
+    ? (await resolveScopeProfile(request)).name : pathProfile;
   // Any profile renders by name — renderProfileConfig binds its source and
   // 404s an unknown name (see lib/engine/renderCache).
   const origin = new URL(request.url).origin;
