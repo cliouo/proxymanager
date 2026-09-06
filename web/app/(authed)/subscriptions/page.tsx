@@ -6,6 +6,7 @@ import { DistributeDrawer, type DistributeTarget } from '@/components/Distribute
 import { PageTopbar } from '@/components/PageChrome';
 import { ScopePill } from '@/components/Topbar';
 import { CodeEditor } from '@/components/ui/CodeEditor';
+import { useUnsavedGuard, confirmUnsavedChanges } from '@/lib/client/useUnsavedGuard';
 import { ApiError, api } from '@/lib/client/api';
 import { useToast } from '@/components/ui/Toast';
 import { type Collection } from '@/lib/types/collection';
@@ -137,7 +138,7 @@ export default function SubscriptionsPage() {
   );
   const guardPageAction = useCallback(
     (action: () => void): boolean => {
-      if (pageMutationIsActive()) return false;
+      if (pageMutationIsActive() || !confirmUnsavedChanges()) return false;
       action();
       return true;
     },
@@ -146,6 +147,7 @@ export default function SubscriptionsPage() {
   const handleTablistKey = useCallback(
     (e: React.KeyboardEvent<HTMLDivElement>) => {
       if (pageMutationIsActive()) return;
+      if (['ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(e.key) && !confirmUnsavedChanges()) return;
       if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
         e.preventDefault();
         const dir = e.key === 'ArrowRight' ? 1 : -1;
@@ -471,6 +473,7 @@ export default function SubscriptionsPage() {
             ? '沿用缓存下发中'
             : '公开分发中';
       return {
+        id: s.id,
         kind: 'source',
         name: s.display_name || s.name,
         pathSeg: s.name,
@@ -482,6 +485,7 @@ export default function SubscriptionsPage() {
     const c = collections.find((x) => x.id === dist.id);
     if (!c) return null;
     return {
+      id: c.id,
       kind: 'collection',
       name: c.name,
       pathSeg: c.slug ?? c.id,
@@ -1209,6 +1213,8 @@ function CollectionForm({
   const [notes, setNotes] = useState(initial?.notes ?? '');
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [draftBaseline] = useState(() => JSON.stringify([name, slug, enabled, [...selected].sort(), tagsInput, notes]));
+  useUnsavedGuard(JSON.stringify([name, slug, enabled, [...selected].sort(), tagsInput, notes]) !== draftBaseline);
 
   const tagList = useMemo(
     () =>
@@ -1432,7 +1438,7 @@ function CollectionForm({
             <button type="submit" className="btn primary" disabled={pending || !name}>
               {pending ? '…' : initial ? '保存' : '创建'}
             </button>
-            <button type="button" className="btn" onClick={onCancel} disabled={pending}>
+            <button type="button" className="btn" onClick={() => { if (confirmUnsavedChanges()) onCancel(); }} disabled={pending}>
               取消
             </button>
           </div>
@@ -2117,6 +2123,8 @@ function AddForm({
   const [policy, setPolicy] = useState<'use-stale-cache' | 'fail-closed'>('use-stale-cache');
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [draftBaseline] = useState(() => JSON.stringify([kind, name, displayName, url, content, ua, tagsInput, ttlSec, enabled, policy]));
+  useUnsavedGuard(JSON.stringify([kind, name, displayName, url, content, ua, tagsInput, ttlSec, enabled, policy]) !== draftBaseline);
 
   useEffect(() => {
     aliveRef.current = true;
@@ -2384,7 +2392,7 @@ function AddForm({
         <button
           type="button"
           className="btn"
-          onClick={() => guardAddFormAction(onCancel)}
+          onClick={() => guardAddFormAction(() => { if (confirmUnsavedChanges()) onCancel(); })}
           disabled={operationBusy || pending}
         >
           取消
@@ -2420,6 +2428,8 @@ function EditForm({
   );
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [draftBaseline] = useState(() => JSON.stringify([displayName, url, content, ua, tagsInput, ttlSec, enabled, policy]));
+  useUnsavedGuard(JSON.stringify([displayName, url, content, ua, tagsInput, ttlSec, enabled, policy]) !== draftBaseline);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -2604,7 +2614,7 @@ function EditForm({
         <button type="submit" className="btn primary" disabled={pending}>
           {pending ? '保存中…' : '保存'}
         </button>
-        <button type="button" className="btn" onClick={onCancel} disabled={pending}>
+        <button type="button" className="btn" onClick={() => { if (confirmUnsavedChanges()) onCancel(); }} disabled={pending}>
           取消
         </button>
       </div>

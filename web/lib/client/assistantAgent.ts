@@ -166,12 +166,13 @@ async function streamModelTurn(
   return { content, reasoning, toolCalls, streamed, aborted };
 }
 
-async function dispatch(name: string, rawInput: unknown, signal?: AbortSignal): Promise<ToolDispatchResult> {
+async function dispatch(name: string, rawInput: unknown, profileId: string, signal?: AbortSignal): Promise<ToolDispatchResult> {
   try {
-    if (isClientTool(name)) return await runClientTool(name, rawInput);
+    if (isClientTool(name)) return await runClientTool(name, rawInput, profileId);
     const res = await api<{ data: ToolDispatchResult }>('/api/v1/assistant/tool', {
       method: 'POST',
       body: { name, input: rawInput },
+      profileId,
       signal,
     });
     return res.data;
@@ -209,6 +210,7 @@ function finishInterrupted(
  * (see finishInterrupted), so the persisted convo == what the model sees next.
  */
 export async function runAgentTurn(opts: {
+  profileId: string;
   priorMessages: ChatMessage[];
   userMessage: string;
   signal?: AbortSignal;
@@ -267,7 +269,7 @@ export async function runAgentTurn(opts: {
       } catch {
         /* malformed args → dispatch surfaces a validation error */
       }
-      const result = await dispatch(call.function.name, rawInput, opts.signal);
+      const result = await dispatch(call.function.name, rawInput, opts.profileId, opts.signal);
       opts.onEvent({
         type: 'component',
         id: call.id,

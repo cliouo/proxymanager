@@ -1,4 +1,5 @@
 import { clearAdminKey, getAdminKey } from './auth-storage';
+import { scopeRequest } from './profile-session';
 
 export class ApiError extends Error {
   constructor(
@@ -50,6 +51,7 @@ function formatProblemErrors(errors: unknown): string | undefined {
 }
 
 export interface ApiOptions extends Omit<RequestInit, 'body' | 'headers'> {
+  profileId?: string;
   body?: unknown;
   headers?: Record<string, string>;
   /** Skip auth header (use for public endpoints during dev). */
@@ -72,7 +74,8 @@ async function parseProblem(res: Response): Promise<ApiError> {
 }
 
 export async function api<T = unknown>(path: string, opts: ApiOptions = {}): Promise<T> {
-  const { body, headers, skipAuth, raw, ...rest } = opts;
+  const { body, headers, skipAuth, raw, profileId, ...rest } = opts;
+  path = await scopeRequest(path, rest.method, profileId);
   const finalHeaders: Record<string, string> = { 'X-Source': 'web-ui', ...(headers ?? {}) };
   if (!skipAuth) {
     const key = getAdminKey();

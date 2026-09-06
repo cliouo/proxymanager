@@ -1,22 +1,23 @@
 'use client';
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
+import { startProfileSession, bindProfileSession } from '@/lib/client/profile-session';
+import { navigateWithUnsavedGuard } from '@/lib/client/useUnsavedGuard';
+import { safeNext } from '@/lib/client/safeNext';
 import { api } from '@/lib/client/api';
 import { clearAdminKey } from '@/lib/client/auth-storage';
 
-/**
- * 配置文件（profile）上下文 —— 侧边栏切换器与 topbar scope 标签共享同一份数据，
- * 避免两处各拉一次 `/api/v1/profiles`。
- *
- * Phase 2：每份配置文件**自带** base / 策略组 / 规则（按 id 独立存储）。本上下文
- * 多了一个「正在编辑的配置文件」(`activeProfile`)：切换器选中后写入 `pm.active_profile`
- * cookie，服务端的编辑接口(`/base`、`/proxy-groups`、`/rules`、衍生的 `/anchors`、
- * `/policies`、场景 ops 等，见 lib/profileScope)据此 cookie 自动作用到该配置文件。
- * 切换会重载页面，让所有按作用域取数的请求带上新 cookie 重新拉取。
- *
- * `current`（名为 `default` 者，否则第一条）仍是 app 内总览/裸 `/api/sub/{token}` 跳转
- * 锚定的那一份；它不一定等于 `activeProfile`。
- */
+/** The tab pins a stable profile ID in sessionStorage. Cookies are only the
+ * initial preference of a new tab; each scoped API request carries the ID.
+ * Background refresh keeps the editor mounted and pauses writes until verified. */
 
 /** Cookie the server reads to scope editing routes — keep in sync with lib/profileScope. */
 const ACTIVE_PROFILE_COOKIE = 'pm.active_profile';
@@ -100,19 +101,49 @@ export function ProfilesProvider({ children }: { children: React.ReactNode }) {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const pinnedId = useRef<string | null>(
+    typeof window === 'undefined' ? null : sessionStorage.getItem('pm.profileId'),
+  );
+  const [activeProfile, setActive] = useState<Profile | null>(null);
+  const [sessionStarted] = useState(() => {
+    if (typeof window !== 'undefined') startProfileSession();
+    return true;
+  });
+  void sessionStarted;
+  const reloadGeneration = useRef(0);
   const reload = useCallback(async () => {
+    const generation = ++reloadGeneration.current;
     setLoading(true);
+    if (pinnedId.current) bindProfileSession(pinnedId.current, false);
     setError(null);
     try {
       const r = await api<{ data: Profile[] }>('/api/v1/profiles');
+      if (generation !== reloadGeneration.current) return;
+      const preference = readActiveCookie();
+      const selected = pinnedId.current
+        ? r.data.find((p) => p.id === pinnedId.current)
+        : preference
+          ? r.data.find((p) => p.name === preference)
+          : (r.data.find((p) => p.name === 'default') ?? r.data[0]);
       setProfiles(r.data);
+      if (!selected && (pinnedId.current || preference)) {
+        throw new Error('当前配置文件已不存在，请重新选择。草稿已保留。');
+      }
+      pinnedId.current = selected?.id ?? null;
+      bindProfileSession(selected?.id ?? null, Boolean(selected));
+      setActive(selected ?? null);
+      if (selected) sessionStorage.setItem('pm.profileId', selected.id);
     } catch (caught) {
+      if (generation !== reloadGeneration.current) return;
       // Keep the last successful list, but never present a first-load failure
       // as an empty instance or manufacture a default profile.
+      bindProfileSession(pinnedId.current, false);
       setError(caught instanceof Error ? caught.message : '无法读取配置文件列表');
     } finally {
-      setLoading(false);
-      setLoaded(true);
+      if (generation === reloadGeneration.current) {
+        setLoading(false);
+        setLoaded(true);
+      }
     }
   }, []);
 
@@ -125,36 +156,30 @@ export function ProfilesProvider({ children }: { children: React.ReactNode }) {
     [profiles],
   );
 
-  // Active editing profile, mirrored from the `pm.active_profile` cookie. Read
-  // in an effect (not during render) to avoid a hydration mismatch.
-  const [activeName, setActiveName] = useState<string | null>(null);
-  useEffect(() => {
-    setActiveName(readActiveCookie());
-  }, []);
-
-  const activeProfile = useMemo(
-    () => (activeName ? (profiles.find((p) => p.name === activeName) ?? current) : current),
-    [activeName, profiles, current],
-  );
   const scopeConfirmed = loaded && !loading && !error && activeProfile !== null;
 
-  const setActiveProfile = useCallback((name: string, redirectTo?: string) => {
-    // Persist for the server (resolveScopeProfile) and reload so every
-    // scope-reading fetch re-runs under the new cookie.
-    document.cookie = `${ACTIVE_PROFILE_COOKIE}=${encodeURIComponent(name)}; path=/; max-age=31536000; SameSite=Lax`;
-    // 只接受站内路径("/x" 而非 "//host" 或绝对 URL),杜绝未来调用方引入 open redirect。
-    if (redirectTo && redirectTo.startsWith('/') && !redirectTo.startsWith('//')) {
-      window.location.href = redirectTo;
-    } else {
-      window.location.reload();
-    }
-  }, []);
+  const setActiveProfile = useCallback(
+    (name: string, redirectTo?: string) => {
+      const target = profiles.find((p) => p.name === name);
+      if (!target) return;
+      navigateWithUnsavedGuard(() => {
+        sessionStorage.setItem('pm.profileId', target.id);
+        document.cookie = `${ACTIVE_PROFILE_COOKIE}=${encodeURIComponent(name)}; path=/; max-age=31536000; SameSite=Lax`;
+        if (redirectTo) window.location.href = safeNext(redirectTo, window.location.origin);
+        else window.location.reload();
+      }, true);
+    },
+    [profiles],
+  );
 
   const clearActiveProfile = useCallback(() => {
     // Drop the cookie (max-age=0) and fall back to `current` in memory, so a
     // deleted active profile can't leave a stale cookie that 404s scoped routes.
     document.cookie = `${ACTIVE_PROFILE_COOKIE}=; path=/; max-age=0; SameSite=Lax`;
-    setActiveName(null);
+    sessionStorage.removeItem('pm.profileId');
+    pinnedId.current = null;
+    bindProfileSession(null, false);
+    setActive(null);
   }, []);
 
   const value = useMemo<ProfilesValue>(
@@ -252,6 +277,35 @@ export function ProfileScopeBoundary({ children }: { children: React.ReactNode }
     hasActiveProfile: activeProfile !== null,
   });
 
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    if (access === 'ready') setMounted(true);
+  }, [access]);
+  if (mounted || access === 'ready') {
+    return (
+      <div data-profile-scope={activeProfile?.id} style={{ display: 'contents' }}>
+        {access !== 'ready' && (
+          <div role="alert" className="panel" style={{ padding: 16, marginBottom: 16 }}>
+            {loading
+              ? '正在重新确认配置，保存已暂停，草稿已保留。'
+              : (error ?? '配置已不可用，草稿已保留。')}
+            {!loading && (
+              <button className="btn sm" onClick={() => void reload()}>
+                重试读取
+              </button>
+            )}
+          </div>
+        )}
+        <fieldset
+          disabled={access !== 'ready'}
+          style={{ display: 'contents', border: 0, padding: 0, margin: 0, minWidth: 0 }}
+        >
+          {children}
+        </fieldset>
+      </div>
+    );
+  }
+
   if (access === 'loading') {
     return (
       <ProfileScopeState
@@ -303,8 +357,10 @@ function ProfileScopeState({
   onRetry?: () => void;
 }) {
   function signOut() {
-    clearAdminKey();
-    window.location.href = '/login';
+    navigateWithUnsavedGuard(() => {
+      clearAdminKey();
+      window.location.href = '/login';
+    }, true);
   }
 
   return (

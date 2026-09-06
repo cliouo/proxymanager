@@ -118,7 +118,7 @@ export function GroupEditor({
                 />
                 {!isCreate && referenced && (
                   <div className="hint">
-                    重命名会自动级联:{refSummary!.rules} 条规则的出口、
+                    重命名会自动级联:{Number.isFinite(refSummary!.rules) ? refSummary!.rules : '数量待确认的'} 条规则的出口、
                     {refSummary!.refIn.length} 个组的成员引用将同步更新。
                   </div>
                 )}
@@ -520,7 +520,8 @@ export function GroupEditor({
               <span className="sub">谁在用这个组</span>
             </div>
             <div className="panel-body" style={{ padding: 14 }}>
-              {!referenced && (
+              {!Number.isFinite(refSummary?.rules) && <div role="status" className="hint">规则引用统计暂不可用，请重试读取；删除时仍会校验全部引用。</div>}
+              {!referenced && Number.isFinite(refSummary?.rules) && (
                 <div className="hint" style={{ lineHeight: 1.6 }}>
                   暂无引用 —— 没有规则或组指向「{originalName}」,可安全删除。
                 </div>

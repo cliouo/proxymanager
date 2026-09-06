@@ -1,21 +1,10 @@
-/**
- * Active editing profile resolution for authed routes.
- *
- * Phase 2 made base / rules / proxy-groups owned per profile. The editing
- * routes (`/api/v1/base`, `/proxy-groups`, `/rules`, derived `/anchors`,
- * `/policies`, scenario ops, …) therefore need to know WHICH profile they act
- * on. Precedence:
- *   1. `?profile=<name>` query param (explicit, wins) — what the scoped pages send;
- *   2. the `pm.active_profile` cookie (the sidebar switcher's selection);
- *   3. `default` (the always-present anchor profile).
- *
- * The resolved name is looked up to a real {@link Profile}; an unknown name is
- * a 404 rather than silently falling back, so a stale URL/cookie can't quietly
- * edit the wrong profile.
- */
+/** Stable profileId takes precedence; explicit name is legacy-compatible.
+ * A conflicting name/ID, invalid ID or deleted profile never falls back.
+ * The cookie/default path remains for older callers that omit explicit scope. */
 
 import { ProblemDetailsError } from '@/lib/http/problem';
-import { getProfileByName } from '@/lib/repos/profilesRepo';
+import { getProfile, getProfileByName } from '@/lib/repos/profilesRepo';
+import { z } from 'zod';
 import { DEFAULT_PROFILE_NAME, type Profile } from '@/schemas';
 
 /** Cookie the UI sets to remember the active editing profile. */
@@ -52,6 +41,20 @@ export function resolveScopeProfileName(request: Request): string {
  * Throws 404 if the resolved name has no profile record.
  */
 export async function resolveScopeProfile(request: Request): Promise<Profile> {
+  const params = new URL(request.url).searchParams;
+  if (params.has('profileId')) {
+    const id = params.get('profileId');
+    if (!z.uuid().safeParse(id).success)
+      throw ProblemDetailsError.badRequest('profileId 必须是有效的 UUID。');
+    const profile = await getProfile(id!);
+    if (!profile) throw ProblemDetailsError.notFound('配置文件不存在。');
+    if (params.has('profile') && params.get('profile')?.trim() !== profile.name) {
+      throw ProblemDetailsError.badRequest('profile 与 profileId 指向不同配置文件。');
+    }
+    return profile;
+  }
+  if (params.has('profile') && !params.get('profile')?.trim())
+    throw ProblemDetailsError.badRequest('profile 不能为空。');
   const name = resolveScopeProfileName(request);
   const profile = await getProfileByName(name);
   if (!profile) {

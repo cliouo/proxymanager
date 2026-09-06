@@ -434,12 +434,15 @@
     z-index: var(--z-drawer);
     width: min(360px, 90vw);
     border-left: 1px solid var(--border);
-    box-shadow: var(--shadow-drawer);
+    box-shadow: none;
+    visibility: hidden;
     transform: translateX(100%);
     transition: transform var(--motion-med) var(--ease);
   }
 
   .inspector.open {
+    visibility: visible;
+    box-shadow: var(--shadow-drawer);
     transform: translateX(0);
   }
 

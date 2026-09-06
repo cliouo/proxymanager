@@ -32,7 +32,8 @@
     "vercel:link": "vercel link",
     "vercel:deploy": "vercel deploy",
     "vercel:deploy:prod": "vercel deploy --prod",
-    "vercel:env:pull": "vercel env pull .env.local"
+    "vercel:env:pull": "vercel env pull .env.local",
+    "test:e2e": "playwright test"
   },
   "engines": {
     "node": "22.x"
@@ -61,6 +62,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@tailwindcss/postcss": "^4.3.0",
     "@types/node": "^20",
     "@types/qrcode": "^1.5.6",

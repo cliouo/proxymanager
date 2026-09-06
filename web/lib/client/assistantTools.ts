@@ -19,35 +19,16 @@ import type { ProxyGroup } from '@/schemas';
 const MAX_PREVIEW_NAMES = 200;
 
 /**
- * Active editing profile from the `pm.active_profile` cookie (P1-9). The
- * assistant tools run in the page but aren't inside the React ProfileContext,
- * so we read the cookie the switcher writes. Falls back to `default`.
- */
-function activeProfileName(): string {
-  if (typeof document === 'undefined') return 'default';
-  for (const part of document.cookie.split(';')) {
-    const eq = part.indexOf('=');
-    if (eq === -1) continue;
-    if (part.slice(0, eq).trim() === 'pm.active_profile') {
-      const v = decodeURIComponent(part.slice(eq + 1).trim());
-      if (v) return v;
-    }
-  }
-  return 'default';
-}
-
-/**
  * Cache the resolved node list per profile for the page session; the model may
  * call preview many times. Keyed by profile so switching scope doesn't serve a
  * stale other-profile node list (P1-9).
  */
 const nodeNamesByProfile = new Map<string, Promise<string[]>>();
-function getNodeNames(): Promise<string[]> {
-  const profile = activeProfileName();
+function getNodeNames(profile: string): Promise<string[]> {
   let promise = nodeNamesByProfile.get(profile);
   if (!promise) {
     promise = api<{ data: { node_names?: string[] } }>(
-      `/api/v1/preview/${encodeURIComponent(profile)}`,
+      `/api/v1/preview/default`, { profileId: profile },
     )
       .then((r) => r.data.node_names ?? [])
       .catch(() => {
@@ -65,15 +46,15 @@ interface PreviewInput {
   exclude_filter?: string;
 }
 
-async function previewProxyGroupMembers(input: PreviewInput): Promise<ToolDispatchResult> {
-  const names = await getNodeNames();
+async function previewProxyGroupMembers(input: PreviewInput, profileId: string): Promise<ToolDispatchResult> {
+  const names = await getNodeNames(profileId);
   let filter = input.filter;
   let excludeFilter = input.exclude_filter;
   let group: string | null = null;
 
   if (input.id) {
     try {
-      const res = await api<{ data: ProxyGroup }>(`/api/v1/proxy-groups/${input.id}`);
+      const res = await api<{ data: ProxyGroup }>(`/api/v1/proxy-groups/${input.id}`, { profileId });
       group = res.data.name;
       if (filter === undefined) filter = res.data.filter;
       if (excludeFilter === undefined) excludeFilter = res.data['exclude-filter'];
@@ -99,16 +80,16 @@ async function previewProxyGroupMembers(input: PreviewInput): Promise<ToolDispat
   return { kind: 'proxy-group-members', data, modelContent: JSON.stringify(data) };
 }
 
-type ClientTool = (input: unknown) => Promise<ToolDispatchResult>;
+type ClientTool = (input: unknown, profileId: string) => Promise<ToolDispatchResult>;
 
 const CLIENT_TOOLS: Record<string, ClientTool> = {
-  preview_proxy_group_members: (input) => previewProxyGroupMembers((input ?? {}) as PreviewInput),
+  preview_proxy_group_members: (input, profileId) => previewProxyGroupMembers((input ?? {}) as PreviewInput, profileId),
 };
 
 export function isClientTool(name: string): boolean {
   return name in CLIENT_TOOLS;
 }
 
-export function runClientTool(name: string, input: unknown): Promise<ToolDispatchResult> {
-  return CLIENT_TOOLS[name](input);
+export function runClientTool(name: string, input: unknown, profileId: string): Promise<ToolDispatchResult> {
+  return CLIENT_TOOLS[name](input, profileId);
 }

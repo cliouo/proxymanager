@@ -1,3 +1,4 @@
+import { backendProfiles, bindBackendTarget } from "@/lib/backend";
 import type {
   Request,
   Response,
@@ -211,12 +212,13 @@ async function handle(req: Request, sender?: BridgeSender): Promise<unknown> {
       perTabHostUrls.delete(req.tabId);
       return null;
     }
+    case "getProfiles": return backendProfiles(await getSettings());
     case "getPolicies": {
-      const settings = await getSettings();
+      const settings = bindBackendTarget(await getSettings(), req.target);
       return backendPolicies(settings);
     }
     case "getAnchors": {
-      const settings = await getSettings();
+      const settings = bindBackendTarget(await getSettings(), req.target);
       return backendAnchors(settings);
     }
     case "speedtestBatch": {
@@ -230,7 +232,7 @@ async function handle(req: Request, sender?: BridgeSender): Promise<unknown> {
       return results;
     }
     case "createRule": {
-      const settings = await getSettings();
+      const settings = bindBackendTarget(await getSettings(), req.target);
       return backendCreateRule(settings, {
         anchor: req.anchor,
         type: req.ruleType,
@@ -332,16 +334,16 @@ async function handle(req: Request, sender?: BridgeSender): Promise<unknown> {
       );
     }
     case "listRulesByAnchor": {
-      const settings = await getSettings();
+      const settings = bindBackendTarget(await getSettings(), req.target);
       return backendListRulesByAnchor(settings, req.anchor);
     }
     case "deleteRule": {
-      const settings = await getSettings();
+      const settings = bindBackendTarget(await getSettings(), req.target);
       await backendDeleteRule(settings, req.ruleId);
       return null;
     }
     case "createRulesBatch": {
-      const settings = await getSettings();
+      const settings = bindBackendTarget(await getSettings(), req.target);
       return backendCreateRulesBatch(
         settings,
         req.rules.map((rule) => ({

@@ -249,10 +249,13 @@
     border-left: 1px solid var(--border-2);
     translate: 100% 0;
     transition: translate 0.22s var(--ease);
-    box-shadow: -24px 0 64px rgba(0, 0, 0, 0.4);
+    box-shadow: none;
+    visibility: hidden;
     padding-bottom: calc(16px + env(safe-area-inset-bottom, 0));
   }
   .inspector.open {
+    visibility: visible;
+    box-shadow: -24px 0 64px var(--shadow-color, rgba(0, 0, 0, 0.25));
     translate: 0 0;
   }
   .inspBtn {

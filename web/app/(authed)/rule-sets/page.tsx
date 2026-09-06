@@ -5,7 +5,7 @@ import { PageTopbar } from '@/components/PageChrome';
 import { ScopePill } from '@/components/Topbar';
 import { CodeEditor } from '@/components/ui/CodeEditor';
 import { ApiError, api } from '@/lib/client/api';
-import { useUnsavedGuard } from '@/lib/client/useUnsavedGuard';
+import { useUnsavedGuard, confirmUnsavedChanges } from '@/lib/client/useUnsavedGuard';
 import styles from './ruleSets.module.css';
 
 type Format = 'yaml' | 'text' | 'mrs';
@@ -62,7 +62,7 @@ export default function RuleSetsPage() {
   const [usage, setUsage] = useState<Record<string, number>>({});
   // P3-27: whether the usage counts above the whole rule set (not just the
   // first 500 rules / a failed fetch). When false, a 0 count means "unknown",
-  // NOT "unused" — showing "未被使用" then could lure the user into deleting a
+  // NOT "unused" — showing "当前配置未引用" then could lure the user into deleting a
   // set that's actually referenced.
   const [usageComplete, setUsageComplete] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -78,24 +78,12 @@ export default function RuleSetsPage() {
       const [list, m, rules] = await Promise.all([
         api<{ data: RuleSet[] }>('/api/v1/rule-sets'),
         api<{ data: Meta }>('/api/v1/meta'),
-        api<{ data: { type: string; value: string }[]; meta?: { total: number } }>(
-          '/api/v1/rules?limit=500',
-        )
-          .then((r) => ({ ok: true as const, data: r.data, total: r.meta?.total ?? r.data.length }))
-          .catch(() => ({
-            ok: false as const,
-            data: [] as { type: string; value: string }[],
-            total: 0,
-          })),
+        api<{ data: { ruleSets: Record<string, number> } }>('/api/v1/rules/summary').catch(() => null),
       ]);
       setSets(list.data);
       setMeta(m.data);
-      const counts: Record<string, number> = {};
-      for (const r of rules.data) {
-        if (r.type === 'RULE-SET' && r.value) counts[r.value] = (counts[r.value] ?? 0) + 1;
-      }
-      setUsage(counts);
-      setUsageComplete(rules.ok && rules.data.length >= rules.total);
+      setUsage(rules?.data.ruleSets ?? {});
+      setUsageComplete(rules !== null);
       setSelectedId((prev) => {
         if (selectName) return list.data.find((s) => s.name === selectName)?.id ?? prev;
         if (prev && list.data.some((s) => s.id === prev)) return prev;
@@ -190,13 +178,14 @@ export default function RuleSetsPage() {
         <ScopePill shared />
         {loaded && (
           <span className="crumb">
-            {sets.length} 个 · {usedCount} 被引用
+            {sets.length} 个 · {usedCount} 当前配置引用
           </span>
         )}
         <div className="grow" />
         <button
           className="btn primary"
           onClick={() => {
+            if (!confirmUnsavedChanges()) return;
             setCreating(true);
             setSelectedId(null);
           }}
@@ -266,6 +255,7 @@ export default function RuleSetsPage() {
                     key={s.id}
                     className={`li${s.id === selectedId && !creating ? ' on' : ''}`}
                     onClick={() => {
+                      if (s.id !== selectedId && !confirmUnsavedChanges()) return;
                       setSelectedId(s.id);
                       setCreating(false);
                     }}
@@ -277,17 +267,17 @@ export default function RuleSetsPage() {
                         style={{ marginLeft: 'auto' }}
                         title={
                           !usageComplete && used === 0 && !inBase
-                            ? '规则数超过一次加载上限,引用统计不完整'
+                            ? '当前配置引用统计暂不可用'
                             : undefined
                         }
                       >
-                        {/* P3-27: don't claim "未被使用" when the usage scan was incomplete. */}
+                        {/* P3-27: don't claim "当前配置未引用" when the usage scan was incomplete. */}
                         {used > 0
                           ? `被 ${used} 引用`
                           : inBase
                             ? 'base 引用'
                             : usageComplete
-                              ? '未被使用'
+                              ? '当前配置未引用'
                               : '引用未知'}
                       </span>
                     </b>
@@ -306,6 +296,7 @@ export default function RuleSetsPage() {
           {creating ? (
             <CreateForm
               onCancel={() => {
+                if (!confirmUnsavedChanges()) return;
                 setCreating(false);
                 if (sets.length > 0) setSelectedId(sets[0].id);
               }}
@@ -320,7 +311,7 @@ export default function RuleSetsPage() {
                 <LocalDetail
                   key={selected.id}
                   set={detail}
-                  usedBy={usage[selected.name] ?? 0}
+                  usedBy={usageComplete ? usage[selected.name] ?? 0 : null}
                   referencedInBase={selected.referenced_in_base ?? false}
                   providerUrl={meta ? `${meta.ruleProvidersBase}/${selected.name}` : ''}
                   onSaved={() => reload(selected.name)}
@@ -344,7 +335,7 @@ export default function RuleSetsPage() {
               <RemoteDetail
                 key={selected.id}
                 set={selected}
-                usedBy={usage[selected.name] ?? 0}
+                usedBy={usageComplete ? usage[selected.name] ?? 0 : null}
                 referencedInBase={selected.referenced_in_base ?? false}
                 onSaved={() => reload(selected.name)}
                 onDelete={() => onDelete(selected.id)}
@@ -382,7 +373,7 @@ function LocalDetail({
   onError,
 }: {
   set: RuleSet;
-  usedBy: number;
+  usedBy: number | null;
   referencedInBase: boolean;
   providerUrl: string;
   onSaved: () => Promise<void> | void;
@@ -460,9 +451,9 @@ function LocalDetail({
             <div className="k">被规则引用</div>
             <div
               className="v"
-              style={{ color: usedBy > 0 || referencedInBase ? 'var(--accent)' : 'var(--faint)' }}
+              style={{ color: (usedBy ?? 0) > 0 || referencedInBase ? 'var(--accent)' : 'var(--faint)' }}
             >
-              {usedBy > 0 ? `${usedBy} 条` : referencedInBase ? 'base 结构' : '0 条'}
+              {usedBy === null ? '统计暂不可用' : usedBy > 0 ? `${usedBy} 条` : referencedInBase ? 'base 结构' : '当前配置 0 条'}
             </div>
           </div>
           <div className="cell">
@@ -522,11 +513,11 @@ function LocalDetail({
         </div>
 
         <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 14 }}>
-          {usedBy > 0
-            ? '已被规则引用，注入 rule-providers 并对外下发。'
+          {usedBy === null ? '当前配置引用统计暂不可用。' : (usedBy ?? 0) > 0
+            ? '已被当前配置规则引用，注入 rule-providers 并对外下发。'
             : referencedInBase
               ? '被 base 结构直接引用（如 DNS rule-set: 策略），已注入 rule-providers 下发。'
-              : '未被规则引用 · 留库不下发（到「规则」页加 RULE-SET 规则启用）。'}
+              : '未被当前配置规则引用 · 此配置不下发（到「规则」页加 RULE-SET 规则启用）。'}
           {behavior === 'domain' && (
             <span style={{ color: 'var(--faint)' }}>
               {' '}
@@ -558,7 +549,7 @@ function RemoteDetail({
   onError,
 }: {
   set: RuleSet;
-  usedBy: number;
+  usedBy: number | null;
   referencedInBase: boolean;
   onSaved: () => Promise<void> | void;
   onDelete: () => void;
@@ -657,9 +648,9 @@ function RemoteDetail({
             <div className="k">被规则引用</div>
             <div
               className="v"
-              style={{ color: usedBy > 0 || referencedInBase ? 'var(--accent)' : 'var(--faint)' }}
+              style={{ color: (usedBy ?? 0) > 0 || referencedInBase ? 'var(--accent)' : 'var(--faint)' }}
             >
-              {usedBy > 0 ? `${usedBy} 条` : referencedInBase ? 'base 结构' : '0 条'}
+              {usedBy === null ? '统计暂不可用' : usedBy > 0 ? `${usedBy} 条` : referencedInBase ? 'base 结构' : '当前配置 0 条'}
             </div>
           </div>
           <div className="cell">

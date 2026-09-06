@@ -4,6 +4,7 @@ import { resolveScopeProfile } from '@/lib/profileScope';
 import { listRules } from '@/lib/repos/rulesRepo';
 import { dispatch } from '@/lib/scenarios/_shared/dispatch';
 import { resolveActor } from '@/lib/services/rulesService';
+import { versionedRead } from '@/lib/services/versionedRead';
 import { type Rule } from '@/schemas';
 
 export const dynamic = 'force-dynamic';
@@ -32,6 +33,8 @@ export const GET = withProblemDetails(async (request: Request) => {
   const anchorFilter = params.get('anchor');
   const policyFilter = params.get('policy');
   const typeFilter = params.get('type');
+  const enabledFilter = params.get('enabled');
+  if (enabledFilter !== null && !['true', 'false'].includes(enabledFilter)) throw ProblemDetailsError.badRequest('enabled 必须为 true 或 false');
   const qFilter = params.get('q')?.toLowerCase() ?? null;
 
   const sortParam = params.get('sort') ?? 'rank';
@@ -44,26 +47,27 @@ export const GET = withProblemDetails(async (request: Request) => {
   const limit = Math.min(500, Math.max(1, parseInt(params.get('limit'), 100)));
   const offset = Math.max(0, parseInt(params.get('offset'), 0));
 
-  const all = await listRules(profileId);
+  const { data: all, configVersion } = await versionedRead(() => listRules(profileId));
 
   const filtered = all.filter((rule) => {
     if (anchorFilter && rule.anchor !== anchorFilter) return false;
     if (policyFilter && rule.policy !== policyFilter) return false;
     if (typeFilter && rule.type !== typeFilter) return false;
+    if (enabledFilter !== null && (rule.enabled !== false) !== (enabledFilter === 'true')) return false;
     if (qFilter) {
-      const haystack = `${rule.value.toLowerCase()} ${(rule.note ?? '').toLowerCase()}`;
+      const haystack = `${rule.value.toLowerCase()} ${(rule.note ?? '').toLowerCase()} ${(rule.options ?? []).join(' ').toLowerCase()}`;
       if (!haystack.includes(qFilter)) return false;
     }
     return true;
   });
 
   const cmp = COMPARERS[sortKey];
-  filtered.sort((a, b) => sortDir * cmp(a, b));
+  filtered.sort((a, b) => sortDir * (cmp(a, b) || a.id.localeCompare(b.id)));
 
   const total = filtered.length;
   const data = filtered.slice(offset, offset + limit);
 
-  return Response.json({ data, meta: { total, limit, offset } });
+  return Response.json({ data, meta: { total, limit, offset, configVersion, profileId } });
 });
 
 /**

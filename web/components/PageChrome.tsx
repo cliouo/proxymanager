@@ -1,6 +1,8 @@
 'use client';
 
 import {
+  Children,
+  isValidElement,
   createContext,
   useContext,
   useEffect,
@@ -20,6 +22,8 @@ import {
 
 export interface PageChrome {
   topbar: ReactNode;
+  primaryAction?: ReactNode;
+  secondaryActions?: ReactNode;
   /** 内容区 max-width(px),覆盖 .content 默认的 1240。 */
   contentMaxWidth?: number;
 }
@@ -48,13 +52,32 @@ export function usePageChrome(): PageChrome | null {
 export function PageTopbar({
   children,
   contentMaxWidth,
+  primaryAction,
+  secondaryActions,
 }: {
   children: ReactNode;
+  primaryAction?: ReactNode;
+  secondaryActions?: ReactNode;
   contentMaxWidth?: number;
 }) {
   const set = useContext(ChromeSetContext);
   useEffect(() => {
-    set({ topbar: children, contentMaxWidth });
+    const title: ReactNode[] = [];
+    const actions: ReactNode[] = [];
+    let primary = primaryAction;
+    for (const child of Children.toArray(children)) {
+      const props = isValidElement<{ className?: string }>(child) ? child.props : null;
+      if (props?.className?.split(' ').includes('btn')) {
+        if (!primary && props.className.split(' ').includes('primary')) primary = child;
+        else actions.push(child);
+      } else title.push(child);
+    }
+    set({
+      topbar: title,
+      primaryAction: primary,
+      secondaryActions: secondaryActions ?? actions,
+      contentMaxWidth,
+    });
   });
   useEffect(() => () => set(null), [set]);
   return null;

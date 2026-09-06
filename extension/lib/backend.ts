@@ -1,4 +1,5 @@
-import type { BackendRule } from "./messages";
+import { z } from "zod";
+import type { BackendTarget, BackendProfile, BackendRule } from "./messages";
 import type { Settings } from "./settings";
 
 export class BackendError extends Error {
@@ -24,7 +25,7 @@ function ensureBackend(settings: Settings): { url: string; key: string } {
     );
   }
   return {
-    url: settings.backendUrl.replace(/\/+$/, ""),
+    url: new URL(settings.backendUrl).origin,
     key: settings.adminKey,
   };
 }
@@ -35,6 +36,14 @@ async function call<T>(
   init?: RequestInit,
 ): Promise<T> {
   const { url, key } = ensureBackend(settings);
+  if (/^\/api\/v1\/(?:rules|policies|anchors)(?:[/?]|$)/.test(path)) {
+    if (!z.string().uuid().safeParse(settings.profileId).success) throw new BackendError('请选择目标 Profile。');
+    const meta = await call<{ data: { capabilities?: { profileIdScope?: boolean } } }>(settings, '/api/v1/meta');
+    if (meta.data.capabilities?.profileIdScope !== true) throw new BackendError('服务器不支持 Profile ID 作用域，请先升级服务器。已停止规则写回。');
+    const scoped = new URL(path, url);
+    scoped.searchParams.set('profileId', settings.profileId);
+    path = scoped.pathname + scoped.search;
+  }
   const headers: Record<string, string> = {
     Authorization: `Bearer ${key}`,
     "X-Source": "extension",
@@ -43,7 +52,7 @@ async function call<T>(
   if (init?.body && !("Content-Type" in headers)) {
     headers["Content-Type"] = "application/json";
   }
-  const res = await fetch(`${url}${path}`, { ...init, headers });
+  const res = await fetch(`${url}${path}`, { ...init, credentials: "omit", headers });
   const text = await res.text();
   let body: unknown = undefined;
   if (text) {
@@ -62,6 +71,26 @@ async function call<T>(
     );
   }
   return body as T;
+}
+
+export function targetFromSettings(settings: Settings): BackendTarget {
+  if (!settings.profileId) throw new BackendError('请选择目标 Profile。');
+  return { origin: ensureBackend(settings).url, profileId: settings.profileId, profileName: settings.profileName };
+}
+
+export function bindBackendTarget(settings: Settings, target: BackendTarget): Settings {
+  const parsed = z.object({ origin: z.string().url(), profileId: z.string().uuid(), profileName: z.string() }).safeParse(target);
+  if (!parsed.success) throw new BackendError('原始写入目标未记录，无法安全执行。');
+  const current = ensureBackend(settings).url;
+  if (parsed.data.origin !== current) throw new BackendError('请先连接原始后端实例，再执行此操作。');
+  return { ...settings, profileId: parsed.data.profileId, profileName: parsed.data.profileName };
+}
+
+export async function backendProfiles(settings: Settings): Promise<BackendProfile[]> {
+  const meta = await call<{ data: { capabilities?: { profileIdScope?: boolean } } }>(settings, '/api/v1/meta');
+  if (meta.data.capabilities?.profileIdScope !== true) throw new BackendError('服务器不支持 Profile ID 作用域，请先升级服务器。已停止规则写回。');
+  const res = await call<{ data: BackendProfile[] }>(settings, '/api/v1/profiles');
+  return res.data;
 }
 
 export async function backendHealth(settings: Settings): Promise<unknown> {
@@ -134,12 +163,16 @@ export async function backendListRulesByAnchor(
   settings: Settings,
   anchor: string,
 ): Promise<BackendRule[]> {
-  const qs = new URLSearchParams({ anchor, limit: "500" });
-  const res = await call<{ data: BackendRule[] }>(
-    settings,
-    `/api/v1/rules?${qs.toString()}`,
-  );
-  return res.data;
+  const rules: BackendRule[] = [];
+  let version: number | undefined;
+  for (let offset = 0; ; offset += 500) {
+    const qs = new URLSearchParams({ anchor, limit: "500", offset: String(offset) });
+    const res = await call<{ data: BackendRule[]; meta: { total: number; configVersion: number } }>(settings, `/api/v1/rules?${qs}`);
+    if (version !== undefined && version !== res.meta.configVersion) throw new BackendError('规则在读取期间发生变化，请重试。');
+    version = res.meta.configVersion;
+    rules.push(...res.data);
+    if (rules.length >= res.meta.total || res.data.length === 0) return rules;
+  }
 }
 
 export async function backendDeleteRule(

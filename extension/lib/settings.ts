@@ -4,6 +4,8 @@ import { z } from 'zod';
 export const SettingsSchema = z.object({
   /** ProxyManager backend origin, e.g. https://proxymanager.vercel.app */
   backendUrl: z.string().url().or(z.literal('')),
+  profileId: z.string().uuid().or(z.literal('')).default(''),
+  profileName: z.string().default(''),
   /** ADMIN_KEY bearer token */
   adminKey: z.string(),
   /** Clash External Controller URL, e.g. http://localhost:9090 */
@@ -30,6 +32,8 @@ export type Settings = z.infer<typeof SettingsSchema>;
 
 export const DEFAULT_SETTINGS: Settings = {
   backendUrl: '',
+  profileId: '',
+  profileName: '',
   adminKey: '',
   clashUrl: 'http://localhost:9090',
   clashSecret: '',

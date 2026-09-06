@@ -1,3 +1,4 @@
+import type { BackendTarget } from './messages';
 /**
  * Append-only log of recent rule writes initiated from the extension.
  *
@@ -7,6 +8,8 @@
  */
 
 export interface RecentWrite {
+  /** Missing on legacy records: unsafe to infer a target for undo. */
+  target?: BackendTarget;
   id: string;
   ts: number;
   anchor: string;

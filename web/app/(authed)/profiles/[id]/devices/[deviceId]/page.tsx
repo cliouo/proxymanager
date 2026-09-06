@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState, type KeyboardEvent } from 'react';
 import { parse, stringify } from 'yaml';
 import { ApiError, api } from '@/lib/client/api';
-import { useUnsavedGuard } from '@/lib/client/useUnsavedGuard';
+import { useUnsavedGuard, navigateAfterSave } from '@/lib/client/useUnsavedGuard';
 import { PageTopbar } from '@/components/PageChrome';
 import { CodeEditor } from '@/components/ui/CodeEditor';
 import { useToast } from '@/components/ui/Toast';
@@ -276,7 +276,7 @@ export default function DeviceDetailPage() {
     setDeleting(true);
     try {
       await api(`/api/v1/profiles/${profileId}/devices/${deviceId}`, { method: 'DELETE' });
-      router.push(backHref);
+      navigateAfterSave(() => router.push(backHref));
     } catch (e) {
       setError(e instanceof ApiError ? e.message : '删除失败');
       setDeleting(false);

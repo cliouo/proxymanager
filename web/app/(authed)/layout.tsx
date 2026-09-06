@@ -41,17 +41,12 @@ export default function AuthedLayout({ children }: { children: React.ReactNode }
 
   // ESC 关抽屉；跨断点（≥1101px）回到固定栏时复位 open 态。
   useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') setNavOpen(false);
-    }
     const mq = window.matchMedia('(min-width: 1101px)');
     function onWide(e: MediaQueryListEvent) {
       if (e.matches) setNavOpen(false);
     }
-    document.addEventListener('keydown', onKey);
     mq.addEventListener('change', onWide);
     return () => {
-      document.removeEventListener('keydown', onKey);
       mq.removeEventListener('change', onWide);
     };
   }, []);
@@ -111,7 +106,7 @@ function Workspace({
   setNavOpen: React.Dispatch<React.SetStateAction<boolean>>;
   children: React.ReactNode;
 }) {
-  const { scopeConfirmed } = useProfiles();
+  const { activeProfile } = useProfiles();
   const profileScoped = isProfileScopedPath(pathname);
   return (
     <>
@@ -128,11 +123,11 @@ function Workspace({
           </Content>
         </div>
         <div
-          className={`scrim${navOpen ? ' open' : ''}`}
+          data-modal-backdrop className={`scrim${navOpen ? ' open' : ''}`}
           onClick={() => setNavOpen(false)}
           aria-hidden
         />
-        {scopeConfirmed && <AssistantPanel />}
+        {activeProfile && <AssistantPanel />}
       </div>
     </>
   );

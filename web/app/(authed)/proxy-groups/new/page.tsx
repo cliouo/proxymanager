@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import { useUnsavedGuard, confirmUnsavedChanges, navigateWithUnsavedGuard, navigateAfterSave } from '@/lib/client/useUnsavedGuard';
 import { ApiError, api } from '@/lib/client/api';
 import { PageTopbar } from '@/components/PageChrome';
 import { ScopePill } from '@/components/Topbar';
@@ -32,16 +33,17 @@ export default function ProxyGroupNewPage() {
     nodesBySub,
     previewError,
     loaded,
-    reload,
-    reloadPreview,
   } = data;
 
   const [form, setForm] = useState<FormState | null>(null);
+  const [baseline, setBaseline] = useState<string | null>(null);
+  useUnsavedGuard(form !== null && JSON.stringify(form) !== baseline);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   function pickKind(kind: ProxyGroupKind) {
-    setForm({ ...EMPTY_FORM, kind, ...presetDefaults(kind) });
+    const next = { ...EMPTY_FORM, kind, ...presetDefaults(kind) };
+    setForm(next); setBaseline(JSON.stringify(next));
     setError(null);
   }
 
@@ -58,8 +60,7 @@ export default function ProxyGroupNewPage() {
         method: 'POST',
         body: toPayload(form),
       });
-      await Promise.all([reload(), reloadPreview()]);
-      router.push(`/proxy-groups/${res.data.id}`);
+      navigateAfterSave(() => router.push(`/proxy-groups/${res.data.id}`));
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
       setBusy(false);
@@ -91,11 +92,11 @@ export default function ProxyGroupNewPage() {
       )}
 
       {!form ? (
-        <IntentPicker onPick={pickKind} onCancel={() => router.push('/proxy-groups')} />
+        <IntentPicker onPick={pickKind} onCancel={() => navigateWithUnsavedGuard(() => router.push('/proxy-groups'))} />
       ) : (
         <>
           <div className={styles.stepRow}>
-            <button type="button" className={styles.back} onClick={() => setForm(null)}>
+            <button type="button" className={styles.back} onClick={() => { if (confirmUnsavedChanges()) setForm(null); }}>
               ‹ 换场景
             </button>
             <span className="crumb">
@@ -116,7 +117,7 @@ export default function ProxyGroupNewPage() {
             refSummary={null}
             busy={busy}
             onSubmit={onSubmit}
-            onCancel={() => router.push('/proxy-groups')}
+            onCancel={() => navigateWithUnsavedGuard(() => router.push('/proxy-groups'))}
           />
         </>
       )}
