@@ -3,7 +3,7 @@
 import { useModalSurface } from '@/lib/client/useModalSurface';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { navigateWithUnsavedGuard } from '@/lib/client/useUnsavedGuard';
 import { api } from '@/lib/client/api';
 import { clearAdminKey } from '@/lib/client/auth-storage';
@@ -196,6 +196,31 @@ function ProfileSwitcher({ onNavigate }: { onNavigate: () => void }) {
   const ref = useRef<HTMLDivElement>(null);
   const { normal, templates } = useMemo(() => partitionProfilesByKind(profiles), [profiles]);
 
+  useLayoutEffect(() => {
+    const element = ref.current;
+    const menu = element?.querySelector<HTMLElement>('.profile-pop');
+    if (!open || !element || !menu) return;
+    const viewport = window.visualViewport;
+    const fit = () => {
+      // offsetTop excludes the opening animation's translate, so the height stays stable.
+      const top = element.getBoundingClientRect().top + menu.offsetTop;
+      const bottom = viewport ? viewport.offsetTop + viewport.height : window.innerHeight;
+      menu.style.setProperty('--profile-pop-max-height', `${Math.max(0, bottom - top - 12)}px`);
+    };
+    fit();
+    const observer = new ResizeObserver(fit);
+    observer.observe(element);
+    window.addEventListener('resize', fit);
+    viewport?.addEventListener('resize', fit);
+    viewport?.addEventListener('scroll', fit);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', fit);
+      viewport?.removeEventListener('resize', fit);
+      viewport?.removeEventListener('scroll', fit);
+    };
+  }, [open]);
+
   useEffect(() => {
     if (!open) return;
     function onDoc(e: MouseEvent) {
@@ -281,53 +306,56 @@ function ProfileSwitcher({ onNavigate }: { onNavigate: () => void }) {
         <span className="caret">▾</span>
       </button>
       <div className={`profile-pop${open ? ' open' : ''}`}>
-        <div className="pp-label">配置文件 · {normal.length}</div>
-        {loading && !activeProfile ? (
-          <div className="pp-li" style={{ color: 'var(--muted)', cursor: 'default' }} role="status">
-            正在读取配置文件
-          </div>
-        ) : error ? (
-          <div className="pp-li" style={{ cursor: 'default', display: 'block' }} role="alert">
-            <span style={{ color: 'var(--danger)', display: 'block' }}>{error}</span>
-            {normal.map(row)}
-            <button
-              type="button"
-              className="btn sm"
-              style={{ marginTop: 8 }}
-              disabled={loading}
-              aria-busy={loading}
-              onClick={() => void reload()}
-            >
-              {loading ? '正在重试' : '重试'}
-            </button>
-          </div>
-        ) : profiles.length === 0 ? (
-          <div className="pp-li" style={{ color: 'var(--muted)', cursor: 'default' }}>
-            尚无配置文件记录
-          </div>
-        ) : normal.length === 0 ? (
-          <div className="pp-li" style={{ color: 'var(--muted)', cursor: 'default' }}>
-            只有模版,尚无配置文件
-          </div>
-        ) : (
-          normal.map(row)
-        )}
-        {templates.length > 0 && (
-          <>
-            <div className="pp-sep" />
-            <div className="pp-label" title={TEMPLATE_TAGLINE}>
-              模版 · {templates.length}
+        <div className="pp-scroll">
+          <div className="pp-label">配置文件 · {normal.length}</div>
+          {loading && !activeProfile ? (
+            <div className="pp-li" style={{ color: 'var(--muted)', cursor: 'default' }} role="status">
+              正在读取配置文件
             </div>
-            {templates.map(row)}
-          </>
-        )}
-        <div className="pp-sep" />
-        <Link className="pp-li pp-act" href="/profiles" onClick={go}>
-          <span className="ic">＋</span>新建配置文件
-        </Link>
-        <Link className="pp-li pp-act" href="/profiles" onClick={go}>
-          <span className="ic">⊞</span>管理全部配置文件
-        </Link>
+          ) : error ? (
+            <div className="pp-li" style={{ cursor: 'default', display: 'block' }} role="alert">
+              <span style={{ color: 'var(--danger)', display: 'block' }}>{error}</span>
+              {normal.map(row)}
+              <button
+                type="button"
+                className="btn sm"
+                style={{ marginTop: 8 }}
+                disabled={loading}
+                aria-busy={loading}
+                onClick={() => void reload()}
+              >
+                {loading ? '正在重试' : '重试'}
+              </button>
+            </div>
+          ) : profiles.length === 0 ? (
+            <div className="pp-li" style={{ color: 'var(--muted)', cursor: 'default' }}>
+              尚无配置文件记录
+            </div>
+          ) : normal.length === 0 ? (
+            <div className="pp-li" style={{ color: 'var(--muted)', cursor: 'default' }}>
+              只有模版,尚无配置文件
+            </div>
+          ) : (
+            normal.map(row)
+          )}
+          {templates.length > 0 && (
+            <>
+              <div className="pp-sep" />
+              <div className="pp-label" title={TEMPLATE_TAGLINE}>
+                模版 · {templates.length}
+              </div>
+              {templates.map(row)}
+            </>
+          )}
+        </div>
+        <div className="pp-footer">
+          <Link className="pp-li pp-act" href="/profiles" onClick={go}>
+            <span className="ic">＋</span>新建配置文件
+          </Link>
+          <Link className="pp-li pp-act" href="/profiles" onClick={go}>
+            <span className="ic">⊞</span>管理全部配置文件
+          </Link>
+        </div>
       </div>
     </div>
   );
