@@ -2,7 +2,7 @@ import { z } from '@/lib/openapi/zod';
 import { withProblemDetails } from '@/lib/http/handler';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { resolveScopeProfile } from '@/lib/profileScope';
-import { recordEvents } from '@/lib/repos/auditRepo';
+import { auditedMutation, operationIdentity } from '@/lib/repos/auditedMutation';
 import { getConfigVersion } from '@/lib/repos/configVersionRepo';
 import { listRules } from '@/lib/repos/rulesRepo';
 import {
@@ -94,6 +94,7 @@ export const POST = withProblemDetails(async (request: Request) => {
           enabled: op.rule.enabled,
         };
         writes.push(rule);
+        existingMap.set(rule.id, rule);
         pendingEvents.push({ op: 'rule.create', after: rule });
         results.push({ status: 201, data: rule });
       } else if (op.op === 'update') {
@@ -122,6 +123,7 @@ export const POST = withProblemDetails(async (request: Request) => {
           ensureValidRuleSetRef(merged, providerNames);
         }
         writes.push(merged);
+        existingMap.set(merged.id, merged);
         pendingEvents.push({ op: 'rule.update', before: current, after: merged });
         results.push({ status: 200, data: merged });
       } else {
@@ -135,6 +137,7 @@ export const POST = withProblemDetails(async (request: Request) => {
         }
         removes.push(op.id);
         const before = existingMap.get(op.id);
+        existingMap.delete(op.id);
         if (before) pendingEvents.push({ op: 'rule.delete', before });
         results.push({ status: 204 });
       }
@@ -160,43 +163,49 @@ export const POST = withProblemDetails(async (request: Request) => {
     }
   }
 
-  if (writes.length > 0 || removes.length > 0) {
-    await preflightAndCommitProfileChanges(
-      profileId,
-      {
-        ruleWrites: writes,
-        ruleDeletes: removes,
-      },
-      planningVersion,
-    );
-  }
+  const committed = await auditedMutation(
+    async () => {
+      if (writes.length > 0 || removes.length > 0) {
+        await preflightAndCommitProfileChanges(
+          profileId,
+          {
+            ruleWrites: writes,
+            ruleDeletes: removes,
+          },
+          planningVersion,
+        );
+      }
 
-  // P2-8: emit all audit events in one pipeline after the commit lands, instead
-  // of a per-op serial loop that could take tens of seconds for a large batch.
-  const actor = resolveActor(request);
-  await recordEvents(
-    pendingEvents.map((ev) =>
-      ev.op === 'rule.create'
-        ? { op: 'rule.create' as const, actor, ruleId: ev.after.id, after: ev.after, profileId }
-        : ev.op === 'rule.update'
-          ? {
-              op: 'rule.update' as const,
-              actor,
-              ruleId: ev.after.id,
-              before: ev.before,
-              after: ev.after,
-              profileId,
-            }
-          : {
-              op: 'rule.delete' as const,
-              actor,
-              ruleId: ev.before.id,
-              before: ev.before,
-              profileId,
-            },
-    ),
+      // P2-8: emit all audit events in one pipeline after the commit lands, instead
+      // of a per-op serial loop that could take tens of seconds for a large batch.
+      const actor = resolveActor(request);
+      return {
+        data: results,
+        events: pendingEvents.map((ev) =>
+          ev.op === 'rule.create'
+            ? { op: 'rule.create' as const, actor, ruleId: ev.after.id, after: ev.after, profileId }
+            : ev.op === 'rule.update'
+              ? {
+                  op: 'rule.update' as const,
+                  actor,
+                  ruleId: ev.after.id,
+                  before: ev.before,
+                  after: ev.after,
+                  profileId,
+                }
+              : {
+                  op: 'rule.delete' as const,
+                  actor,
+                  ruleId: ev.before.id,
+                  before: ev.before,
+                  profileId,
+                },
+        ),
+      };
+    },
+    operationIdentity(request, { profileId, raw }),
   );
 
-  const allSucceeded = results.every((r) => r.status < 400);
-  return Response.json({ results }, { status: allSucceeded ? 200 : 207 });
+  const allSucceeded = committed.data.every((r) => r.status < 400);
+  return Response.json({ results: committed.data }, { status: allSucceeded ? 200 : 207 });
 });

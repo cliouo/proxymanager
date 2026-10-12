@@ -443,7 +443,7 @@ function normalise(raw: unknown): Subscription | null {
   return rawOperators === undefined ? parsed.data : attachRawOperators(parsed.data, rawOperators);
 }
 
-export async function listSubscriptions(): Promise<Subscription[]> {
+async function listSubscriptionMetadata(): Promise<Subscription[]> {
   const all = await getRedis().hgetall<Record<string, unknown>>(REDIS_KEYS.subscriptions);
   if (!all) return [];
   const out: Subscription[] = [];
@@ -454,14 +454,62 @@ export async function listSubscriptions(): Promise<Subscription[]> {
   return out.sort((a, b) => a.name.localeCompare(b.name));
 }
 
+/** Full render inputs; only local records whose bodies have been split need hydration. */
+export async function listSubscriptions(): Promise<Subscription[]> {
+  const subscriptions = await listSubscriptionMetadata();
+  const split = subscriptions.filter((sub) => sub.kind === 'local' && sub.content === undefined);
+  if (split.length) {
+    const bodies = await getRedis().mget<(string | null)[]>(
+      ...split.map((sub) => REDIS_KEYS.subscriptionContent(sub.id)),
+    );
+    split.forEach((sub, index) => {
+      sub.content = bodies[index] ?? undefined;
+    });
+  }
+  return subscriptions;
+}
+
+/** Legacy bodies are scanned at most once per configuration version / cache window. */
+export async function listSubscriptionSummaries(): Promise<Subscription[]> {
+  const redis = getRedis();
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const version = (await redis.get<number>(REDIS_KEYS.configVersion)) ?? 0;
+    const key = `subscription-summaries:v1:${version}`;
+    const cached = await redis.get<Subscription[]>(key);
+    if (Array.isArray(cached)) return cached;
+    const subscriptions = await listSubscriptionMetadata();
+    if (((await redis.get<number>(REDIS_KEYS.configVersion)) ?? 0) !== version) continue;
+    const summaries = subscriptions.map((sub) => {
+      const summary = { ...sub };
+      delete summary.content;
+      return summary;
+    });
+    await redis.set(key, summaries, { ex: 60 });
+    return summaries;
+  }
+  throw new Error('Subscriptions changed while reading summaries.');
+}
+
 export async function getSubscription(id: string): Promise<Subscription | null> {
   const raw = await getRedis().hget<unknown>(REDIS_KEYS.subscriptions, id);
-  return normalise(raw);
+  const sub = normalise(raw);
+  if (sub?.kind !== 'local' || sub.content !== undefined) return sub;
+  // Re-read BOTH parts atomically: a concurrent source change cannot tear a detail response.
+  const [meta, body] = (await getRedis().eval(
+    `return {redis.call('HGET', KEYS[1], ARGV[1]), redis.call('GET', KEYS[2])}`,
+    [REDIS_KEYS.subscriptions, REDIS_KEYS.subscriptionContent(id)],
+    [id],
+  )) as [unknown, string | null];
+  const latest = normalise(typeof meta === 'string' ? JSON.parse(meta) : meta);
+  if (latest?.kind === 'local') latest.content = body ?? latest.content;
+  return latest;
 }
 
 export async function getSubscriptionByName(name: string): Promise<Subscription | null> {
-  const all = await listSubscriptions();
-  return all.find((s) => s.name === name) ?? null;
+  const all = await listSubscriptionSummaries();
+  const summary = all.find((s) => s.name === name);
+  const subscription = summary ? await getSubscription(summary.id) : null;
+  return subscription?.name === name ? subscription : null;
 }
 
 // Writes bump config:version in the same multi() — subscription records
@@ -497,6 +545,42 @@ function parseSubscriptionCommitResult(result: unknown): SubscriptionCommitResul
   };
 }
 
+async function evalSubscriptionMutation(script: string, keys: string[], args: string[]) {
+  const entity = args[3] === 'set' ? (JSON.parse(args[2]) as Subscription) : null;
+  const meta = entity ? { ...entity } : null;
+  if (meta?.kind === 'local') delete meta.content;
+  const wrapped = `
+local bodyKey = KEYS[${keys.length + 1}]
+local bodyType = redis.call('TYPE', bodyKey).ok
+if bodyType ~= 'none' and bodyType ~= 'string' then return {2, 'local-content-wrongtype'} end
+local storedEntity = ARGV[${args.length + 1}]
+local body = ''
+if ARGV[4] == 'set' then
+  local candidate = cjson.decode(ARGV[3])
+  if candidate.kind == 'local' then body = cjson.encode(candidate.content) end
+end
+local originalKeys = KEYS
+local originalArgs = ARGV
+local function applyDefinition()
+  local KEYS = {}
+  local ARGV = {}
+  for i = 1, ${keys.length} do KEYS[i] = originalKeys[i] end
+  for i = 1, ${args.length} do ARGV[i] = originalArgs[i] end
+${script.replace("redis.call('HSET', KEYS[2], ARGV[2], ARGV[3])", "redis.call('HSET', KEYS[2], ARGV[2], storedEntity)")}
+end
+local result = applyDefinition()
+if result[1] == 1 then
+  if body ~= '' then redis.call('SET', bodyKey, body) else redis.call('DEL', bodyKey) end
+end
+return result
+`;
+  return getRedis().eval(
+    wrapped,
+    [...keys, REDIS_KEYS.subscriptionContent(args[1])],
+    [...args, meta ? safeJsonStringify(meta) : ''],
+  );
+}
+
 export async function commitSubscriptionChange(
   sub: Subscription,
   expectedVersion: number,
@@ -519,15 +603,12 @@ export async function commitSubscriptionChange(
     (!/^[0-9a-f]{16}$/.test(fetchCache.cacheKey) ||
       !Number.isSafeInteger(fetchCache.ttlMs) ||
       fetchCache.ttlMs < 1 ||
-      Buffer.byteLength(fetchCache.entry.content, 'utf8') >
-        MAX_REMOTE_SUBSCRIPTION_BODY_BYTES)
+      Buffer.byteLength(fetchCache.entry.content, 'utf8') > MAX_REMOTE_SUBSCRIPTION_BODY_BYTES)
   ) {
     throw new SubscriptionCommitStateError();
   }
-  const fetchCacheTtlSeconds = fetchCache
-    ? Math.max(1, Math.ceil(fetchCache.ttlMs / 1000))
-    : 0;
-  const result = await getRedis().eval(
+  const fetchCacheTtlSeconds = fetchCache ? Math.max(1, Math.ceil(fetchCache.ttlMs / 1000)) : 0;
+  const result = await evalSubscriptionMutation(
     CAS_SUBSCRIPTION_CHANGE,
     [
       REDIS_KEYS.configVersion,
@@ -565,7 +646,7 @@ export async function commitSubscriptionDelete(
   ordinalPlan: OrdinalReservationPlan,
 ): Promise<SubscriptionCommitResult> {
   const encoded = encodeOrdinalReservationPlan(ordinalPlan);
-  const result = await getRedis().eval(
+  const result = await evalSubscriptionMutation(
     CAS_SUBSCRIPTION_DELETE,
     [
       REDIS_KEYS.configVersion,

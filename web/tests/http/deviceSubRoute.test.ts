@@ -43,7 +43,7 @@ describe('/api/sub/{token}/{profile}/{device}', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
-    getProfileByName.mockResolvedValue({ name: 'home', kind: 'normal' });
+    getProfileByName.mockResolvedValue({ id: 'p-home', name: 'home', kind: 'normal' });
     renderDeviceConfig.mockResolvedValue(rendered());
     ({ GET } = await import('@/app/api/sub/[token]/[profile]/[device]/route'));
   });
@@ -64,7 +64,11 @@ describe('/api/sub/{token}/{profile}/{device}', () => {
 
   it('guards with the PROFILE as the token resource (设备不引入第三种令牌)', async () => {
     await GET(new Request('https://pm.test/api/sub/tk/home/macbook'), ctx('tk', 'home', 'macbook'));
-    expect(guardSubToken).toHaveBeenCalledWith(expect.anything(), 'tk', 'home');
+    expect(guardSubToken).toHaveBeenCalledWith(
+      expect.anything(),
+      'tk',
+      expect.objectContaining({ type: 'profile', id: 'p-home' }),
+    );
   });
 
   it('names the file after the device', async () => {
@@ -100,6 +104,7 @@ describe('/api/sub/{token}/{profile}/{device}', () => {
       ctx('tk', 'home', 'macbook'),
     );
     expect(renderDeviceConfig).toHaveBeenCalledWith('home', 'macbook', {
+      expectedProfileId: 'p-home',
       providerUrlBase: 'https://pm.test/api/rule-providers/tk',
       noCache: true,
     });

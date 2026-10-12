@@ -123,7 +123,8 @@ function Workspace({
           </Content>
         </div>
         <div
-          data-modal-backdrop className={`scrim${navOpen ? ' open' : ''}`}
+          data-modal-backdrop
+          className={`scrim${navOpen ? ' open' : ''}`}
           onClick={() => setNavOpen(false)}
           aria-hidden
         />
@@ -145,6 +146,7 @@ function Content({
   profileScoped: boolean;
   children: React.ReactNode;
 }) {
+  const { activeProfile } = useProfiles();
   const chrome = usePageChrome();
   const maxWidth = !fill && chrome?.contentMaxWidth ? chrome.contentMaxWidth : undefined;
   return (
@@ -162,7 +164,7 @@ function Content({
           {children}
         </>
       ) : (
-        <div key={pathname} className="pm-reveal">
+        <div key={`${pathname}:${activeProfile?.id}`} className="pm-reveal">
           <ProfileReadErrorBanner />
           {children}
         </div>

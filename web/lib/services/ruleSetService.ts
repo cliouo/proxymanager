@@ -155,7 +155,12 @@ export async function replaceRuleSet(id: string, input: RuleSetCreate): Promise<
       throw ProblemDetailsError.conflict(`Rule set name "${input.name}" already exists.`);
     }
   }
-  const next: RuleSet = { ...input, id, updated_at: nowSeconds() };
+  const next: RuleSet = {
+    ...input,
+    id,
+    token_version: current.token_version,
+    updated_at: nowSeconds(),
+  };
   assertInvariants(next);
   await commitRuleSetUnderGate({
     affectedNames: renaming ? [current.name, input.name] : [current.name],

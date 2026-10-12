@@ -1,3 +1,4 @@
+import { evalConfigMutation } from './auditedMutation';
 import { getRedis } from '@/lib/redis/client';
 import { REDIS_KEYS } from '@/lib/redis/keys';
 import { DeviceSchema, type Device } from '@/schemas';
@@ -94,7 +95,7 @@ export async function commitDeviceChanges(
   for (const device of writes) args.push(device.id, JSON.stringify(device));
   args.push(String(deletes.length), ...deletes);
 
-  const result = (await getRedis().eval(
+  const result = (await evalConfigMutation(
     CAS_DEVICE_WRITE,
     [REDIS_KEYS.configVersion, REDIS_KEYS.devices(profileId)],
     args,

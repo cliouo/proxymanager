@@ -2,7 +2,7 @@ import { withProblemDetails } from '@/lib/http/handler';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { renderProfileConfig } from '@/lib/engine/renderCache';
 import { extractStructured } from '@/lib/engine/structured';
-import { resolveScopeProfileName } from '@/lib/profileScope';
+import { resolveScopeProfile } from '@/lib/profileScope';
 
 export const dynamic = 'force-dynamic';
 
@@ -21,15 +21,14 @@ export const GET = withProblemDetails(async (request: Request) => {
   // No providerUrlBase here (matches the old direct resolveConfig call —
   // the renderer falls back to its placeholder host). The render cache keys
   // identity on that, so this route shares hits with other no-base renders.
-  const { resolved, baseEtag, baseUpdatedAt, cache } = await renderProfileConfig(
-    resolveScopeProfileName(request),
-    {
-      missingBaseError: () =>
-        ProblemDetailsError.unprocessable('Base config has not been initialized.'),
-      // P-FFP v1: the structured admin view is not a real attempt — no fetch health.
-      recordFetchHealth: false,
-    },
-  );
+  const profile = await resolveScopeProfile(request);
+  const { resolved, baseEtag, baseUpdatedAt, cache } = await renderProfileConfig(profile.name, {
+    expectedProfileId: profile.id,
+    missingBaseError: () =>
+      ProblemDetailsError.unprocessable('Base config has not been initialized.'),
+    // P-FFP v1: the structured admin view is not a real attempt — no fetch health.
+    recordFetchHealth: false,
+  });
   // extractStructured stays at the route layer — it's a cheap projection of
   // the cached content, not worth bloating the cache entry with.
   const structured = extractStructured(resolved.content);

@@ -282,6 +282,7 @@ export type SubscriptionFetchHealthState = SubscriptionFetchHealth['state'];
  */
 const StoredSubscriptionFields = {
   id: z.uuid(),
+  token_version: z.number().int().positive().optional(),
   /**
    * Distribution identifier: `name` is the slug used in public subscription
    * links and group bindings. NOTE — rename is an ACCEPTED IDENTITY RESET:
@@ -477,6 +478,7 @@ export interface SubscriptionAdminView {
 /** In-memory decoded subscription (remote branch may carry the policy). */
 export interface Subscription {
   id: string;
+  token_version?: number;
   name: string;
   display_name?: string;
   enabled: boolean;

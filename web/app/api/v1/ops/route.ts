@@ -1,3 +1,4 @@
+import { operationIdentity } from '@/lib/repos/auditedMutation';
 import { z } from '@/lib/openapi/zod';
 import { withProblemDetails } from '@/lib/http/handler';
 import { ProblemDetailsError } from '@/lib/http/problem';
@@ -20,6 +21,7 @@ export const POST = withProblemDetails(async (request: Request) => {
   const { scenario, op, payload } = OpRequestSchema.parse(raw);
   const { id: profileId } = await resolveScopeProfile(request);
   const result = await dispatch({
+    operationIdentity: operationIdentity(request, { profileId, scenario, op, payload }),
     scenario,
     op,
     payload,

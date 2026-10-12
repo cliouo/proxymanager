@@ -1,6 +1,6 @@
 import { withProblemDetails } from '@/lib/http/handler';
 import { ProblemDetailsError } from '@/lib/http/problem';
-import { getBase } from '@/lib/repos/baseRepo';
+import { getBaseMeta } from '@/lib/repos/baseRepo';
 import { resolveScopeProfile, resolveScopeProfileName } from '@/lib/profileScope';
 import { getProfileByName } from '@/lib/repos/profilesRepo';
 
@@ -15,11 +15,13 @@ export const GET = withProblemDetails(async (request: Request) => {
   const origin = new URL(request.url).origin;
   // Resolve the active profile's base for the buildId/hasBase hints; tolerate a
   // missing record (pre-init) by leaving base null rather than 404-ing meta.
-  const profile = (new URL(request.url).searchParams.has('profileId') || new URL(request.url).searchParams.has('profile'))
-    ? await resolveScopeProfile(request)
-    : await getProfileByName(resolveScopeProfileName(request));
+  const profile =
+    new URL(request.url).searchParams.has('profileId') ||
+    new URL(request.url).searchParams.has('profile')
+      ? await resolveScopeProfile(request)
+      : await getProfileByName(resolveScopeProfileName(request));
   const profileName = profile?.name ?? resolveScopeProfileName(request);
-  const base = profile ? await getBase(profile.id) : null;
+  const base = profile ? await getBaseMeta(profile.id) : null;
 
   return Response.json({
     data: {

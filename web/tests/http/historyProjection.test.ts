@@ -31,7 +31,7 @@ const fakeRedis = {
     const m = bucket(key);
     for (const [id, v] of Object.entries(payload)) m.set(id, v);
   },
-  zrange: async () => [...bucket(REDIS_KEYS.audit.events).keys()],
+  zrange: async () => [...bucket(REDIS_KEYS.audit.events)].flatMap(([id, score]) => [id, score]),
   hmget: async (key: string, ...ids: string[]) => {
     const m = bucket(key);
     const out: Record<string, unknown> = {};

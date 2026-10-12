@@ -29,7 +29,8 @@ const fakeRedis = {
   get: async (key: string) => readKey(key),
   set: async (key: string, value: unknown, opts?: unknown) => {
     kv.set(key, value);
-    if (key !== REDIS_KEYS.configVersion) setCalls.push({ key, value, opts });
+    if (key !== REDIS_KEYS.configVersion && !key.endsWith(':manifest'))
+      setCalls.push({ key, value, opts });
   },
   del: async (key: string) => {
     const removed = Number(kv.delete(key) || counters.delete(key));
@@ -191,7 +192,7 @@ describe('renderProfileConfig — miss then hit', () => {
     // Entry written under render:{profile} with EX = ceil(freshForMs/1000)+60.
     // airport-b (ttl 60s) did NOT participate, so the window is airport-a's 600s.
     expect(setCalls).toHaveLength(1);
-    expect(setCalls[0].key).toBe(REDIS_KEYS.renderCache('default'));
+    expect(setCalls[0].key).toBe(mod.renderVariantKey(REDIS_KEYS.renderCache('default'), URL_BASE));
     const entry = setCalls[0].value as { freshForMs: number; version: number };
     expect(entry.freshForMs).toBe(600_000);
     expect(entry.version).toBe(0);
@@ -232,14 +233,14 @@ describe('renderProfileConfig — miss then hit', () => {
     await expect(mod.renderProfileConfig('default', {})).rejects.toThrow(/PROXY-GROUPS/);
 
     expect(setCalls).toHaveLength(0);
-    expect(kv.has(REDIS_KEYS.renderCache('default'))).toBe(false);
+    expect(kv.has(mod.renderVariantKey(REDIS_KEYS.renderCache('default'), URL_BASE))).toBe(false);
   });
 });
 
 describe('renderProfileConfig — invalidation paths', () => {
   it('rejects epoch 21 entries created before full-domain stable numbering', async () => {
     await mod.renderProfileConfig('default', { providerUrlBase: URL_BASE });
-    const key = REDIS_KEYS.renderCache('default');
+    const key = mod.renderVariantKey(REDIS_KEYS.renderCache('default'), URL_BASE);
     const entry = kv.get(key) as { epoch: number };
     entry.epoch = 21;
 
@@ -250,7 +251,7 @@ describe('renderProfileConfig — invalidation paths', () => {
 
   it('treats a corrupt cache envelope as a miss instead of serving it', async () => {
     await mod.renderProfileConfig('default', { providerUrlBase: URL_BASE });
-    const key = REDIS_KEYS.renderCache('default');
+    const key = mod.renderVariantKey(REDIS_KEYS.renderCache('default'), URL_BASE);
     const entry = kv.get(key) as Record<string, unknown>;
     entry.content = 42;
 
@@ -301,7 +302,7 @@ describe('renderProfileConfig — invalidation paths', () => {
     ['non-string warning', (entry: Record<string, unknown>) => (entry.warnings = [{}])],
   ])('treats %s as a cache miss', async (_label, corrupt) => {
     await mod.renderProfileConfig('default', { providerUrlBase: URL_BASE });
-    const key = REDIS_KEYS.renderCache('default');
+    const key = mod.renderVariantKey(REDIS_KEYS.renderCache('default'), URL_BASE);
     corrupt(kv.get(key) as Record<string, unknown>);
 
     const out = await mod.renderProfileConfig('default', { providerUrlBase: URL_BASE });
@@ -320,7 +321,7 @@ describe('renderProfileConfig — invalidation paths', () => {
     expect(out.cache).toBe('miss');
     expect(resolveConfigMock).toHaveBeenCalledTimes(2);
     expect(setCalls).toHaveLength(1); // only the initial, pre-corruption write
-    expect(kv.has(REDIS_KEYS.renderCache('default'))).toBe(false);
+    expect(kv.has(mod.renderVariantKey(REDIS_KEYS.renderCache('default'), URL_BASE))).toBe(false);
   });
 
   it('repairs an invalid version to a nonzero global generation before the next read', async () => {
@@ -366,8 +367,8 @@ describe('renderProfileConfig — invalidation paths', () => {
       providerUrlBase: URL_BASE,
     });
 
-    expect(otherProfile.cache).toBe('miss');
-    expect(resolveConfigMock).toHaveBeenCalledTimes(4);
+    expect(otherProfile.cache).toBe('hit'); // dependencies were re-read and verified unchanged
+    expect(resolveConfigMock).toHaveBeenCalledTimes(3);
   });
 
   it.each(['00', '01'])(
@@ -386,8 +387,8 @@ describe('renderProfileConfig — invalidation paths', () => {
       const otherProfile = await mod.renderProfileConfig('secondary', {
         providerUrlBase: URL_BASE,
       });
-      expect(otherProfile.cache).toBe('miss');
-      expect(resolveConfigMock).toHaveBeenCalledTimes(4);
+      expect(otherProfile.cache).toBe('hit'); // dependencies were re-read and verified unchanged
+      expect(resolveConfigMock).toHaveBeenCalledTimes(3);
     },
   );
 
@@ -423,13 +424,14 @@ describe('renderProfileConfig — invalidation paths', () => {
     const otherProfile = await mod.renderProfileConfig('secondary', {
       providerUrlBase: URL_BASE,
     });
-    expect(otherProfile.cache).toBe('miss');
+    expect(otherProfile.cache).toBe('hit'); // dependencies were re-read and verified unchanged
     expect(readKey(REDIS_KEYS.configVersion)).toBe(101);
   });
 
-  it('re-renders when config:version was bumped (write invalidation)', async () => {
+  it('re-renders when a relevant input changes with config:version', async () => {
     await mod.renderProfileConfig('default', { providerUrlBase: URL_BASE });
     await fakeRedis.incr(REDIS_KEYS.configVersion); // simulate a repo write
+    getBaseMock.mockResolvedValue({ ...BASE, etag: 'changed' });
     const out = await mod.renderProfileConfig('default', { providerUrlBase: URL_BASE });
     expect(out.cache).toBe('miss');
     expect(resolveConfigMock).toHaveBeenCalledTimes(2);
@@ -552,4 +554,76 @@ describe('renderProfileConfig — display_name propagation', () => {
     const out = await mod.renderProfileConfig('default', { providerUrlBase: URL_BASE });
     expect(out.displayName).toBeNull();
   });
+});
+
+it('alternating structural reads and previews keep separate cache slots', async () => {
+  await mod.renderProfileConfig('default');
+  await mod.renderProfileConfig('default', { providerUrlBase: URL_BASE });
+  expect((await mod.renderProfileConfig('default')).cache).toBe('hit');
+  expect((await mod.renderProfileConfig('default', { providerUrlBase: URL_BASE })).cache).toBe(
+    'hit',
+  );
+  expect(resolveConfigMock).toHaveBeenCalledTimes(2);
+});
+
+it('local dependency URLs carry the rule-set capability, never the visiting profile token', async () => {
+  vi.stubEnv('SUB_TOKEN', 'isolated-master');
+  try {
+    await mod.renderProfileConfig('default', {
+      providerUrlBase: 'https://pm.test/api/rule-providers/profile-token',
+    });
+    const options = resolveConfigMock.mock.calls[0][5] as { providerUrl: (p: unknown) => string };
+    const url = new URL(options.providerUrl({ id: 'rules-id', name: 'private-rules' }));
+    const { requireSubToken, deriveSubToken } = await import('@/lib/auth');
+    const token = url.pathname.split('/')[3];
+    expect(() => requireSubToken(token, { type: 'rule-set', id: 'rules-id' })).not.toThrow();
+    expect(() =>
+      requireSubToken(deriveSubToken({ type: 'profile', id: 'profile-id' }), {
+        type: 'rule-set',
+        id: 'rules-id',
+      }),
+    ).toThrow();
+    expect(url.pathname.endsWith('/private-rules')).toBe(true);
+  } finally {
+    vi.unstubAllEnvs();
+  }
+});
+
+it('revalidates unchanged dependencies after another profile writes without recompiling', async () => {
+  await mod.renderProfileConfig('default', { providerUrlBase: URL_BASE });
+  await fakeRedis.incr(REDIS_KEYS.configVersion);
+  expect((await mod.renderProfileConfig('default', { providerUrlBase: URL_BASE })).cache).toBe(
+    'hit',
+  );
+  expect(resolveConfigMock).toHaveBeenCalledTimes(1);
+  expect(getBaseMock).toHaveBeenCalledTimes(2);
+});
+it('validates 304 from a lightweight manifest without fetching the artifact', async () => {
+  await mod.renderProfileConfig('default', { providerUrlBase: URL_BASE });
+  kv.delete(mod.renderVariantKey(REDIS_KEYS.renderCache('default'), URL_BASE));
+  expect(await mod.cachedProfileEtag('default', URL_BASE, `"${RESOLVED_BUILD_ID}"`)).toBe(
+    `"${RESOLVED_BUILD_ID}"`,
+  );
+  expect(await mod.cachedProfileEtag('default', URL_BASE, '"other"')).toBeNull();
+  await fakeRedis.incr(REDIS_KEYS.configVersion);
+  expect(await mod.cachedProfileEtag('default', URL_BASE, `"${RESOLVED_BUILD_ID}"`)).toBeNull();
+  expect(resolveConfigMock).toHaveBeenCalledTimes(1);
+});
+
+it.each([false, true])(
+  'refuses a name rebound to another authenticated profile (warm=%s)',
+  async (warm) => {
+    if (warm) await mod.renderProfileConfig('default', { providerUrlBase: URL_BASE });
+    const bound = { providerUrlBase: URL_BASE, expectedProfileId: 'previous-owner' };
+    await expect(mod.renderProfileConfig('default', bound)).rejects.toMatchObject({
+      problem: { status: 404 },
+    });
+    expect(resolveConfigMock).toHaveBeenCalledTimes(warm ? 1 : 0);
+  },
+);
+it('does not issue a 304 for a different authenticated profile identity', async () => {
+  await mod.renderProfileConfig('default', { providerUrlBase: URL_BASE });
+  expect(
+    await mod.cachedProfileEtag('default', URL_BASE, `"${RESOLVED_BUILD_ID}"`, 'previous-owner'),
+  ).toBeNull();
 });

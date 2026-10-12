@@ -1,9 +1,10 @@
+import { findDistributionIdentity } from '@/lib/repos/distributionIdentityRepo';
 import { withProblemDetails } from '@/lib/http/handler';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { guardSubToken } from '@/lib/http/subGuard';
 import { nodeExportResponse, parseNodeExportFormat } from '@/lib/http/providerResponse';
 import { exportSubscriptionNodes } from '@/lib/services/nodeExportService';
-import { getSubscriptionByName } from '@/lib/services/subscriptionService';
+import { getSubscription } from '@/lib/repos/subscriptionsRepo';
 import { getConfigVersion } from '@/lib/repos/configVersionRepo';
 
 export const dynamic = 'force-dynamic';
@@ -21,11 +22,16 @@ type Ctx = RouteContext<'/api/sub/[token]/source/[name]'>;
  */
 export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
   const { token, name } = await ctx.params;
-  await guardSubToken(request, token, name);
   const format = parseNodeExportFormat(request);
   const configVersion = await getConfigVersion();
 
-  const sub = await getSubscriptionByName(name);
+  const meta = await findDistributionIdentity('subscription', name);
+  await guardSubToken(
+    request,
+    token,
+    meta ? { type: 'subscription', id: meta.id, tokenVersion: meta.token_version } : undefined,
+  );
+  const sub = meta ? await getSubscription(meta.id) : null;
   if (!sub) {
     throw ProblemDetailsError.notFound(`Subscription "${name}" not found.`);
   }

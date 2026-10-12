@@ -42,7 +42,12 @@ vi.mock('@/lib/repos/collectionsRepo', () => ({ listCollections: async () => [] 
 vi.mock('@/lib/repos/ruleSetsRepo', () => ({ listRuleSets: async () => [] }));
 vi.mock('@/lib/repos/proxyGroupTemplatesRepo', () => ({ listProxyGroupTemplates: async () => [] }));
 vi.mock('@/lib/repos/devicesRepo', () => ({ listDevices: async () => [] }));
-vi.mock('@/lib/repos/auditRepo', () => ({ recordEvent: state.audits, recordEvents: state.audits }));
+vi.mock('@/lib/repos/auditRepo', async (original) => ({
+  ...(await original<typeof import('@/lib/repos/auditRepo')>()),
+  trimEvents: vi.fn(async () => undefined),
+  recordEvent: state.audits,
+  recordEvents: state.audits,
+}));
 vi.mock('@/lib/redis/client', () => ({ getRedis: () => ({ eval: state.eval }) }));
 
 // Real service, final renderer/preflight, and repository serialization/CAS;
@@ -123,7 +128,8 @@ it('leaves every rank untouched when the final CAS conflicts', async () => {
     problem: { status: 412 },
   });
   expect(state.groups).toEqual(before);
-  expect(state.audits).not.toHaveBeenCalled();
+  // Events are planned before the CAS; the Redis integration asserts no event persists on failure.
+  expect(state.audits).toHaveBeenCalledOnce();
 });
 it.each([[A], [A, A], [A, 'cccccccc-cccc-4ccc-8ccc-cccccccccccc']])(
   'rejects incomplete, duplicate or foreign ID lists before writing: %j',

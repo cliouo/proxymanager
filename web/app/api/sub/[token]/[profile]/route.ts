@@ -1,4 +1,6 @@
-import { renderProfileConfig } from '@/lib/engine/renderCache';
+import { parse } from 'yaml';
+import { buildBase64Subscription } from '@/lib/proxies/clashToUri';
+import { cachedProfileEtag, renderProfileConfig } from '@/lib/engine/renderCache';
 import { attachmentDisposition } from '@/lib/http/contentDisposition';
 import { etagMatches } from '@/lib/http/etag';
 import { withProblemDetails } from '@/lib/http/handler';
@@ -18,12 +20,17 @@ export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
   const { token, profile } = await ctx.params;
   // Accept the master token, a token derived for THIS profile, or a rotated
   // one; rate-limit failed attempts by IP (P1-2/P1-3).
-  await guardSubToken(request, token, profile);
 
   // 模版不对外分发 —— 在**渲染之前**拦掉,别为一份注定 404 的请求付渲染成本
   // (renderProfileConfig 自己只 404 未知名字,不认识 kind)。措辞与未知名字的
   // 404 同一套 Problem Details,不额外暴露「这个名字存在」以外的信息。
   const record = await getProfileByName(profile);
+  await guardSubToken(
+    request,
+    token,
+    record ? { type: 'profile', id: record.id, tokenVersion: record.token_version } : undefined,
+  );
+  if (!record) throw ProblemDetailsError.notFound(`Profile "${profile}" 不存在。`);
   if (isTemplateProfile(record)) {
     throw ProblemDetailsError.notFound(
       `Profile "${profile}" 是模版,${TEMPLATE_NOT_DISTRIBUTABLE} —— 请从它新建一份配置文件再分发。`,
@@ -34,12 +41,27 @@ export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
   // 未知名字由它 404(见 lib/engine/renderCache)。
   const url = new URL(request.url);
   const noCache = url.searchParams.get('noCache') === '1';
+  const format = url.searchParams.get('format');
+  if (format && !['clash', 'yaml', 'base64', 'v2ray'].includes(format))
+    throw ProblemDetailsError.badRequest('Unsupported config format.');
+  const asBase64 = format === 'base64' || format === 'v2ray';
+  const providerUrlBase = `${url.origin}/api/rule-providers/${token}`;
+  const conditional = request.headers.get('if-none-match');
+  if (!noCache && !asBase64 && conditional) {
+    const etag = await cachedProfileEtag(profile, providerUrlBase, conditional, record.id);
+    if (etag)
+      return new Response(null, {
+        status: 304,
+        headers: { ETag: etag, 'X-Render-Cache': 'hit', 'Cache-Control': 'no-store' },
+      });
+  }
   // Data loading + resolveConfig now live behind the render cache — when
   // nothing changed since the last render, this is a single Redis MGET.
   // `?noCache=1` keeps its old meaning (force-refresh upstream subs) and
   // additionally bypasses the render cache read (still rewrites it).
   const { resolved, displayName, cache } = await renderProfileConfig(profile, {
-    providerUrlBase: `${url.origin}/api/rule-providers/${token}`,
+    expectedProfileId: record.id,
+    providerUrlBase,
     noCache,
   });
 
@@ -52,7 +74,12 @@ export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
 
   // buildId is content-addressed, so it doubles as a strong ETag — Mihomo /
   // clients polling on Profile-Update-Interval can skip the body transfer.
-  const etag = `"${resolved.buildId}"`;
+  const doc = asBase64 ? parse(resolved.content) : null;
+  const proxies = Array.isArray(doc?.proxies) ? doc.proxies : [];
+  const encoded = asBase64 ? buildBase64Subscription(proxies) : null;
+  if (encoded && !encoded.lineCount && proxies.length)
+    throw ProblemDetailsError.unprocessable('没有可导出为通用订阅的节点。');
+  const etag = `"${resolved.buildId}${asBase64 ? '-b64' : ''}"`;
   const ifNoneMatch = request.headers.get('if-none-match');
   if (ifNoneMatch && etagMatches(ifNoneMatch, etag)) {
     return new Response(null, {
@@ -64,10 +91,16 @@ export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
     });
   }
 
-  return new Response(resolved.content, {
+  return new Response(encoded?.content ?? resolved.content, {
     status: 200,
     headers: {
-      'Content-Type': 'text/yaml; charset=utf-8',
+      'Content-Type': asBase64 ? 'text/plain; charset=utf-8' : 'text/yaml; charset=utf-8',
+      ...(encoded
+        ? {
+            'X-Proxy-Count': String(encoded.lineCount),
+            'X-Skipped-Nodes': String(encoded.skipped.length),
+          }
+        : {}),
       'Content-Disposition': attachmentDisposition(filename),
       'Cache-Control': 'no-store',
       'Profile-Update-Interval': '24',

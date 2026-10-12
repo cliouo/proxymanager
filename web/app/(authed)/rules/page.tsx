@@ -10,6 +10,7 @@ import styles from './rules.module.css';
 
 interface Rule {
   id: string;
+  revision?: number;
   anchor: string;
   type: string;
   value: string;
@@ -79,6 +80,7 @@ export default function RulesPage() {
   const [query, setQuery] = useState('');
   const [showDisabled, setShowDisabled] = useState(true);
   const [adding, setAdding] = useState(false);
+  const editingRevision = useRef<number | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
 
@@ -88,14 +90,22 @@ export default function RulesPage() {
   const [debouncedQuery, setDebouncedQuery] = useState('');
   const [fetching, setFetching] = useState(false);
   const requestGeneration = useRef(0);
-  useEffect(() => { const timer = setTimeout(() => setDebouncedQuery(query.trim()), 250); return () => clearTimeout(timer); }, [query]);
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedQuery(query.trim()), 250);
+    return () => clearTimeout(timer);
+  }, [query]);
   function changeFilter(action: () => void) {
     if (!confirmUnsavedChanges()) return;
-    setEditingId(null); setAdding(false); setOffset(0); action();
+    setEditingId(null);
+    setAdding(false);
+    setOffset(0);
+    action();
   }
   function changePage(next: number) {
     if (!confirmUnsavedChanges()) return;
-    setEditingId(null); setAdding(false); setOffset(next);
+    setEditingId(null);
+    setAdding(false);
+    setOffset(next);
   }
   const reload = useCallback(async () => {
     const generation = ++requestGeneration.current;
@@ -108,32 +118,57 @@ export default function RulesPage() {
     if (debouncedQuery) params.set('q', debouncedQuery);
     setError(null);
     try {
-      const [r, a, p, rs, sums] = await Promise.all([
-        api<{ data: Rule[]; meta: { total: number; configVersion: number } }>(`/api/v1/rules?${params}`),
-        api<{ data: string[] }>('/api/v1/anchors').catch(() => ({ data: [] as string[] })),
-        api<{ data: string[] }>('/api/v1/policies').catch(() => ({ data: [] as string[] })),
-        api<{ data: { name: string }[] }>('/api/v1/rule-sets').catch(() => ({ data: [] as { name: string }[] })),
-        api<{ data: RuleSummary }>('/api/v1/rules/summary').catch(() => null),
-      ]);
+      const r = await api<{
+        data: Rule[];
+        meta: { total: number; configVersion: number; summary: RuleSummary };
+      }>(`/api/v1/rules?${params}`);
       if (generation !== requestGeneration.current) return;
-      if (offset > 0 && offset >= r.meta.total) { setOffset(Math.max(0, Math.ceil(r.meta.total / 100) - 1) * 100); return; }
-      setSummary(sums?.data ?? null);
+      if (offset > 0 && offset >= r.meta.total) {
+        setOffset(Math.max(0, Math.ceil(r.meta.total / 100) - 1) * 100);
+        return;
+      }
+      setSummary(r.meta.summary);
       setConfigVersion(r.meta.configVersion);
       setRules(r.data);
       setServerTotal(r.meta?.total ?? r.data.length);
-      setAnchors(a.data);
-      setPolicies(p.data);
-      setRuleSets(rs.data.map((s) => s.name));
     } catch (err) {
-      if (generation === requestGeneration.current) { setError(err instanceof Error ? err.message : String(err)); setConfigVersion(null); }
+      if (generation === requestGeneration.current) {
+        setError(err instanceof Error ? err.message : String(err));
+        setConfigVersion(null);
+      }
     } finally {
-      if (generation === requestGeneration.current) { setLoaded(true); setFetching(false); }
+      if (generation === requestGeneration.current) {
+        setLoaded(true);
+        setFetching(false);
+      }
     }
   }, [offset, filterAnchor, filterPolicy, filterType, showDisabled, debouncedQuery]);
 
   useEffect(() => {
     reload();
   }, [reload]);
+
+  // Dictionaries are independent of search/page state. Remount on confirmed profile switch.
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([
+      api<{ data: string[] }>('/api/v1/anchors'),
+      api<{ data: string[] }>('/api/v1/policies'),
+      api<{ data: { name: string }[] }>('/api/v1/rule-sets'),
+    ])
+      .then(([a, p, rs]) => {
+        if (cancelled) return;
+        setAnchors(a.data);
+        setPolicies(p.data);
+        setRuleSets(rs.data.map((s) => s.name));
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const filtered = rules;
 
@@ -155,7 +190,9 @@ export default function RulesPage() {
   }, [filtered, anchors, rules]);
 
   const counts = summary ?? { total: 0, active: 0, disabled: 0 };
-  const anchorCounts = new Map(Object.entries(summary?.anchors ?? {}).map(([name, stats]) => [name, stats.total]));
+  const anchorCounts = new Map(
+    Object.entries(summary?.anchors ?? {}).map(([name, stats]) => [name, stats.total]),
+  );
 
   /* ── mutations ──────────────────────────────────────────────── */
 
@@ -173,9 +210,16 @@ export default function RulesPage() {
     }
   }
 
-  async function onPatch(id: string, patch: Partial<Rule>) {
+  async function onPatch(
+    id: string,
+    patch: Partial<Rule>,
+    expectedRevision = rules.find((r) => r.id === id)?.revision ?? 0,
+  ) {
     try {
-      const res = await api<{ data: Rule }>(`/api/v1/rules/${id}`, { method: 'PATCH', body: patch });
+      const res = await api<{ data: Rule }>(`/api/v1/rules/${id}`, {
+        method: 'PATCH',
+        body: { ...patch, expectedRevision },
+      });
       void res;
       await reload();
       return true;
@@ -207,7 +251,10 @@ export default function RulesPage() {
     if (configVersion === null) return;
     setBusy(true);
     try {
-      await api(`/api/v1/rules/${rule.id}/move`, { method: 'POST', body: { direction: dir, expectedVersion: configVersion } });
+      await api(`/api/v1/rules/${rule.id}/move`, {
+        method: 'POST',
+        body: { direction: dir, expectedVersion: configVersion },
+      });
       await reload();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
@@ -228,6 +275,7 @@ export default function RulesPage() {
     }
   }
 
+  const createOperation = useRef<{ payload: string; id: string } | null>(null);
   async function onCreate(f: RuleFields) {
     const body: Record<string, unknown> = {
       anchor: f.anchor,
@@ -239,21 +287,33 @@ export default function RulesPage() {
       ...(f.options.length ? { options: f.options } : {}),
       ...(f.enabled ? {} : { enabled: false }),
     };
-    await api('/api/v1/rules', { method: 'POST', body });
+    const payload = JSON.stringify(body);
+    if (createOperation.current?.payload !== payload)
+      createOperation.current = { payload, id: crypto.randomUUID() };
+    await api('/api/v1/rules', {
+      method: 'POST',
+      body,
+      headers: { 'Idempotency-Key': createOperation.current.id },
+    });
+    createOperation.current = null;
     await reload();
     setAdding(false);
   }
 
   async function onEdit(id: string, f: RuleFields) {
-    const ok = await onPatch(id, {
-      anchor: f.anchor,
-      type: f.type,
-      value: NO_VALUE_TYPES.has(f.type) ? '' : f.value,
-      policy: f.policy,
-      options: f.options,
-      note: f.note,
-      enabled: f.enabled,
-    });
+    const ok = await onPatch(
+      id,
+      {
+        anchor: f.anchor,
+        type: f.type,
+        value: NO_VALUE_TYPES.has(f.type) ? '' : f.value,
+        policy: f.policy,
+        options: f.options,
+        note: f.note,
+        enabled: f.enabled,
+      },
+      editingRevision.current ?? 0,
+    );
     if (ok) setEditingId(null);
   }
 
@@ -340,7 +400,9 @@ export default function RulesPage() {
             className="btn ghost sm"
             onClick={() => {
               if (!confirmUnsavedChanges()) return;
-              setOffset(0); setEditingId(null); setAdding(false);
+              setOffset(0);
+              setEditingId(null);
+              setAdding(false);
               setFilterAnchor('');
               setFilterPolicy('');
               setFilterType('');
@@ -363,10 +425,22 @@ export default function RulesPage() {
 
       {error ? (
         <div className={styles.errBar}>
-          <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <span
+            style={{
+              minWidth: 0,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
             {error}
           </span>
-          <button type="button" className={styles.x} onClick={() => setError(null)} aria-label="关闭">
+          <button
+            type="button"
+            className={styles.x}
+            onClick={() => setError(null)}
+            aria-label="关闭"
+          >
             ✕
           </button>
         </div>
@@ -381,7 +455,9 @@ export default function RulesPage() {
               policies={policies}
               ruleSets={ruleSets}
               onSubmit={onCreate}
-              onCancel={() => { if (confirmUnsavedChanges()) setAdding(false); }}
+              onCancel={() => {
+                if (confirmUnsavedChanges()) setAdding(false);
+              }}
             />
           </div>
         </div>
@@ -445,6 +521,7 @@ export default function RulesPage() {
                       editingId={editingId}
                       onSetEditing={(id) => {
                         if (!confirmUnsavedChanges()) return;
+                        editingRevision.current = rules.find((r) => r.id === id)?.revision ?? 0;
                         setEditingId(id);
                         setAdding(false);
                       }}
@@ -476,11 +553,25 @@ export default function RulesPage() {
       </div>
 
       <div className={styles.foot}>
-        <span>{serverTotal ? `${offset + 1}–${offset + rules.length}` : '0'} / 共 {serverTotal ?? 0} 条 · 每页 100 条</span>
-        <button className="btn sm" disabled={fetching || offset === 0} onClick={() => changePage(Math.max(0, offset - 100))}>上一页</button>
-        <button className="btn sm" disabled={fetching || offset + 100 >= (serverTotal ?? 0)} onClick={() => changePage(offset + 100)}>下一页</button>
+        <span>
+          {serverTotal ? `${offset + 1}–${offset + rules.length}` : '0'} / 共 {serverTotal ?? 0} 条
+          · 每页 100 条
+        </span>
+        <button
+          className="btn sm"
+          disabled={fetching || offset === 0}
+          onClick={() => changePage(Math.max(0, offset - 100))}
+        >
+          上一页
+        </button>
+        <button
+          className="btn sm"
+          disabled={fetching || offset + 100 >= (serverTotal ?? 0)}
+          onClick={() => changePage(offset + 100)}
+        >
+          下一页
+        </button>
         {filtersOn && <span>筛选期间暂停排序，清除筛选后可跨页移动。</span>}
-
       </div>
     </>
   );
@@ -532,7 +623,9 @@ function GroupBody({
           <div className={styles.inner}>
             <span className={styles.anchorChip}>{anchor}</span>
             <span className={styles.gmeta}>
-              {activeN === null || totalN === null ? '统计暂不可用' : `${activeN} 生效${totalN > activeN ? ` · ${totalN - activeN} 停用` : ''}`}
+              {activeN === null || totalN === null
+                ? '统计暂不可用'
+                : `${activeN} 生效${totalN > activeN ? ` · ${totalN - activeN} 停用` : ''}`}
             </span>
             <button
               type="button"
@@ -619,7 +712,16 @@ function GroupBody({
                   {active ? '生效' : '停用'}
                 </button>
               </td>
-              <td style={{ color: 'var(--muted)', fontSize: 11.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.note}>
+              <td
+                style={{
+                  color: 'var(--muted)',
+                  fontSize: 11.5,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+                title={r.note}
+              >
                 {r.note || ''}
               </td>
               <td>
@@ -704,9 +806,17 @@ function RuleForm({
     if (!initial && policies.length && !policy) setPolicy(policies[0]);
   }, [anchors, policies, anchor, policy, initial]);
 
-  useUnsavedGuard(initial
-    ? anchor !== initial.anchor || type !== initial.type || value !== initial.value || policy !== initial.policy || optionsStr !== (initial.options ?? []).join(', ') || note !== (initial.note ?? '') || enabled !== (initial.enabled !== false)
-    : value !== '' || note !== '' || optionsStr !== '' || type !== 'DOMAIN-SUFFIX' || !enabled);
+  useUnsavedGuard(
+    initial
+      ? anchor !== initial.anchor ||
+          type !== initial.type ||
+          value !== initial.value ||
+          policy !== initial.policy ||
+          optionsStr !== (initial.options ?? []).join(', ') ||
+          note !== (initial.note ?? '') ||
+          enabled !== (initial.enabled !== false)
+      : value !== '' || note !== '' || optionsStr !== '' || type !== 'DOMAIN-SUFFIX' || !enabled,
+  );
   const noValue = NO_VALUE_TYPES.has(type);
   const isRuleSet = type === 'RULE-SET';
 
@@ -745,12 +855,22 @@ function RuleForm({
 
   return (
     <form onSubmit={submit} className={styles.formBar}>
-      <select className="input mono" value={anchor} onChange={(e) => setAnchor(e.target.value)} style={{ width: 110 }}>
+      <select
+        className="input mono"
+        value={anchor}
+        onChange={(e) => setAnchor(e.target.value)}
+        style={{ width: 110 }}
+      >
         {anchors.map((a) => (
           <option key={a}>{a}</option>
         ))}
       </select>
-      <select className="input mono" value={type} onChange={(e) => setType(e.target.value)} style={{ width: 150 }}>
+      <select
+        className="input mono"
+        value={type}
+        onChange={(e) => setType(e.target.value)}
+        style={{ width: 150 }}
+      >
         {TYPES.map((t) => (
           <option key={t}>{t}</option>
         ))}
@@ -766,7 +886,9 @@ function RuleForm({
           <option value="">
             {ruleSets.length ? '选择规则集…' : '（暂无规则集，请先到「规则集」页创建）'}
           </option>
-          {value && !ruleSets.includes(value) ? <option value={value}>{value}（库中不存在）</option> : null}
+          {value && !ruleSets.includes(value) ? (
+            <option value={value}>{value}（库中不存在）</option>
+          ) : null}
           {ruleSets.map((n) => (
             <option key={n} value={n}>
               {n}
@@ -784,7 +906,12 @@ function RuleForm({
           autoFocus={mode === 'create'}
         />
       )}
-      <select className="input mono" value={policy} onChange={(e) => setPolicy(e.target.value)} style={{ width: 130 }}>
+      <select
+        className="input mono"
+        value={policy}
+        onChange={(e) => setPolicy(e.target.value)}
+        style={{ width: 130 }}
+      >
         {policy && !policies.includes(policy) ? <option>{policy}</option> : null}
         {policies.map((p) => (
           <option key={p}>{p}</option>

@@ -12,7 +12,10 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('@/lib/profileScope', () => ({ resolveScopeProfile: mocks.resolveScopeProfile }));
-vi.mock('@/lib/repos/auditRepo', () => ({ recordEvents: mocks.recordEvents }));
+vi.mock('@/lib/repos/auditRepo', async (original) => ({
+  ...(await original<typeof import('@/lib/repos/auditRepo')>()),
+  recordEvents: mocks.recordEvents,
+}));
 vi.mock('@/lib/repos/configVersionRepo', () => ({ getConfigVersion: mocks.getConfigVersion }));
 vi.mock('@/lib/repos/rulesRepo', () => ({ listRules: mocks.listRules }));
 vi.mock('@/lib/services/profileConfigMutationService', () => ({

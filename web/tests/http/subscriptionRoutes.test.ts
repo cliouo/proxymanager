@@ -82,7 +82,10 @@ const gate = vi.hoisted(() => ({
   })),
 }));
 
-vi.mock('@/lib/repos/subscriptionsRepo', () => repo);
+vi.mock('@/lib/repos/subscriptionsRepo', () => ({
+  ...repo,
+  listSubscriptionSummaries: repo.listSubscriptions,
+}));
 vi.mock('@/lib/repos/profilesRepo', () => ({ listProfiles: consumerRepos.listProfiles }));
 vi.mock('@/lib/repos/collectionsRepo', () => ({
   listCollections: consumerRepos.listCollections,

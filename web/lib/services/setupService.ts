@@ -1,3 +1,6 @@
+import { getRedis } from '@/lib/redis/client';
+import { getConfigVersion } from '@/lib/repos/configVersionRepo';
+import { SetupStatusSchema } from '@/schemas/setup';
 import { ConfigPreflightUnavailableError } from '@/lib/config/errors';
 import { ProblemDetailsError, PROBLEM_BASE_URL } from '@/lib/http/problem';
 import {
@@ -404,11 +407,7 @@ function statusFromSnapshot(snapshot: SetupSnapshot): SetupApiStatus {
     }
   }
 
-  const reasonCodes = [
-    ...blockingReasonCodes,
-    ...healthReasonCodes,
-    ...classificationReasonCodes,
-  ];
+  const reasonCodes = [...blockingReasonCodes, ...healthReasonCodes, ...classificationReasonCodes];
   const diagnostics = reasonCodes.map((code) => {
     const known = REASON_DIAGNOSTICS[code] ?? {
       component: 'storage' as const,
@@ -567,4 +566,28 @@ export async function bootstrapSetup(
       distribution_available: true,
     },
   };
+}
+
+/** Startup read model; setup/repair paths still always inspect storage strictly. */
+export async function getWorkspaceBootstrap() {
+  const version = await getConfigVersion();
+  const key = `workspace-bootstrap:v1:${version}`;
+  const cached = await getRedis().get<{ status: SetupApiStatus; profiles: Profile[] }>(key);
+  if (
+    cached &&
+    SetupStatusSchema.safeParse(cached.status).success &&
+    cached.status.revision === version &&
+    Array.isArray(cached.profiles) &&
+    cached.profiles.every((p) => ProfileSchema.safeParse(p).success)
+  )
+    return cached;
+  const snapshot = await loadSetupSnapshot();
+  const result = {
+    status: statusFromSnapshot(snapshot),
+    profiles: snapshot.profiles.sort((a, b) => a.name.localeCompare(b.name)),
+  };
+  // Versioned + short TTL: never trust an eternal initialized flag.
+  if (result.status.state === 'configured')
+    await getRedis().set(`workspace-bootstrap:v1:${snapshot.revision}`, result, { ex: 60 });
+  return result;
 }

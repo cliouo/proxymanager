@@ -102,7 +102,11 @@ describe('/api/sub/{token}/{profile} — 模版不可分发', () => {
     expect(body.title).toBe('Not Found');
     expect(body.detail).toContain('模版不可分发');
     // 令牌闸门仍在模版判定之前跑 —— 模版的存在性不该绕过鉴权。
-    expect(guardSubToken).toHaveBeenCalledWith(expect.anything(), 'tk', 'simple');
+    expect(guardSubToken).toHaveBeenCalledWith(
+      expect.anything(),
+      'tk',
+      expect.objectContaining({ type: 'profile' }),
+    );
   });
 
   it('serves a normal profile as before', async () => {
@@ -123,13 +127,13 @@ describe('/api/sub/{token}/{profile} — 模版不可分发', () => {
     expect(res.status).toBe(200);
   });
 
-  it('leaves an unknown name to the renderer (its own 404), not to the kind gate', async () => {
+  it('rejects an unknown name before rendering an unauthenticated identity', async () => {
     getProfileByName.mockResolvedValue(null);
 
     const res = await GET(new Request('https://pm.test/api/sub/tk/ghost'), ctx('tk', 'ghost'));
 
-    expect(res.status).toBe(200); // renderer mocked to succeed — the point is it got called
-    expect(renderProfileConfig).toHaveBeenCalledOnce();
+    expect(res.status).toBe(404); // A successful renderer mock must never bypass the identity gate.
+    expect(renderProfileConfig).not.toHaveBeenCalled();
   });
 });
 

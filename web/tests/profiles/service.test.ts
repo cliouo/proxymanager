@@ -1,6 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { REDIS_KEYS } from '@/lib/redis/keys';
-import { RuleSchema, type Collection, type Device, type Profile, type ProxyGroup, type Rule, type Subscription } from '@/schemas';
+import {
+  RuleSchema,
+  type Collection,
+  type Device,
+  type Profile,
+  type ProxyGroup,
+  type Rule,
+  type Subscription,
+} from '@/schemas';
 
 const stores = new Map<string, Map<string, unknown>>();
 /** Plain string keys (base:content/meta, config:version, backups). */
@@ -32,7 +40,7 @@ const fakeRedis = {
     for (const id of ids) if (m.delete(id)) n++;
     return n;
   },
-  get: async (key: string) => kv.get(key) ?? null,
+  get: async (key: string) => kv.get(key) ?? counters.get(key) ?? null,
   mget: async (...keys: string[]) => keys.map((k) => kv.get(k) ?? counters.get(k) ?? null),
   set: async (key: string, value: unknown) => {
     kv.set(key, value);
@@ -40,6 +48,18 @@ const fakeRedis = {
   // Simulate baseRepo's CAS_SET_BASE Lua (P2-1): CAS on the meta etag, then
   // write content + meta + bump version.
   eval: async (_script: string, keys: string[], args: (string | number)[]) => {
+    if (keys[0] === REDIS_KEYS.configVersion) {
+      const current = counters.get(keys[0]) ?? 0;
+      if (current !== Number(args[0])) return [0, String(current)];
+      let index = 3;
+      const count = Number(args[2]);
+      for (let n = 0; n < count; n++)
+        bucket(keys[1]).set(String(args[index++]), JSON.parse(String(args[index++])));
+      const deletes = Number(args[index++]);
+      for (let n = 0; n < deletes; n++) bucket(keys[1]).delete(String(args[index++]));
+      counters.set(keys[0], current + 1);
+      return [1, String(current + 1)];
+    }
     const [metaKey, contentKey, versionKey] = keys;
     const [check, expectedEtag, content, metaJson] = args.map(String);
     if (check === '1') {
@@ -434,9 +454,7 @@ describe('profileService — clone-on-create (Phase 2)', () => {
 
     const dest = await svc.createProfile({ name: 'fresh' }); // no copy_from
 
-    expect(kv.get(REDIS_KEYS.base.content(dest.id))).toBe(
-      'proxies: []\n# === PROXY-GROUPS ===\n',
-    );
+    expect(kv.get(REDIS_KEYS.base.content(dest.id))).toBe('proxies: []\n# === PROXY-GROUPS ===\n');
     expect(stores.get(REDIS_KEYS.proxyGroups(dest.id))).toBeUndefined();
     expect(stores.get(REDIS_KEYS.rules(dest.id))).toBeUndefined();
   });

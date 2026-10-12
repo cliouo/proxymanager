@@ -1,23 +1,13 @@
+import { readRulePage } from '@/lib/services/rulePage';
+import { operationIdentity } from '@/lib/repos/auditedMutation';
 import { withProblemDetails } from '@/lib/http/handler';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { resolveScopeProfile } from '@/lib/profileScope';
-import { listRules } from '@/lib/repos/rulesRepo';
 import { dispatch } from '@/lib/scenarios/_shared/dispatch';
 import { resolveActor } from '@/lib/services/rulesService';
-import { versionedRead } from '@/lib/services/versionedRead';
 import { type Rule } from '@/schemas';
 
 export const dynamic = 'force-dynamic';
-
-const SORT_KEYS = ['rank', 'added_at', 'updated_at', 'value'] as const;
-type SortKey = (typeof SORT_KEYS)[number];
-
-const COMPARERS: Record<SortKey, (a: Rule, b: Rule) => number> = {
-  rank: (a, b) => a.rank - b.rank,
-  added_at: (a, b) => a.added_at - b.added_at,
-  updated_at: (a, b) => a.updated_at - b.updated_at,
-  value: (a, b) => a.value.localeCompare(b.value),
-};
 
 function parseInt(value: string | null, fallback: number): number {
   if (value === null) return fallback;
@@ -34,40 +24,28 @@ export const GET = withProblemDetails(async (request: Request) => {
   const policyFilter = params.get('policy');
   const typeFilter = params.get('type');
   const enabledFilter = params.get('enabled');
-  if (enabledFilter !== null && !['true', 'false'].includes(enabledFilter)) throw ProblemDetailsError.badRequest('enabled 必须为 true 或 false');
+  if (enabledFilter !== null && !['true', 'false'].includes(enabledFilter))
+    throw ProblemDetailsError.badRequest('enabled 必须为 true 或 false');
   const qFilter = params.get('q')?.toLowerCase() ?? null;
-
-  const sortParam = params.get('sort') ?? 'rank';
-  const [rawKey, rawDir = 'asc'] = sortParam.split(':');
-  const sortKey: SortKey = (SORT_KEYS as readonly string[]).includes(rawKey)
-    ? (rawKey as SortKey)
-    : 'rank';
-  const sortDir = rawDir === 'desc' ? -1 : 1;
 
   const limit = Math.min(500, Math.max(1, parseInt(params.get('limit'), 100)));
   const offset = Math.max(0, parseInt(params.get('offset'), 0));
 
-  const { data: all, configVersion } = await versionedRead(() => listRules(profileId));
-
-  const filtered = all.filter((rule) => {
-    if (anchorFilter && rule.anchor !== anchorFilter) return false;
-    if (policyFilter && rule.policy !== policyFilter) return false;
-    if (typeFilter && rule.type !== typeFilter) return false;
-    if (enabledFilter !== null && (rule.enabled !== false) !== (enabledFilter === 'true')) return false;
-    if (qFilter) {
-      const haystack = `${rule.value.toLowerCase()} ${(rule.note ?? '').toLowerCase()} ${(rule.options ?? []).join(' ').toLowerCase()}`;
-      if (!haystack.includes(qFilter)) return false;
-    }
-    return true;
-  });
-
-  const cmp = COMPARERS[sortKey];
-  filtered.sort((a, b) => sortDir * (cmp(a, b) || a.id.localeCompare(b.id)));
-
-  const total = filtered.length;
-  const data = filtered.slice(offset, offset + limit);
-
-  return Response.json({ data, meta: { total, limit, offset, configVersion, profileId } });
+  return Response.json(
+    await readRulePage(
+      profileId,
+      {
+        anchor: anchorFilter,
+        policy: policyFilter,
+        type: typeFilter,
+        enabled: enabledFilter === null ? undefined : enabledFilter === 'true',
+        q: qFilter,
+        sort: params.get('sort') ?? 'rank:asc',
+      },
+      offset,
+      limit,
+    ),
+  );
 });
 
 /**
@@ -81,6 +59,7 @@ export const POST = withProblemDetails(async (request: Request) => {
     throw ProblemDetailsError.badRequest('Request body must be valid JSON.');
   });
   const result = await dispatch({
+    operationIdentity: operationIdentity(request, { profileId, payload }),
     scenario: 'rule-anchor-append',
     op: 'create',
     payload,

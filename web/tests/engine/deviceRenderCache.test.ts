@@ -63,7 +63,11 @@ vi.mock('@/lib/engine/resolve', async (importOriginal) => ({
   resolveConfig: mocks.resolveConfig,
 }));
 
-import { renderDeviceConfig, renderProfileConfig } from '@/lib/engine/renderCache';
+import {
+  renderDeviceConfig,
+  renderProfileConfig,
+  renderVariantKey,
+} from '@/lib/engine/renderCache';
 import { REDIS_KEYS } from '@/lib/redis/keys';
 
 const PROFILE = {
@@ -153,7 +157,7 @@ describe('renderDeviceConfig', () => {
 
   it('writes a cache entry keyed by device id and hits it on the second call', async () => {
     await renderDeviceConfig('home', 'macbook');
-    expect(store.kv.has(REDIS_KEYS.deviceRenderCache('home', 'd-1'))).toBe(true);
+    expect(store.kv.has(renderVariantKey(REDIS_KEYS.deviceRenderCache('home', 'd-1')))).toBe(true);
 
     mocks.resolveConfig.mockClear();
     const second = await renderDeviceConfig('home', 'macbook');
@@ -232,7 +236,7 @@ describe('renderDeviceConfig', () => {
 
     expect(out.resolved.content).toContain('mixed-port: 7891');
     expect(mocks.resolveConfig).toHaveBeenCalledTimes(2);
-    expect(store.kv.has(REDIS_KEYS.deviceRenderCache('home', 'd-1'))).toBe(true);
+    expect(store.kv.has(renderVariantKey(REDIS_KEYS.deviceRenderCache('home', 'd-1')))).toBe(true);
   });
 
   it('缓存命中前若版本变化，会拒绝旧条目并用新设备记录重试', async () => {
@@ -287,5 +291,16 @@ describe('renderDeviceConfig', () => {
     const shared = await renderProfileConfig('home');
     const dev = await renderDeviceConfig('home', 'macbook');
     expect(dev.resolved.content).toBe(shared.resolved.content);
+  });
+});
+
+it('refuses a device render after the authenticated profile name changes owners', async () => {
+  mocks.getProfileByName.mockResolvedValue(PROFILE);
+  const bound = {
+    providerUrlBase: 'https://pm.test/api/rule-providers/token',
+    expectedProfileId: 'previous-owner',
+  };
+  await expect(renderDeviceConfig('home', 'macbook', bound)).rejects.toMatchObject({
+    problem: { status: 404 },
   });
 });

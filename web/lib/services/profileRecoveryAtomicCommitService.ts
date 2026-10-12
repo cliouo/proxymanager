@@ -145,6 +145,7 @@ export async function commitAtomicProfileRecovery(
   ];
   for (const group of groups) args.push(group.id, safeJsonStringify(group));
   args.push(String(groupDeletes.length), ...groupDeletes, String(rules.length));
+  for (const rule of rules) rule.revision = plan.expectedVersion + 1;
   for (const rule of rules) args.push(rule.id, safeJsonStringify(rule));
   args.push(String(subscriptions.length));
   for (const subscription of subscriptions) {

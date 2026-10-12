@@ -1,5 +1,5 @@
 import { withProblemDetails } from '@/lib/http/handler';
-import { listEvents } from '@/lib/repos/auditRepo';
+import { listEvents, eventCursor } from '@/lib/repos/auditRepo';
 import { projectNamingAuditsForExternal } from '@/lib/services/namingAuditProjection';
 
 export const dynamic = 'force-dynamic';
@@ -22,6 +22,7 @@ export const GET = withProblemDetails(async (request: Request) => {
   const beforeTs = beforeTsRaw !== null ? Number(beforeTsRaw) : undefined;
   const data = await listEvents({
     limit,
+    cursor: url.searchParams.get('cursor') ?? undefined,
     beforeTs: Number.isFinite(beforeTs) ? beforeTs : undefined,
   });
   // pass-8 blocker 7: raw entity/profile UUIDs never leave the history
@@ -30,6 +31,10 @@ export const GET = withProblemDetails(async (request: Request) => {
   const projected = projectNamingAuditsForExternal(data);
   return Response.json({
     data: projected,
-    meta: { limit, count: projected.length },
+    meta: {
+      limit,
+      count: projected.length,
+      nextCursor: data.length === limit ? eventCursor(data[data.length - 1]) : null,
+    },
   });
 });

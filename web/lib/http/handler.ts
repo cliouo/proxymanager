@@ -1,3 +1,4 @@
+import { timeRequest } from './timing';
 import { z } from '@/lib/openapi/zod';
 import { HandleSecretError } from '@/lib/proxies/handles';
 import {
@@ -17,13 +18,14 @@ type RouteHandler<TArgs extends unknown[]> = (...args: TArgs) => Promise<Respons
 export function withProblemDetails<TArgs extends unknown[]>(
   handler: RouteHandler<TArgs>,
 ): RouteHandler<TArgs> {
-  return async (...args) => {
-    try {
-      return await handler(...args);
-    } catch (err) {
-      return toProblemResponse(err);
-    }
-  };
+  return async (...args) =>
+    timeRequest(async () => {
+      try {
+        return await handler(...args);
+      } catch (err) {
+        return toProblemResponse(err);
+      }
+    });
 }
 
 function toProblemResponse(err: unknown): Response {

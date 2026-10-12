@@ -18,6 +18,7 @@ import { listSubscriptions } from '@/lib/repos/subscriptionsRepo';
 import {
   preflightProfileConfig,
   type SubscriptionPreflightSnapshot,
+  type SharedLibrarySnapshot,
 } from '@/lib/services/configPreflight';
 import {
   createOrdinalPlanningSession,
@@ -143,6 +144,7 @@ export async function preflightPipelineSave(plan: PipelineSavePlan): Promise<Pip
     return { configVersion: version, ordinalGeneration, ordinalPlan };
   }
 
+  const sharedLibraries: SharedLibrarySnapshot = new Map();
   let version: number | null = null;
   let ordinalGeneration: number | null = null;
   for (const profile of [...plan.affected].sort((a, b) => a.id.localeCompare(b.id))) {
@@ -158,6 +160,7 @@ export async function preflightPipelineSave(plan: PipelineSavePlan): Promise<Pip
       }),
       {
         ordinalPlanningSession,
+        sharedLibraries,
         subscriptionSnapshot,
         ...(plan.contentOverrides ? { contentOverrides: plan.contentOverrides } : {}),
       },

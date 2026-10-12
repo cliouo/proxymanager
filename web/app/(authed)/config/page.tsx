@@ -13,6 +13,7 @@ import { TEMPLATE_NOT_DISTRIBUTABLE, isTemplateProfile } from '@/lib/profiles/ki
 import styles from './config.module.css';
 
 interface PreviewData {
+  rendered_at: number;
   content: string;
   build_id: string;
   anchors_applied: Array<{ anchor: string; ruleCount: number }>;
@@ -54,12 +55,14 @@ export default function ConfigPage() {
       if (!opts?.silent) setLoadError(null);
       try {
         const [previewRes, metaRes] = await Promise.all([
-          api<{ data: PreviewData }>(`/api/v1/preview/${encodeURIComponent(activeName)}`),
+          api<{ data: PreviewData }>(
+            `/api/v1/preview/${encodeURIComponent(activeName)}?view=content`,
+          ),
           api<{ data: Meta }>('/api/v1/meta').catch(() => null),
         ]);
         if (seq !== generation.current) return;
         setPreview(previewRes.data);
-        setGeneratedAt(new Date().toLocaleString());
+        setGeneratedAt(new Date(previewRes.data.rendered_at).toLocaleString());
         setMeta(metaRes?.data ?? null);
         setLoadError(null);
       } catch (err) {
@@ -70,17 +73,25 @@ export default function ConfigPage() {
           setLoadError(err instanceof Error ? err.message : String(err));
         }
       } finally {
-        if (seq === generation.current) { setLoaded(true); setRefreshing(false); }
+        if (seq === generation.current) {
+          setLoaded(true);
+          setRefreshing(false);
+        }
       }
     },
     [activeName],
   );
 
   useEffect(() => {
-    setPreview(null); setMeta(null); setLoaded(false); setGeneratedAt(null);
+    setPreview(null);
+    setMeta(null);
+    setLoaded(false);
+    setGeneratedAt(null);
     void load();
     const activeGeneration = generation;
-    return () => { activeGeneration.current++; };
+    return () => {
+      activeGeneration.current++;
+    };
   }, [load]);
 
   // 实时反映：从规则页 / 结构页改完切回来时自动拉最新渲染结果。
@@ -122,7 +133,10 @@ export default function ConfigPage() {
   async function copyConfig() {
     if (!ready) return;
     // P3-31: don't flash "已复制" when the clipboard write actually failed.
-    if (!(await copyText(content))) { setCopyError('无法复制，请下载 YAML 或手动选择内容复制。'); return; }
+    if (!(await copyText(content))) {
+      setCopyError('无法复制，请下载 YAML 或手动选择内容复制。');
+      return;
+    }
     setCopyError(null);
     setCopied('config');
     setTimeout(() => setCopied(null), 1500);
@@ -130,7 +144,10 @@ export default function ConfigPage() {
 
   async function copyUrl() {
     if (!ready || isTemplate || !subUrl) return;
-    if (!(await copyText(subUrl))) { setCopyError('无法复制订阅地址，请重试。'); return; }
+    if (!(await copyText(subUrl))) {
+      setCopyError('无法复制订阅地址，请重试。');
+      return;
+    }
     setCopyError(null);
     setCopied('url');
     setTimeout(() => setCopied(null), 1500);
@@ -170,7 +187,9 @@ export default function ConfigPage() {
               {refreshing
                 ? '正在生成配置'
                 : loadError
-                  ? preview ? '上次成功版本，最新检查失败' : '配置暂不可用'
+                  ? preview
+                    ? '上次成功版本，最新检查失败'
+                    : '配置暂不可用'
                   : isTemplate
                     ? '模版预览已就绪'
                     : '配置已就绪'}
@@ -211,10 +230,15 @@ export default function ConfigPage() {
           </div>
         </section>
 
-        {stale && <div role="status" className="panel" style={{ padding: 12 }}>
-          当前显示上次成功版本 · {activeName} · {generatedAt} · build {preview?.build_id.slice(0, 8)}
-          <button className="btn sm" onClick={() => download(true)}>导出上次成功版本</button>
-        </div>}
+        {stale && (
+          <div role="status" className="panel" style={{ padding: 12 }}>
+            当前显示上次成功版本 · {activeName} · {generatedAt} · build{' '}
+            {preview?.build_id.slice(0, 8)}
+            <button className="btn sm" onClick={() => download(true)}>
+              导出上次成功版本
+            </button>
+          </div>
+        )}
         {copyError && <p role="alert">{copyError}</p>}
         <div className={styles.bar}>
           <div className="tabs" role="tablist" aria-label="配置预览视图">
@@ -321,11 +345,13 @@ export default function ConfigPage() {
 
       <button
         type="button"
-        data-modal-backdrop className={`${styles.inspectorScrim}${inspOpen ? ` ${styles.open}` : ''}`}
+        data-modal-backdrop
+        className={`${styles.inspectorScrim}${inspOpen ? ` ${styles.open}` : ''}`}
         onClick={() => setInspOpen(false)}
         aria-label="关闭检查详情"
       />
-      <aside ref={modalRef}
+      <aside
+        ref={modalRef}
         className={`${styles.inspector}${inspOpen ? ` ${styles.open}` : ''}`}
         aria-label="配置检查详情"
       >
@@ -394,7 +420,11 @@ export default function ConfigPage() {
                 {urlRevealed ? '隐藏' : '显示'}
               </button>
             </div>
-            <button className={`btn primary ${styles.copyUrl}`} onClick={copyUrl} disabled={!ready || !subUrl}>
+            <button
+              className={`btn primary ${styles.copyUrl}`}
+              onClick={copyUrl}
+              disabled={!ready || !subUrl}
+            >
               {copied === 'url' ? '地址已复制' : '复制订阅地址'}
             </button>
             <p className={styles.credentialHint}>持有此地址即可拉取配置，请按访问凭证保管。</p>

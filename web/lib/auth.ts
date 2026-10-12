@@ -18,16 +18,25 @@ export function safeEqual(a: string, b: string): boolean {
   return timingSafeEqual(aBuf, bBuf);
 }
 
-/**
- * Derive a resource-scoped subscription token: `HMAC-SHA256(master, resource)`.
- * P1-3: the single static `SUB_TOKEN` grants everything and is baked into every
- * distributed link, so forwarding one config hands over full access. A derived
- * token lets a user hand out a link that only works for one resource (a single
- * profile / source / collection / provider name) — leaking it can't reach the
- * rest. The master token keeps working everywhere for backward compatibility.
- */
-export function deriveSubToken(resource: string, master = readSecret('SUB_TOKEN')): string {
-  return createHmac('sha256', master).update(resource).digest('hex');
+/** Versioned capability identity. Names never confer authority. */
+export interface SubTokenResource {
+  type: 'profile' | 'subscription' | 'collection' | 'rule-set';
+  id: string;
+  tokenVersion?: number;
+}
+
+export function deriveSubToken(
+  resource: SubTokenResource,
+  master = readSecret('SUB_TOKEN'),
+): string {
+  const identity = JSON.stringify([
+    'pm-sub',
+    2,
+    resource.type,
+    resource.id,
+    resource.tokenVersion ?? 1,
+  ]);
+  return createHmac('sha256', master).update(identity).digest('hex');
 }
 
 export function requireAdminBearer(request: Request): void {
@@ -51,7 +60,7 @@ export function requireAdminBearer(request: Request): void {
  *     let clients refresh, then drop PREV. This makes the token revocable — the
  *     gap the original single static token never had.
  */
-export function requireSubToken(suppliedToken: string, resource?: string): void {
+export function requireSubToken(suppliedToken: string, resource?: SubTokenResource): void {
   const master = readSecret('SUB_TOKEN');
   const prev = process.env.SUB_TOKEN_PREV || null;
 

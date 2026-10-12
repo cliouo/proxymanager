@@ -47,3 +47,20 @@ A profile-scoped action must not rewrite a subscription used by another profile
 unless it preflights every consuming profile against the same candidate and
 configuration version. Narrow recovery actions that only plan one profile must
 reject shared sources before writing.
+
+## Distribution identity and audit invariants
+
+Resource-scoped distribution credentials bind a resource type and stable ID.
+Once a caller authenticates or resolves a Profile ID, every subsequent shared,
+device, preview, cache-hit and conditional-304 read must preserve that identity
+via `expectedProfileId`; re-resolving a mutable name must never authorize a new
+owner. Public name resolution must project identity metadata inside Redis before
+authentication, including for legacy inline bodies; fetch full records only by
+the authenticated ID afterward.
+
+Audited mutations plan one preflighted configuration CAS and commit core events,
+undo links and any idempotency receipt in that same atomic operation. Retention
+and advisory taxonomy writes cannot turn committed success into a failed request.
+Keep audit snapshots as original JSON strings: Redis cjson re-encoding changes
+empty arrays into objects. An operation receipt fingerprint must include scope,
+scenario, operation and payload when several actions share one route.

@@ -73,6 +73,7 @@ function rendersAsSingleScalar(
 
 export const RuleSchema = z.object({
   id: z.uuid(),
+  revision: z.number().int().nonnegative().optional(),
   anchor: z.string().min(1),
   type: RuleTypeSchema,
   // Empty only for MATCH (which takes no value); enforced on the write path by
@@ -262,6 +263,7 @@ function isValidRuleRanges(value: string, maximum: number): boolean {
 export const RuleCreateSchema = RuleSchema.omit({
   id: true,
   rank: true,
+  revision: true,
   added_at: true,
   updated_at: true,
 })
@@ -272,6 +274,7 @@ export const RuleCreateSchema = RuleSchema.omit({
 
 export const RuleReplaceSchema = RuleSchema.omit({
   id: true,
+  revision: true,
   added_at: true,
   updated_at: true,
 }).superRefine(ruleWriteRefine);

@@ -24,7 +24,7 @@ export function getProfileSessionId(): string {
 }
 
 const SCOPED =
-  /^\/api\/v1\/(?:base|anchors|policies|rules|proxy-groups|ops|scenarios|resolved-snapshot|rule-sets|meta|preview|assistant\/(?:tool|naming-analysis))(?:\/|$)/;
+  /^\/api\/v1\/(?:dashboard|base|anchors|policies|rules|proxy-groups|ops|scenarios|resolved-snapshot|rule-sets|meta|preview|assistant\/(?:tool|naming-analysis))(?:\/|$)/;
 
 export async function scopeRequest(
   path: string,

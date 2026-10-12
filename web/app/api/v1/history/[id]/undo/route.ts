@@ -1,6 +1,7 @@
+import { auditedMutation } from '@/lib/repos/auditedMutation';
 import { withProblemDetails } from '@/lib/http/handler';
 import { ProblemDetailsError } from '@/lib/http/problem';
-import { getEvent, markUndone, recordEvent } from '@/lib/repos/auditRepo';
+import { getEvent } from '@/lib/repos/auditRepo';
 import { getConfigVersion } from '@/lib/repos/configVersionRepo';
 import { getScenario } from '@/lib/scenarios/registry';
 import { createBaseStore } from '@/lib/scenarios/_shared/baseMutator';
@@ -11,7 +12,7 @@ import { getProfileByName } from '@/lib/repos/profilesRepo';
 import { computeNextRank, resolveActor } from '@/lib/services/rulesService';
 import { preflightAndCommitProfileChanges } from '@/lib/services/profileConfigMutationService';
 import { undoDeviceEvent } from '@/lib/services/deviceService';
-import { DEFAULT_PROFILE_NAME, type AuditEvent } from '@/schemas';
+import { DEFAULT_PROFILE_NAME } from '@/schemas';
 
 export const dynamic = 'force-dynamic';
 
@@ -95,51 +96,39 @@ export const POST = withProblemDetails(async (request: Request, ctx: Ctx) => {
     taxonomy: createTaxonomyStore(profileId),
   };
 
-  const result = isDeviceEvent
-    ? await undoDeviceEvent(profileId, {
-        op: event.op,
-        before: event.before,
-        after: event.after,
-      })
-    : await inverse!(opCtx, {
-        id: event.id,
-        before: event.before,
-        after: event.after,
-        target,
-        ruleId: event.ruleId,
-      });
+  const committed = await auditedMutation(async () => {
+    const result = isDeviceEvent
+      ? await undoDeviceEvent(profileId, {
+          op: event.op,
+          before: event.before,
+          after: event.after,
+        })
+      : await inverse!(opCtx, {
+          id: event.id,
+          before: event.before,
+          after: event.after,
+          target,
+          ruleId: event.ruleId,
+        });
 
-  // Record the inverse mutation as its own event, pointing back at the
-  // original via `undoes`. Audit op string is derived from the original
-  // scenario id (so a legacy rule.* event undone produces a
-  // rule-anchor-append.* inverse — consistent with new ops going forward).
-  let inverseEvent: AuditEvent | null = null;
-  for (const ev of result.events) {
-    const lastDot = event.op.lastIndexOf('.');
-    const rawScenario = event.op.slice(0, lastDot);
-    const inverseScenarioId = rawScenario === 'rule' ? 'rule-anchor-append' : rawScenario;
-    const recorded = await recordEvent({
-      op: `${inverseScenarioId}.${ev.action}`,
-      actor,
-      target: ev.target,
-      ruleId: ev.target.kind === 'rule' ? ev.target.id : undefined,
-      before: ev.before,
-      after: ev.after,
-      undoes: event.id,
-      profileId,
-    });
-    // First emitted event is the canonical inverse; later ones (if any)
-    // are bookkeeping and don't get the back-pointer on the original.
-    if (!inverseEvent) inverseEvent = recorded;
-  }
-
-  if (!inverseEvent) {
-    throw ProblemDetailsError.unprocessable(
-      'Inverse handler emitted no events; cannot complete undo.',
-    );
-  }
-
-  await markUndone(event.id, inverseEvent.id);
+    if (!result.events.length)
+      throw ProblemDetailsError.unprocessable('Inverse handler emitted no events.');
+    const rawScenario = event.op.slice(0, event.op.lastIndexOf('.'));
+    const scenario = rawScenario === 'rule' ? 'rule-anchor-append' : rawScenario;
+    return {
+      data: result.data,
+      events: result.events.map((ev) => ({
+        op: `${scenario}.${ev.action}`,
+        actor,
+        target: ev.target,
+        before: ev.before,
+        after: ev.after,
+        undoes: event.id,
+        profileId,
+      })),
+    };
+  });
+  const inverseEvent = committed.events[0];
   return Response.json({
     data: { event: { ...event, undone_by: inverseEvent.id }, inverse: inverseEvent },
   });

@@ -33,6 +33,18 @@ const fakeRedis = {
   // global generation + stored meta etag, then write, invalidate this
   // profile's resolved snapshot field, and bump the generation atomically.
   eval: async (_script: string, keys: string[], args: (string | number)[]) => {
+    if (keys[0] === REDIS_KEYS.configVersion) {
+      const current = counters.get(keys[0]) ?? 0;
+      if (current !== Number(args[0])) return [0, String(current)];
+      let index = 3;
+      const count = Number(args[2]);
+      for (let n = 0; n < count; n++)
+        bucket(keys[1]).set(String(args[index++]), JSON.parse(String(args[index++])));
+      const deletes = Number(args[index++]);
+      for (let n = 0; n < deletes; n++) bucket(keys[1]).delete(String(args[index++]));
+      counters.set(keys[0], current + 1);
+      return [1, String(current + 1)];
+    }
     const [metaKey, contentKey, versionKey, snapshotKey] = keys;
     const [
       precondition,

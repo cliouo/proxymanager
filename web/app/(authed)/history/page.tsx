@@ -244,15 +244,19 @@ export default function HistoryPage() {
   const [query, setQuery] = useState('');
   const toast = useToast();
 
-  const load = useCallback(async (beforeTs?: number) => {
+  const [cursor, setCursor] = useState<string | null>(null);
+  const load = useCallback(async (beforeTs?: string) => {
     setLoading(true);
     setError(null);
     try {
       const qs = new URLSearchParams({ limit: String(PAGE_SIZE) });
-      if (beforeTs !== undefined) qs.set('before_ts', String(beforeTs));
-      const res = await api<{ data: AuditEvent[] }>(`/api/v1/history?${qs.toString()}`);
+      if (beforeTs !== undefined) qs.set('cursor', beforeTs);
+      const res = await api<{ data: AuditEvent[]; meta: { nextCursor: string | null } }>(
+        `/api/v1/history?${qs.toString()}`,
+      );
       setEvents((prev) => (beforeTs === undefined ? res.data : [...prev, ...res.data]));
-      setHasMore(res.data.length === PAGE_SIZE);
+      setCursor(res.meta.nextCursor);
+      setHasMore(res.meta.nextCursor !== null);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     } finally {
@@ -293,11 +297,6 @@ export default function HistoryPage() {
       });
     }
   }
-
-  const oldestTs = useMemo(
-    () => (events.length > 0 ? events[events.length - 1].ts : undefined),
-    [events],
-  );
 
   const q = query.trim().toLowerCase();
   const filtered = useMemo(
@@ -422,11 +421,7 @@ export default function HistoryPage() {
 
       {hasMore && (
         <div style={{ textAlign: 'center', marginTop: 24 }}>
-          <button
-            className="btn"
-            onClick={() => oldestTs !== undefined && load(oldestTs)}
-            disabled={loading}
-          >
+          <button className="btn" onClick={() => cursor && load(cursor)} disabled={loading}>
             {loading ? '加载中…' : '加载更早'}
           </button>
         </div>

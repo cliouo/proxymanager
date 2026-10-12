@@ -1,3 +1,4 @@
+import { evalConfigMutation } from './auditedMutation';
 import { getRedis } from '@/lib/redis/client';
 import { REDIS_KEYS } from '@/lib/redis/keys';
 import type { BaseConfig } from '@/schemas';
@@ -94,13 +95,11 @@ export async function setBase(
   precondition: SetBasePrecondition,
   expectedConfigVersion?: number,
 ): Promise<SetBaseResult> {
-  const redis = getRedis();
-
   // Atomic existence/etag + config-version CAS + write + version bump. INCR
   // rides the same script so the render
   // cache can never see new content under the old version (漏 bump = 保存后仍
   // 读到旧渲染).
-  const result = (await redis.eval(
+  const result = (await evalConfigMutation(
     CAS_SET_BASE,
     [
       REDIS_KEYS.base.meta(profileId),
@@ -142,4 +141,17 @@ export async function setBase(
     conflict: 'etag',
     currentEtag: (Array.isArray(result) ? result[1] : '') || null,
   };
+}
+
+/** Metadata and body existence from one atomic read; never transfers base content. */
+export async function getBaseMeta(profileId: string): Promise<BaseMeta | null> {
+  const raw = await getRedis().eval(
+    `
+if redis.call('EXISTS', KEYS[1]) == 0 then return false end
+return redis.call('GET', KEYS[2])
+`,
+    [REDIS_KEYS.base.content(profileId), REDIS_KEYS.base.meta(profileId)],
+    [],
+  );
+  return typeof raw === 'string' ? JSON.parse(raw) : (raw as BaseMeta | null);
 }

@@ -82,7 +82,45 @@ export interface ConfigPreflightResult {
   buildId: string;
 }
 
+type SharedLibraries = Pick<
+  ProfileConfigState,
+  'subscriptions' | 'templates' | 'ruleSets' | 'collections'
+>;
+export type SharedLibrarySnapshot = Map<number, Promise<SharedLibraries>>;
+function cloneLibrary<T>(value: T): T {
+  if (Array.isArray(value)) return value.map(cloneLibrary) as T;
+  if (value && typeof value === 'object')
+    return Object.fromEntries(
+      Reflect.ownKeys(value).map((key) => [
+        key,
+        cloneLibrary((value as Record<PropertyKey, unknown>)[key]),
+      ]),
+    ) as T;
+  return value;
+}
+async function loadSharedLibraries(
+  version: number,
+  cache?: SharedLibrarySnapshot,
+): Promise<SharedLibraries> {
+  const hit = cache?.get(version);
+  if (hit) return cloneLibrary(await hit);
+  const pending = Promise.all([
+    listSubscriptions(),
+    listProxyGroupTemplates(),
+    listRuleSets(),
+    listCollections(),
+  ]).then(([subscriptions, templates, ruleSets, collections]) => ({
+    subscriptions,
+    templates,
+    ruleSets,
+    collections,
+  }));
+  cache?.set(version, pending);
+  return cloneLibrary(await pending);
+}
+
 export interface ConfigPreflightOptions {
+  sharedLibraries?: SharedLibrarySnapshot;
   /** Shared by every affected profile in one outer save. */
   ordinalPlanningSession?: OrdinalPlanningSession;
   /**
@@ -252,6 +290,7 @@ export async function preflightProfileConfig(
     profileId,
     options.initializeProfile,
     options.initializeBaseContent,
+    options.sharedLibraries,
   );
   const patch = await buildCandidate(state);
   const candidate: ProfileConfigState = { ...state, ...patch };
@@ -440,6 +479,7 @@ async function loadStableProfileState(
   profileId: string,
   initializeProfile?: Profile,
   initializeBaseContent?: string,
+  sharedLibraries?: SharedLibrarySnapshot,
 ): Promise<{
   version: number;
   state: ProfileConfigState;
@@ -451,27 +491,15 @@ async function loadStableProfileState(
   }
   for (let attempt = 0; attempt < SNAPSHOT_READ_ATTEMPTS; attempt += 1) {
     const version = await getConfigVersion();
-    const [
-      profile,
-      base,
-      rules,
-      subscriptions,
-      proxyGroups,
-      templates,
-      ruleSets,
-      collections,
-      devices,
-    ] = await Promise.all([
+    const [profile, base, rules, proxyGroups, devices, shared] = await Promise.all([
       getProfile(profileId),
       getBase(profileId),
       listRules(profileId),
-      listSubscriptions(),
       listProxyGroups(profileId),
-      listProxyGroupTemplates(),
-      listRuleSets(),
-      listCollections(),
       listDevices(profileId),
+      loadSharedLibraries(version, sharedLibraries),
     ]);
+    const { subscriptions, templates, ruleSets, collections } = shared;
     const after = await getConfigVersion();
     if (version !== after) continue;
     if (!profile && !initializeProfile) throw new ConfigMissingError('profile');

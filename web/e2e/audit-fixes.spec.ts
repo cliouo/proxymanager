@@ -284,3 +284,58 @@ for (const width of [375, 600, 1100, 1440])
       }
     }
   });
+
+test('profile switching retains the document and search does not reload dictionaries', async ({
+  context,
+  page,
+}) => {
+  const { requests } = await mockWorkspace(context);
+  await page.goto('/rules');
+  await expect(page.getByText('domain-0.example', { exact: true })).toBeVisible();
+  await page.evaluate(() => {
+    document.documentElement.dataset.sessionProof = 'same-document';
+  });
+  await page.locator('.profile-switch').click();
+  await page.locator('.pp-pick').filter({ hasText: 'office' }).click();
+  await expect(page.locator('.topbar')).toContainText('office');
+  await expect
+    .poll(
+      () => requests.filter((r) => r.path === '/api/v1/rules' && r.scope === profiles[1].id).length,
+    )
+    .toBeGreaterThan(0);
+  expect(await page.locator('html').getAttribute('data-session-proof')).toBe('same-document');
+  const count = (path: string) => requests.filter((r) => r.path === path).length;
+  await expect(page.getByText('domain-0.example', { exact: true })).toBeVisible();
+  const dictionaries = ['/api/v1/anchors', '/api/v1/policies', '/api/v1/rule-sets'];
+  const before = dictionaries.map(count);
+  await page.getByPlaceholder('搜索值 / 备注 / 修饰符…').fill('domain-1000.example');
+  await expect(page.getByText('domain-1000.example', { exact: true })).toBeVisible();
+  expect(dictionaries.map(count)).toEqual(before);
+  expect(count('/api/v1/rules/summary')).toBe(0);
+});
+
+test('an optimistic rule conflict sends the read revision and retains the draft', async ({
+  context,
+  page,
+}) => {
+  await mockWorkspace(context);
+  let submitted: { expectedRevision?: number } | null = null;
+  await context.route('**/api/v1/rules/rule-0?*', async (route) => {
+    if (route.request().method() !== 'PATCH') return route.fallback();
+    submitted = route.request().postDataJSON();
+    await route.fulfill({
+      status: 412,
+      json: { title: 'Conflict', detail: '规则已被其他操作修改' },
+    });
+  });
+  await page.goto('/rules');
+  await expect(page.getByText('domain-0.example', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '编辑', exact: true }).first().click();
+  await page.getByPlaceholder('备注', { exact: true }).fill('retained-conflict-draft');
+  await page.getByRole('button', { name: '保存', exact: true }).click();
+  await expect(page.getByText('规则已被其他操作修改')).toBeVisible();
+  expect(submitted).toMatchObject({ expectedRevision: 0 });
+  await expect(page.getByPlaceholder('备注', { exact: true })).toHaveValue(
+    'retained-conflict-draft',
+  );
+});

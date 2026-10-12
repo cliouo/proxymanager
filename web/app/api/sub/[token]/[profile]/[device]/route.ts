@@ -30,9 +30,14 @@ type Ctx = RouteContext<'/api/sub/[token]/[profile]/[device]'>;
  */
 export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
   const { token, profile, device } = await ctx.params;
-  await guardSubToken(request, token, profile);
 
   const record = await getProfileByName(profile);
+  await guardSubToken(
+    request,
+    token,
+    record ? { type: 'profile', id: record.id, tokenVersion: record.token_version } : undefined,
+  );
+  if (!record) throw ProblemDetailsError.notFound(`Profile "${profile}" 不存在。`);
   if (isTemplateProfile(record)) {
     throw ProblemDetailsError.notFound(
       `Profile "${profile}" 是模版,${TEMPLATE_NOT_DISTRIBUTABLE} —— 请从它新建一份配置文件再分发。`,
@@ -53,6 +58,7 @@ export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
     profile,
     device,
     {
+      expectedProfileId: record.id,
       providerUrlBase: `${url.origin}/api/rule-providers/${token}`,
       noCache,
     },

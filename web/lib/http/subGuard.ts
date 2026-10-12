@@ -7,14 +7,14 @@
  * guessable and, if guessed, yields a full config with node credentials.
  */
 
-import { requireSubToken } from '@/lib/auth';
+import { requireSubToken, type SubTokenResource } from '@/lib/auth';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { clientIp, registerAuthFailure } from '@/lib/rateLimit';
 
 export async function guardSubToken(
   request: Request,
   token: string,
-  resource?: string,
+  resource?: SubTokenResource,
 ): Promise<void> {
   try {
     requireSubToken(token, resource);
