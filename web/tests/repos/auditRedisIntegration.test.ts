@@ -309,6 +309,35 @@ describe.skipIf(!server || !cli)('isolated real Redis: atomic config and audit',
       runtime.redis.eval = realEval;
     }
   });
+  it.each(['standalone', 'configuration CAS'])(
+    'preserves batch history order through %s',
+    async (mode) => {
+      vi.spyOn(Date, 'now').mockReturnValue(1234567890000);
+      // Reverse lexical UUIDs expose timestamp ties deterministically.
+      vi.spyOn(crypto, 'randomUUID')
+        .mockReturnValueOnce('ffffffff-ffff-4fff-8fff-ffffffffffff')
+        .mockReturnValueOnce('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee')
+        .mockReturnValue('11111111-1111-4111-8111-111111111111');
+      try {
+        const events = [
+          { op: 'rule.create', actor: 'test', ruleId: rule.id },
+          { op: 'rule.delete', actor: 'test', ruleId: rule.id },
+        ];
+        if (mode === 'standalone') await recordEvents(events);
+        else
+          await auditedMutation(async () => {
+            await commitProfileConfigChanges('profile-a', { ruleWrites: [rule] }, 0);
+            return { data: null, events };
+          });
+        const page = await listEvents({ limit: 1 });
+        expect(page.map((event) => event.op)).toEqual(['rule.delete']);
+        const next = await listEvents({ limit: 1, cursor: eventCursor(page[0]) });
+        expect(next.map((event) => event.op)).toEqual(['rule.create']);
+      } finally {
+        vi.restoreAllMocks();
+      }
+    },
+  );
   it('undo links and empty-array snapshots persist in the same transaction', async () => {
     const first = await auditedMutation(plan);
     const undone = await auditedMutation(async () => {
@@ -344,8 +373,16 @@ describe.skipIf(!server || !cli)('isolated real Redis: atomic config and audit',
   it('does not skip tied timestamps and retains exactly matching index/body IDs', async () => {
     vi.spyOn(Date, 'now').mockReturnValue(1234567890000);
     try {
-      await recordEvents(
+      const events = await recordEvents(
         Array.from({ length: 1100 }, () => ({ op: 'rule.create', actor: 'test' })),
+      );
+      // Explicitly seed legacy/concurrent records with tied timestamps, independently
+      // of the ordering assigned to a newly built batch.
+      command('ZADD', 'audit:events', ...events.flatMap((event) => [1234567890000, event.id]));
+      command(
+        'HSET',
+        'audit:by_id',
+        ...events.flatMap((event) => [event.id, JSON.stringify({ ...event, ts: 1234567890000 })]),
       );
       await Promise.all([trimEvents(), trimEvents()]);
       expect(command('ZCARD', 'audit:events')).toBe(1000);

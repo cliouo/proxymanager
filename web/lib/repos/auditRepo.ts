@@ -34,10 +34,12 @@ function nowMs(): number {
 }
 
 export function buildEvents(inputs: RecordInput[]): AuditEvent[] {
-  return inputs.map((input) => ({
+  const baseTs = nowMs();
+  return inputs.map((input, index) => ({
     ...input,
     id: generateEventId(),
-    ts: nowMs(),
+    // Preserve input order within a batch rather than sorting UUID ties randomly.
+    ts: baseTs + index,
     ruleId: input.ruleId ?? (input.target?.kind === 'rule' ? input.target.id : undefined),
   }));
 }
@@ -73,13 +75,19 @@ export async function recordEvents(inputs: RecordInput[]): Promise<AuditEvent[]>
     plan.events.push(...events);
     return events;
   }
+  await persistBuiltEvents(events);
+  return events;
+}
+
+/** Persist existing IDs and snapshots without rebuilding events collected during planning. */
+export async function persistBuiltEvents(events: AuditEvent[]): Promise<void> {
+  if (!events.length) return;
   const tx = getRedis().multi();
   for (const event of events)
     tx.zadd(REDIS_KEYS.audit.events, { score: event.ts, member: event.id });
   tx.hset(REDIS_KEYS.audit.byId, Object.fromEntries(events.map((event) => [event.id, event])));
   await tx.exec();
   await trimEvents().catch(() => undefined);
-  return events;
 }
 
 /**

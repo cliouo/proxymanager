@@ -3,7 +3,7 @@ import type { Rule } from '@/schemas';
 
 const mocks = vi.hoisted(() => ({
   resolveScopeProfile: vi.fn(),
-  recordEvents: vi.fn(),
+  persistBuiltEvents: vi.fn(),
   getConfigVersion: vi.fn(),
   listRules: vi.fn(),
   loadParsedBase: vi.fn(),
@@ -14,7 +14,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/lib/profileScope', () => ({ resolveScopeProfile: mocks.resolveScopeProfile }));
 vi.mock('@/lib/repos/auditRepo', async (original) => ({
   ...(await original<typeof import('@/lib/repos/auditRepo')>()),
-  recordEvents: mocks.recordEvents,
+  persistBuiltEvents: mocks.persistBuiltEvents,
 }));
 vi.mock('@/lib/repos/configVersionRepo', () => ({ getConfigVersion: mocks.getConfigVersion }));
 vi.mock('@/lib/repos/rulesRepo', () => ({ listRules: mocks.listRules }));
@@ -59,7 +59,7 @@ describe('POST /api/v1/rules/batch', () => {
     mocks.loadParsedBase.mockResolvedValue({ anchors: ['manual'], policies: ['DIRECT'] });
     mocks.loadProviderNames.mockResolvedValue(new Set(['ebay_classic']));
     mocks.preflightAndCommitProfileChanges.mockResolvedValue({});
-    mocks.recordEvents.mockResolvedValue(undefined);
+    mocks.persistBuiltEvents.mockResolvedValue(undefined);
   });
 
   it('swaps rank with an existing RULE-SET rule without falsely rejecting its provider', async () => {

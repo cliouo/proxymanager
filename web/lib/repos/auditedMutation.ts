@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { getRedis } from '@/lib/redis/client';
 import { REDIS_KEYS } from '@/lib/redis/keys';
 import { ProblemDetailsError } from '@/lib/http/problem';
-import { buildEvents, trimEvents, type RecordInput } from './auditRepo';
+import { buildEvents, persistBuiltEvents, trimEvents, type RecordInput } from './auditRepo';
 import type { AuditEvent } from '@/schemas';
 
 export async function afterConfigCommit(effect: () => Promise<unknown>): Promise<void> {
@@ -69,10 +69,10 @@ export async function auditedMutation<T>(
   };
   const mutation = context.mutation;
   if (!mutation) {
-    if (!planned.events.length && !context.events.length) return result;
-    // A no-op scenario may still emit informational events.
-    const { recordEvents } = await import('./auditRepo');
-    return { data: planned.data, events: await recordEvents(planned.events) };
+    // Empty configuration write sets can still carry audit events and advisory writes.
+    await persistBuiltEvents(result.events);
+    await Promise.all(context.effects.map((effect) => effect().catch(() => undefined)));
+    return result;
   }
   const keyOffset = mutation.keys.length;
   const argOffset = mutation.args.length;

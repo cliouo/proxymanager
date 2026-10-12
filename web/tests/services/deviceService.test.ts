@@ -35,7 +35,11 @@ vi.mock('@/lib/repos/profilesRepo', () => ({
   getProfile: mocks.getProfile,
   listProfiles: mocks.listProfiles,
 }));
-vi.mock('@/lib/repos/auditRepo', () => ({ recordEvent: mocks.recordEvent }));
+vi.mock('@/lib/repos/auditRepo', () => ({
+  recordEvent: mocks.recordEvent,
+  // Configuration commits and recordEvent are mocked in this service-level suite.
+  persistBuiltEvents: vi.fn().mockResolvedValue(undefined),
+}));
 
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { ConfigValidationError } from '@/lib/config/errors';
