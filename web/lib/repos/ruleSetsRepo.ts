@@ -1,3 +1,4 @@
+import { evalConfigMutation } from './auditedMutation';
 import { getRedis } from '@/lib/redis/client';
 import { REDIS_KEYS } from '@/lib/redis/keys';
 import type { Rule, RuleSet } from '@/schemas';
@@ -160,6 +161,8 @@ export async function commitRuleSetChange(
   if (!targetId) {
     throw new Error('commitRuleSetChange requires either `write` or `deleteId`.');
   }
+  for (const group of change.ruleWrites ?? [])
+    for (const rule of group.rules) rule.revision = expectedVersion + 1;
   const groups = (change.ruleWrites ?? []).filter((g) => g.rules.length > 0);
 
   const keys = [
@@ -181,7 +184,7 @@ export async function commitRuleSetChange(
     for (const rule of group.rules) args.push(rule.id, JSON.stringify(rule));
   }
 
-  const result = (await getRedis().eval(CAS_RULE_SET_CHANGE, keys, args)) as [number, string];
+  const result = (await evalConfigMutation(CAS_RULE_SET_CHANGE, keys, args)) as [number, string];
   const parsedVersion = Number(Array.isArray(result) ? result[1] : '');
   return {
     ok: Array.isArray(result) && result[0] === 1,

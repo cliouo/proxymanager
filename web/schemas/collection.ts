@@ -20,6 +20,7 @@ export const CollectionGroupTypeSchema = z.enum(['select']);
 
 export const CollectionSchema = z.object({
   id: z.uuid(),
+  token_version: z.number().int().positive().optional(),
   /**
    * Display label. Free text (Chinese welcome). Looked up by `id` or `slug`,
    * never by this name.

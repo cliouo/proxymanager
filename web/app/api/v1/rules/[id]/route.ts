@@ -15,7 +15,7 @@ export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
   const { id } = await ctx.params;
   const rule = await getRule(profileId, id);
   if (!rule) throw ProblemDetailsError.notFound(`Rule ${id} not found.`);
-  return Response.json({ data: rule });
+  return Response.json({ data: rule }, { headers: { ETag: `"${rule.revision ?? 0}"` } });
 });
 
 /* ─── Mutation routes — thin shims over the rule-anchor-append scenario ─ */
@@ -29,7 +29,7 @@ export const PUT = withProblemDetails(async (request: Request, ctx: Ctx) => {
   const result = await dispatch({
     scenario: 'rule-anchor-append',
     op: 'replace',
-    payload: { id, rule: body },
+    payload: { id, rule: body, expectedRevision: body?.expectedRevision },
     actor: resolveActor(request),
     profileId,
   });
@@ -45,7 +45,7 @@ export const PATCH = withProblemDetails(async (request: Request, ctx: Ctx) => {
   const result = await dispatch({
     scenario: 'rule-anchor-append',
     op: 'patch',
-    payload: { id, patch: body },
+    payload: { id, patch: body, expectedRevision: body?.expectedRevision },
     actor: resolveActor(request),
     profileId,
   });

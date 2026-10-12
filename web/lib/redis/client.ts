@@ -1,3 +1,4 @@
+import { instrumentRedis } from '@/lib/http/timing';
 import { Redis } from '@upstash/redis';
 
 function readEnv(name: string): string {
@@ -16,10 +17,12 @@ let cached: Redis | null = null;
 
 export function getRedis(): Redis {
   if (!cached) {
-    cached = new Redis({
-      url: readEnv('KV_REST_API_URL'),
-      token: readEnv('KV_REST_API_TOKEN'),
-    });
+    cached = instrumentRedis(
+      new Redis({
+        url: readEnv('KV_REST_API_URL'),
+        token: readEnv('KV_REST_API_TOKEN'),
+      }),
+    );
   }
   return cached;
 }

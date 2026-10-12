@@ -21,6 +21,7 @@ export const RuleSetSourceSchema = z.enum(['local', 'remote']);
 
 export const RuleSetSchema = z.object({
   id: z.uuid(),
+  token_version: z.number().int().positive().optional(),
   name: z
     .string()
     .min(1)
@@ -65,7 +66,10 @@ export function ruleSetIssues(v: RuleSetFields): Array<{ path: string; message: 
     }
   } else {
     if (v.format === 'mrs') {
-      issues.push({ path: 'format', message: '本地托管不支持 mrs（二进制）格式，请用 yaml 或 text' });
+      issues.push({
+        path: 'format',
+        message: '本地托管不支持 mrs（二进制）格式，请用 yaml 或 text',
+      });
     }
     if (v.content === undefined || v.content.trim() === '') {
       issues.push({ path: 'content', message: '本地规则集必须填写内容' });
@@ -80,9 +84,11 @@ export function assertRuleSetInvariants(v: RuleSetFields, ctx: z.RefinementCtx):
   }
 }
 
-export const RuleSetCreateSchema = RuleSetSchema.omit({ id: true, updated_at: true }).superRefine(
-  assertRuleSetInvariants,
-);
+export const RuleSetCreateSchema = RuleSetSchema.omit({
+  id: true,
+  updated_at: true,
+  token_version: true,
+}).superRefine(assertRuleSetInvariants);
 /**
  * P1-5: optional fields accept `null` to CLEAR them. The client used to send
  * `undefined` for an emptied field, which `JSON.stringify` drops entirely, so
@@ -91,7 +97,11 @@ export const RuleSetCreateSchema = RuleSetSchema.omit({ id: true, updated_at: tr
  * delete the field. `behavior`/`interval` are enum/number so an empty string
  * can't express "cleared" — null is the signal.
  */
-export const RuleSetUpdateSchema = RuleSetSchema.omit({ id: true, updated_at: true })
+export const RuleSetUpdateSchema = RuleSetSchema.omit({
+  id: true,
+  updated_at: true,
+  token_version: true,
+})
   .partial()
   .extend({
     behavior: RuleSetBehaviorSchema.nullable().optional(),

@@ -65,6 +65,7 @@ export const DEFAULT_PROFILE_SOURCE: ProfileSource = { type: 'none' };
 
 export const ProfileSchema = z.object({
   id: z.uuid(),
+  token_version: z.number().int().positive().optional(),
   name: z.string().min(1).regex(NAME_REGEX, NAME_HINT),
   /** Free-form name clients display after import (Content-Disposition). */
   display_name: z.string().max(DISPLAY_NAME_MAX).optional(),

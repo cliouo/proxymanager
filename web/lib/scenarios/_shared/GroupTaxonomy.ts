@@ -1,3 +1,4 @@
+import { afterConfigCommit } from '@/lib/repos/auditedMutation';
 /**
  * TaxonomyStore — project-defined metadata for proxy-groups.
  *
@@ -24,11 +25,11 @@ export function createTaxonomyStore(profileId: string): TaxonomyStore {
       return value ?? null;
     },
     async set(name: string, tag: GroupTag): Promise<void> {
-      await redis.hset(key, { [name]: tag });
+      await afterConfigCommit(() => redis.hset(key, { [name]: tag }));
     },
     async delete(name: string): Promise<boolean> {
-      const removed = await redis.hdel(key, name);
-      return removed > 0;
+      await afterConfigCommit(() => redis.hdel(key, name));
+      return true;
     },
   };
 }

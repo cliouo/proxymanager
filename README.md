@@ -169,3 +169,6 @@ npm run build   # 产物在 build/chrome-mv3/，Chrome 开发者模式 Load unpa
 ## License
 
 [MIT](LICENSE)
+
+
+分发 token、审计提交与读取缓存的兼容性变化见 [2026-10-12 修复说明](docs/audit-fixes-2026-10-12.md)。旧式裸名称派生 token 不再接受；master token 轮换机制不变。

@@ -108,6 +108,7 @@ export async function commitAtomicProfileConfig(
   ];
   for (const group of plan.groups) args.push(group.id, JSON.stringify(group));
   args.push(String(plan.rules.length));
+  for (const rule of plan.rules) rule.revision = plan.expectedVersion + 1;
   for (const rule of plan.rules) args.push(rule.id, JSON.stringify(rule));
   args.push(event.id, String(event.ts), JSON.stringify(event));
 

@@ -9,7 +9,9 @@ import {
   useRef,
   useState,
 } from 'react';
-import { fetchSetupStatus, runSetupBootstrap } from '@/lib/client/setup';
+import { runSetupBootstrap } from '@/lib/client/setup';
+import { api } from '@/lib/client/api';
+import type { Profile } from '@/components/profile/ProfileContext';
 import type {
   SetupApiStatus,
   SetupBootstrapApiResponse,
@@ -18,6 +20,7 @@ import type {
 
 interface SetupContextValue {
   status: SetupApiStatus | null;
+  initialProfiles: Profile[] | null;
   loading: boolean;
   error: string | null;
   initializing: boolean;
@@ -28,6 +31,7 @@ interface SetupContextValue {
 const SetupContext = createContext<SetupContextValue | null>(null);
 
 export function SetupProvider({ children }: { children: React.ReactNode }) {
+  const [initialProfiles, setInitialProfiles] = useState<Profile[] | null>(null);
   const [status, setStatus] = useState<SetupApiStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -39,8 +43,14 @@ export function SetupProvider({ children }: { children: React.ReactNode }) {
     setLoading(true);
     setError(null);
     try {
-      const next = await fetchSetupStatus();
-      if (id === requestId.current) setStatus(next);
+      const { data } = await api<{ data: { status: SetupApiStatus; profiles: Profile[] } }>(
+        '/api/v1/bootstrap',
+      );
+      const next = data.status;
+      if (id === requestId.current) {
+        setStatus(next);
+        setInitialProfiles(data.profiles);
+      }
       return next;
     } catch (caught) {
       if (id === requestId.current) {
@@ -71,8 +81,8 @@ export function SetupProvider({ children }: { children: React.ReactNode }) {
   );
 
   const value = useMemo<SetupContextValue>(
-    () => ({ status, loading, error, initializing, refresh, bootstrap }),
-    [status, loading, error, initializing, refresh, bootstrap],
+    () => ({ status, initialProfiles, loading, error, initializing, refresh, bootstrap }),
+    [status, initialProfiles, loading, error, initializing, refresh, bootstrap],
   );
 
   return <SetupContext.Provider value={value}>{children}</SetupContext.Provider>;

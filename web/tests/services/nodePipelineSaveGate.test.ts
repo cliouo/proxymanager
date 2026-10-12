@@ -24,6 +24,7 @@ function bucket(key: string): Map<string, unknown> {
 }
 
 const fakeRedis = {
+  set: async () => undefined,
   hgetall: async (key: string) => {
     const m = bucket(key);
     return m.size === 0 ? null : Object.fromEntries(m);

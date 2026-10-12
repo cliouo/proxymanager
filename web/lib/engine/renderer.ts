@@ -36,6 +36,7 @@ export interface RenderOptions {
    * Remote providers ignore this and use their own `url`.
    */
   providerUrlBase?: string;
+  providerUrl?: (provider: RuleSet) => string;
 }
 
 const ANCHOR_LINE_PATTERN = /^([ \t]*)#\s*===\s*ANCHOR:\s*([\w-]+)\s*===\s*$/gm;
@@ -224,6 +225,7 @@ function renderRuleProviders(
   providers: RuleSet[],
   refs: Set<string>,
   urlBase: string,
+  providerUrl?: (provider: RuleSet) => string,
 ): { block: string; applied: string[] } {
   const used = providers
     .filter((p) => refs.has(p.name))
@@ -235,7 +237,10 @@ function renderRuleProviders(
     const decl: Record<string, unknown> = { type: 'http' };
     if (p.behavior) decl.behavior = p.behavior;
     decl.format = p.format;
-    decl.url = p.source === 'remote' ? p.url : `${urlBase}/${p.name}`;
+    decl.url =
+      p.source === 'remote'
+        ? p.url
+        : (providerUrl?.(p) ?? `${urlBase}/${encodeURIComponent(p.name)}`);
     decl.interval = p.interval ?? 86400;
     if (p.proxy) decl.proxy = p.proxy;
     map[p.name] = decl;
@@ -296,6 +301,7 @@ export function renderBase(
     opts.providers ?? [],
     refs,
     opts.providerUrlBase ?? PLACEHOLDER_URL_BASE,
+    opts.providerUrl,
   );
   // If there's a block to inject but no marker to inject it at, `replace` is a
   // silent no-op — the config keeps its RULE-SET references with no matching

@@ -31,7 +31,10 @@ export const GET = withProblemDetails(async (_request: Request, ctx: Ctx) => {
   const device = await getProfileDevice(id, deviceId);
 
   // P-FFP v1: admin previews are not real attempts — no fetch health.
-  const shared = await renderProfileConfig(profile.name, { recordFetchHealth: false });
+  const shared = await renderProfileConfig(profile.name, {
+    expectedProfileId: profile.id,
+    recordFetchHealth: false,
+  });
 
   let deviceYaml: string | null = null;
   const issues: ConfigValidationError['issue'][] = [];

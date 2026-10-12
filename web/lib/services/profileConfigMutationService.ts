@@ -23,6 +23,8 @@ export async function preflightAndCommitProfileChanges(
 ): Promise<ProfileConfigState> {
   const checked = await preflightProfileConfigChanges(profileId, changes, expectedPlanningVersion);
 
+  // The global CAS generation is strictly monotonic, including delete/restore.
+  for (const rule of changes.ruleWrites ?? []) rule.revision = checked.configVersion + 1;
   const committed = await commitProfileConfigChanges(profileId, changes, checked.configVersion);
   if (!committed.ok) {
     throw ProblemDetailsError.preconditionFailed(

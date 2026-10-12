@@ -7,6 +7,39 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/lib/repos/rulesRepo', () => ({ listRules: mocks.listRules }));
 vi.mock('@/lib/repos/configVersionRepo', () => ({ getConfigVersion: mocks.getConfigVersion }));
 vi.mock('@/lib/profileScope', () => ({ resolveScopeProfile: mocks.resolveScopeProfile }));
+vi.mock('@/lib/redis/client', () => ({
+  getRedis: () => ({
+    get: async () => null,
+    mget: async () => [await mocks.getConfigVersion(), null],
+    multi: () => {
+      const tx = { zadd: () => tx, expire: () => tx, set: () => tx, exec: async () => [] };
+      return tx;
+    },
+    zrange: async (_key: string, start: number, end: number) => {
+      const { filterAndSortRules } = await import('@/lib/services/rulePage');
+      return filterAndSortRules(await mocks.listRules(), lastQuery)
+        .slice(start, end + 1)
+        .map((r) => r.id);
+    },
+    hmget: async (_key: string, ...ids: string[]) =>
+      Object.fromEntries(
+        (await mocks.listRules())
+          .filter((r: { id: string }) => ids.includes(r.id))
+          .map((r: { id: string }) => [r.id, r]),
+      ),
+  }),
+}));
+let lastQuery: import('@/lib/services/rulePage').RuleQuery = { sort: 'rank:asc' };
+vi.mock('@/lib/services/rulePage', async (original) => {
+  const mod = await original<typeof import('@/lib/services/rulePage')>();
+  return {
+    ...mod,
+    readRulePage: (...args: Parameters<typeof mod.readRulePage>) => {
+      lastQuery = args[1];
+      return mod.readRulePage(...args);
+    },
+  };
+});
 import { GET } from '@/app/api/v1/rules/route';
 import { GET as summary } from '@/app/api/v1/rules/summary/route';
 beforeEach(() => {

@@ -1,4 +1,4 @@
-import { getRedis } from '@/lib/redis/client';
+import { evalConfigMutation } from './auditedMutation';
 import { REDIS_KEYS } from '@/lib/redis/keys';
 import type { ProxyGroup, Rule } from '@/schemas';
 
@@ -89,7 +89,7 @@ export async function commitProfileConfigChanges(
   for (const group of groupWrites) args.push(group.id, JSON.stringify(group));
   args.push(String(groupDeletes.length), ...groupDeletes);
 
-  const result = (await getRedis().eval(
+  const result = (await evalConfigMutation(
     CAS_PROFILE_CONFIG_CHANGES,
     [
       REDIS_KEYS.configVersion,

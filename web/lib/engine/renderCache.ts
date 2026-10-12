@@ -17,6 +17,8 @@
  * Anything else falls through to the real pipeline and rewrites the entry.
  */
 
+import { deriveSubToken } from '@/lib/auth';
+import { etagMatches } from '@/lib/http/etag';
 import { createHash } from 'node:crypto';
 import { buildDeviceConfig } from '@/lib/engine/devicePatch';
 import { resolveConfig, type ResolveResult } from '@/lib/engine/resolve';
@@ -115,7 +117,7 @@ return 1
  *       across source filters and collection stages, with stricter active-row
  *       and failure semantics. Epoch-21 node names/collisions are stale.
  */
-const RENDER_CACHE_EPOCH = 22;
+const RENDER_CACHE_EPOCH = 23;
 
 export type RenderCacheStatus = 'hit' | 'miss' | 'bypass';
 
@@ -137,6 +139,8 @@ export type CachedResolveOutput = Pick<
 >;
 
 export interface RenderCacheEntry extends CachedResolveOutput {
+  profileId: string;
+  inputHash?: string;
   /** {@link RENDER_CACHE_EPOCH} the entry was produced under; mismatch ⇒ miss. */
   epoch: number;
   /** config:version observed BEFORE loading data (see race note below). */
@@ -155,6 +159,8 @@ export interface RenderCacheEntry extends CachedResolveOutput {
 }
 
 export interface RenderProfileOptions {
+  /** Bind output to the identity already authorized/resolved by the caller. */
+  expectedProfileId?: string;
   /** Absolute base for rendered rule-provider URLs; part of the cache identity. */
   providerUrlBase?: string;
   /** Skip reading the cache and force-refresh upstream subs; still writes the cache. */
@@ -180,6 +186,7 @@ export interface RenderProfileResult {
   /** Profile's display_name for the Content-Disposition filename (null = default). */
   displayName: string | null;
   cache: RenderCacheStatus;
+  renderedAt: number;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -227,6 +234,7 @@ function buildIdForContent(content: string): string {
 function isRenderCacheEntry(value: unknown): value is RenderCacheEntry {
   if (!isRecord(value)) return false;
   return (
+    typeof value.profileId === 'string' &&
     isNonNegativeSafeInteger(value.epoch) &&
     isNonNegativeSafeInteger(value.version) &&
     (value.providerUrlBase === null || typeof value.providerUrlBase === 'string') &&
@@ -276,13 +284,75 @@ function defaultMissingBaseError(): ProblemDetailsError {
   return ProblemDetailsError.notFound('Base config has not been initialized yet.');
 }
 
+interface RenderManifest {
+  profileId: string;
+  epoch: number;
+  version: number;
+  renderedAt: number;
+  freshForMs: number;
+  buildId: string;
+}
+async function publishRenderEntry(key: string, entry: RenderCacheEntry) {
+  const ttl = Math.max(
+    1,
+    Math.ceil((entry.renderedAt + entry.freshForMs - Date.now()) / 1000) + EX_SLACK_SECONDS,
+  );
+  const { profileId, epoch, version, renderedAt, freshForMs, buildId } = entry;
+  await Promise.all([
+    getRedis().set(key, entry, { ex: ttl }),
+    getRedis().set(
+      `${key}:manifest`,
+      { profileId, epoch, version, renderedAt, freshForMs, buildId },
+      { ex: ttl },
+    ),
+  ]);
+}
+
+/** Conditional YAML requests can validate freshness and ETag without reading the artifact. */
+export async function cachedProfileEtag(
+  profile: string,
+  providerUrlBase: string,
+  supplied: string,
+  expectedProfileId?: string,
+): Promise<string | null> {
+  const key = renderVariantKey(REDIS_KEYS.renderCache(profile), providerUrlBase);
+  const [version, manifest] = await getRedis().mget<[number | null, RenderManifest | null]>(
+    REDIS_KEYS.configVersion,
+    `${key}:manifest`,
+  );
+  if (
+    !manifest ||
+    (expectedProfileId !== undefined && manifest.profileId !== expectedProfileId) ||
+    manifest.epoch !== RENDER_CACHE_EPOCH ||
+    manifest.version !== (version ?? 0) ||
+    !Number.isSafeInteger(manifest.renderedAt) ||
+    manifest.renderedAt > Date.now() + MAX_CLOCK_SKEW_MS ||
+    !(manifest.freshForMs > 0 && manifest.freshForMs <= MAX_FRESH_MS) ||
+    Date.now() - manifest.renderedAt >= manifest.freshForMs ||
+    typeof manifest.buildId !== 'string'
+  )
+    return null;
+  const etag = `"${manifest.buildId}"`;
+  return etagMatches(supplied, etag) ? etag : null;
+}
+
+export function renderVariantKey(key: string, providerUrlBase?: string): string {
+  // Include credential generation as well: rotating SUB_TOKEN changes dependency URLs.
+  const identity = JSON.stringify([
+    providerUrlBase ?? null,
+    providerUrlBase ? process.env.SUB_TOKEN : null,
+  ]);
+  return `${key}:v${RENDER_CACHE_EPOCH}:${createHash('sha256').update(identity).digest('hex')}`;
+}
+
 export async function renderProfileConfig(
   profileName: string,
   opts: RenderProfileOptions = {},
 ): Promise<RenderProfileResult> {
   const redis = getRedis();
-  const cacheKey = REDIS_KEYS.renderCache(profileName);
+  const cacheKey = renderVariantKey(REDIS_KEYS.renderCache(profileName), opts.providerUrlBase);
   const providerUrlBase = opts.providerUrlBase ?? null;
+  let reusable: RenderCacheEntry | null = null;
 
   // 防竞态:版本号必须在读取任何数据**之前**取到,并原样写进缓存条目。若渲染
   // 期间有并发写(bump),写进缓存的是旧版本号,下次读取时版本比对失配 →
@@ -307,8 +377,15 @@ export async function renderProfileConfig(
     }
     const entry = isRenderCacheEntry(rawEntry) ? rawEntry : null;
     if (
+      entry?.epoch === RENDER_CACHE_EPOCH &&
+      entry.providerUrlBase === providerUrlBase &&
+      Date.now() - entry.renderedAt < entry.freshForMs
+    )
+      reusable = entry;
+    if (
       cacheableVersion &&
       entry !== null &&
+      (opts.expectedProfileId === undefined || entry.profileId === opts.expectedProfileId) &&
       entry.epoch === RENDER_CACHE_EPOCH &&
       entry.version === version &&
       (entry.providerUrlBase ?? null) === providerUrlBase &&
@@ -320,6 +397,7 @@ export async function renderProfileConfig(
         baseUpdatedAt: entry.baseUpdatedAt,
         displayName: entry.displayName ?? null,
         cache: 'hit',
+        renderedAt: entry.renderedAt,
       };
     }
   } else {
@@ -352,6 +430,10 @@ export async function renderProfileConfig(
     throw ProblemDetailsError.notFound(`Profile "${profileName}" 不存在。`);
   }
 
+  if (opts.expectedProfileId !== undefined && profileRecord.id !== opts.expectedProfileId) {
+    throw ProblemDetailsError.notFound('Profile identity changed during the request.');
+  }
+
   const [base, rules, providers, subscriptions, proxyGroups, templates, collections] =
     await Promise.all([
       getBase(profileRecord.id),
@@ -366,9 +448,49 @@ export async function renderProfileConfig(
     throw (opts.missingBaseError ?? defaultMissingBaseError)();
   }
 
+  const inputHash = createHash('sha256')
+    .update(
+      JSON.stringify([
+        profileRecord,
+        base,
+        rules,
+        providers,
+        subscriptions,
+        proxyGroups,
+        templates,
+        collections,
+      ]),
+    )
+    .digest('hex');
+  // Global CAS still protects saves. An unrelated profile write may require
+  // rechecking dependencies, but it need not refetch upstreams or recompile YAML.
+  if (cacheableVersion && reusable?.inputHash === inputHash) {
+    const entry = { ...reusable, version };
+    await publishRenderEntry(cacheKey, entry);
+    return {
+      resolved: entry,
+      baseEtag: entry.baseEtag,
+      baseUpdatedAt: entry.baseUpdatedAt,
+      displayName: entry.displayName,
+      cache: 'hit',
+      renderedAt: entry.renderedAt,
+    };
+  }
+
   const resolved = await resolveConfig(base.content, rules, subscriptions, proxyGroups, templates, {
     providers,
     providerUrlBase: opts.providerUrlBase,
+    providerUrl: opts.providerUrlBase
+      ? (provider) => {
+          const origin = new URL(opts.providerUrlBase!).origin;
+          const token = deriveSubToken({
+            type: 'rule-set',
+            id: provider.id,
+            tokenVersion: provider.token_version,
+          });
+          return `${origin}/api/rule-providers/${token}/${encodeURIComponent(provider.name)}`;
+        }
+      : undefined,
     // A downloadable or cached full config must never look successful after a
     // source silently disappeared. Stale-on-error still happens inside the
     // fetcher when an older complete provider is available; otherwise fail the
@@ -397,6 +519,8 @@ export async function renderProfileConfig(
   const freshForMs = Math.min(ttls.length > 0 ? Math.min(...ttls) : MAX_FRESH_MS, MAX_FRESH_MS);
 
   const entry: RenderCacheEntry = {
+    profileId: profileRecord.id,
+    inputHash,
     epoch: RENDER_CACHE_EPOCH,
     version,
     providerUrlBase,
@@ -420,7 +544,7 @@ export async function renderProfileConfig(
   };
   // EX 只是垃圾回收;有效性由 version/renderedAt 判定,所以略宽于窗口即可。
   if (cacheableVersion) {
-    await redis.set(cacheKey, entry, { ex: Math.ceil(freshForMs / 1000) + EX_SLACK_SECONDS });
+    await publishRenderEntry(cacheKey, entry);
   }
 
   return {
@@ -429,6 +553,7 @@ export async function renderProfileConfig(
     baseUpdatedAt: base.updated_at,
     displayName: profileRecord.display_name ?? null,
     cache: opts.noCache ? 'bypass' : 'miss',
+    renderedAt: entry.renderedAt,
   };
 }
 
@@ -489,12 +614,18 @@ async function renderDeviceConfigAttempt(
   if (!profileRecord) {
     throw ProblemDetailsError.notFound(`Profile "${profileName}" 不存在。`);
   }
+  if (opts.expectedProfileId !== undefined && profileRecord.id !== opts.expectedProfileId) {
+    throw ProblemDetailsError.notFound('Profile identity changed during the request.');
+  }
   const device = await getDeviceByName(profileRecord.id, deviceName);
   if (!device) {
     throw ProblemDetailsError.notFound(`设备 "${deviceName}" 不存在。`);
   }
 
-  const cacheKey = REDIS_KEYS.deviceRenderCache(profileName, device.id);
+  const cacheKey = renderVariantKey(
+    REDIS_KEYS.deviceRenderCache(profileName, device.id),
+    opts.providerUrlBase,
+  );
   if (!cacheableVersion) {
     await redis.del(cacheKey);
   }
@@ -504,6 +635,7 @@ async function renderDeviceConfigAttempt(
     const entry = isRenderCacheEntry(raw) ? raw : null;
     if (
       entry !== null &&
+      (opts.expectedProfileId === undefined || entry.profileId === opts.expectedProfileId) &&
       entry.epoch === RENDER_CACHE_EPOCH &&
       entry.version === version &&
       (entry.providerUrlBase ?? null) === providerUrlBase &&
@@ -525,13 +657,17 @@ async function renderDeviceConfigAttempt(
         displayName: entry.displayName ?? null,
         deviceDisplayName: device.display_name ?? null,
         cache: 'hit',
+        renderedAt: entry.renderedAt,
         sharedCache: null,
       };
     }
   }
 
   // 共享渲染:全部选项语义(noCache 强刷上游、providerUrlBase 进 URL)照单传下去。
-  const shared = await renderProfileConfig(profileName, opts);
+  const shared = await renderProfileConfig(profileName, {
+    ...opts,
+    expectedProfileId: profileRecord.id,
+  });
   const content = buildDeviceConfig(
     shared.resolved.content,
     device.base_patch,
@@ -548,6 +684,7 @@ async function renderDeviceConfigAttempt(
   };
 
   const entry: RenderCacheEntry = {
+    profileId: profileRecord.id,
     epoch: RENDER_CACHE_EPOCH,
     version,
     providerUrlBase,
@@ -583,6 +720,7 @@ async function renderDeviceConfigAttempt(
     displayName: shared.displayName,
     deviceDisplayName: device.display_name ?? null,
     cache: opts.noCache ? 'bypass' : 'miss',
+    renderedAt: entry.renderedAt,
     sharedCache: shared.cache,
   };
 }

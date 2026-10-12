@@ -20,6 +20,7 @@ export const REDIS_KEYS = {
    */
   devices: (profileId: string): string => `devices:${profileId}`,
   subscriptions: 'subscriptions',
+  subscriptionContent: (id: string): string => `subscription-local-content:${id}`,
   /**
    * One checksum-verified manual snapshot per subscription. The value has no
    * TTL and is mutated only by the subscription definition CAS.

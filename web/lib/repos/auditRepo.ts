@@ -1,10 +1,12 @@
+import { mutationPlanning } from './mutationContext';
+import { ProblemDetailsError } from '@/lib/http/problem';
 import { getRedis } from '@/lib/redis/client';
 import { REDIS_KEYS } from '@/lib/redis/keys';
 import type { AuditEvent, AuditTarget } from '@/schemas';
 
 const MAX_EVENTS = 1000;
 
-interface RecordInput {
+export interface RecordInput {
   op: AuditEvent['op'];
   actor: string;
   /**
@@ -31,100 +33,61 @@ function nowMs(): number {
   return Date.now();
 }
 
-/**
- * Append a new event to the audit log. ZADD (score=ts) + HSET (payload by id)
- * in a single pipeline so the index and the payload stay in sync. Opportunistic
- * trim drops events past MAX_EVENTS — we read the trimmed ids first so we can
- * HDEL their payloads in the same trip.
- */
-export async function recordEvent(input: RecordInput): Promise<AuditEvent> {
-  const event: AuditEvent = {
+export function buildEvents(inputs: RecordInput[]): AuditEvent[] {
+  const baseTs = nowMs();
+  return inputs.map((input, index) => ({
+    ...input,
     id: generateEventId(),
-    ts: nowMs(),
-    op: input.op,
-    actor: input.actor,
+    // Preserve input order within a batch rather than sorting UUID ties randomly.
+    ts: baseTs + index,
     ruleId: input.ruleId ?? (input.target?.kind === 'rule' ? input.target.id : undefined),
-    target: input.target,
-    before: input.before,
-    after: input.after,
-    undoes: input.undoes,
-    undoable: input.undoable,
-    profileId: input.profileId,
-  };
-
-  const redis = getRedis();
-  const tx = redis.multi();
-  tx.zadd(REDIS_KEYS.audit.events, { score: event.ts, member: event.id });
-  tx.hset(REDIS_KEYS.audit.byId, { [event.id]: event });
-  await tx.exec();
-
-  // Opportunistic trim. Reading the to-evict ids requires its own RTT; we
-  // only pay it when the log has actually grown past the cap.
-  const card = await redis.zcard(REDIS_KEYS.audit.events);
-  if (card > MAX_EVENTS) {
-    const overflow = card - MAX_EVENTS;
-    const evictIds = (await redis.zrange<string[]>(REDIS_KEYS.audit.events, 0, overflow - 1)) ?? [];
-    if (evictIds.length > 0) {
-      const trim = redis.multi();
-      trim.zremrangebyrank(REDIS_KEYS.audit.events, 0, overflow - 1);
-      trim.hdel(REDIS_KEYS.audit.byId, ...evictIds);
-      await trim.exec();
-    }
-  }
-
-  return event;
+  }));
 }
 
-/**
- * Record many events in a single Redis round-trip (P2-8). The per-op serial
- * `recordEvent` loop the batch route used could take 500 × a few RTTs — tens of
- * seconds, long enough for the client to hit a 504 and retry (duplicating the
- * whole batch). Here every ZADD + one bulk HSET go out in one pipeline, with a
- * single opportunistic trim at the end.
- *
- * Each event's score is `baseTs + index` so a batch landing inside one
- * millisecond still gets strictly-increasing scores — preserving intra-batch
- * order and keeping the events distinct for exclusive-bound pagination.
- */
+export const TRIM_EVENTS = `
+local overflow = redis.call('ZCARD', KEYS[1]) - tonumber(ARGV[1])
+if overflow <= 0 then return 0 end
+local ids = redis.call('ZRANGE', KEYS[1], 0, overflow - 1)
+for _, id in ipairs(ids) do
+  redis.call('ZREM', KEYS[1], id)
+  redis.call('HDEL', KEYS[2], id)
+end
+return #ids
+`;
+
+export async function trimEvents(): Promise<void> {
+  await getRedis().eval(
+    TRIM_EVENTS,
+    [REDIS_KEYS.audit.events, REDIS_KEYS.audit.byId],
+    [MAX_EVENTS],
+  );
+}
+
+export async function recordEvent(input: RecordInput): Promise<AuditEvent> {
+  return (await recordEvents([input]))[0];
+}
+
 export async function recordEvents(inputs: RecordInput[]): Promise<AuditEvent[]> {
-  if (inputs.length === 0) return [];
-  const baseTs = nowMs();
-  const events: AuditEvent[] = inputs.map((input, i) => ({
-    id: generateEventId(),
-    ts: baseTs + i,
-    op: input.op,
-    actor: input.actor,
-    ruleId: input.ruleId ?? (input.target?.kind === 'rule' ? input.target.id : undefined),
-    target: input.target,
-    before: input.before,
-    after: input.after,
-    undoes: input.undoes,
-    undoable: input.undoable,
-    profileId: input.profileId,
-  }));
-
-  const redis = getRedis();
-  const tx = redis.multi();
-  for (const event of events) {
-    tx.zadd(REDIS_KEYS.audit.events, { score: event.ts, member: event.id });
+  if (!inputs.length) return [];
+  const events = buildEvents(inputs);
+  const plan = mutationPlanning.getStore();
+  if (plan) {
+    plan.events.push(...events);
+    return events;
   }
-  tx.hset(REDIS_KEYS.audit.byId, Object.fromEntries(events.map((e) => [e.id, e])));
-  await tx.exec();
-
-  // One trim for the whole batch (not per event).
-  const card = await redis.zcard(REDIS_KEYS.audit.events);
-  if (card > MAX_EVENTS) {
-    const overflow = card - MAX_EVENTS;
-    const evictIds = (await redis.zrange<string[]>(REDIS_KEYS.audit.events, 0, overflow - 1)) ?? [];
-    if (evictIds.length > 0) {
-      const trim = redis.multi();
-      trim.zremrangebyrank(REDIS_KEYS.audit.events, 0, overflow - 1);
-      trim.hdel(REDIS_KEYS.audit.byId, ...evictIds);
-      await trim.exec();
-    }
-  }
-
+  await persistBuiltEvents(events);
   return events;
+}
+
+/** Persist existing IDs and snapshots without rebuilding events collected during planning. */
+export async function persistBuiltEvents(events: AuditEvent[]): Promise<void> {
+  if (!events.length) return;
+  const tx = getRedis().multi();
+  for (const event of events)
+    tx.zadd(REDIS_KEYS.audit.events, { score: event.ts, member: event.id });
+  tx.hset(REDIS_KEYS.audit.byId, Object.fromEntries(events.map((event) => [event.id, event])));
+  await tx.exec();
+  await trimEvents().catch(() => undefined);
 }
 
 /**
@@ -145,6 +108,7 @@ export interface ListEventsOptions {
   limit?: number;
   /** Return events strictly older than this ms timestamp (for pagination). */
   beforeTs?: number;
+  cursor?: string;
 }
 
 export async function listEvents(opts: ListEventsOptions = {}): Promise<AuditEvent[]> {
@@ -153,17 +117,43 @@ export async function listEvents(opts: ListEventsOptions = {}): Promise<AuditEve
   // Upstash's zrange types accept `+inf` / `-inf` / `(N` template-literal
   // strings — cast to satisfy the union without losing exclusive-bound
   // semantics for pagination.
-  const max = (opts.beforeTs !== undefined ? (`(${opts.beforeTs}` as const) : '+inf') as
-    | `(${number}`
-    | '+inf';
-  // Newest first.
-  const ids =
-    (await redis.zrange<string[]>(REDIS_KEYS.audit.events, max, '-inf', {
-      byScore: true,
-      rev: true,
-      count: limit,
-      offset: 0,
-    })) ?? [];
+  let boundary: [number, string] | undefined;
+  if (opts.cursor) {
+    try {
+      const decoded = JSON.parse(Buffer.from(opts.cursor, 'base64url').toString());
+      if (
+        !Array.isArray(decoded) ||
+        !Number.isSafeInteger(decoded[0]) ||
+        typeof decoded[1] !== 'string'
+      )
+        throw new Error();
+      boundary = [decoded[0], decoded[1]];
+    } catch {
+      throw ProblemDetailsError.badRequest('Invalid history cursor');
+    }
+  }
+  // Retention bounds the index to 1000 entries. A (score, member) cursor keeps
+  // every same-millisecond event, even if the boundary event was trimmed.
+  const max = boundary
+    ? boundary[0]
+    : opts.beforeTs !== undefined
+      ? (`(${opts.beforeTs}` as const)
+      : '+inf';
+  const raw = await redis.zrange<string[]>(REDIS_KEYS.audit.events, max, '-inf', {
+    byScore: true,
+    rev: true,
+    withScores: true,
+    count: boundary ? MAX_EVENTS : limit,
+    offset: 0,
+  });
+  const ids: string[] = [];
+  for (let i = 0; i < (raw?.length ?? 0); i += 2) {
+    const id = String(raw[i]);
+    const score = Number(raw[i + 1]);
+    if (boundary && score === boundary[0] && id >= boundary[1]) continue;
+    ids.push(id);
+    if (ids.length === limit) break;
+  }
   if (ids.length === 0) return [];
 
   const payloads = await redis.hmget<Record<string, AuditEvent>>(REDIS_KEYS.audit.byId, ...ids);
@@ -180,4 +170,8 @@ export async function listEvents(opts: ListEventsOptions = {}): Promise<AuditEve
 export async function getEvent(id: string): Promise<AuditEvent | null> {
   const ev = await getRedis().hget<AuditEvent>(REDIS_KEYS.audit.byId, id);
   return ev ?? null;
+}
+
+export function eventCursor(event: AuditEvent): string {
+  return Buffer.from(JSON.stringify([event.ts, event.id])).toString('base64url');
 }

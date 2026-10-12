@@ -15,7 +15,7 @@
 
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { getConfigVersion } from '@/lib/repos/configVersionRepo';
-import { recordEvent } from '@/lib/repos/auditRepo';
+import { auditedMutation, type OperationIdentity } from '@/lib/repos/auditedMutation';
 import { getRule as getRuleRepo, listRules as listRulesRepo } from '@/lib/repos/rulesRepo';
 import { preflightAndCommitProfileChanges } from '@/lib/services/profileConfigMutationService';
 import { computeNextRank } from '@/lib/services/rulesService';
@@ -26,6 +26,7 @@ import { createTaxonomyStore } from './GroupTaxonomy';
 import type { OpContext, RulesStore } from './types';
 
 export interface DispatchRequest {
+  operationIdentity?: OperationIdentity;
   scenario: string;
   op: string;
   payload: unknown;
@@ -98,23 +99,18 @@ export async function dispatch(req: DispatchRequest): Promise<DispatchResponse> 
     taxonomy: createTaxonomyStore(req.profileId),
   };
 
-  const result = await handler(ctx, req.payload);
-
-  const recorded: AuditEvent[] = [];
-  for (const ev of result.events) {
-    const fullOp = `${req.scenario}.${ev.action}`;
-    recorded.push(
-      await recordEvent({
-        op: fullOp,
+  return auditedMutation(async () => {
+    const result = await handler(ctx, req.payload);
+    return {
+      data: result.data,
+      events: result.events.map((ev) => ({
+        op: `${req.scenario}.${ev.action}`,
         actor: req.actor,
         target: ev.target,
-        ruleId: ev.target.kind === 'rule' ? ev.target.id : undefined,
         before: ev.before,
         after: ev.after,
         profileId: req.profileId,
-      }),
-    );
-  }
-
-  return { data: result.data, events: recorded };
+      })),
+    };
+  }, req.operationIdentity);
 }

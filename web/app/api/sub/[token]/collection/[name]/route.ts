@@ -28,7 +28,6 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
  */
 export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
   const { token, name } = await ctx.params;
-  await guardSubToken(request, token, name);
   const format = parseNodeExportFormat(request);
   const configVersion = await getConfigVersion();
 
@@ -36,6 +35,13 @@ export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
     (await getCollectionBySlug(name)) ??
     (UUID_RE.test(name) ? await getCollection(name) : null) ??
     (await getCollectionByName(name));
+  await guardSubToken(
+    request,
+    token,
+    collection
+      ? { type: 'collection', id: collection.id, tokenVersion: collection.token_version }
+      : undefined,
+  );
   if (!collection) {
     throw ProblemDetailsError.notFound(`Collection "${name}" not found.`);
   }

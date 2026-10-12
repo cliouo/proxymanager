@@ -27,17 +27,6 @@ interface Meta {
   hasBase: boolean;
 }
 
-interface ProxyGroup {
-  id: string;
-  name: string;
-  type?: string;
-}
-
-interface RuleSet {
-  id: string;
-  name?: string;
-}
-
 interface SubStatus {
   name: string;
   injectedCount: number;
@@ -151,7 +140,10 @@ export default function DashboardPage() {
   const editingTemplate = isTemplateProfile(activeProfile);
   const [meta, setMeta] = useState<Meta | null>(null);
   const [counts, setCounts] = useState<Counts | null>(null);
-  const [groups, setGroups] = useState<ProxyGroup[]>([]);
+  const [groupStats, setGroupStats] = useState({
+    breakdown: {} as Record<string, number>,
+    chainCount: 0,
+  });
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [snapshotError, setSnapshotError] = useState(false);
   // P-FFP v1: the subscription list carries fetch_health — the single source
@@ -165,64 +157,31 @@ export default function DashboardPage() {
   const [qrOpen, setQrOpen] = useState(false);
   const [deviceStats, setDeviceStats] = useState<{ total: number; tailscale: number } | null>(null);
 
-  // 设备数跟随正在编辑的配置文件,单独拉取;失败只让卡片留在「–」。
-  useEffect(() => {
-    if (!activeProfile) return;
-    let cancelled = false;
-    api<{ data: { features?: { tailscale?: unknown } }[] }>(
-      `/api/v1/profiles/${activeProfile.id}/devices`,
-    )
-      .then((r) => {
-        if (cancelled) return;
-        setDeviceStats({
-          total: r.data.length,
-          tailscale: r.data.filter((d) => d.features?.tailscale).length,
-        });
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [activeProfile]);
-
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const [metaRes, anchors, subs, sets, pgs, rules, hist, prev] = await Promise.all([
-          api<{ data: Meta }>('/api/v1/meta'),
-          api<{ data: string[] }>('/api/v1/anchors').catch(() => ({ data: [] as string[] })),
-          api<{ data: SubscriptionHealthSource[]; meta: { total: number } }>(
-            '/api/v1/subscriptions',
-          ),
-          api<{ data: RuleSet[]; meta: { total: number } }>('/api/v1/rule-sets'),
-          api<{ data: ProxyGroup[]; meta: { total: number } }>('/api/v1/proxy-groups'),
-          api<{ meta: { total: number } }>('/api/v1/rules?limit=1'),
-          api<{ data: AuditEvent[] }>('/api/v1/history?limit=5').catch(() => ({
-            data: [] as AuditEvent[],
-          })),
-          // 告警/注入摘要读上次渲染的快照(1 次 Redis GET)——概览绝不触发
-          // 渲染管线与上游订阅拉取;新鲜产物只在真正使用时生成(/api/sub、最终配置)。
-          // P3-35: distinguish "no render yet" (200 + data:null) from a fetch
-          // FAILURE — conflating them showed a misleading "还没有渲染记录".
-          api<{ data: Snapshot | null }>('/api/v1/resolved-snapshot')
-            .then((r) => ({ ok: true as const, data: r.data }))
-            .catch(() => ({ ok: false as const, data: null })),
-        ]);
+        const { data } = await api<{
+          data: {
+            meta: Meta;
+            counts: Counts;
+            groupTypeBreakdown: Record<string, number>;
+            chainCount: number;
+            lastRenderSummary: Snapshot | null;
+            recentEventSummaries: AuditEvent[];
+            subscriptionHealthSummary: SubscriptionHealthSource[];
+            deviceCounts: { total: number; tailscale: number };
+          };
+        }>('/api/v1/dashboard');
         if (cancelled) return;
-        setMeta(metaRes.data);
-        setGroups(pgs.data);
-        setEvents(hist.data);
-        setSnapshot(prev.data ?? null);
-        setSnapshotError(!prev.ok);
-        setSubscriptionHealth(subs.data);
-        setCounts({
-          anchors: anchors.data.length,
-          subscriptions: subs.meta.total,
-          ruleSets: sets.meta.total,
-          proxyGroups: pgs.meta.total,
-          rules: rules.meta.total,
-        });
+        setMeta(data.meta);
+        setCounts(data.counts);
+        setEvents(data.recentEventSummaries);
+        setSnapshot(data.lastRenderSummary ?? null);
+        setSnapshotError(false);
+        setSubscriptionHealth(data.subscriptionHealthSummary);
+        setDeviceStats(data.deviceCounts);
+        setGroupStats({ breakdown: data.groupTypeBreakdown, chainCount: data.chainCount });
       } catch (err) {
         if (cancelled) return;
         setError(err instanceof ApiError ? err.message : String(err));
@@ -249,18 +208,14 @@ export default function DashboardPage() {
   }
 
   /* ---------- derived stat descriptors (all real) ---------- */
-  const groupBreakdown = (() => {
-    const by = new Map<string, number>();
-    for (const g of groups) by.set(g.type ?? 'select', (by.get(g.type ?? 'select') ?? 0) + 1);
-    return [...by.entries()].map(([t, n]) => `${t} ×${n}`).join(' · ');
-  })();
+  const groupBreakdown = Object.entries(groupStats.breakdown)
+    .map(([t, n]) => `${t} ×${n}`)
+    .join(' · ');
 
   // P1-4: the 4th 配置资源 card links to /scenarios/chained-proxy (R.chained) but
   // was mislabelled as 规则集 (a duplicate of the 共享资源 card). It's meant to be
   // the chained-proxy stat — a chain wrap is a group carrying `dialer-proxy`.
-  const chainCount = groups.filter(
-    (g) => (g as { 'dialer-proxy'?: string })['dialer-proxy'],
-  ).length;
+  const chainCount = groupStats.chainCount;
 
   const anchorsApplied = snapshot?.anchorsApplied ?? 0;
   const rulesDesc =
@@ -446,7 +401,9 @@ export default function DashboardPage() {
               <Link className="stat" href={R.proxyGroups}>
                 <div className="k">代理策略</div>
                 <div className="v">{counts.proxyGroups}</div>
-                <div className="d">{groups.length > 0 ? groupBreakdown : '尚无策略组'}</div>
+                <div className="d">
+                  {(counts?.proxyGroups ?? 0) > 0 ? groupBreakdown : '尚无策略组'}
+                </div>
               </Link>
               <Link className="stat" href={R.rules}>
                 <div className="k">规则</div>

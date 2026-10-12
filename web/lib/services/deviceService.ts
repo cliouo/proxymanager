@@ -1,3 +1,4 @@
+import { atomicService } from '@/lib/repos/auditedMutation';
 /**
  * 设备 CRUD 编排 —— 每一次写都是同一条流水线：
  *
@@ -166,7 +167,7 @@ export async function getProfileDevice(profileId: string, deviceId: string): Pro
   return device;
 }
 
-export async function createDevice(profileId: string, input: DeviceCreate): Promise<Device> {
+async function createDeviceImpl(profileId: string, input: DeviceCreate): Promise<Device> {
   await requireProfile(profileId);
   const parsed = DeviceCreateSchema.parse(input);
 
@@ -210,7 +211,7 @@ export async function createDevice(profileId: string, input: DeviceCreate): Prom
   return device;
 }
 
-export async function patchDevice(
+async function patchDeviceImpl(
   profileId: string,
   deviceId: string,
   patch: DeviceUpdate,
@@ -383,7 +384,7 @@ export async function undoDeviceEvent(
   throw ProblemDetailsError.unprocessable(`设备操作 "${action}" 没有注册撤销路径。`);
 }
 
-export async function deleteDevice(profileId: string, deviceId: string): Promise<boolean> {
+async function deleteDeviceImpl(profileId: string, deviceId: string): Promise<boolean> {
   await requireProfile(profileId);
   // 「不存在」是 no-op 而不是错误,所以先廉价探一次;真正的存在性判定仍在括号内
   // 重做一遍(下面的 plan),这次只是为了在明显不存在时不白跑一整轮 preflight。
@@ -489,7 +490,7 @@ export async function getDeviceTailscaleFeature(
   };
 }
 
-export async function putDeviceTailscaleFeature(
+async function putDeviceTailscaleFeatureImpl(
   profileId: string,
   deviceId: string,
   input: TailscaleDeviceFeatureUpdate,
@@ -566,7 +567,7 @@ export async function putDeviceTailscaleFeature(
   };
 }
 
-export async function deleteDeviceTailscaleFeature(
+async function deleteDeviceTailscaleFeatureImpl(
   profileId: string,
   deviceId: string,
 ): Promise<TailscaleFeatureResult | null> {
@@ -605,3 +606,13 @@ export async function deleteDeviceTailscaleFeature(
   }
   return { feature: null, warnings };
 }
+
+export const createDevice = atomicService(createDeviceImpl);
+
+export const patchDevice = atomicService(patchDeviceImpl);
+
+export const deleteDevice = atomicService(deleteDeviceImpl);
+
+export const putDeviceTailscaleFeature = atomicService(putDeviceTailscaleFeatureImpl);
+
+export const deleteDeviceTailscaleFeature = atomicService(deleteDeviceTailscaleFeatureImpl);

@@ -11,6 +11,8 @@ import {
 } from 'react';
 import { startProfileSession, bindProfileSession } from '@/lib/client/profile-session';
 import { navigateWithUnsavedGuard } from '@/lib/client/useUnsavedGuard';
+import { useSetup } from '@/components/setup/SetupContext';
+import { useRouter } from 'next/navigation';
 import { safeNext } from '@/lib/client/safeNext';
 import { api } from '@/lib/client/api';
 import { clearAdminKey } from '@/lib/client/auth-storage';
@@ -57,8 +59,8 @@ interface ProfilesValue {
   /** 正在编辑的配置文件 —— /base、/proxy-groups、/rules 等作用于它。回退到 current。 */
   activeProfile: Profile | null;
   /**
-   * 切换正在编辑的配置文件:写 cookie 并重载页面以按新作用域重新取数。
-   * 传 `redirectTo` 则重载到该路径(例:从别的配置文件的设置页跳去它的设备页)。
+   * 切换正在编辑的配置文件:确认草稿后更新稳定 ID，仅重挂载作用域内页面。
+   * 传 `redirectTo` 则导航到该路径(例:从别的配置文件的设置页跳去它的设备页)。
    */
   setActiveProfile: (name: string, redirectTo?: string) => void;
   /** 清除 active cookie 并回退到 current(无重载)—— 删除当前活动配置文件后调用。 */
@@ -96,6 +98,9 @@ export function profileMark(name: string): string {
 }
 
 export function ProfilesProvider({ children }: { children: React.ReactNode }) {
+  const router = useRouter();
+  const { initialProfiles } = useSetup();
+  const initial = useRef(initialProfiles);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
   const [loaded, setLoaded] = useState(false);
@@ -117,7 +122,9 @@ export function ProfilesProvider({ children }: { children: React.ReactNode }) {
     if (pinnedId.current) bindProfileSession(pinnedId.current, false);
     setError(null);
     try {
-      const r = await api<{ data: Profile[] }>('/api/v1/profiles');
+      const seed = initial.current;
+      initial.current = null;
+      const r = seed ? { data: seed } : await api<{ data: Profile[] }>('/api/v1/profiles');
       if (generation !== reloadGeneration.current) return;
       const preference = readActiveCookie();
       const selected = pinnedId.current
@@ -165,11 +172,17 @@ export function ProfilesProvider({ children }: { children: React.ReactNode }) {
       navigateWithUnsavedGuard(() => {
         sessionStorage.setItem('pm.profileId', target.id);
         document.cookie = `${ACTIVE_PROFILE_COOKIE}=${encodeURIComponent(name)}; path=/; max-age=31536000; SameSite=Lax`;
-        if (redirectTo) window.location.href = safeNext(redirectTo, window.location.origin);
-        else window.location.reload();
-      }, true);
+        ++reloadGeneration.current;
+        pinnedId.current = target.id;
+        bindProfileSession(target.id, true);
+        setActive(target);
+        setLoading(false);
+        setLoaded(true);
+        setError(null);
+        if (redirectTo) router.push(safeNext(redirectTo, window.location.origin));
+      });
     },
-    [profiles],
+    [profiles, router],
   );
 
   const clearActiveProfile = useCallback(() => {
@@ -297,6 +310,7 @@ export function ProfileScopeBoundary({ children }: { children: React.ReactNode }
           </div>
         )}
         <fieldset
+          key={activeProfile?.id}
           disabled={access !== 'ready'}
           style={{ display: 'contents', border: 0, padding: 0, margin: 0, minWidth: 0 }}
         >

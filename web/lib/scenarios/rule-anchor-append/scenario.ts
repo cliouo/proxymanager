@@ -1,3 +1,4 @@
+import { assertRuleRevision, sameRuleState } from '@/lib/services/ruleRevision';
 /**
  * `rule-anchor-append` — first real scenario, lifted from the original
  * /api/v1/rules CRUD path.
@@ -17,8 +18,8 @@
  *   delete        → create (re-upsert the `before` rule)
  *   batch-create  → batch-delete (delete each ruleId in the batch)
  *
- * Concurrency: rule.updated_at acts as the optimistic version. Inverse
- * handlers refuse with 409 if the live rule has moved past the snapshot.
+ * Concurrency: edits compare entity revision; inverses compare the exact
+ * recorded state (including revision) and reject later writes with 409.
  */
 
 import { z } from '@/lib/openapi/zod';
@@ -53,14 +54,17 @@ import type {
 const CreatePayloadSchema = RuleCreateSchema;
 const ReplacePayloadSchema = z.object({
   id: z.uuid(),
+  expectedRevision: z.number().int().nonnegative().optional(),
   rule: RuleReplaceSchema,
 });
 const PatchPayloadSchema = z.object({
   id: z.uuid(),
+  expectedRevision: z.number().int().nonnegative().optional(),
   patch: RulePatchSchema,
 });
 const DeletePayloadSchema = z.object({
   id: z.uuid(),
+  expectedRevision: z.number().int().nonnegative().optional(),
 });
 const BatchCreatePayloadSchema = z.object({
   rules: z.array(RuleCreateSchema).min(1).max(500),
@@ -105,9 +109,10 @@ const create: OpHandler = async (ctx, raw) => {
 };
 
 const replace: OpHandler = async (ctx, raw) => {
-  const { id, rule: body } = ReplacePayloadSchema.parse(raw);
+  const { id, rule: body, expectedRevision } = ReplacePayloadSchema.parse(raw);
   const existing = await ctx.rules.get(id);
   if (!existing) throw ProblemDetailsError.notFound(`Rule ${id} not found.`);
+  assertRuleRevision(existing, expectedRevision);
 
   const parsedBase = await loadParsedBase(ctx.profileId);
   ensureValidAnchorAndPolicy(body, parsedBase);
@@ -143,9 +148,10 @@ const replace: OpHandler = async (ctx, raw) => {
 };
 
 const patch: OpHandler = async (ctx, raw) => {
-  const { id, patch: body } = PatchPayloadSchema.parse(raw);
+  const { id, patch: body, expectedRevision } = PatchPayloadSchema.parse(raw);
   const existing = await ctx.rules.get(id);
   if (!existing) throw ProblemDetailsError.notFound(`Rule ${id} not found.`);
+  assertRuleRevision(existing, expectedRevision);
 
   const updated: Rule = { ...existing, ...body, updated_at: nowSeconds() };
   if (body.anchor !== undefined || body.policy !== undefined) {
@@ -174,9 +180,10 @@ const patch: OpHandler = async (ctx, raw) => {
 };
 
 const del: OpHandler = async (ctx, raw) => {
-  const { id } = DeletePayloadSchema.parse(raw);
+  const { id, expectedRevision } = DeletePayloadSchema.parse(raw);
   const existing = await ctx.rules.get(id);
   if (!existing) throw ProblemDetailsError.notFound(`Rule ${id} not found.`);
+  assertRuleRevision(existing, expectedRevision);
 
   const removed = await ctx.rules.delete(id);
   if (!removed) throw ProblemDetailsError.notFound(`Rule ${id} not found.`);
@@ -261,7 +268,7 @@ const inverseCreate: InverseHandler = async (ctx, event) => {
   if (!current) {
     throw ProblemDetailsError.conflict(`Rule ${ruleId} no longer exists; nothing to undo.`);
   }
-  if (current.updated_at !== after.updated_at) {
+  if (!sameRuleState(current, after)) {
     throw ProblemDetailsError.conflict(
       `Rule ${ruleId} was modified after this event; refuse to undo.`,
     );
@@ -316,7 +323,7 @@ const inverseUpdate: InverseHandler = async (ctx, event) => {
   if (!current) {
     throw ProblemDetailsError.conflict(`Rule ${ruleId} no longer exists; nothing to revert.`);
   }
-  if (current.updated_at !== after.updated_at) {
+  if (!sameRuleState(current, after)) {
     throw ProblemDetailsError.conflict(
       `Rule ${ruleId} was modified after this event; refuse to revert.`,
     );

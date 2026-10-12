@@ -114,6 +114,7 @@ export async function mockWorkspace(context: BrowserContext) {
     const scope = url.searchParams.get('profileId');
     requests.push({ path, method, scope, query: url.search, body: req.postData() });
     const ok = (data: unknown) => route.fulfill({ json: data });
+    if (path === '/api/v1/bootstrap') return ok({ data: { status, profiles: localProfiles } });
     if (path === '/api/v1/setup/status') return ok({ data: status });
     if (path === '/api/v1/profiles') {
       await new Promise((r) => setTimeout(r, 80));
@@ -195,7 +196,20 @@ export async function mockWorkspace(context: BrowserContext) {
         limit = Number(url.searchParams.get('limit') || 100);
       return ok({
         data: filtered.slice(offset, offset + limit),
-        meta: { total: filtered.length, offset, limit, configVersion: 7 },
+        meta: {
+          total: filtered.length,
+          offset,
+          limit,
+          configVersion: 7,
+          summary: {
+            total: controls.ruleCount,
+            active: controls.ruleCount,
+            disabled: 0,
+            anchors: { manual: { total: controls.ruleCount, active: controls.ruleCount } },
+            policies: {},
+            ruleSets: {},
+          },
+        },
       });
     }
     if (path.startsWith('/api/v1/preview/'))
@@ -205,6 +219,7 @@ export async function mockWorkspace(context: BrowserContext) {
             data: {
               content: initialBase,
               build_id: 'test-build',
+              rendered_at: 1700000000000,
               anchors_applied: [],
               unmatched_anchors: [],
             },

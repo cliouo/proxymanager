@@ -1,3 +1,4 @@
+import { listSubscriptionSummaries } from '@/lib/repos/subscriptionsRepo';
 import { createHash } from 'node:crypto';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import {
@@ -195,7 +196,7 @@ export function projectSubscriptionAdminView(
 
 /** Admin views for the whole library (one MGET for all remote healths). */
 export async function listSubscriptionAdminViews(): Promise<SubscriptionAdminView[]> {
-  const subs = await listSubscriptions();
+  const subs = await listSubscriptionSummaries();
   const remoteIds = subs
     .filter((s) => s.kind === 'remote' && effectiveSubscriptionRefreshMode(s) === 'server-auto')
     .map((s) => s.id);
@@ -308,6 +309,7 @@ export async function replaceSubscription(
         }
       : {}),
     id,
+    token_version: current.token_version,
     updated_at: nextUpdatedAt(current),
   });
   if (next.kind === 'remote') delete next.content;
@@ -403,9 +405,7 @@ export async function patchSubscription(
   next = applyFetchIdentityRevision(current, next);
 
   let contentOverrides: ReadonlyMap<string, string> | undefined;
-  let fetchCache:
-    | { cacheKey: string; entry: FetchCacheEntry; ttlMs: number }
-    | undefined;
+  let fetchCache: { cacheKey: string; entry: FetchCacheEntry; ttlMs: number } | undefined;
   if (
     current.kind === 'remote' &&
     effectiveSubscriptionRefreshMode(current) === 'manual' &&

@@ -1,3 +1,4 @@
+import { atomicService } from '@/lib/repos/auditedMutation';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { listProxyGroups } from '@/lib/repos/proxyGroupsRepo';
 import { listRules } from '@/lib/repos/rulesRepo';
@@ -6,7 +7,7 @@ import { preflightAndCommitProfileChanges } from './profileConfigMutationService
 import { versionedRead } from './versionedRead';
 import { compareRulesForEffectiveOrder } from '@/schemas/rule';
 
-export async function reorderProxyGroups(
+async function reorderProxyGroupsImpl(
   profileId: string,
   orderedIds: string[],
   expectedVersion: number,
@@ -44,7 +45,7 @@ export async function reorderProxyGroups(
   return writes;
 }
 
-export async function moveRule(
+async function moveRuleImpl(
   profileId: string,
   id: string,
   direction: 'up' | 'down',
@@ -82,3 +83,7 @@ export async function moveRule(
   });
   return writes;
 }
+
+export const reorderProxyGroups = atomicService(reorderProxyGroupsImpl);
+
+export const moveRule = atomicService(moveRuleImpl);
