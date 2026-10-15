@@ -1,13 +1,4 @@
-/**
- * 设备渲染与它的缓存层。
- *
- * 最重要的两条：
- *   - 设备条目的有效性判据与共享层**完全同构**（epoch/version/providerUrlBase/新鲜度），
- *     所以设备写 INCR config:version 之后无需任何显式失效代码；
- *   - 零设备/空补丁时共享渲染的产物逐字节不变（向后兼容的锚点）。
- */
-
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Device, Profile } from '@/schemas';
 
 const store = vi.hoisted(() => ({
@@ -63,11 +54,7 @@ vi.mock('@/lib/engine/resolve', async (importOriginal) => ({
   resolveConfig: mocks.resolveConfig,
 }));
 
-import {
-  renderDeviceConfig,
-  renderProfileConfig,
-  renderVariantKey,
-} from '@/lib/engine/renderCache';
+import { renderDeviceConfig, renderProfileConfig } from '@/lib/engine/renderCache';
 import { REDIS_KEYS } from '@/lib/redis/keys';
 
 const PROFILE = {
@@ -138,6 +125,79 @@ describe('renderDeviceConfig', () => {
     mocks.resolveConfig.mockResolvedValue(resolved(SHARED));
   });
 
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('re-renders through the real fetcher without extra upstream calls and exposes a refreshed port immediately', async () => {
+    const actual =
+      await vi.importActual<typeof import('@/lib/engine/resolve')>('@/lib/engine/resolve');
+    const { resolveSubscriptionContent } = await import('@/lib/services/subscriptionFetcher');
+    const { SubscriptionSchema } = await import('@/schemas');
+    const sub = SubscriptionSchema.parse({
+      id: '11111111-1111-4111-8111-111111111111',
+      name: 'airport',
+      kind: 'remote',
+      url: 'https://airport.example/sub',
+      ttl_ms: 600_000,
+      enabled: true,
+      tags: [],
+      operators: [],
+      updated_at: 1,
+    });
+    mocks.listSubscriptions.mockResolvedValue([sub]);
+    mocks.getProfileByName.mockResolvedValue({
+      ...PROFILE,
+      source: { type: 'collection', id: 'collection-1' },
+    });
+    mocks.listCollections.mockResolvedValue([
+      {
+        id: 'collection-1',
+        name: 'aggregate',
+        enabled: true,
+        subscription_ids: [sub.id],
+        subscription_tags: [],
+        operators: [],
+      },
+    ]);
+    mocks.resolveConfig.mockImplementation(actual.resolveConfig);
+    const provider = (port: number) => `proxies:
+  - name: HK
+    type: socks5
+    server: hk.example.com
+    port: ${port}
+`;
+    const upstream = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(provider(63333)))
+      .mockResolvedValueOnce(new Response(provider(64321)));
+    vi.stubGlobal('fetch', upstream);
+    const first = await renderDeviceConfig('home', 'macbook', { recordFetchHealth: false });
+    expect(first.resolved.content).toContain('port: 63333');
+    const repeated = await renderDeviceConfig('home', 'macbook', { recordFetchHealth: false });
+    expect(repeated.resolved.buildId).toBe(first.resolved.buildId);
+    expect(upstream).toHaveBeenCalledTimes(1);
+
+    // The same fetch path used by the refresh endpoint updates only source state.
+    await resolveSubscriptionContent(sub, { noCache: true, recordHealth: false });
+    expect(store.counters.get(REDIS_KEYS.configVersion)).toBe(3);
+    const updated = await renderDeviceConfig('home', 'macbook', { recordFetchHealth: false });
+    expect(updated.resolved.content).toContain('port: 64321');
+    expect(updated.resolved.content).not.toContain('63333');
+    expect(updated.resolved.buildId).not.toBe(first.resolved.buildId);
+    expect(upstream).toHaveBeenCalledTimes(2);
+    expect([...store.kv.keys()].some((key) => key.startsWith('render:'))).toBe(false);
+  });
+
+  it('fails closed after three concurrent device changes', async () => {
+    mocks.resolveConfig.mockImplementation(async () => {
+      await fakeRedis.incr(REDIS_KEYS.configVersion);
+      return resolved(SHARED);
+    });
+    await expect(renderDeviceConfig('home', 'macbook')).rejects.toMatchObject({
+      problem: { status: 412 },
+    });
+    expect(mocks.resolveConfig).toHaveBeenCalledTimes(3);
+  });
+
   it('applies the device patch on top of the shared render', async () => {
     const out = await renderDeviceConfig('home', 'macbook');
     expect(out.resolved.content).toContain('mixed-port: 7891');
@@ -155,16 +215,31 @@ describe('renderDeviceConfig', () => {
     expect(a.resolved.buildId).not.toBe('shared-build');
   });
 
-  it('writes a cache entry keyed by device id and hits it on the second call', async () => {
-    await renderDeviceConfig('home', 'macbook');
-    expect(store.kv.has(renderVariantKey(REDIS_KEYS.deviceRenderCache('home', 'd-1')))).toBe(true);
-
-    mocks.resolveConfig.mockClear();
+  it('ignores legacy device/shared caches and sees changed source content without a version bump', async () => {
+    const content = (port: number) =>
+      SHARED.replace(
+        'proxies: []',
+        `proxies:
+  - name: HK
+    type: socks5
+    server: example.com
+    port: ${port}`,
+      );
+    mocks.resolveConfig.mockResolvedValue(resolved(content(63333)));
+    const first = await renderDeviceConfig('home', 'macbook');
+    store.kv.set(REDIS_KEYS.deviceRenderCache('home', 'd-1'), first.resolved);
+    store.kv.set(REDIS_KEYS.renderCache('home'), first.resolved);
+    mocks.resolveConfig.mockResolvedValue(resolved(content(64321)));
     const second = await renderDeviceConfig('home', 'macbook');
-    expect(second.cache).toBe('hit');
-    // 命中时连共享渲染都不该跑。
-    expect(mocks.resolveConfig).not.toHaveBeenCalled();
-    expect(second.sharedCache).toBeNull();
+    expect(second.resolved.content).toContain('port: 64321');
+    expect(second.resolved.content).not.toContain('63333');
+    expect(second.resolved.buildId).not.toBe(first.resolved.buildId);
+    expect(second.cache).toBe('miss');
+    expect(second.sharedCache).toBe('miss');
+    expect(mocks.resolveConfig).toHaveBeenCalledTimes(2);
+    expect(store.counters.get(REDIS_KEYS.configVersion)).toBe(3);
+    expect(store.kv.get(REDIS_KEYS.deviceRenderCache('home', 'd-1'))).toBe(first.resolved);
+    expect(store.kv.get(REDIS_KEYS.renderCache('home'))).toBe(first.resolved);
   });
 
   it('misses after config:version moves (设备写/共享写都会 INCR)', async () => {
@@ -225,7 +300,7 @@ describe('renderDeviceConfig', () => {
     await expect(renderDeviceConfig('home', 'macbook')).rejects.toThrow(/proxies/);
   });
 
-  it('渲染期间版本号变了会重读整份设备快照，再缓存新一代产物', async () => {
+  it('渲染期间版本号变了会重读整份设备快照，返回新一代产物', async () => {
     // 渲染进行到一半时有并发写:共享渲染返回后版本号已经不是最初读到的那个。
     mocks.resolveConfig.mockImplementation(async () => {
       store.counters.set(REDIS_KEYS.configVersion, 4);
@@ -236,10 +311,10 @@ describe('renderDeviceConfig', () => {
 
     expect(out.resolved.content).toContain('mixed-port: 7891');
     expect(mocks.resolveConfig).toHaveBeenCalledTimes(2);
-    expect(store.kv.has(renderVariantKey(REDIS_KEYS.deviceRenderCache('home', 'd-1')))).toBe(true);
+    expect(store.kv.has(REDIS_KEYS.deviceRenderCache('home', 'd-1'))).toBe(false);
   });
 
-  it('缓存命中前若版本变化，会拒绝旧条目并用新设备记录重试', async () => {
+  it('设备读取期间若版本变化，会用新设备记录重试', async () => {
     await renderDeviceConfig('home', 'macbook');
     mocks.resolveConfig.mockClear();
     mocks.getDeviceByName.mockResolvedValue(

@@ -8,10 +8,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const renderDeviceConfig = vi.hoisted(() => vi.fn());
+const renderProfileConfig = vi.hoisted(() => vi.fn());
 const getProfileByName = vi.hoisted(() => vi.fn());
 const guardSubToken = vi.hoisted(() => vi.fn(async () => undefined));
 
-vi.mock('@/lib/engine/renderCache', () => ({ renderDeviceConfig }));
+vi.mock('@/lib/engine/renderCache', () => ({ renderDeviceConfig, renderProfileConfig }));
 vi.mock('@/lib/repos/profilesRepo', () => ({ getProfileByName }));
 vi.mock('@/lib/http/subGuard', () => ({ guardSubToken }));
 
@@ -33,7 +34,7 @@ function rendered(over: Record<string, unknown> = {}) {
     displayName: null,
     deviceDisplayName: null,
     cache: 'miss',
-    sharedCache: 'hit',
+    sharedCache: 'miss',
     ...over,
   };
 }
@@ -98,6 +99,22 @@ describe('/api/sub/{token}/{profile}/{device}', () => {
     expect(res.status).toBe(304);
   });
 
+  it('returns changed content instead of 304 when the client sends the previous build ETag', async () => {
+    const updated = CONFIG.replace('8388', '64321');
+    renderDeviceConfig.mockResolvedValue(
+      rendered({ resolved: { content: updated, buildId: 'updated-build', inlinedProxyCount: 2 } }),
+    );
+    const response = await GET(
+      new Request('https://pm.test/api/sub/tk/home/macbook', {
+        headers: { 'if-none-match': '"dev-build"' },
+      }),
+      ctx('tk', 'home', 'macbook'),
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get('ETag')).toBe('"updated-build"');
+    expect(await response.text()).toContain('port: 64321');
+  });
+
   it('forwards ?noCache=1 and the provider URL base', async () => {
     await GET(
       new Request('https://pm.test/api/sub/tk/home/macbook?noCache=1'),
@@ -158,5 +175,30 @@ describe('/api/sub/{token}/{profile}/{device}', () => {
       ctx('tk', 'home', 'ghost'),
     );
     expect(res.status).toBe(404);
+  });
+});
+
+describe('shared profile conditional requests', () => {
+  it.each([
+    ['dev-build', 304],
+    ['updated-build', 200],
+  ])('renders current content before comparing a client ETag (%s)', async (buildId, status) => {
+    getProfileByName.mockResolvedValue({ id: 'p-home', name: 'home', kind: 'normal' });
+    renderProfileConfig.mockResolvedValue(
+      rendered({ resolved: { content: CONFIG, buildId, inlinedProxyCount: 1 } }),
+    );
+    const { GET } = await import('@/app/api/sub/[token]/[profile]/route');
+    const response = await GET(
+      new Request('https://pm.test/api/sub/tk/home', {
+        headers: { 'if-none-match': '"dev-build"' },
+      }),
+      { params: Promise.resolve({ token: 'tk', profile: 'home' }) } as never,
+    );
+    expect(response.status).toBe(status);
+    expect(renderProfileConfig).toHaveBeenCalledWith(
+      'home',
+      expect.objectContaining({ expectedProfileId: 'p-home', noCache: false }),
+    );
+    expect(response.headers.get('X-Render-Cache')).toBe('miss');
   });
 });

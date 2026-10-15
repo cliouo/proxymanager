@@ -1,24 +1,10 @@
 /**
- * renderProfileConfig — cached front door for the full resolve pipeline.
- *
- * The three read routes (/api/v1/preview/[profile], /api/sub/[token]/[profile],
- * /api/v1/base/parsed) used to each run: 7-8 Redis HGETALLs → subscription
- * fetches → full YAML render. This module short-circuits that to a single
- * Redis MGET when nothing changed:
- *
- *   - validity   — entry.version must equal the global config:version counter
- *                  (bumped by every repo write that affects render output);
- *   - identity   — entry.providerUrlBase must equal the request's (the
- *                  rendered rule-providers URLs bake it in);
- *   - freshness  — entry must be younger than the min ttl_ms of the
- *                  subscriptions that actually participated in the render
- *                  (upstream sub content can change without any repo write).
- *
- * Anything else falls through to the real pipeline and rewrites the entry.
+ * Fresh profile/device rendering. Only subscription bodies are cached.
+ * The module path and response status fields are retained for callers; legacy
+ * render:* entries are neither read nor written and expire naturally.
  */
 
 import { deriveSubToken } from '@/lib/auth';
-import { etagMatches } from '@/lib/http/etag';
 import { createHash } from 'node:crypto';
 import { buildDeviceConfig } from '@/lib/engine/devicePatch';
 import { resolveConfig, type ResolveResult } from '@/lib/engine/resolve';
@@ -35,30 +21,6 @@ import { listRules } from '@/lib/repos/rulesRepo';
 import { listRuleSets } from '@/lib/repos/ruleSetsRepo';
 import { listSubscriptions } from '@/lib/repos/subscriptionsRepo';
 
-/**
- * Ceiling for the freshness window. With no participating subscriptions the
- * render only changes via repo writes (covered by the version check), so
- * 24h is purely a safety net.
- *
- * P3-13 (known behaviour, documented not fixed): two independent TTLs stack —
- * the per-sub FETCH cache (subscriptionFetcher, ttl_ms) and this RENDER cache
- * (freshForMs, derived from the same ttl_ms). An upstream node-list change that
- * happens with no accompanying repo write (so config:version doesn't bump) can
- * take up to the fetch TTL to be re-fetched AND up to the render TTL to be
- * re-rendered — worst case ≈ 2×ttl_ms before it appears. `?noCache=1` bypasses
- * both for an on-demand fresh render; acceptable for a personal tool.
- */
-const MAX_FRESH_MS = 24 * 60 * 60 * 1000;
-/** Tolerate small host-clock skew, but reject timestamps that can pin a corrupt entry fresh. */
-const MAX_CLOCK_SKEW_MS = 5 * 60 * 1000;
-/** Slack added to the Redis EX over the freshness window (GC, not validity). */
-const EX_SLACK_SECONDS = 60;
-
-/**
- * Atomically replace only a still-invalid (or deleted) global generation.
- * A delayed repair must never overwrite a valid value produced by a concurrent
- * repo INCR, or the version-before-data race guard would be reversed.
- */
 const REPAIR_INVALID_CONFIG_VERSION = `
 local current = redis.call('GET', KEYS[1])
 local canonical = current == '0' or (current and string.match(current, '^[1-9]%d*$'))
@@ -70,58 +32,6 @@ redis.call('SET', KEYS[1], ARGV[1])
 return 1
 `.trim();
 
-/**
- * Code-level cache epoch. `config:version` only bumps on data writes, so a pure
- * change to render *logic* (e.g. which rule-providers get emitted) would keep
- * serving stale entries until a freshness lapse or unrelated edit. Bump this on
- * any deploy that changes render output so existing entries (which carry an old
- * or absent epoch) miss and re-render immediately.
- *   1 → +base `rule-set:` refs now emit their rule-providers declaration.
- *   2 → dropped node_prefix (names no longer prefixed) + single-sub groups now
- *       emit `proxies` from member nodes instead of a `^prefix` filter.
- *   3 → chained-proxy wraps render as cloned `proxies:` entries (dialer-proxy
- *       isn't honored on a proxy-group); include-all groups now exclude clones.
- *   4 → chain clone now also covers subscription-injected backends (plain
- *       objects), not just base.yaml literals.
- *   5 → a chain wrap whose backend node is missing (renamed/dropped) is now
- *       pruned instead of emitted as a group referencing a non-existent node;
- *       references to it (group members / rules) are scrubbed so the config
- *       still loads.
- *   6 → region detection (flag-emoji #4 / region-filter #9 / sort #6) now also
- *       recognizes alpha-3 codes (HKG/SGP/JPN…), so a flag-emoji add can flag
- *       nodes named with 3-letter codes that previously got none.
- *   7 → region table gained DK/IS/PL/AE/NG/PK/UA (Denmark/Iceland/Poland/UAE/
- *       Nigeria/Pakistan/Ukraine), so flag-emoji now flags those too.
- *   8 → base / rules / proxy-groups are now loaded per-profile (keyed by the
- *       profile's id) instead of single global instances; every profile renders
- *       its own owned config.
- *   9 → cache entry now carries the profile's display_name so the sub route can
- *       set a customisable Content-Disposition filename on a cache hit (no extra
- *       profile load on the fast path).
- *  10 → proxy URI failures are fail-closed and diagnostics are credential-safe;
- *       invalidate full configs rendered from pre-hardening fetch-cache data.
- *  11 → provider normalisation canonicalises a narrow set of no-loss legacy
- *       fields and URI aliases before strict fixed-Mihomo validation.
- *  16 → weakly typed hysteria bandwidth/hop integers coerce to strings and
- *       tab-padded node names are accepted; previously-skipped nodes appear.
- *  18 → typed device features inject device-scoped Tailscale nodes, groups and
- *       routes after the RFC 7386 patch and before final validation.
- *  19 → subscriptions may carry inert skip-cert-verify while tls is disabled.
- *  20 → VLESS URI packetEncoding=none normalises to Mihomo's effective XUDP
- *       default instead of rejecting the subscription.
- *  21 → placeholder-template naming (rename-template DSL): composed node names
- *       changed shape (flag+region visual block, optional segments, identity
- *       dedup, persisted stable ordinals) — old cached renders must not be
- *       served.
- *  22 → `${index}` now reserves the complete immutable raw-source domain
- *       across source filters and collection stages, with stricter active-row
- *       and failure semantics. Epoch-21 node names/collisions are stale.
- */
-const RENDER_CACHE_EPOCH = 23;
-
-export type RenderCacheStatus = 'hit' | 'miss' | 'bypass';
-
-/** The ResolveResult fields the routes consume — serialised as-is into Redis. */
 export type CachedResolveOutput = Pick<
   ResolveResult,
   | 'content'
@@ -138,44 +48,16 @@ export type CachedResolveOutput = Pick<
   | 'proxyGroupCount'
 >;
 
-export interface RenderCacheEntry extends CachedResolveOutput {
-  profileId: string;
-  inputHash?: string;
-  /** {@link RENDER_CACHE_EPOCH} the entry was produced under; mismatch ⇒ miss. */
-  epoch: number;
-  /** config:version observed BEFORE loading data (see race note below). */
-  version: number;
-  /** Raw providerUrlBase string the render was produced with (null = none). */
-  providerUrlBase: string | null;
-  /** ms epoch when the render completed. */
-  renderedAt: number;
-  /** Freshness window — min ttl_ms across participating subs, capped at 24h. */
-  freshForMs: number;
-  /** base.yaml meta carried along so /api/v1/base/parsed can answer from cache. */
-  baseEtag: string;
-  baseUpdatedAt: number;
-  /** Profile's display_name (Content-Disposition name); null = use default. */
-  displayName: string | null;
-}
+export type RenderCacheStatus = 'miss' | 'bypass';
 
 export interface RenderProfileOptions {
-  /** Bind output to the identity already authorized/resolved by the caller. */
+  /** Identity already authenticated by the route; names can change owners. */
   expectedProfileId?: string;
-  /** Absolute base for rendered rule-provider URLs; part of the cache identity. */
   providerUrlBase?: string;
-  /** Skip reading the cache and force-refresh upstream subs; still writes the cache. */
+  /** Force upstream refresh; ordinary renders still use subscription caches. */
   noCache?: boolean;
-  /**
-   * P-FFP v1: record actual-attempt runtime fetch health. Public profile/
-   * device distribution defaults true; admin profile/device previews, the
-   * base parsed view, AI config reads, device-write previews and mutation
-   * preflight pass false — only real non-preview attempts write health.
-   */
+  /** Public distribution records fetch health; previews opt out. */
   recordFetchHealth?: boolean;
-  /**
-   * Error to throw when base.yaml is uninitialised. Routes differ (preview/sub
-   * use 404, base/parsed use 422) and their response shapes must not change.
-   */
   missingBaseError?: () => ProblemDetailsError;
 }
 
@@ -183,245 +65,66 @@ export interface RenderProfileResult {
   resolved: CachedResolveOutput;
   baseEtag: string;
   baseUpdatedAt: number;
-  /** Profile's display_name for the Content-Disposition filename (null = default). */
   displayName: string | null;
-  cache: RenderCacheStatus;
   renderedAt: number;
+  /** Compatibility header: miss for ordinary rendering, bypass for noCache. */
+  cache: RenderCacheStatus;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
+export interface RenderDeviceResult extends RenderProfileResult {
+  deviceDisplayName: string | null;
+  sharedCache: RenderCacheStatus;
 }
 
-function isNonNegativeSafeInteger(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+const RENDER_SNAPSHOT_ATTEMPTS = 3;
+
+function readConfigVersion(value: unknown): number | null {
+  if (value === null) return 0;
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
 }
 
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((item) => typeof item === 'string');
+/** Repair corrupt generations without overwriting a concurrent valid INCR. */
+async function captureVersion(): Promise<number> {
+  const redis = getRedis();
+  let version = readConfigVersion(await redis.get<unknown>(REDIS_KEYS.configVersion));
+  if (version === null) {
+    await redis.eval(
+      REPAIR_INVALID_CONFIG_VERSION,
+      [REDIS_KEYS.configVersion],
+      [String(Date.now())],
+    );
+    version = readConfigVersion(await redis.get<unknown>(REDIS_KEYS.configVersion));
+  }
+  if (version === null) throw ProblemDetailsError.preconditionFailed('配置版本无效，请稍后重试。');
+  return version;
 }
 
-function isAnchorStat(value: unknown): boolean {
-  return (
-    isRecord(value) && typeof value.anchor === 'string' && isNonNegativeSafeInteger(value.ruleCount)
-  );
-}
-
-function isSubscriptionStatus(value: unknown): boolean {
-  return (
-    isRecord(value) &&
-    typeof value.name === 'string' &&
-    isNonNegativeSafeInteger(value.injectedCount) &&
-    (value.stale === undefined || typeof value.stale === 'boolean') &&
-    (value.staleReason === undefined || typeof value.staleReason === 'string') &&
-    (value.error === undefined || typeof value.error === 'string')
-  );
-}
-
-function isCollision(value: unknown): boolean {
-  return (
-    isRecord(value) &&
-    typeof value.name === 'string' &&
-    (value.keptFrom === null || typeof value.keptFrom === 'string') &&
-    isStringArray(value.droppedFrom)
-  );
-}
-
-function buildIdForContent(content: string): string {
-  return createHash('sha256').update(content, 'utf8').digest('hex').slice(0, 8);
-}
-
-function isRenderCacheEntry(value: unknown): value is RenderCacheEntry {
-  if (!isRecord(value)) return false;
-  return (
-    typeof value.profileId === 'string' &&
-    isNonNegativeSafeInteger(value.epoch) &&
-    isNonNegativeSafeInteger(value.version) &&
-    (value.providerUrlBase === null || typeof value.providerUrlBase === 'string') &&
-    isNonNegativeSafeInteger(value.renderedAt) &&
-    value.renderedAt <= Date.now() + MAX_CLOCK_SKEW_MS &&
-    isNonNegativeSafeInteger(value.freshForMs) &&
-    value.freshForMs > 0 &&
-    value.freshForMs <= MAX_FRESH_MS &&
-    typeof value.baseEtag === 'string' &&
-    isNonNegativeSafeInteger(value.baseUpdatedAt) &&
-    (value.displayName === null || typeof value.displayName === 'string') &&
-    typeof value.content === 'string' &&
-    value.content.trim().length > 0 &&
-    typeof value.buildId === 'string' &&
-    value.buildId === buildIdForContent(value.content) &&
-    Array.isArray(value.anchorsApplied) &&
-    value.anchorsApplied.every(isAnchorStat) &&
-    isStringArray(value.unmatchedAnchors) &&
-    isStringArray(value.ruleProvidersApplied) &&
-    Array.isArray(value.subscriptions) &&
-    value.subscriptions.every(isSubscriptionStatus) &&
-    Array.isArray(value.collisions) &&
-    value.collisions.every(isCollision) &&
-    isStringArray(value.nodeNames) &&
-    isRecord(value.nodesBySub) &&
-    Object.values(value.nodesBySub).every(isStringArray) &&
-    isStringArray(value.warnings) &&
-    isNonNegativeSafeInteger(value.inlinedProxyCount) &&
-    isNonNegativeSafeInteger(value.proxyGroupCount)
-  );
-}
-
-function readConfigVersion(value: unknown): { version: number; cacheable: boolean } {
-  // Missing is the intentional legacy version 0. A present but malformed value
-  // is not equivalent: treating it as zero can falsely hit an old entry while
-  // Redis is corrupt or partially migrated.
-  if (value === null) return { version: 0, cacheable: true };
-  if (isNonNegativeSafeInteger(value)) return { version: value, cacheable: true };
-  return { version: 0, cacheable: false };
-}
-
-async function repairInvalidConfigVersion(redis: ReturnType<typeof getRedis>): Promise<void> {
-  await redis.eval(REPAIR_INVALID_CONFIG_VERSION, [REDIS_KEYS.configVersion], [String(Date.now())]);
+async function versionIsCurrent(version: number): Promise<boolean> {
+  return readConfigVersion(await getRedis().get<unknown>(REDIS_KEYS.configVersion)) === version;
 }
 
 function defaultMissingBaseError(): ProblemDetailsError {
   return ProblemDetailsError.notFound('Base config has not been initialized yet.');
 }
 
-interface RenderManifest {
-  profileId: string;
-  epoch: number;
-  version: number;
-  renderedAt: number;
-  freshForMs: number;
-  buildId: string;
-}
-async function publishRenderEntry(key: string, entry: RenderCacheEntry) {
-  const ttl = Math.max(
-    1,
-    Math.ceil((entry.renderedAt + entry.freshForMs - Date.now()) / 1000) + EX_SLACK_SECONDS,
-  );
-  const { profileId, epoch, version, renderedAt, freshForMs, buildId } = entry;
-  await Promise.all([
-    getRedis().set(key, entry, { ex: ttl }),
-    getRedis().set(
-      `${key}:manifest`,
-      { profileId, epoch, version, renderedAt, freshForMs, buildId },
-      { ex: ttl },
-    ),
-  ]);
-}
-
-/** Conditional YAML requests can validate freshness and ETag without reading the artifact. */
-export async function cachedProfileEtag(
-  profile: string,
-  providerUrlBase: string,
-  supplied: string,
-  expectedProfileId?: string,
-): Promise<string | null> {
-  const key = renderVariantKey(REDIS_KEYS.renderCache(profile), providerUrlBase);
-  const [version, manifest] = await getRedis().mget<[number | null, RenderManifest | null]>(
-    REDIS_KEYS.configVersion,
-    `${key}:manifest`,
-  );
-  if (
-    !manifest ||
-    (expectedProfileId !== undefined && manifest.profileId !== expectedProfileId) ||
-    manifest.epoch !== RENDER_CACHE_EPOCH ||
-    manifest.version !== (version ?? 0) ||
-    !Number.isSafeInteger(manifest.renderedAt) ||
-    manifest.renderedAt > Date.now() + MAX_CLOCK_SKEW_MS ||
-    !(manifest.freshForMs > 0 && manifest.freshForMs <= MAX_FRESH_MS) ||
-    Date.now() - manifest.renderedAt >= manifest.freshForMs ||
-    typeof manifest.buildId !== 'string'
-  )
-    return null;
-  const etag = `"${manifest.buildId}"`;
-  return etagMatches(supplied, etag) ? etag : null;
-}
-
-export function renderVariantKey(key: string, providerUrlBase?: string): string {
-  // Include credential generation as well: rotating SUB_TOKEN changes dependency URLs.
-  const identity = JSON.stringify([
-    providerUrlBase ?? null,
-    providerUrlBase ? process.env.SUB_TOKEN : null,
-  ]);
-  return `${key}:v${RENDER_CACHE_EPOCH}:${createHash('sha256').update(identity).digest('hex')}`;
-}
-
 export async function renderProfileConfig(
   profileName: string,
   opts: RenderProfileOptions = {},
 ): Promise<RenderProfileResult> {
-  const redis = getRedis();
-  const cacheKey = renderVariantKey(REDIS_KEYS.renderCache(profileName), opts.providerUrlBase);
-  const providerUrlBase = opts.providerUrlBase ?? null;
-  let reusable: RenderCacheEntry | null = null;
-
-  // 防竞态:版本号必须在读取任何数据**之前**取到,并原样写进缓存条目。若渲染
-  // 期间有并发写(bump),写进缓存的是旧版本号,下次读取时版本比对失配 →
-  // 重新渲染。先读数据后读版本则可能把「新版本号 + 旧数据」缓存住,永远不失效。
-  let version: number;
-  let cacheableVersion: boolean;
-
-  if (!opts.noCache) {
-    // 命中路径的全部 Redis 开销:这一次 MGET(版本号 + 缓存条目)。
-    const [rawVersion, rawEntry] = await redis.mget<[unknown, unknown]>(
-      REDIS_KEYS.configVersion,
-      cacheKey,
-    );
-    ({ version, cacheable: cacheableVersion } = readConfigVersion(rawVersion));
-    if (!cacheableVersion) {
-      // Repair the *global* generation to a value no legacy v0 cache can
-      // match. Deleting only this profile's entry is insufficient: another
-      // profile not requested during the incident could otherwise resurrect
-      // its old v0 entry if the corrupt key were merely deleted (= 0).
-      await repairInvalidConfigVersion(redis);
-      await redis.del(cacheKey);
-    }
-    const entry = isRenderCacheEntry(rawEntry) ? rawEntry : null;
-    if (
-      entry?.epoch === RENDER_CACHE_EPOCH &&
-      entry.providerUrlBase === providerUrlBase &&
-      Date.now() - entry.renderedAt < entry.freshForMs
-    )
-      reusable = entry;
-    if (
-      cacheableVersion &&
-      entry !== null &&
-      (opts.expectedProfileId === undefined || entry.profileId === opts.expectedProfileId) &&
-      entry.epoch === RENDER_CACHE_EPOCH &&
-      entry.version === version &&
-      (entry.providerUrlBase ?? null) === providerUrlBase &&
-      Date.now() - entry.renderedAt < entry.freshForMs
-    ) {
-      return {
-        resolved: entry,
-        baseEtag: entry.baseEtag,
-        baseUpdatedAt: entry.baseUpdatedAt,
-        displayName: entry.displayName ?? null,
-        cache: 'hit',
-        renderedAt: entry.renderedAt,
-      };
-    }
-  } else {
-    // bypass 也要先取版本号 — 渲染结果仍会写回缓存,同样要防上面的竞态。
-    const rawVersion = await redis.get<unknown>(REDIS_KEYS.configVersion);
-    ({ version, cacheable: cacheableVersion } = readConfigVersion(rawVersion));
-    if (!cacheableVersion) {
-      await repairInvalidConfigVersion(redis);
-      await redis.del(cacheKey);
-    }
+  for (let attempt = 0; attempt < RENDER_SNAPSHOT_ATTEMPTS; attempt++) {
+    const version = await captureVersion();
+    const result = await renderProfileSnapshot(profileName, opts, version);
+    if (await versionIsCurrent(version)) return result;
   }
+  throw ProblemDetailsError.preconditionFailed('配置正在更新，请稍后重试。');
+}
 
-  // Miss / bypass. base / rules / proxy-groups are now owned per profile
-  // (keyed by the profile's id), so resolve the profile record FIRST, then
-  // load its scoped structural data alongside the shared libraries.
-  //
-  // Profile existence guard: the engine renders a profile by name, so a name
-  // with no record can't be located — 404 it (`default` included, since post-
-  // migration it always has a record; with none, there's nothing to render).
-  // This lives on the miss path on purpose — a cache *hit* already proves a
-  // valid prior render under the current config:version, and deleting a profile
-  // bumps that version (see profilesRepo), so a stale hit for a deleted profile
-  // can't survive. Keeping it off the hit path preserves the single-MGET fast
-  // path for polling clients.
+/** Caller owns the version bracket, including device reads when applicable. */
+async function renderProfileSnapshot(
+  profileName: string,
+  opts: RenderProfileOptions,
+  version: number,
+): Promise<RenderProfileResult> {
   const profileRecord = await getProfileByName(profileName);
   if (!profileRecord) {
     if (profileName === 'default') {
@@ -448,35 +151,6 @@ export async function renderProfileConfig(
     throw (opts.missingBaseError ?? defaultMissingBaseError)();
   }
 
-  const inputHash = createHash('sha256')
-    .update(
-      JSON.stringify([
-        profileRecord,
-        base,
-        rules,
-        providers,
-        subscriptions,
-        proxyGroups,
-        templates,
-        collections,
-      ]),
-    )
-    .digest('hex');
-  // Global CAS still protects saves. An unrelated profile write may require
-  // rechecking dependencies, but it need not refetch upstreams or recompile YAML.
-  if (cacheableVersion && reusable?.inputHash === inputHash) {
-    const entry = { ...reusable, version };
-    await publishRenderEntry(cacheKey, entry);
-    return {
-      resolved: entry,
-      baseEtag: entry.baseEtag,
-      baseUpdatedAt: entry.baseUpdatedAt,
-      displayName: entry.displayName,
-      cache: 'hit',
-      renderedAt: entry.renderedAt,
-    };
-  }
-
   const resolved = await resolveConfig(base.content, rules, subscriptions, proxyGroups, templates, {
     providers,
     providerUrlBase: opts.providerUrlBase,
@@ -491,10 +165,7 @@ export async function renderProfileConfig(
           return `${origin}/api/rule-providers/${token}/${encodeURIComponent(provider.name)}`;
         }
       : undefined,
-    // A downloadable or cached full config must never look successful after a
-    // source silently disappeared. Stale-on-error still happens inside the
-    // fetcher when an older complete provider is available; otherwise fail the
-    // render and leave the previous render-cache entry untouched.
+    // Keep the existing source failure policy and final-config validation.
     ignoreFailedSubs: false,
     noCache: opts.noCache,
     // P-FFP v1: health is recorded only by real serving attempts; preview/
@@ -511,228 +182,60 @@ export async function renderProfileConfig(
     snapshotProfileId: profileRecord.id,
   });
 
-  // 新鲜度窗口 = 实际参与注入的订阅(resolveConfig 已做过 enabled + boundSource
-  // 过滤,subscriptions 状态列表就是参与名单)的 ttl_ms 最小值。订阅上游内容
-  // 变化不经过任何 repo 写,版本号不会动,只能靠 TTL 兜底。
-  const participating = new Set(resolved.subscriptions.map((s) => s.name));
-  const ttls = subscriptions.filter((s) => participating.has(s.name)).map((s) => s.ttl_ms);
-  const freshForMs = Math.min(ttls.length > 0 ? Math.min(...ttls) : MAX_FRESH_MS, MAX_FRESH_MS);
-
-  const entry: RenderCacheEntry = {
-    profileId: profileRecord.id,
-    inputHash,
-    epoch: RENDER_CACHE_EPOCH,
-    version,
-    providerUrlBase,
-    renderedAt: Date.now(),
-    freshForMs,
-    baseEtag: base.etag,
-    baseUpdatedAt: base.updated_at,
-    displayName: profileRecord.display_name ?? null,
-    content: resolved.content,
-    buildId: resolved.buildId,
-    anchorsApplied: resolved.anchorsApplied,
-    unmatchedAnchors: resolved.unmatchedAnchors,
-    ruleProvidersApplied: resolved.ruleProvidersApplied,
-    subscriptions: resolved.subscriptions,
-    collisions: resolved.collisions,
-    nodeNames: resolved.nodeNames,
-    nodesBySub: resolved.nodesBySub,
-    warnings: resolved.warnings,
-    inlinedProxyCount: resolved.inlinedProxyCount,
-    proxyGroupCount: resolved.proxyGroupCount,
-  };
-  // EX 只是垃圾回收;有效性由 version/renderedAt 判定,所以略宽于窗口即可。
-  if (cacheableVersion) {
-    await publishRenderEntry(cacheKey, entry);
-  }
-
   return {
-    resolved: entry,
+    resolved,
     baseEtag: base.etag,
     baseUpdatedAt: base.updated_at,
     displayName: profileRecord.display_name ?? null,
     cache: opts.noCache ? 'bypass' : 'miss',
-    renderedAt: entry.renderedAt,
+    renderedAt: Date.now(),
   };
 }
 
-/* ─── 设备渲染 ──────────────────────────────────────────────────────── */
-
-export interface RenderDeviceResult extends RenderProfileResult {
-  /** 设备记录的 display_name(null = 用 `{profile}-{device}` 兜底)。 */
-  deviceDisplayName: string | null;
-  /** 共享层缓存状态 —— 设备命中时共享层可能根本没被读(见下)。 */
-  sharedCache: RenderCacheStatus | null;
-}
-
-const DEVICE_RENDER_SNAPSHOT_ATTEMPTS = 3;
-
-/**
- * 渲染某台设备的最终配置 = 共享渲染 + 该设备的 base_patch。
- *
- * 缓存分两层，各自独立命中：
- *   - 设备条目 `render:{profile}:device:{deviceId}` 命中 ⇒ **完全不碰共享层**
- *     （连 renderProfileConfig 都不调）。合法性由与共享层**完全相同**的四元组
- *     保证：epoch / config:version / providerUrlBase / 新鲜度窗口。设备写与共享
- *     层写都 INCR config:version，所以这里没有、也不需要任何显式失效逻辑。
- *   - 未命中 ⇒ 走 renderProfileConfig（它自己的缓存照常命中），再叠加补丁。
- *
- * 补丁与三道校验走 {@link buildDeviceConfig} —— 与 preflight 同一个函数，
- * 所以「渲染时能过」与「保存时能过」不可能出现两套标准。
- */
+/** One version bracket covers both shared config and the device patch. */
 export async function renderDeviceConfig(
   profileName: string,
   deviceName: string,
   opts: RenderProfileOptions = {},
 ): Promise<RenderDeviceResult> {
-  return renderDeviceConfigAttempt(profileName, deviceName, opts, 0);
-}
-
-async function renderDeviceConfigAttempt(
-  profileName: string,
-  deviceName: string,
-  opts: RenderProfileOptions,
-  attempt: number,
-): Promise<RenderDeviceResult> {
-  const redis = getRedis();
-  const providerUrlBase = opts.providerUrlBase ?? null;
-
-  // 防竞态,与共享层同一条纪律:版本号必须在读**任何**数据之前取到。设备记录本身
-  // 也是被这个版本号保护的数据 —— 先读设备后读版本的话,一次并发的设备改补丁会让
-  // 我们把「新版本号 + 旧补丁」缓存住,而它再也不会失效。
-  //
-  // 代价是命中路径比共享层多一次往返(共享层能把版本与条目并进一个 MGET,这里的
-  // 缓存键要先知道 device.id 才能拼出来)。正确性优先于这一次 GET。
-  const rawVersion = await redis.get<unknown>(REDIS_KEYS.configVersion);
-  const { version, cacheable: cacheableVersion } = readConfigVersion(rawVersion);
-  if (!cacheableVersion) {
-    await repairInvalidConfigVersion(redis);
-  }
-
-  const profileRecord = await getProfileByName(profileName);
-  if (!profileRecord) {
-    throw ProblemDetailsError.notFound(`Profile "${profileName}" 不存在。`);
-  }
-  if (opts.expectedProfileId !== undefined && profileRecord.id !== opts.expectedProfileId) {
-    throw ProblemDetailsError.notFound('Profile identity changed during the request.');
-  }
-  const device = await getDeviceByName(profileRecord.id, deviceName);
-  if (!device) {
-    throw ProblemDetailsError.notFound(`设备 "${deviceName}" 不存在。`);
-  }
-
-  const cacheKey = renderVariantKey(
-    REDIS_KEYS.deviceRenderCache(profileName, device.id),
-    opts.providerUrlBase,
-  );
-  if (!cacheableVersion) {
-    await redis.del(cacheKey);
-  }
-
-  if (!opts.noCache && cacheableVersion) {
-    const raw = await redis.get<unknown>(cacheKey);
-    const entry = isRenderCacheEntry(raw) ? raw : null;
-    if (
-      entry !== null &&
-      (opts.expectedProfileId === undefined || entry.profileId === opts.expectedProfileId) &&
-      entry.epoch === RENDER_CACHE_EPOCH &&
-      entry.version === version &&
-      (entry.providerUrlBase ?? null) === providerUrlBase &&
-      Date.now() - entry.renderedAt < entry.freshForMs
-    ) {
-      // version、设备记录和缓存项分三次读取。只有尾部版本仍等于开头版本，
-      // 三者才属于同一代；否则这次“命中”可能带着刚被改掉的补丁或密钥。
-      const versionAfterHit = readConfigVersion(await redis.get<unknown>(REDIS_KEYS.configVersion));
-      if (!versionAfterHit.cacheable || versionAfterHit.version !== version) {
-        if (attempt + 1 >= DEVICE_RENDER_SNAPSHOT_ATTEMPTS) {
-          throw ProblemDetailsError.preconditionFailed('配置正在更新，请稍后重试。');
-        }
-        return renderDeviceConfigAttempt(profileName, deviceName, opts, attempt + 1);
-      }
-      return {
-        resolved: entry,
-        baseEtag: entry.baseEtag,
-        baseUpdatedAt: entry.baseUpdatedAt,
-        displayName: entry.displayName ?? null,
-        deviceDisplayName: device.display_name ?? null,
-        cache: 'hit',
-        renderedAt: entry.renderedAt,
-        sharedCache: null,
-      };
+  for (let attempt = 0; attempt < RENDER_SNAPSHOT_ATTEMPTS; attempt++) {
+    // Read the generation before any profile/device/config records.
+    const version = await captureVersion();
+    const profile = await getProfileByName(profileName);
+    if (!profile) throw ProblemDetailsError.notFound(`Profile "${profileName}" 不存在。`);
+    if (opts.expectedProfileId !== undefined && profile.id !== opts.expectedProfileId) {
+      throw ProblemDetailsError.notFound('Profile identity changed during the request.');
     }
+    const device = await getDeviceByName(profile.id, deviceName);
+    if (!device) throw ProblemDetailsError.notFound(`设备 "${deviceName}" 不存在。`);
+
+    const shared = await renderProfileSnapshot(
+      profileName,
+      {
+        ...opts,
+        expectedProfileId: profile.id,
+      },
+      version,
+    );
+    const content = buildDeviceConfig(
+      shared.resolved.content,
+      device.base_patch,
+      device.name,
+      device.features,
+    );
+    if (!(await versionIsCurrent(version))) continue;
+
+    return {
+      ...shared,
+      resolved: {
+        ...shared.resolved,
+        content,
+        // Each device's actual content determines its ETag.
+        buildId: createHash('sha256').update(content, 'utf8').digest('hex').slice(0, 8),
+      },
+      deviceDisplayName: device.display_name ?? null,
+      sharedCache: shared.cache,
+    };
   }
-
-  // 共享渲染:全部选项语义(noCache 强刷上游、providerUrlBase 进 URL)照单传下去。
-  const shared = await renderProfileConfig(profileName, {
-    ...opts,
-    expectedProfileId: profileRecord.id,
-  });
-  const content = buildDeviceConfig(
-    shared.resolved.content,
-    device.base_patch,
-    device.name,
-    device.features,
-  );
-
-  const resolved: CachedResolveOutput = {
-    ...shared.resolved,
-    content,
-    // buildId 是内容寻址的,同时充当 ETag —— 必须按设备产物重算,否则两台设备会
-    // 共用一个 ETag,客户端拿着别的设备的 304 就永远更新不到自己的配置。
-    buildId: buildIdForContent(content),
-  };
-
-  const entry: RenderCacheEntry = {
-    profileId: profileRecord.id,
-    epoch: RENDER_CACHE_EPOCH,
-    version,
-    providerUrlBase,
-    renderedAt: Date.now(),
-    // 新鲜度跟随共享层:设备补丁不引入新的上游依赖,过期性完全由共享渲染决定。
-    freshForMs: sharedFreshForMs(shared),
-    baseEtag: shared.baseEtag,
-    baseUpdatedAt: shared.baseUpdatedAt,
-    displayName: shared.displayName,
-    ...resolved,
-  };
-  // 落缓存前复读一次版本号:渲染期间若有并发写(设备改补丁 / 共享层保存),我们手上
-  // 这份产物已经是旧世界的了。不能只跳过缓存后仍把它下发,尤其旧产物可能还带着刚
-  // 轮换的密钥;整个设备快照重读并重渲染,连续三次竞争才返回 412 让客户端稍后重试。
-  const versionAfter = readConfigVersion(await redis.get<unknown>(REDIS_KEYS.configVersion));
-  const stillCurrent = versionAfter.cacheable && versionAfter.version === version;
-  if (!stillCurrent) {
-    if (attempt + 1 >= DEVICE_RENDER_SNAPSHOT_ATTEMPTS) {
-      throw ProblemDetailsError.preconditionFailed('配置正在更新，请稍后重试。');
-    }
-    return renderDeviceConfigAttempt(profileName, deviceName, opts, attempt + 1);
-  }
-  if (cacheableVersion && stillCurrent) {
-    await redis.set(cacheKey, entry, {
-      ex: Math.ceil(entry.freshForMs / 1000) + EX_SLACK_SECONDS,
-    });
-  }
-
-  return {
-    resolved: entry,
-    baseEtag: shared.baseEtag,
-    baseUpdatedAt: shared.baseUpdatedAt,
-    displayName: shared.displayName,
-    deviceDisplayName: device.display_name ?? null,
-    cache: opts.noCache ? 'bypass' : 'miss',
-    renderedAt: entry.renderedAt,
-    sharedCache: shared.cache,
-  };
-}
-
-/**
- * 共享渲染的新鲜度窗口。共享层命中缓存时条目自带 freshForMs;miss 时
- * renderProfileConfig 刚写过条目但没把该值回传,退到上限即可 —— 设备条目至多
- * 比共享条目晚过期一个窗口,而版本号失效(设备/共享任一写入)始终先一步生效。
- */
-function sharedFreshForMs(shared: RenderProfileResult): number {
-  const entry = shared.resolved as Partial<RenderCacheEntry>;
-  return typeof entry.freshForMs === 'number' && entry.freshForMs > 0
-    ? Math.min(entry.freshForMs, MAX_FRESH_MS)
-    : MAX_FRESH_MS;
+  throw ProblemDetailsError.preconditionFailed('配置正在更新，请稍后重试。');
 }
