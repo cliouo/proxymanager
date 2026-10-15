@@ -1,6 +1,6 @@
 import { parse } from 'yaml';
 import { buildBase64Subscription } from '@/lib/proxies/clashToUri';
-import { cachedProfileEtag, renderProfileConfig } from '@/lib/engine/renderCache';
+import { renderProfileConfig } from '@/lib/engine/renderCache';
 import { attachmentDisposition } from '@/lib/http/contentDisposition';
 import { etagMatches } from '@/lib/http/etag';
 import { withProblemDetails } from '@/lib/http/handler';
@@ -46,19 +46,8 @@ export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
     throw ProblemDetailsError.badRequest('Unsupported config format.');
   const asBase64 = format === 'base64' || format === 'v2ray';
   const providerUrlBase = `${url.origin}/api/rule-providers/${token}`;
-  const conditional = request.headers.get('if-none-match');
-  if (!noCache && !asBase64 && conditional) {
-    const etag = await cachedProfileEtag(profile, providerUrlBase, conditional, record.id);
-    if (etag)
-      return new Response(null, {
-        status: 304,
-        headers: { ETag: etag, 'X-Render-Cache': 'hit', 'Cache-Control': 'no-store' },
-      });
-  }
-  // Data loading + resolveConfig now live behind the render cache — when
-  // nothing changed since the last render, this is a single Redis MGET.
-  // `?noCache=1` keeps its old meaning (force-refresh upstream subs) and
-  // additionally bypasses the render cache read (still rewrites it).
+  // Rebuild before comparing ETags: a retained manifest can hide refreshed source content.
+  // noCache only controls whether subscription fetch caches may be reused.
   const { resolved, displayName, cache } = await renderProfileConfig(profile, {
     expectedProfileId: record.id,
     providerUrlBase,
