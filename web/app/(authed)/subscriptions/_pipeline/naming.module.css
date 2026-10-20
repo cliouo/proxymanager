@@ -1,97 +1,236 @@
+/* 智能命名工作台：左栏编辑 / 预览 / 健康矩阵，右栏粘性「应用」与引用影响。 */
 .workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 18px;
+  align-items: start;
+  max-width: 1240px;
+}
+
+.mainCol,
+.sideCol {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  max-width: 960px;
-  padding: 16px;
+  min-width: 0;
+}
+
+.sideCol {
+  position: sticky;
+  top: 80px;
 }
 
 .card {
-  border: 1px solid var(--border, #e2e5ea);
-  border-radius: 10px;
-  padding: 16px;
-  background: var(--surface, #fff);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: 18px 20px;
+  background: var(--surface);
+  box-shadow: var(--shadow-soft);
 }
 
 .card h2 {
-  margin: 0 0 10px;
+  margin: 0 0 12px;
   font-size: 15px;
+  font-weight: 650;
+  color: var(--fg);
 }
 
 .card h3 {
-  margin: 10px 0 4px;
-  font-size: 13px;
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--fg);
 }
 
 .note {
-  color: #667085;
-  font-size: 12px;
-  line-height: 1.6;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.65;
   margin: 6px 0;
 }
 
 .error {
-  color: #b42318;
+  color: var(--danger);
   font-size: 13px;
-  margin: 6px 0;
+  line-height: 1.6;
+  margin: 8px 0;
+}
+
+/* 告警 / 提示两种条：都走语义 token，深浅色自动翻转。 */
+.warn,
+.info {
+  border-radius: var(--r-md);
+  padding: 9px 12px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  margin: 8px 0;
 }
 
 .warn {
-  color: #9a6700;
-  background: #fff8e6;
-  border: 1px solid #f2e0b3;
-  border-radius: 8px;
-  padding: 8px 10px;
-  font-size: 12px;
-  margin: 8px 0;
-  line-height: 1.6;
+  color: color-mix(in srgb, var(--warn) 80%, var(--fg));
+  background: var(--warn-dim);
+  border: 1px solid color-mix(in srgb, var(--warn) 28%, transparent);
+}
+
+.info {
+  color: var(--fg-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+
+/* —— 命名健康 —— */
+.healthSource + .healthSource {
+  border-top: 1px solid var(--border);
+  margin-top: 16px;
+  padding-top: 16px;
+}
+
+.healthHead {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.healthStats {
+  display: flex;
+  gap: 8px;
+  margin: 0 0 0 auto;
+}
+
+.healthStats > div {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--surface-2);
+}
+
+.healthStats dt {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.healthStats dd {
+  margin: 0;
+  font: 600 13px var(--font-mono);
+  color: var(--fg);
+}
+
+.healthStats .statWarn {
+  background: var(--warn-dim);
+}
+
+.healthStats .statWarn dd {
+  color: var(--warn);
+}
+
+.healthStats .statMuted dd {
+  color: var(--muted);
 }
 
 .matrix {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12px;
-  margin: 6px 0 10px;
+  font-size: 12.5px;
+  margin: 10px 0 6px;
 }
 
 .matrix th,
 .matrix td {
-  border-bottom: 1px solid var(--border, #e2e5ea);
-  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  padding: 8px 10px;
   text-align: left;
+  vertical-align: middle;
+}
+
+.matrix tbody tr:last-child th,
+.matrix tbody tr:last-child td {
+  border-bottom: none;
 }
 
 .matrix thead th {
+  font-size: 11.5px;
   font-weight: 600;
-  background: #f7f8fa;
+  color: var(--muted);
+  background: var(--surface-2);
+}
+
+.matrix tbody th {
+  font-weight: 600;
+  color: var(--fg-2);
+  white-space: nowrap;
+}
+
+.cover {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+  font: 12px var(--font-mono);
+  color: var(--fg-2);
+}
+
+.coverBar {
+  display: inline-block;
+  width: 64px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.coverBar i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--ok);
+}
+
+.coverBar i.coverPart {
+  background: var(--warn);
+}
+
+.coverBar i.coverNone {
+  background: transparent;
 }
 
 .samples {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: wrap;
 }
 
 .samples span {
-  background: #f2f4f7;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
   border-radius: 6px;
-  padding: 2px 6px;
+  padding: 1px 6px;
   font-size: 11px;
+  color: var(--fg-2);
 }
 
+/* —— 模板编辑 —— */
 .templateInput {
   width: 100%;
-  font-size: 13px;
+  font-size: 13.5px;
   line-height: 1.7;
   resize: vertical;
-  min-height: 72px;
+  min-height: 76px;
 }
 
 .chips {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin: 8px 0;
+  margin: 10px 0 4px;
+}
+
+/* 在所有来源里都识别不到的字段：虚线 + 降低对比，仍可插入。 */
+.chipDim {
+  opacity: 0.55;
+  border-style: dashed !important;
 }
 
 .row {
@@ -101,38 +240,45 @@
   flex-wrap: wrap;
 }
 
+.sideCol .row {
+  align-items: stretch;
+}
+
+.sideCol .row :global(.btn) {
+  flex: 1 1 auto;
+  justify-content: center;
+}
+
+.sideCol .row :global(.btn.primary) {
+  flex-basis: 100%;
+}
+
 .nameList {
   list-style: none;
-  margin: 8px 0 0;
+  margin: 10px 0 0;
   padding: 0;
-  max-height: 260px;
+  max-height: 280px;
   overflow: auto;
-  border: 1px solid var(--border, #e2e5ea);
-  border-radius: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
 }
 
 .nameList li {
-  padding: 4px 10px;
-  border-bottom: 1px solid #f0f1f3;
-  font-size: 12px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12.5px;
+  color: var(--fg);
+}
+
+.nameList li:last-child {
+  border-bottom: none;
 }
 
 .link {
-  color: #175cd3;
+  color: var(--accent);
   text-decoration: underline;
   margin-left: 10px;
-}
-
-.healthSource {
-  border-top: 1px dashed var(--border, #e2e5ea);
-  margin-top: 8px;
-  padding-top: 8px;
-}
-
-.healthSource:first-of-type {
-  border-top: none;
-  margin-top: 0;
-  padding-top: 0;
 }
 
 .srOnly {
@@ -144,45 +290,60 @@
   white-space: nowrap;
 }
 
-.details {
-  margin: 8px 0;
-  font-size: 12px;
+/* 可展开的细节：「逐节点事实」「了解更多」 */
+.details,
+.more {
+  margin: 10px 0 0;
+  font-size: 12.5px;
 }
 
-.details summary {
+.details summary,
+.more summary {
   cursor: pointer;
-  color: #175cd3;
+  color: var(--muted);
+  font-weight: 500;
+  width: fit-content;
+}
+
+.details summary:hover,
+.more summary:hover {
+  color: var(--fg);
+}
+
+.more .note {
+  margin-top: 8px;
 }
 
 .factList {
   list-style: none;
-  margin: 6px 0 0;
+  margin: 8px 0 0;
   padding: 0;
   max-height: 220px;
   overflow: auto;
-  border: 1px solid var(--border, #e2e5ea);
-  border-radius: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
 }
 
 .factList li {
-  padding: 3px 10px;
-  border-bottom: 1px solid #f0f1f3;
-  font-size: 11px;
-  color: #475467;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11.5px;
+  color: var(--fg-2);
 }
 
 .aiResult {
-  margin-top: 10px;
-  border: 1px solid var(--border, #e2e5ea);
-  border-radius: 8px;
-  padding: 10px 12px;
-  background: #f8fafc;
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 12px 14px;
+  background: var(--surface-2);
 }
 
 .aiTemplate {
   font-size: 13px;
   line-height: 1.7;
   margin: 6px 0;
+  color: var(--fg);
 }
 
 .aiPayloadList {
@@ -190,6 +351,31 @@
   margin: 6px 0 0;
   padding: 0;
   font-size: 12px;
-  color: #475467;
+  color: var(--fg-2);
   line-height: 1.7;
+}
+
+@media (max-width: 960px) {
+  .workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .sideCol {
+    position: static;
+  }
+}
+
+@media (max-width: 600px) {
+  .card {
+    padding: 16px;
+  }
+  .healthStats {
+    margin-left: 0;
+  }
+  /* 健康矩阵在窄屏横向滚动，不挤压列。 */
+  .healthSource {
+    overflow-x: auto;
+  }
+  .matrix {
+    min-width: 520px;
+  }
 }
