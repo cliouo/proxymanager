@@ -213,7 +213,11 @@ export default function BasePage() {
         <button className="btn" onClick={onValidate} disabled={reading || busy !== null}>
           {busy === 'validate' ? '校验中…' : '校验'}
         </button>
-        <button className="btn primary" onClick={onSave} disabled={reading || !!loadError || busy !== null || !dirty}>
+        <button
+          className="btn primary"
+          onClick={onSave}
+          disabled={reading || !!loadError || busy !== null || !dirty}
+        >
           {busy === 'save' ? '保存中…' : '保存'}{' '}
           <span className="kbd" style={{ background: 'rgba(0,0,0,.2)', color: 'var(--accent-on)' }}>
             ⌘S
@@ -259,7 +263,17 @@ export default function BasePage() {
             }`}
           >
             {loadError ?? status?.message}
-            {(loadError || status?.kind === 'error') && <button className="btn sm" disabled={reading || busy !== null} onClick={() => { if (confirmUnsavedChanges()) void load(); }}>重新读取远端</button>}
+            {(loadError || status?.kind === 'error') && (
+              <button
+                className="btn sm"
+                disabled={reading || busy !== null}
+                onClick={() => {
+                  if (confirmUnsavedChanges()) void load();
+                }}
+              >
+                重新读取远端
+              </button>
+            )}
           </div>
         )}
 
@@ -288,6 +302,9 @@ export default function BasePage() {
   );
 }
 
+/** Policy tags shown before the rail's "展开全部" toggle. */
+const POLICY_PREVIEW = 12;
+
 function Inspector({
   data,
   validation,
@@ -300,13 +317,18 @@ function Inspector({
   onClose: () => void;
 }) {
   const modalRef = useRef<HTMLElement>(null);
+  const [allPolicies, setAllPolicies] = useState(false);
   useModalSurface(modalRef, open, onClose, '(max-width: 960px)');
   const anchors = validation?.anchors.length ? validation.anchors : (data?.anchors ?? []);
   const policies = validation?.policies.length ? validation.policies : (data?.policies ?? []);
   const orphans = validation?.orphans ?? [];
 
   return (
-    <aside ref={modalRef} aria-label="锚点与检查" className={`${styles.inspector}${open ? ` ${styles.open}` : ''}`}>
+    <aside
+      ref={modalRef}
+      aria-label="锚点与检查"
+      className={`${styles.inspector}${open ? ` ${styles.open}` : ''}`}
+    >
       <button className={`btn ghost sm ${styles.inspClose}`} onClick={onClose}>
         关闭
       </button>
@@ -332,14 +354,25 @@ function Inspector({
       {policies.length === 0 ? (
         <div className={styles.empty}>未发现策略</div>
       ) : (
-        <div className={styles.polWrap}>
-          {policies.slice(0, 30).map((p) => (
-            <span className="tag" key={p}>
-              {p}
-            </span>
-          ))}
-          {policies.length > 30 && <span className={styles.empty}>+{policies.length - 30}</span>}
-        </div>
+        <>
+          <div className={styles.polWrap}>
+            {(allPolicies ? policies : policies.slice(0, POLICY_PREVIEW)).map((p) => (
+              <span className={`tag ${styles.polTag}`} key={p} title={p}>
+                {p}
+              </span>
+            ))}
+          </div>
+          {policies.length > POLICY_PREVIEW && (
+            <button
+              type="button"
+              className={styles.polMore}
+              aria-expanded={allPolicies}
+              onClick={() => setAllPolicies((v) => !v)}
+            >
+              {allPolicies ? '收起' : `展开全部 ${policies.length} 个`}
+            </button>
+          )}
+        </>
       )}
 
       {orphans.length > 0 && (

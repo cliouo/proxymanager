@@ -1770,6 +1770,105 @@ textarea.input {
   margin-bottom: 10px;
 }
 
+/* —— 助手空状态：欢迎 + 能力清单 + 贴近输入框的起手问题 —— */
+.ai-welcome {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 12px 4px 0;
+}
+.ai-welcome h3 {
+  margin: 14px 0 4px;
+  font-size: 16px;
+  font-weight: 650;
+  color: var(--fg);
+}
+.ai-welcome > p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--muted);
+}
+.ai-caps {
+  width: 100%;
+  margin-top: 18px;
+}
+.ai-caps-title {
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg-2);
+}
+.ai-caps ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ai-caps li {
+  position: relative;
+  padding: 3px 0 3px 16px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--fg-2);
+}
+.ai-caps li::before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 11px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--ai) 55%, transparent);
+}
+.ai-welcome-note {
+  margin-top: 14px !important;
+  padding: 8px 10px;
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  font-size: 12px !important;
+}
+.ai-starters {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: auto;
+  padding-top: 16px;
+}
+.ai-starter {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  text-align: left;
+  font-size: 13px;
+  color: var(--fg-2);
+  transition:
+    border-color 0.12s var(--ease),
+    background 0.12s var(--ease);
+}
+.ai-starter:hover,
+.ai-starter:focus-visible {
+  border-color: color-mix(in srgb, var(--ai) 40%, var(--border));
+  background: var(--ai-dim);
+  color: var(--fg);
+  outline: none;
+}
+.ai-starter-text {
+  flex: 1;
+  min-width: 0;
+}
+.ai-starter-go {
+  color: var(--faint);
+}
+.ai-starter:hover .ai-starter-go {
+  color: var(--ai);
+}
+
 /* ============================================================
    responsive — 四档体系
    ============================================================ */
