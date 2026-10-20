@@ -23,7 +23,7 @@ import {
   type ManualRefreshOperationKind,
   type ManualRefreshOperationLease,
 } from '@/lib/client/subscriptionLocalRefresh';
-import { IconTile } from '@/components/ui/IconTile';
+import { IconTile, type IconTileName } from '@/components/ui/IconTile';
 import { RowMenu } from '@/components/ui/RowMenu';
 import styles from './subscriptions.module.css';
 
@@ -792,12 +792,14 @@ export default function SubscriptionsPage() {
           role="tabpanel"
           aria-labelledby={`${tabsId}-tab-naming`}
         >
-          <div className={styles.lead}>
-            <b>智能命名</b>：以模板占位符 DSL 统一管理节点名称——国旗 + 地区一个视觉块、
-            可选片段按字段缺失整段消失、序号优先复用上游编号并由服务端持久化（上游重排不翻动）。
-            同配置节点按来源优先级只保留一次；格式化重名用「来源-序号」有意义地消歧。每个目标都有
-            独立的命名健康（字段覆盖率矩阵）与 原始 → 事实 → 最终名称 预览。
-          </div>
+          <NamingIntro
+            enabled={
+              subs.filter((x) => hasManagedNaming(x.operators)).length +
+              collections.filter((x) => hasManagedNaming(x.operators)).length
+            }
+            total={subs.length + collections.length}
+            loaded={loaded}
+          />
 
           {!loaded ? (
             <div className="panel">
@@ -810,31 +812,61 @@ export default function SubscriptionsPage() {
                 <div className={styles.d}>还没有任何订阅源或聚合订阅。</div>
               </div>
             </div>
-          ) : (
+          ) : filteredSubs.length + filteredCollections.length === 0 ? (
             <div className="panel">
-              {subs.map((sub) => (
-                <NamingTargetRow
-                  key={sub.id}
-                  label={sub.display_name?.trim() || sub.name}
-                  sublabel="订阅源"
-                  href={`/subscriptions/${sub.id}/naming`}
-                  managed={hasManagedNaming(sub.operators)}
-                  disabled={globalMutationBusy}
-                  isOperationActive={pageMutationIsActive}
-                />
-              ))}
-              {collections.map((c) => (
-                <NamingTargetRow
-                  key={c.id}
-                  label={c.name}
-                  sublabel="聚合订阅"
-                  href={`/subscriptions/collection/${c.id}/naming`}
-                  managed={hasManagedNaming(c.operators)}
-                  disabled={globalMutationBusy}
-                  isOperationActive={pageMutationIsActive}
-                />
-              ))}
+              <div className={styles.empty}>
+                <div className={styles.d}>没有匹配「{query}」的订阅源或聚合订阅。</div>
+              </div>
             </div>
+          ) : (
+            <>
+              {filteredSubs.length > 0 && (
+                <NamingGroup
+                  title="单订阅"
+                  total={filteredSubs.length}
+                  enabled={filteredSubs.filter((x) => hasManagedNaming(x.operators)).length}
+                >
+                  {filteredSubs.map((sub) => (
+                    <NamingTargetRow
+                      key={sub.id}
+                      icon={sub.kind === 'remote' ? 'cloud' : 'file'}
+                      label={sub.display_name?.trim() || sub.name}
+                      slug={
+                        sub.display_name?.trim() && sub.display_name.trim() !== sub.name
+                          ? sub.name
+                          : undefined
+                      }
+                      kindLabel={sub.kind === 'remote' ? '远程订阅' : '本地内容'}
+                      href={`/subscriptions/${sub.id}/naming`}
+                      managed={hasManagedNaming(sub.operators)}
+                      disabled={globalMutationBusy}
+                      isOperationActive={pageMutationIsActive}
+                    />
+                  ))}
+                </NamingGroup>
+              )}
+              {filteredCollections.length > 0 && (
+                <NamingGroup
+                  title="聚合订阅"
+                  total={filteredCollections.length}
+                  enabled={filteredCollections.filter((x) => hasManagedNaming(x.operators)).length}
+                >
+                  {filteredCollections.map((c) => (
+                    <NamingTargetRow
+                      key={c.id}
+                      icon="stack"
+                      label={c.name}
+                      slug={c.slug && c.slug !== c.name ? c.slug : undefined}
+                      kindLabel="聚合订阅"
+                      href={`/subscriptions/collection/${c.id}/naming`}
+                      managed={hasManagedNaming(c.operators)}
+                      disabled={globalMutationBusy}
+                      isOperationActive={pageMutationIsActive}
+                    />
+                  ))}
+                </NamingGroup>
+              )}
+            </>
           )}
         </section>
       )}
@@ -1139,15 +1171,20 @@ function NamingLink({
   managed,
   disabled = false,
   blocked,
+  className,
+  children,
 }: {
   href: string;
   managed: boolean;
   disabled?: boolean;
   blocked?: () => boolean;
+  className?: string;
+  children?: React.ReactNode;
 }) {
   const router = useRouter();
   return (
     <a
+      className={className}
       href={disabled ? undefined : href}
       aria-disabled={disabled || undefined}
       tabIndex={disabled ? -1 : undefined}
@@ -1161,22 +1198,111 @@ function NamingLink({
         router.push(href);
       }}
     >
-      智能命名{managed ? '' : '（未启用）'} →
+      {children ?? <>智能命名{managed ? '' : '（未启用）'} →</>}
     </a>
+  );
+}
+
+/** 智能命名 tab 顶部：一句话说明 + 三个要点 + 启用进度。 */
+function NamingIntro({
+  enabled,
+  total,
+  loaded,
+}: {
+  enabled: number;
+  total: number;
+  loaded: boolean;
+}) {
+  const pct = total > 0 ? (enabled / total) * 100 : 0;
+  return (
+    <section className={`panel ${styles.namingIntro}`} aria-labelledby="naming-intro-title">
+      <div className={styles.namingIntroHead}>
+        <div>
+          <h2 id="naming-intro-title">智能命名</h2>
+          <p>
+            用模板把节点名统一成「国旗 地区 序号」这样的一致格式。每个订阅源和聚合订阅单独启用，
+            未启用的都已备好推荐模板，启用前可以先预览原始名、识别出的字段和最终名称。
+          </p>
+        </div>
+        {loaded && total > 0 && (
+          <div className={styles.namingProgress} aria-label={`已启用 ${enabled} / ${total}`}>
+            <div className={styles.namingProgressNum}>
+              <b className="num">{enabled}</b>
+              <span className="num"> / {total}</span>
+            </div>
+            <div className={styles.namingProgressLabel}>已启用</div>
+            <div className="traffic">
+              <div className="bar">
+                <i style={{ width: `${pct}%` }} />
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+      <ul className={styles.namingPoints}>
+        <li>
+          <IconTile name="list" tone="neutral" size={26} />
+          <span>
+            <b>格式统一</b>国旗与地区合成一块显示，字段缺失时整段省略
+          </span>
+        </li>
+        <li>
+          <IconTile name="check" tone="neutral" size={26} />
+          <span>
+            <b>序号稳定</b>优先沿用上游编号并由服务端记住，上游重排也不翻动
+          </span>
+        </li>
+        <li>
+          <IconTile name="stack" tone="neutral" size={26} />
+          <span>
+            <b>自动去重</b>同配置的重复节点按来源优先级只留一个，重名用「来源-序号」区分
+          </span>
+        </li>
+      </ul>
+    </section>
+  );
+}
+
+/** 一组命名目标（单订阅 / 聚合订阅），组头带启用计数。 */
+function NamingGroup({
+  title,
+  total,
+  enabled,
+  children,
+}: {
+  title: string;
+  total: number;
+  enabled: number;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className={styles.namingGroup}>
+      <div className={styles.namingGroupHead}>
+        <b>{title}</b>
+        <span className="num">
+          {total} 个 · 已启用 {enabled}
+        </span>
+      </div>
+      <div className="panel">{children}</div>
+    </section>
   );
 }
 
 /** 智能命名面板里的一行目标。 */
 function NamingTargetRow({
+  icon,
   label,
-  sublabel,
+  slug,
+  kindLabel,
   href,
   managed,
   disabled,
   isOperationActive,
 }: {
+  icon: IconTileName;
   label: string;
-  sublabel: string;
+  slug?: string;
+  kindLabel: string;
   href: string;
   managed: boolean;
   disabled: boolean;
@@ -1184,13 +1310,27 @@ function NamingTargetRow({
 }) {
   return (
     <div className={styles.namingRow}>
-      <span className={styles.namingLabel}>
-        {label} <span className={styles.k}>{sublabel}</span>
-      </span>
-      <span className={styles.namingState}>
-        {managed ? '已启用模板命名' : '未启用 · 有确定性推荐模板'}
-      </span>
-      <NamingLink href={href} managed={managed} disabled={disabled} blocked={isOperationActive} />
+      <IconTile name={icon} tone="neutral" size={30} />
+      <div className={styles.namingMain}>
+        <div className={styles.namingLabel}>
+          <b title={label}>{label}</b>
+          {slug && <span className="pill plain mono">{slug}</span>}
+        </div>
+        <div className={styles.namingState}>
+          {kindLabel}
+          {managed ? ' · 名称由模板统一生成' : ''}
+        </div>
+      </div>
+      <span className={`pill ${managed ? 'ok' : 'idle'}`}>{managed ? '已启用' : '未启用'}</span>
+      <NamingLink
+        className="btn sm"
+        href={href}
+        managed={managed}
+        disabled={disabled}
+        blocked={isOperationActive}
+      >
+        {managed ? '调整' : '设置'} →
+      </NamingLink>
     </div>
   );
 }
