@@ -74,11 +74,15 @@ describe('subscription local refresh interaction', () => {
       'if (!manualLeaseRef.current && !isOperationActive()) onCancel();',
     );
     expect(pageSource.match(/disabled=\{rowControlsDisabled\}/g)).toHaveLength(3);
-    expect(pageSource).toContain('disabled={rowControlsDisabled || !sub.enabled}');
-    expect(pageSource).toContain('disabled={rowControlsDisabled || manualUpdating}');
+    // 刷新 / 导入更新 / 改回自动 / 删除 live in the row's overflow menu; each item
+    // carries the row guard itself, so a menu left open while another row's
+    // operation starts cannot fire.
+    expect(pageSource).toContain('disabled: rowControlsDisabled || !sub.enabled,');
+    expect(pageSource).toContain('disabled: rowControlsDisabled || manualUpdating,');
     expect(pageSource).toContain(
-      'disabled={rowControlsDisabled || manualUpdating || !sub.enabled}',
+      'disabled: rowControlsDisabled || manualUpdating || !sub.enabled,',
     );
+    expect(pageSource).toMatch(/label: '删除',[\s\S]*?disabled: rowControlsDisabled,/);
     expect(pageSource).toContain(
       '<DistChip enabled={sub.enabled} onClick={onDistribute} disabled={activeRowBusy} />',
     );
@@ -165,7 +169,9 @@ describe('subscription local refresh interaction', () => {
     expect(addFormSource).toContain('guardAddFormAction(() => setUa(e.target.value))');
     expect(addFormSource).toContain('guardAddFormAction(() => setContent(value))');
     expect(addFormSource).toContain('guardAddFormAction(() => setEnabled((v) => !v))');
-    expect(addFormSource).toMatch(/guardAddFormAction\(\(\) => [\s\S]*?confirmUnsavedChanges\(\)[\s\S]*?onCancel\(\)/);
+    expect(addFormSource).toMatch(
+      /guardAddFormAction\(\(\) => [\s\S]*?confirmUnsavedChanges\(\)[\s\S]*?onCancel\(\)/,
+    );
     expect(addFormSource).not.toContain("onClick={() => setKind('");
     expect(addFormSource).not.toContain('onClick={() => setPolicy(');
     expect(addFormSource).not.toContain('onClick={() => setEnabled(');

@@ -23,6 +23,8 @@ import {
   type ManualRefreshOperationKind,
   type ManualRefreshOperationLease,
 } from '@/lib/client/subscriptionLocalRefresh';
+import { IconTile } from '@/components/ui/IconTile';
+import { RowMenu } from '@/components/ui/RowMenu';
 import styles from './subscriptions.module.css';
 
 const DEFAULT_TTL_MS = 10 * 60 * 1000;
@@ -985,16 +987,16 @@ function CollectionCard({
 
   return (
     <div className={`${styles.subItem}${anyEditing && !editing ? ` ${styles.dimmed}` : ''}`}>
-      <span className={`${styles.led} ${styles[ledTone]}`} />
+      <span className={styles.kindIcon} title="聚合订阅">
+        <IconTile name="stack" tone="ai" size={34} />
+        <span className={`${styles.led} ${styles[ledTone]}`} />
+      </span>
       <div className={styles.subMain}>
         <div className={styles.head}>
           <b>{c.name}</b>
           {c.slug && <span className="pill plain mono">{c.slug}</span>}
           <span className="pill ai plain">聚合</span>
           <span className="pill idle plain">{c.enabled ? '已启用' : '已停用'}</span>
-        </div>
-        <div className={styles.colLead}>
-          合并多个单订阅的节点，去重后输出一条对外链接——在「结构骨架」绑定为节点来源即可。
         </div>
         {(directMembers.length > 0 || c.subscription_tags.length > 0) && (
           <div className={styles.colMembers}>
@@ -1066,9 +1068,6 @@ function CollectionCard({
       <div className={styles.right}>
         <DistChip enabled={c.enabled} onClick={onDistribute} />
         <div className={styles.acts}>
-          <button type="button" className="btn sm" onClick={onEdit} disabled={locked || anyEditing}>
-            编辑
-          </button>
           <button
             type="button"
             className="switch"
@@ -1077,14 +1076,16 @@ function CollectionCard({
             disabled={locked || pending || anyEditing}
             title={c.enabled ? '停用' : '启用'}
           />
-          <button
-            type="button"
-            className="btn sm danger"
-            onClick={onDelete}
-            disabled={locked || anyEditing}
-          >
-            删除
+          <button type="button" className="btn sm" onClick={onEdit} disabled={locked || anyEditing}>
+            编辑
           </button>
+          <RowMenu
+            label={`更多操作 · ${c.name}`}
+            disabled={locked || anyEditing}
+            items={[
+              { label: '删除', onSelect: onDelete, danger: true, disabled: locked || anyEditing },
+            ]}
+          />
         </div>
       </div>
     </div>
@@ -1464,7 +1465,7 @@ function CollectionForm({
 function SubSkeleton() {
   return (
     <div className={styles.subItem}>
-      <span className={`${styles.led} ${styles.off}`} />
+      <span className={styles.skel} style={{ width: 34, height: 34, borderRadius: 8 }} />
       <div className={styles.subMain}>
         <div className={styles.skel} style={{ width: 180, marginBottom: 10 }} />
         <div className={styles.skel} style={{ width: '70%' }} />
@@ -1485,24 +1486,20 @@ function CompactTraffic({
   return (
     <div className="traffic">
       <div className="lbl">
-        <span>已用 {fmtBytes(used)}</span>
-        <span>共 {fmtBytes(traffic.total)}</span>
+        <span>
+          <b>{fmtBytes(used)}</b> / {fmtBytes(traffic.total)}
+        </span>
+        <span className={hot ? 'hot' : undefined}>{pct.toFixed(pct < 10 ? 1 : 0)}%</span>
       </div>
       <div className="bar">
         <i className={hot ? 'hot' : undefined} style={{ width: `${pct}%` }} />
       </div>
       <div className="lbl">
-        <span>
-          ↑ {fmtBytes(traffic.upload)} · ↓ {fmtBytes(traffic.download)}
+        <span title={`上传 ${fmtBytes(traffic.upload)} · 下载 ${fmtBytes(traffic.download)}`}>
+          ↑ {fmtBytes(traffic.upload)} ↓ {fmtBytes(traffic.download)}
         </span>
-        <span>{pct.toFixed(pct < 10 ? 1 : 0)}%</span>
+        {expiry && <span>到期 {expiry}</span>}
       </div>
-      {expiry && (
-        <div className="lbl">
-          <span>到期</span>
-          <span>{expiry}</span>
-        </div>
-      )}
     </div>
   );
 }
@@ -1622,7 +1619,10 @@ function Dossier({
       aria-busy={activeRowBusy || undefined}
       data-operation-kind={activeRowBusy ? operationKind : undefined}
     >
-      <span className={`${styles.led} ${styles[ledTone]}`} />
+      <span className={styles.kindIcon} title={sub.kind === 'remote' ? '远程订阅' : '本地内容'}>
+        <IconTile name={sub.kind === 'remote' ? 'cloud' : 'file'} tone="neutral" size={34} />
+        <span className={`${styles.led} ${styles[ledTone]}`} />
+      </span>
       <div className={styles.subMain}>
         <div className={styles.head}>
           <b>{sub.display_name || sub.name}</b>
@@ -1644,7 +1644,13 @@ function Dossier({
           {!sub.enabled && <span className="pill idle">已停用</span>}
         </div>
 
-        {fetchAlert && <div className={styles.errLine}>{fetchAlert.line}</div>}
+        {fetchAlert && (
+          <div
+            className={`${styles.errLine}${fetchAlert.pill === 'pill warn' ? ` ${styles.warnLine}` : ''}`}
+          >
+            {fetchAlert.line}
+          </div>
+        )}
         {refreshMode === 'manual' && sub.manual_snapshot?.source_changed && (
           <div className={styles.sourceChanged} role="status">
             上游设置已变化；当前仍使用上次校验通过的快照。请从本机更新以确认新来源。
@@ -1713,44 +1719,6 @@ function Dossier({
         <div className={styles.acts}>
           <button
             type="button"
-            className="btn sm"
-            onClick={onEditStart}
-            disabled={rowControlsDisabled}
-          >
-            编辑
-          </button>
-          {sub.kind === 'remote' && refreshMode === 'server-auto' && (
-            <button
-              type="button"
-              className="btn sm"
-              onClick={onRefresh}
-              disabled={rowControlsDisabled || !sub.enabled}
-            >
-              刷新
-            </button>
-          )}
-          {sub.kind === 'remote' && (
-            <button
-              type="button"
-              className="btn sm"
-              onClick={onManualStart}
-              disabled={rowControlsDisabled || manualUpdating}
-            >
-              {refreshMode === 'manual' ? '更新内容' : '导入更新'}
-            </button>
-          )}
-          {sub.kind === 'remote' && refreshMode === 'manual' && (
-            <button
-              type="button"
-              className="btn ghost sm"
-              onClick={onUseServerAuto}
-              disabled={rowControlsDisabled || manualUpdating || !sub.enabled}
-            >
-              改回自动
-            </button>
-          )}
-          <button
-            type="button"
             className="switch"
             aria-pressed={sub.enabled}
             onClick={onToggle}
@@ -1759,12 +1727,52 @@ function Dossier({
           />
           <button
             type="button"
-            className="btn sm danger"
-            onClick={onDelete}
+            className="btn sm"
+            onClick={onEditStart}
             disabled={rowControlsDisabled}
           >
-            删除
+            编辑
           </button>
+          <RowMenu
+            label={`更多操作 · ${sub.display_name || sub.name}`}
+            disabled={rowControlsDisabled}
+            items={[
+              ...(sub.kind === 'remote' && refreshMode === 'server-auto'
+                ? [
+                    {
+                      label: '刷新',
+                      onSelect: onRefresh,
+                      disabled: rowControlsDisabled || !sub.enabled,
+                    },
+                  ]
+                : []),
+              ...(sub.kind === 'remote'
+                ? [
+                    {
+                      label: refreshMode === 'manual' ? '更新内容' : '导入更新',
+                      onSelect: onManualStart,
+                      disabled: rowControlsDisabled || manualUpdating,
+                    },
+                  ]
+                : []),
+              ...(sub.kind === 'remote' && refreshMode === 'manual'
+                ? [
+                    {
+                      label: '改回自动',
+                      onSelect: onUseServerAuto,
+                      disabled: rowControlsDisabled || manualUpdating || !sub.enabled,
+                    },
+                  ]
+                : []),
+              {
+                label: '删除',
+                onSelect: onDelete,
+                danger: true,
+                separated: sub.kind === 'remote',
+                disabled: rowControlsDisabled,
+              },
+            ]}
+          />
         </div>
       </div>
     </div>

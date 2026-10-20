@@ -28,7 +28,7 @@
   overflow-x: auto;
 }
 .flowCol {
-  flex: 1;
+  flex: 1 1 0;
   min-width: 132px;
 }
 .fcH {
@@ -78,10 +78,14 @@
 .flItem.hub b {
   color: var(--accent);
 }
+/* 溢出说明（「YouTube · Emby · … ↓」）允许换行，不再越过列宽压到相邻列。 */
 .flItem.pool {
   background: transparent;
   box-shadow: inset 0 0 0 1px transparent;
   color: var(--muted);
+  white-space: normal;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
 }
 .flowArr {
   flex: none;
@@ -158,26 +162,32 @@
 }
 
 /* ---- 列表行 ---- */
-.row {
-  display: grid;
-  grid-template-columns: 26px 44px minmax(200px, 1.35fr) minmax(170px, 1fr) minmax(130px, 0.8fr) auto 20px;
-  align-items: center;
-  gap: 14px;
-  padding: 11px 14px;
-  margin-bottom: 5px;
-  width: 100%;
-  text-align: left;
+/* 同一分区的行合在一块面板里，用细线分隔；列宽全部固定，跨行对齐。 */
+.pgList {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--r-md);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-soft);
+  overflow: hidden;
+}
+.row {
+  display: grid;
+  grid-template-columns:
+    18px 32px 30px minmax(200px, 1.4fr) minmax(150px, 1fr) minmax(140px, 0.9fr)
+    64px 16px;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 16px;
+  width: 100%;
+  text-align: left;
   color: var(--fg);
   text-decoration: none;
-  transition:
-    border-color 0.15s var(--ease),
-    background 0.15s var(--ease);
+  transition: background 0.15s var(--ease);
+}
+.row + .row {
+  border-top: 1px solid var(--border);
 }
 .row:hover {
-  border-color: var(--border-2);
   background: var(--surface-2);
 }
 .row.dragging {
@@ -192,7 +202,9 @@
 }
 .rank {
   font: 11px var(--font-mono);
+  font-variant-numeric: tabular-nums;
   color: var(--faint);
+  text-align: right;
 }
 .ident {
   min-width: 0;
@@ -204,7 +216,7 @@
   min-width: 0;
 }
 .nm b {
-  font: 550 13.5px var(--font-mono);
+  font: 600 13.5px var(--font-mono);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -228,7 +240,9 @@
 }
 .flags {
   display: flex;
+  justify-content: flex-end;
   gap: 5px;
+  min-width: 0;
 }
 .arrow {
   color: var(--faint);
@@ -691,7 +705,9 @@
 /* —— 响应式 —— */
 @media (max-width: 1200px) {
   .row {
-    grid-template-columns: 26px 40px minmax(160px, 1.3fr) minmax(130px, 1fr) minmax(100px, 0.8fr) auto 20px;
+    grid-template-columns:
+      18px 28px 30px minmax(160px, 1.3fr) minmax(130px, 1fr) minmax(100px, 0.8fr)
+      56px 16px;
     gap: 10px;
   }
   .detailGrid {
@@ -701,7 +717,7 @@
 }
 @media (max-width: 960px) {
   .row {
-    grid-template-columns: 26px minmax(0, 1fr) 20px;
+    grid-template-columns: 18px 30px minmax(0, 1fr) 16px;
     row-gap: 6px;
   }
   .row .rank,
@@ -709,16 +725,27 @@
   .row .flags {
     display: none;
   }
-  .row .members {
+  .row > :global(.icon-tile) {
+    grid-row: 1 / span 2;
     grid-column: 2;
+    align-self: start;
+  }
+  .row .ident {
+    grid-row: 1;
+    grid-column: 3;
+  }
+  .row .members {
+    grid-row: 2;
+    grid-column: 3;
   }
   .row .arrow {
     grid-row: 1;
-    grid-column: 3;
+    grid-column: 4;
     align-self: start;
   }
   .row .grip {
     grid-row: 1;
+    grid-column: 1;
     align-self: start;
   }
   /* 流量结构改竖排 */

@@ -79,3 +79,23 @@ export function LoadingPanel({ rows = 4 }: { rows?: number }) {
     </div>
   );
 }
+
+/** Timeline-shaped skeleton: icon tile + two text lines per row. */
+export function TimelineSkeleton({ rows = 4 }: { rows?: number }) {
+  return (
+    <div aria-hidden>
+      {Array.from({ length: rows }).map((_, i) => (
+        <div key={i} className="tl-item" style={{ background: 'none' }}>
+          <span className="pm-skeleton" style={{ width: 28, height: 28, borderRadius: 8 }} />
+          <div className="body">
+            <div className="pm-skeleton line" style={{ width: `${38 + ((i * 17) % 30)}%` }} />
+            <div
+              className="pm-skeleton line"
+              style={{ width: `${22 + ((i * 11) % 16)}%`, height: 9, marginTop: 7 }}
+            />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}

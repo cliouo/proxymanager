@@ -43,9 +43,19 @@
 /* —— 清单卡 —— */
 .subItem {
   display: flex;
-  gap: 15px;
-  padding: 18px;
-  align-items: flex-start;
+  gap: 14px;
+  padding: 16px 18px;
+  align-items: center;
+  transition: background 0.12s var(--ease);
+}
+.subItem:hover {
+  background: color-mix(in srgb, var(--surface-2) 60%, transparent);
+}
+/* 类型图标块 + 右下角状态点（替代原来悬空的 LED）。 */
+.kindIcon {
+  position: relative;
+  flex: none;
+  align-self: flex-start;
 }
 .subItem + .subItem {
   border-top: 1px solid var(--border);
@@ -57,21 +67,19 @@
   display: block;
 }
 .led {
-  flex: none;
-  width: 8px;
-  height: 8px;
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
-  margin-top: 6px;
+  border: 2px solid var(--surface);
 }
 .led.ok {
   background: var(--ok);
-  box-shadow:
-    0 0 8px var(--ok-dim),
-    0 0 0 3px var(--ok-dim);
 }
 .led.err {
   background: var(--danger);
-  box-shadow: 0 0 0 3px var(--danger-dim);
 }
 .led.off {
   background: var(--faint);
@@ -87,7 +95,9 @@
   flex-wrap: wrap;
 }
 .head b {
-  font: 600 14.5px var(--font-mono);
+  font-size: 14.5px;
+  font-weight: 600;
+  color: var(--fg);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -97,7 +107,7 @@
   display: flex;
   gap: 14px;
   flex-wrap: wrap;
-  margin-top: 9px;
+  margin-top: 6px;
   font: 11.5px var(--font-mono);
   color: var(--muted);
 }
@@ -116,6 +126,10 @@
   border-radius: var(--r-sm);
   padding: 6px 10px;
   word-break: break-word;
+}
+.errLine.warnLine {
+  color: color-mix(in srgb, var(--warn) 80%, var(--fg));
+  background: var(--warn-dim);
 }
 .sourceChanged {
   margin-top: 9px;
@@ -239,9 +253,11 @@
 .right {
   flex: none;
   display: flex;
-  flex-direction: column;
-  gap: 11px;
-  align-items: flex-end;
+  gap: 16px;
+  align-items: center;
+}
+.right :global(.traffic) {
+  width: 224px;
 }
 .colMembers {
   display: flex;
@@ -253,12 +269,6 @@
 .colMembers .mk {
   font: 10.5px var(--font-mono);
   color: var(--faint);
-}
-.colLead {
-  font-size: 12.5px;
-  color: var(--muted);
-  margin-top: 8px;
-  line-height: 1.55;
 }
 
 .skel {
@@ -308,16 +318,15 @@
     gap: 10px;
   }
   .right {
-    flex-direction: column;
-    align-items: stretch;
+    align-items: center;
+    gap: 10px;
   }
-  .right .traffic {
+  .right :global(.traffic) {
     width: 100%;
     min-width: 0;
   }
   .acts {
-    width: 100%;
-    flex-wrap: wrap;
+    margin-left: auto;
   }
   .head {
     row-gap: 6px;
