@@ -24,6 +24,7 @@ import {
   TEMPLATE_TAGLINE,
   isTemplateProfile,
 } from '@/lib/profiles/kind';
+import { NavIcon, type NavIconName } from '@/components/NavIcon';
 import styles from './page.module.css';
 
 /* ---------- API shapes (kept local; only the fields the dashboard reads) ---------- */
@@ -362,29 +363,29 @@ export default function DashboardPage() {
           ) : (
             <>
               <Link className="stat" href={R.base}>
-                <div className="k">锚点 anchors</div>
+                <StatHead icon="base" label="锚点 anchors" />
                 <div className="v">{counts.anchors}</div>
                 <div className="d">base 结构中可注入位</div>
               </Link>
               <Link className="stat" href={R.proxyGroups}>
-                <div className="k">代理策略</div>
+                <StatHead icon="groups" label="代理策略" />
                 <div className="v">{counts.proxyGroups}</div>
                 <div className="d">
                   {(counts?.proxyGroups ?? 0) > 0 ? groupBreakdown : '尚无策略组'}
                 </div>
               </Link>
               <Link className="stat" href={R.rules}>
-                <div className="k">规则</div>
+                <StatHead icon="rules" label="规则" />
                 <div className="v">{counts.rules}</div>
                 <div className="d">{rulesDesc}</div>
               </Link>
               <Link className="stat" href={R.chained}>
-                <div className="k">链式代理</div>
+                <StatHead icon="chain" label="链式代理" />
                 <div className="v">{chainCount}</div>
                 <div className="d">前置池 / 链式出站</div>
               </Link>
               <Link className="stat" href={R.devices}>
-                <div className="k">设备</div>
+                <StatHead icon="devices" label="设备" />
                 <div className="v">{deviceStats ? deviceStats.total : '–'}</div>
                 <div className="d">
                   {deviceStats && deviceStats.tailscale > 0
@@ -414,7 +415,7 @@ export default function DashboardPage() {
           ) : (
             <>
               <Link className="stat" href={R.subscriptions}>
-                <div className="k">节点订阅</div>
+                <StatHead icon="subscriptions" label="节点订阅" />
                 <div className="v">{counts.subscriptions}</div>
                 <div className="d">
                   {subsInjected !== undefined
@@ -423,7 +424,7 @@ export default function DashboardPage() {
                 </div>
               </Link>
               <Link className="stat" href={R.ruleSets}>
-                <div className="k">规则资源</div>
+                <StatHead icon="ruleSets" label="规则资源" />
                 <div className="v">{counts.ruleSets}</div>
                 <div className="d">rule-set 库，按需注入 rule-providers</div>
               </Link>
@@ -529,6 +530,22 @@ export default function DashboardPage() {
 
       {qrOpen && meta && <QrModal url={meta.subscriptionUrl} onClose={() => setQrOpen(false)} />}
     </>
+  );
+}
+
+/* ---------- stat card head: sidebar icon + label + hover arrow ---------- */
+
+function StatHead({ icon, label }: { icon: NavIconName; label: string }) {
+  return (
+    <div className="stat-head">
+      <span className="stat-ico">
+        <NavIcon name={icon} size={15} />
+      </span>
+      <span className="k">{label}</span>
+      <span className="go" aria-hidden="true">
+        →
+      </span>
+    </div>
   );
 }
 

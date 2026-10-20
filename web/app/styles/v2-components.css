@@ -877,15 +877,50 @@ textarea.input {
   background: var(--surface-2);
   transform: translateY(-1px);
 }
+.stat-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.stat-ico {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  background: var(--surface-2);
+  color: var(--muted);
+  transition:
+    background 0.15s var(--ease),
+    color 0.15s var(--ease);
+}
+.stat:hover .stat-ico {
+  background: var(--surface-3);
+  color: var(--fg);
+}
 .stat .k {
-  font: 11px var(--font-mono);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--muted);
+}
+.stat .go {
+  margin-left: auto;
   color: var(--faint);
+  opacity: 0;
+  transform: translateX(-3px);
+  transition:
+    opacity 0.15s var(--ease),
+    transform 0.15s var(--ease);
+}
+.stat:hover .go,
+.stat:focus-visible .go {
+  opacity: 1;
+  transform: none;
 }
 .stat .v {
   font: 600 30px/1.2 var(--font-mono);
-  margin: 6px 0 2px;
+  margin: 12px 0 2px;
   font-variant-numeric: tabular-nums;
 }
 .stat .d {
