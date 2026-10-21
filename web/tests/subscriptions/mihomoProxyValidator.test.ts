@@ -1425,6 +1425,16 @@ describe('fixed Mihomo v1.19.28 proxy node validation', () => {
     },
   );
 
+  it.each([300, '300', '30-5', '9223372037'])(
+    'accepts inert Hysteria 2 hop interval %s without ports',
+    (interval) => {
+      const proxy = { ...endpoint('hysteria2'), 'hop-interval': interval };
+      expect(validateMihomoProxyList([proxy])).toEqual([
+        { ...proxy, 'hop-interval': String(interval) },
+      ]);
+    },
+  );
+
   it('accepts slash-separated Hysteria 2 ranges and validates its hop range', () => {
     const proxy = {
       name: 'H2-HOP',
@@ -1500,11 +1510,6 @@ describe('fixed Mihomo v1.19.28 proxy node validation', () => {
   });
 
   it.each([
-    [
-      'Hysteria 2 orphan hop interval',
-      { ...endpoint('hysteria2'), 'hop-interval': '30' },
-      'hop-interval',
-    ],
     [
       'Hysteria 2 descending hop interval',
       { ...endpoint('hysteria2'), ports: '443,8443', 'hop-interval': '30-5' },

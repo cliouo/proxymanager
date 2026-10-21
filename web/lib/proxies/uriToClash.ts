@@ -1922,14 +1922,15 @@ function parseHysteria2(uri: string): ClashProxy {
   }
   const hopInterval = params['hop-interval'] ?? params['hop_interval'];
   if (hopInterval !== undefined) {
-    if (proxy.ports === undefined) {
-      throw new Error('hysteria2 hop interval requires port hopping');
-    }
-    proxy['hop-interval'] = validateBoundedUnsignedRange(
-      hopInterval,
-      'hysteria2 hop interval',
-      MAX_SAFE_DURATION_SECONDS,
-    );
+    // As in Mihomo's YAML path, the interval is inert without a port set.
+    proxy['hop-interval'] =
+      proxy.ports === undefined
+        ? hopInterval
+        : validateBoundedUnsignedRange(
+            hopInterval,
+            'hysteria2 hop interval',
+            MAX_SAFE_DURATION_SECONDS,
+          );
   }
   if (Object.hasOwn(params, 'keepalive')) {
     throw new Error('hysteria2 keepalive is unsupported by the target');

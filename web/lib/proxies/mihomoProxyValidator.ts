@@ -2781,10 +2781,9 @@ function validateDurationSeconds(
 
 function validateHysteria2(proxy: Record<string, unknown>, index: number): void {
   validateHysteriaFingerprint(proxy, index);
-  if (hasOwn(proxy, 'hop-interval')) {
-    if (!hasOwn(proxy, 'ports')) {
-      invalidProxyEntry(index, 'hop-interval', 'requires ports');
-    }
+  // Mihomo only parses the hop interval when port hopping is configured.
+  // Providers may include this inert field on single-port endpoints.
+  if (hasOwn(proxy, 'ports') && hasOwn(proxy, 'hop-interval')) {
     validateUnsignedRangeString(proxy, 'hop-interval', index, BigInt(MAX_GO_DURATION_SECONDS));
   }
   for (const field of ['obfs-min-packet-size', 'obfs-max-packet-size', 'cwnd', 'udp-mtu']) {
