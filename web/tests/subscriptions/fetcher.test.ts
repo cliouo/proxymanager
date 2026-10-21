@@ -54,6 +54,33 @@ describe('parseTrafficHeader', () => {
 });
 
 describe('normaliseToClashProviderYaml', () => {
+  it('keeps all provider nodes when single-port Hysteria 2 includes an inert hop interval', () => {
+    const result = normaliseToClashProviderYaml(`proxies:
+  - name: hy2-single-port
+    type: hysteria2
+    server: edge.invalid
+    port: 443
+    password: test-only
+    hop-interval: 300
+  - name: http-peer
+    type: http
+    server: proxy.invalid
+    port: 8080
+`);
+    expect(result.proxyCount).toBe(2);
+    expect(parse(result.yaml).proxies).toEqual([
+      {
+        name: 'hy2-single-port',
+        type: 'hysteria2',
+        server: 'edge.invalid',
+        port: 443,
+        password: 'test-only',
+        'hop-interval': '300',
+      },
+      { name: 'http-peer', type: 'http', server: 'proxy.invalid', port: 8080 },
+    ]);
+  });
+
   it('extracts proxies from a full Clash config', () => {
     const result = normaliseToClashProviderYaml(SAMPLE_CLASH_YAML);
     expect(result.proxyCount).toBe(2);

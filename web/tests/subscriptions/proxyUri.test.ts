@@ -501,6 +501,14 @@ describe('parseProxyUriList per protocol', () => {
     });
   });
 
+  it.each(['hop-interval', 'hop_interval'])('accepts inert Hysteria 2 %s without ports', (key) => {
+    const { proxies, errors } = parseProxyUriList(`hy2://pw@h.example:443?${key}=300`);
+    expect(errors).toHaveLength(0);
+    expect(proxies).toHaveLength(1);
+    expect(proxies[0]).toMatchObject({ type: 'hysteria2', port: 443, 'hop-interval': '300' });
+    expect(proxies[0]).not.toHaveProperty('ports');
+  });
+
   it('hysteria2://: ?mport / ?peer / ?obfs=none / ?hop-interval / ?upmbps', () => {
     const uri =
       'hy2://pwd@h.com?peer=cdn.com&obfs=none&mport=20000-30000&hop-interval=30&upmbps=200&downmbps=500#H';
@@ -2417,7 +2425,6 @@ describe('closed URI grammars reject ambiguous or silently dropped input', () =>
     ['Hysteria 1 invalid boolean', 'hysteria://h.example:443?up=10&down=20&insecure=true'],
     ['Hysteria 2 unknown query', 'hy2://pw@h.example?label=x'],
     ['Hysteria 2 SNI alias collision', 'hy2://pw@h.example?sni=a.example&peer=b.example'],
-    ['Hysteria 2 hop without ports', 'hy2://pw@h.example?hop-interval=30'],
     ['Hysteria 2 malformed hop range', 'hy2://pw@h.example?mport=443-444&hop-interval=30-10'],
     [
       'Hysteria 2 overflowing hop range',
