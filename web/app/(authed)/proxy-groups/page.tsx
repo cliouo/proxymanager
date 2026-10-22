@@ -8,7 +8,15 @@ import { ScopePill } from '@/components/Topbar';
 import type { ProxyGroup, ProxyGroupKind } from '@/schemas';
 import { KIND_LABELS } from './_lib/model';
 import { useProxyGroupsData } from './_lib/useProxyGroupsData';
+import { IconTile, type IconTileName } from '@/components/ui/IconTile';
 import styles from './proxyGroups.module.css';
+
+const TYPE_ICON: Record<ProxyGroup['type'], IconTileName> = {
+  select: 'list',
+  'url-test': 'gauge',
+  fallback: 'fallback',
+  'load-balance': 'balance',
+};
 
 /**
  * 策略组 — LIST page (v2「Signal Console」/proxy-groups.html).
@@ -147,7 +155,8 @@ export default function ProxyGroupsPage() {
   // recomputing ranks from the visible order would collide with hidden rows /
   // cross partitions. Disable reordering until the filter is cleared.
   const [sorting, setSorting] = useState(false);
-  const dragDisabled = sorting || configVersion === null || query.trim().length > 0 || kindFilter !== null;
+  const dragDisabled =
+    sorting || configVersion === null || query.trim().length > 0 || kindFilter !== null;
 
   const onDragStart = (section: string, id: string) => {
     if (dragDisabled) return;
@@ -199,17 +208,23 @@ export default function ProxyGroupsPage() {
     if (!sec) return;
     const members = new Set(order);
     let cursor = 0;
-    const orderedIds = [...groups].sort((a, b) => a.rank - b.rank || a.id.localeCompare(b.id))
-      .map((g) => members.has(g.id) ? order[cursor++] : g.id);
+    const orderedIds = [...groups]
+      .sort((a, b) => a.rank - b.rank || a.id.localeCompare(b.id))
+      .map((g) => (members.has(g.id) ? order[cursor++] : g.id));
     if (configVersion === null) return;
     setSorting(true);
     setRankOverride(Object.fromEntries(orderedIds.map((gid, i) => [gid, (i + 1) * 10])));
     try {
-      await api('/api/v1/proxy-groups/reorder', { method: 'POST', body: { orderedIds, expectedVersion: configVersion } });
+      await api('/api/v1/proxy-groups/reorder', {
+        method: 'POST',
+        body: { orderedIds, expectedVersion: configVersion },
+      });
       showToast('渲染顺序已完整保存');
       await reload();
     } catch (err) {
-      showToast(err instanceof ApiError ? `排序未保存：${err.message}` : '排序未保存，请重新读取后重试');
+      showToast(
+        err instanceof ApiError ? `排序未保存：${err.message}` : '排序未保存，请重新读取后重试',
+      );
       await reload();
     } finally {
       setRankOverride({});
@@ -373,56 +388,61 @@ export default function ProxyGroupsPage() {
                   {items.length} 个 · rank {minRank}–{maxRank}
                 </span>
               </div>
-              {rendered.map((g) => {
-                const s = stat(g);
-                const summary = refSummaryFor(g);
-                const flags = rowFlags(g);
-                return (
-                  <Link
-                    key={g.id}
-                    href={`/proxy-groups/${g.id}`}
-                    className={`${styles.row}${draggingId === g.id ? ' ' + styles.dragging : ''}`}
-                    draggable={!dragDisabled}
-                    onDragStart={() => onDragStart(section, g.id)}
-                    onDragEnd={(e) => onDragEnd(section, e)}
-                    onDragOver={(e) => {
-                      e.preventDefault();
-                      const rect = e.currentTarget.getBoundingClientRect();
-                      const after = e.clientY > rect.top + rect.height / 2;
-                      onDragOver(section, g.id, after);
-                    }}
-                    onClick={(e) => {
-                      if (draggingId) e.preventDefault();
-                    }}
-                  >
-                    <span
-                      className={styles.grip}
-                      title="拖动调整渲染顺序"
-                      onClick={(e) => e.preventDefault()}
+              <div className={styles.pgList}>
+                {rendered.map((g) => {
+                  const s = stat(g);
+                  const summary = refSummaryFor(g);
+                  const flags = rowFlags(g);
+                  return (
+                    <Link
+                      key={g.id}
+                      href={`/proxy-groups/${g.id}`}
+                      className={`${styles.row}${draggingId === g.id ? ' ' + styles.dragging : ''}`}
+                      draggable={!dragDisabled}
+                      onDragStart={() => onDragStart(section, g.id)}
+                      onDragEnd={(e) => onDragEnd(section, e)}
+                      onDragOver={(e) => {
+                        e.preventDefault();
+                        const rect = e.currentTarget.getBoundingClientRect();
+                        const after = e.clientY > rect.top + rect.height / 2;
+                        onDragOver(section, g.id, after);
+                      }}
+                      onClick={(e) => {
+                        if (draggingId) e.preventDefault();
+                      }}
                     >
-                      ⠿
-                    </span>
-                    <span className={styles.rank}>r {rankOf(g)}</span>
-                    <span className={styles.ident}>
-                      <span className={styles.nm}>
-                        <b>{g.name}</b>
-                        <span className="pill acc plain">{g.type}</span>
+                      <span
+                        className={styles.grip}
+                        title="拖动调整渲染顺序"
+                        onClick={(e) => e.preventDefault()}
+                      >
+                        ⠿
                       </span>
-                      <span className={styles.desc}>{g.notes || deriveDesc(g, s.summary)}</span>
-                    </span>
-                    <span className={styles.members}>{s.summary}</span>
-                    <span className={styles.refs}>{refLabel(summary)}</span>
-                    <span className={styles.flags}>
-                      {flags.map((f) => (
-                        <span key={f.text} className={styles.kindTag} title={f.title}>
-                          {f.text}
+                      <span className={styles.rank} title="渲染顺序 rank">
+                        {rankOf(g)}
+                      </span>
+                      <IconTile name={TYPE_ICON[g.type]} tone="neutral" size={30} />
+                      <span className={styles.ident}>
+                        <span className={styles.nm}>
+                          <b title={g.name}>{g.name}</b>
+                          <span className="pill idle plain">{g.type}</span>
                         </span>
-                      ))}
-                    </span>
-                    <span className={styles.arrow}>→</span>
-                  </Link>
-                );
-              })}
+                        <span className={styles.desc}>{g.notes || deriveDesc(g, s.summary)}</span>
+                      </span>
+                      <span className={styles.members}>{s.summary}</span>
+                      <span className={styles.refs}>{refLabel(summary)}</span>
+                      <span className={styles.flags}>
+                        {flags.map((f) => (
+                          <span key={f.text} className={styles.kindTag} title={f.title}>
+                            {f.text}
+                          </span>
+                        ))}
+                      </span>
+                      <span className={styles.arrow}>→</span>
+                    </Link>
+                  );
+                })}
+              </div>
             </div>
           );
         })

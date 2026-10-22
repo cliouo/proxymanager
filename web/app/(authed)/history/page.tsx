@@ -5,6 +5,9 @@ import { ApiError, api } from '@/lib/client/api';
 import { PageTopbar } from '@/components/PageChrome';
 import { ScopePill } from '@/components/Topbar';
 import { useToast } from '@/components/ui/Toast';
+import { TimelineSkeleton } from '@/components/ui/Reveal';
+import { ACTIVITY_ICON, IconTile } from '@/components/ui/IconTile';
+import { actorLabel, describeAuditEvent, groupConsecutive } from '@/lib/ui/auditEventCopy';
 import styles from './history.module.css';
 import { HistoryCrumb, NamingRollbackHint } from './namingHints';
 
@@ -20,6 +23,7 @@ type AuditTarget =
   | { kind: 'rule'; id: string }
   | { kind: 'proxy'; name: string }
   | { kind: 'proxy-group'; name: string }
+  | { kind: 'rule-set'; name: string }
   | { kind: 'base'; field?: string }
   | { kind: 'profile' }
   | { kind: 'device'; id: string; name: string }
@@ -40,49 +44,6 @@ interface AuditEvent {
 }
 
 const PAGE_SIZE = 100;
-
-type Glyph = 'create' | 'update' | 'delete' | 'undo' | 'ai';
-
-const GLYPH_SYM: Record<Glyph, string> = {
-  create: '●',
-  update: '◐',
-  delete: '●',
-  undo: '○',
-  ai: '✦',
-};
-
-/** The action is the op's last dotted segment; the scenario prefix is ignored. */
-function actionOf(op: string): string {
-  const i = op.lastIndexOf('.');
-  return i === -1 ? op : op.slice(i + 1);
-}
-
-const VERBS: Record<string, { label: string; glyph: Glyph }> = {
-  create: { label: '新增', glyph: 'create' },
-  'batch-create': { label: '批量新增', glyph: 'create' },
-  'create-pool-chain': { label: '建链', glyph: 'create' },
-  update: { label: '修改', glyph: 'update' },
-  patch: { label: '修改', glyph: 'update' },
-  'set-section': { label: '设置', glyph: 'update' },
-  'set-fixed-chain': { label: '设固定链', glyph: 'update' },
-  'update-pool-members': { label: '改链成员', glyph: 'update' },
-  mark: { label: '标记', glyph: 'update' },
-  delete: { label: '删除', glyph: 'delete' },
-  'delete-section': { label: '删除', glyph: 'delete' },
-  'delete-pool-chain': { label: '删链', glyph: 'delete' },
-  'clear-chain': { label: '清链', glyph: 'delete' },
-};
-
-/** AI-authored events get the purple ✦ glyph regardless of verb. */
-function isAiActor(actor: string): boolean {
-  return /ai|assistant|助手/i.test(actor);
-}
-
-function describeOp(op: string, actor: string): { label: string; glyph: Glyph } {
-  const v = actionOf(op);
-  const base = VERBS[v] ?? { label: v, glyph: 'update' as Glyph };
-  return isAiActor(actor) ? { ...base, glyph: 'ai' } : base;
-}
 
 function valueHint(v: unknown): string {
   if (v === null || v === undefined) return '';
@@ -178,7 +139,11 @@ function EventBody({ e, undone }: { e: AuditEvent; undone: boolean }) {
     );
   }
 
-  if ((kind === 'proxy' || kind === 'proxy-group') && e.target && 'name' in e.target) {
+  if (
+    (kind === 'proxy' || kind === 'proxy-group' || kind === 'rule-set') &&
+    e.target &&
+    'name' in e.target
+  ) {
     return (
       <code className="mono" style={{ fontSize: 12, color: 'var(--fg)' }}>
         {e.target.name}
@@ -242,6 +207,7 @@ export default function HistoryPage() {
   const [hasMore, setHasMore] = useState(false);
   const [undoing, setUndoing] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState('');
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const toast = useToast();
 
   const [cursor, setCursor] = useState<string | null>(null);
@@ -314,6 +280,48 @@ export default function HistoryPage() {
     return [...map.entries()].map(([key, val]) => ({ key, ...val }));
   }, [filtered]);
 
+  function renderItem(e: AuditEvent) {
+    const undone = !!e.undone_by;
+    const isUndo = !!e.undoes;
+    const { title, tone } = describeAuditEvent(e);
+    const icon = ACTIVITY_ICON[tone];
+    return (
+      <div className="tl-item" key={e.id}>
+        <IconTile name={icon.name} tone={icon.tone} />
+        <div className="body">
+          <div className="op">
+            <span className="title">{title}</span>
+            <EventBody e={e} undone={undone} />
+          </div>
+          <div className="meta">
+            <span>{actorLabel(e.actor)}</span>
+            <span className="code">{e.op}</span>
+            {undone && (
+              <span>
+                <span className="pill idle plain" style={{ height: 16 }}>
+                  已被撤销
+                </span>
+              </span>
+            )}
+          </div>
+        </div>
+        <div className="aside">
+          <NamingRollbackHint e={e} undone={undone} isUndo={isUndo} />
+          {!undone && !isUndo && e.undoable !== false && (
+            <button
+              className="btn sm undo-btn"
+              onClick={() => onUndo(e)}
+              disabled={undoing.has(e.id)}
+            >
+              {undoing.has(e.id) ? '…' : '撤销'}
+            </button>
+          )}
+          <span className="t">{timeLabel(e.ts)}</span>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <>
       <PageTopbar contentMaxWidth={860}>
@@ -353,11 +361,8 @@ export default function HistoryPage() {
       )}
 
       {!loaded ? (
-        <div
-          className="pm-pulse"
-          style={{ color: 'var(--faint)', fontSize: 13, padding: '8px 12px' }}
-        >
-          正在读取操作历史 …
+        <div aria-busy="true" aria-label="正在读取操作历史">
+          <TimelineSkeleton rows={8} />
         </div>
       ) : events.length === 0 ? (
         <div
@@ -374,44 +379,60 @@ export default function HistoryPage() {
       ) : (
         groups.map((g) => (
           <div key={g.key}>
-            <div className="tl-day">{g.label}</div>
-            {g.events.map((e) => {
-              const undone = !!e.undone_by;
-              const isUndo = !!e.undoes;
-              const { label, glyph } = describeOp(e.op, e.actor);
-              const finalGlyph: Glyph = isUndo ? 'undo' : glyph;
+            <div className="tl-day">
+              {g.label}
+              <span className="n">{g.events.length} 条</span>
+            </div>
+            {groupConsecutive(g.events).map((item) => {
+              if (item.kind === 'single') return renderItem(item.event);
+              const first = item.events[0];
+              const last = item.events[item.events.length - 1];
+              const open = expanded.has(first.id);
+              const { title, tone } = describeAuditEvent(first);
+              const icon = ACTIVITY_ICON[tone];
+              const toggle = () =>
+                setExpanded((prev) => {
+                  const n = new Set(prev);
+                  if (open) n.delete(first.id);
+                  else n.add(first.id);
+                  return n;
+                });
               return (
-                <div className="tl-item" key={e.id}>
-                  <span className="t num">{timeLabel(e.ts)}</span>
-                  <span className={`glyph ${finalGlyph}`}>{GLYPH_SYM[finalGlyph]}</span>
-                  <div className="body">
-                    <div
-                      className="op"
-                      style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}
-                    >
-                      <span style={{ color: 'var(--fg-2)', fontWeight: 500 }}>{label}</span>
-                      <EventBody e={e} undone={undone} />
-                    </div>
-                    <div className="meta">
-                      <span>{e.op}</span>
-                      <span>{e.actor}</span>
-                      {undone && (
-                        <span className="pill idle plain" style={{ height: 16 }}>
-                          已被撤销
+                <div className="tl-run" key={`run-${first.id}`}>
+                  <div className="tl-item" onClick={toggle}>
+                    <IconTile name={icon.name} tone={icon.tone} />
+                    <div className="body">
+                      <div className="op">
+                        <span className="title">{title}</span>
+                        <span className="pill plain idle" style={{ height: 18 }}>
+                          连续 {item.events.length} 次
                         </span>
-                      )}
+                      </div>
+                      <div className="meta">
+                        <span>{actorLabel(first.actor)}</span>
+                        <span className="code">{first.op}</span>
+                      </div>
+                    </div>
+                    <div className="aside">
+                      <button
+                        type="button"
+                        className="toggle"
+                        aria-expanded={open}
+                        onClick={(ev) => {
+                          ev.stopPropagation();
+                          toggle();
+                        }}
+                      >
+                        {open ? '收起' : '展开'}
+                      </button>
+                      <span className="t">
+                        {timeLabel(last.ts) === timeLabel(first.ts)
+                          ? timeLabel(first.ts)
+                          : `${timeLabel(last.ts)}–${timeLabel(first.ts)}`}
+                      </span>
                     </div>
                   </div>
-                  {!undone && !isUndo && e.undoable !== false && (
-                    <button
-                      className="btn sm undo-btn"
-                      onClick={() => onUndo(e)}
-                      disabled={undoing.has(e.id)}
-                    >
-                      {undoing.has(e.id) ? '…' : '撤销'}
-                    </button>
-                  )}
-                  <NamingRollbackHint e={e} undone={undone} isUndo={isUndo} />
+                  {open && <div className="tl-run-items">{item.events.map(renderItem)}</div>}
                 </div>
               );
             })}

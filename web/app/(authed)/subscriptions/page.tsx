@@ -23,6 +23,8 @@ import {
   type ManualRefreshOperationKind,
   type ManualRefreshOperationLease,
 } from '@/lib/client/subscriptionLocalRefresh';
+import { IconTile, type IconTileName } from '@/components/ui/IconTile';
+import { RowMenu } from '@/components/ui/RowMenu';
 import styles from './subscriptions.module.css';
 
 const DEFAULT_TTL_MS = 10 * 60 * 1000;
@@ -790,12 +792,14 @@ export default function SubscriptionsPage() {
           role="tabpanel"
           aria-labelledby={`${tabsId}-tab-naming`}
         >
-          <div className={styles.lead}>
-            <b>智能命名</b>：以模板占位符 DSL 统一管理节点名称——国旗 + 地区一个视觉块、
-            可选片段按字段缺失整段消失、序号优先复用上游编号并由服务端持久化（上游重排不翻动）。
-            同配置节点按来源优先级只保留一次；格式化重名用「来源-序号」有意义地消歧。每个目标都有
-            独立的命名健康（字段覆盖率矩阵）与 原始 → 事实 → 最终名称 预览。
-          </div>
+          <NamingIntro
+            enabled={
+              subs.filter((x) => hasManagedNaming(x.operators)).length +
+              collections.filter((x) => hasManagedNaming(x.operators)).length
+            }
+            total={subs.length + collections.length}
+            loaded={loaded}
+          />
 
           {!loaded ? (
             <div className="panel">
@@ -808,31 +812,61 @@ export default function SubscriptionsPage() {
                 <div className={styles.d}>还没有任何订阅源或聚合订阅。</div>
               </div>
             </div>
-          ) : (
+          ) : filteredSubs.length + filteredCollections.length === 0 ? (
             <div className="panel">
-              {subs.map((sub) => (
-                <NamingTargetRow
-                  key={sub.id}
-                  label={sub.display_name?.trim() || sub.name}
-                  sublabel="订阅源"
-                  href={`/subscriptions/${sub.id}/naming`}
-                  managed={hasManagedNaming(sub.operators)}
-                  disabled={globalMutationBusy}
-                  isOperationActive={pageMutationIsActive}
-                />
-              ))}
-              {collections.map((c) => (
-                <NamingTargetRow
-                  key={c.id}
-                  label={c.name}
-                  sublabel="聚合订阅"
-                  href={`/subscriptions/collection/${c.id}/naming`}
-                  managed={hasManagedNaming(c.operators)}
-                  disabled={globalMutationBusy}
-                  isOperationActive={pageMutationIsActive}
-                />
-              ))}
+              <div className={styles.empty}>
+                <div className={styles.d}>没有匹配「{query}」的订阅源或聚合订阅。</div>
+              </div>
             </div>
+          ) : (
+            <>
+              {filteredSubs.length > 0 && (
+                <NamingGroup
+                  title="单订阅"
+                  total={filteredSubs.length}
+                  enabled={filteredSubs.filter((x) => hasManagedNaming(x.operators)).length}
+                >
+                  {filteredSubs.map((sub) => (
+                    <NamingTargetRow
+                      key={sub.id}
+                      icon={sub.kind === 'remote' ? 'cloud' : 'file'}
+                      label={sub.display_name?.trim() || sub.name}
+                      slug={
+                        sub.display_name?.trim() && sub.display_name.trim() !== sub.name
+                          ? sub.name
+                          : undefined
+                      }
+                      kindLabel={sub.kind === 'remote' ? '远程订阅' : '本地内容'}
+                      href={`/subscriptions/${sub.id}/naming`}
+                      managed={hasManagedNaming(sub.operators)}
+                      disabled={globalMutationBusy}
+                      isOperationActive={pageMutationIsActive}
+                    />
+                  ))}
+                </NamingGroup>
+              )}
+              {filteredCollections.length > 0 && (
+                <NamingGroup
+                  title="聚合订阅"
+                  total={filteredCollections.length}
+                  enabled={filteredCollections.filter((x) => hasManagedNaming(x.operators)).length}
+                >
+                  {filteredCollections.map((c) => (
+                    <NamingTargetRow
+                      key={c.id}
+                      icon="stack"
+                      label={c.name}
+                      slug={c.slug && c.slug !== c.name ? c.slug : undefined}
+                      kindLabel="聚合订阅"
+                      href={`/subscriptions/collection/${c.id}/naming`}
+                      managed={hasManagedNaming(c.operators)}
+                      disabled={globalMutationBusy}
+                      isOperationActive={pageMutationIsActive}
+                    />
+                  ))}
+                </NamingGroup>
+              )}
+            </>
           )}
         </section>
       )}
@@ -985,16 +1019,16 @@ function CollectionCard({
 
   return (
     <div className={`${styles.subItem}${anyEditing && !editing ? ` ${styles.dimmed}` : ''}`}>
-      <span className={`${styles.led} ${styles[ledTone]}`} />
+      <span className={styles.kindIcon} title="聚合订阅">
+        <IconTile name="stack" tone="ai" size={34} />
+        <span className={`${styles.led} ${styles[ledTone]}`} />
+      </span>
       <div className={styles.subMain}>
         <div className={styles.head}>
           <b>{c.name}</b>
           {c.slug && <span className="pill plain mono">{c.slug}</span>}
           <span className="pill ai plain">聚合</span>
           <span className="pill idle plain">{c.enabled ? '已启用' : '已停用'}</span>
-        </div>
-        <div className={styles.colLead}>
-          合并多个单订阅的节点，去重后输出一条对外链接——在「结构骨架」绑定为节点来源即可。
         </div>
         {(directMembers.length > 0 || c.subscription_tags.length > 0) && (
           <div className={styles.colMembers}>
@@ -1066,9 +1100,6 @@ function CollectionCard({
       <div className={styles.right}>
         <DistChip enabled={c.enabled} onClick={onDistribute} />
         <div className={styles.acts}>
-          <button type="button" className="btn sm" onClick={onEdit} disabled={locked || anyEditing}>
-            编辑
-          </button>
           <button
             type="button"
             className="switch"
@@ -1077,14 +1108,16 @@ function CollectionCard({
             disabled={locked || pending || anyEditing}
             title={c.enabled ? '停用' : '启用'}
           />
-          <button
-            type="button"
-            className="btn sm danger"
-            onClick={onDelete}
-            disabled={locked || anyEditing}
-          >
-            删除
+          <button type="button" className="btn sm" onClick={onEdit} disabled={locked || anyEditing}>
+            编辑
           </button>
+          <RowMenu
+            label={`更多操作 · ${c.name}`}
+            disabled={locked || anyEditing}
+            items={[
+              { label: '删除', onSelect: onDelete, danger: true, disabled: locked || anyEditing },
+            ]}
+          />
         </div>
       </div>
     </div>
@@ -1138,15 +1171,20 @@ function NamingLink({
   managed,
   disabled = false,
   blocked,
+  className,
+  children,
 }: {
   href: string;
   managed: boolean;
   disabled?: boolean;
   blocked?: () => boolean;
+  className?: string;
+  children?: React.ReactNode;
 }) {
   const router = useRouter();
   return (
     <a
+      className={className}
       href={disabled ? undefined : href}
       aria-disabled={disabled || undefined}
       tabIndex={disabled ? -1 : undefined}
@@ -1160,22 +1198,111 @@ function NamingLink({
         router.push(href);
       }}
     >
-      智能命名{managed ? '' : '（未启用）'} →
+      {children ?? <>智能命名{managed ? '' : '（未启用）'} →</>}
     </a>
+  );
+}
+
+/** 智能命名 tab 顶部：一句话说明 + 三个要点 + 启用进度。 */
+function NamingIntro({
+  enabled,
+  total,
+  loaded,
+}: {
+  enabled: number;
+  total: number;
+  loaded: boolean;
+}) {
+  const pct = total > 0 ? (enabled / total) * 100 : 0;
+  return (
+    <section className={`panel ${styles.namingIntro}`} aria-labelledby="naming-intro-title">
+      <div className={styles.namingIntroHead}>
+        <div>
+          <h2 id="naming-intro-title">智能命名</h2>
+          <p>
+            用模板把节点名统一成「国旗 地区 序号」这样的一致格式。每个订阅源和聚合订阅单独启用，
+            未启用的都已备好推荐模板，启用前可以先预览原始名、识别出的字段和最终名称。
+          </p>
+        </div>
+        {loaded && total > 0 && (
+          <div className={styles.namingProgress} aria-label={`已启用 ${enabled} / ${total}`}>
+            <div className={styles.namingProgressNum}>
+              <b className="num">{enabled}</b>
+              <span className="num"> / {total}</span>
+            </div>
+            <div className={styles.namingProgressLabel}>已启用</div>
+            <div className="traffic">
+              <div className="bar">
+                <i style={{ width: `${pct}%` }} />
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+      <ul className={styles.namingPoints}>
+        <li>
+          <IconTile name="list" tone="neutral" size={26} />
+          <span>
+            <b>格式统一</b>国旗与地区合成一块显示，字段缺失时整段省略
+          </span>
+        </li>
+        <li>
+          <IconTile name="check" tone="neutral" size={26} />
+          <span>
+            <b>序号稳定</b>优先沿用上游编号并由服务端记住，上游重排也不翻动
+          </span>
+        </li>
+        <li>
+          <IconTile name="stack" tone="neutral" size={26} />
+          <span>
+            <b>自动去重</b>同配置的重复节点按来源优先级只留一个，重名用「来源-序号」区分
+          </span>
+        </li>
+      </ul>
+    </section>
+  );
+}
+
+/** 一组命名目标（单订阅 / 聚合订阅），组头带启用计数。 */
+function NamingGroup({
+  title,
+  total,
+  enabled,
+  children,
+}: {
+  title: string;
+  total: number;
+  enabled: number;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className={styles.namingGroup}>
+      <div className={styles.namingGroupHead}>
+        <b>{title}</b>
+        <span className="num">
+          {total} 个 · 已启用 {enabled}
+        </span>
+      </div>
+      <div className="panel">{children}</div>
+    </section>
   );
 }
 
 /** 智能命名面板里的一行目标。 */
 function NamingTargetRow({
+  icon,
   label,
-  sublabel,
+  slug,
+  kindLabel,
   href,
   managed,
   disabled,
   isOperationActive,
 }: {
+  icon: IconTileName;
   label: string;
-  sublabel: string;
+  slug?: string;
+  kindLabel: string;
   href: string;
   managed: boolean;
   disabled: boolean;
@@ -1183,13 +1310,27 @@ function NamingTargetRow({
 }) {
   return (
     <div className={styles.namingRow}>
-      <span className={styles.namingLabel}>
-        {label} <span className={styles.k}>{sublabel}</span>
-      </span>
-      <span className={styles.namingState}>
-        {managed ? '已启用模板命名' : '未启用 · 有确定性推荐模板'}
-      </span>
-      <NamingLink href={href} managed={managed} disabled={disabled} blocked={isOperationActive} />
+      <IconTile name={icon} tone="neutral" size={30} />
+      <div className={styles.namingMain}>
+        <div className={styles.namingLabel}>
+          <b title={label}>{label}</b>
+          {slug && <span className="pill plain mono">{slug}</span>}
+        </div>
+        <div className={styles.namingState}>
+          {kindLabel}
+          {managed ? ' · 名称由模板统一生成' : ''}
+        </div>
+      </div>
+      <span className={`pill ${managed ? 'ok' : 'idle'}`}>{managed ? '已启用' : '未启用'}</span>
+      <NamingLink
+        className="btn sm"
+        href={href}
+        managed={managed}
+        disabled={disabled}
+        blocked={isOperationActive}
+      >
+        {managed ? '调整' : '设置'} →
+      </NamingLink>
     </div>
   );
 }
@@ -1464,7 +1605,7 @@ function CollectionForm({
 function SubSkeleton() {
   return (
     <div className={styles.subItem}>
-      <span className={`${styles.led} ${styles.off}`} />
+      <span className={styles.skel} style={{ width: 34, height: 34, borderRadius: 8 }} />
       <div className={styles.subMain}>
         <div className={styles.skel} style={{ width: 180, marginBottom: 10 }} />
         <div className={styles.skel} style={{ width: '70%' }} />
@@ -1485,24 +1626,20 @@ function CompactTraffic({
   return (
     <div className="traffic">
       <div className="lbl">
-        <span>已用 {fmtBytes(used)}</span>
-        <span>共 {fmtBytes(traffic.total)}</span>
+        <span>
+          <b>{fmtBytes(used)}</b> / {fmtBytes(traffic.total)}
+        </span>
+        <span className={hot ? 'hot' : undefined}>{pct.toFixed(pct < 10 ? 1 : 0)}%</span>
       </div>
       <div className="bar">
         <i className={hot ? 'hot' : undefined} style={{ width: `${pct}%` }} />
       </div>
       <div className="lbl">
-        <span>
-          ↑ {fmtBytes(traffic.upload)} · ↓ {fmtBytes(traffic.download)}
+        <span title={`上传 ${fmtBytes(traffic.upload)} · 下载 ${fmtBytes(traffic.download)}`}>
+          ↑ {fmtBytes(traffic.upload)} ↓ {fmtBytes(traffic.download)}
         </span>
-        <span>{pct.toFixed(pct < 10 ? 1 : 0)}%</span>
+        {expiry && <span>到期 {expiry}</span>}
       </div>
-      {expiry && (
-        <div className="lbl">
-          <span>到期</span>
-          <span>{expiry}</span>
-        </div>
-      )}
     </div>
   );
 }
@@ -1622,7 +1759,10 @@ function Dossier({
       aria-busy={activeRowBusy || undefined}
       data-operation-kind={activeRowBusy ? operationKind : undefined}
     >
-      <span className={`${styles.led} ${styles[ledTone]}`} />
+      <span className={styles.kindIcon} title={sub.kind === 'remote' ? '远程订阅' : '本地内容'}>
+        <IconTile name={sub.kind === 'remote' ? 'cloud' : 'file'} tone="neutral" size={34} />
+        <span className={`${styles.led} ${styles[ledTone]}`} />
+      </span>
       <div className={styles.subMain}>
         <div className={styles.head}>
           <b>{sub.display_name || sub.name}</b>
@@ -1644,7 +1784,13 @@ function Dossier({
           {!sub.enabled && <span className="pill idle">已停用</span>}
         </div>
 
-        {fetchAlert && <div className={styles.errLine}>{fetchAlert.line}</div>}
+        {fetchAlert && (
+          <div
+            className={`${styles.errLine}${fetchAlert.pill === 'pill warn' ? ` ${styles.warnLine}` : ''}`}
+          >
+            {fetchAlert.line}
+          </div>
+        )}
         {refreshMode === 'manual' && sub.manual_snapshot?.source_changed && (
           <div className={styles.sourceChanged} role="status">
             上游设置已变化；当前仍使用上次校验通过的快照。请从本机更新以确认新来源。
@@ -1713,44 +1859,6 @@ function Dossier({
         <div className={styles.acts}>
           <button
             type="button"
-            className="btn sm"
-            onClick={onEditStart}
-            disabled={rowControlsDisabled}
-          >
-            编辑
-          </button>
-          {sub.kind === 'remote' && refreshMode === 'server-auto' && (
-            <button
-              type="button"
-              className="btn sm"
-              onClick={onRefresh}
-              disabled={rowControlsDisabled || !sub.enabled}
-            >
-              刷新
-            </button>
-          )}
-          {sub.kind === 'remote' && (
-            <button
-              type="button"
-              className="btn sm"
-              onClick={onManualStart}
-              disabled={rowControlsDisabled || manualUpdating}
-            >
-              {refreshMode === 'manual' ? '更新内容' : '导入更新'}
-            </button>
-          )}
-          {sub.kind === 'remote' && refreshMode === 'manual' && (
-            <button
-              type="button"
-              className="btn ghost sm"
-              onClick={onUseServerAuto}
-              disabled={rowControlsDisabled || manualUpdating || !sub.enabled}
-            >
-              改回自动
-            </button>
-          )}
-          <button
-            type="button"
             className="switch"
             aria-pressed={sub.enabled}
             onClick={onToggle}
@@ -1759,12 +1867,52 @@ function Dossier({
           />
           <button
             type="button"
-            className="btn sm danger"
-            onClick={onDelete}
+            className="btn sm"
+            onClick={onEditStart}
             disabled={rowControlsDisabled}
           >
-            删除
+            编辑
           </button>
+          <RowMenu
+            label={`更多操作 · ${sub.display_name || sub.name}`}
+            disabled={rowControlsDisabled}
+            items={[
+              ...(sub.kind === 'remote' && refreshMode === 'server-auto'
+                ? [
+                    {
+                      label: '刷新',
+                      onSelect: onRefresh,
+                      disabled: rowControlsDisabled || !sub.enabled,
+                    },
+                  ]
+                : []),
+              ...(sub.kind === 'remote'
+                ? [
+                    {
+                      label: refreshMode === 'manual' ? '更新内容' : '导入更新',
+                      onSelect: onManualStart,
+                      disabled: rowControlsDisabled || manualUpdating,
+                    },
+                  ]
+                : []),
+              ...(sub.kind === 'remote' && refreshMode === 'manual'
+                ? [
+                    {
+                      label: '改回自动',
+                      onSelect: onUseServerAuto,
+                      disabled: rowControlsDisabled || manualUpdating || !sub.enabled,
+                    },
+                  ]
+                : []),
+              {
+                label: '删除',
+                onSelect: onDelete,
+                danger: true,
+                separated: sub.kind === 'remote',
+                disabled: rowControlsDisabled,
+              },
+            ]}
+          />
         </div>
       </div>
     </div>

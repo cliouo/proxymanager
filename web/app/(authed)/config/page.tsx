@@ -11,6 +11,7 @@ import { useProfiles } from '@/components/profile/ProfileContext';
 import { CodeView } from '@/components/ui/CodeView';
 import { TEMPLATE_NOT_DISTRIBUTABLE, isTemplateProfile } from '@/lib/profiles/kind';
 import styles from './config.module.css';
+import { Placeholder } from '@/components/ui/Reveal';
 
 interface PreviewData {
   rendered_at: number;
@@ -294,51 +295,65 @@ export default function ConfigPage() {
           </div>
         ) : (
           <div className={styles.summary}>
-            <section className={styles.summaryCard}>
-              <div className={styles.summaryHead}>
-                <div>
-                  <h2>{stale ? '上次成功生成结果' : '本次生成结果'}</h2>
-                  <p>
-                    {isTemplate
-                      ? '这些数据用于检查模版内容，不代表存在可分发的订阅地址。'
-                      : '这些数据用于排查问题，不影响订阅地址。'}
-                  </p>
+            {!preview ? (
+              <section className={styles.summaryCard} aria-busy={!loadError || undefined}>
+                <div className={styles.summaryHead}>
+                  <div>
+                    <h2>本次生成结果</h2>
+                    <p>
+                      {loadError ? '还没有生成结果，见左侧提示。' : '正在生成，完成后显示统计。'}
+                    </p>
+                  </div>
                 </div>
-                {!loadError &&
-                  loaded &&
-                  (isTemplate ? (
-                    <span className="pill acc">{TEMPLATE_NOT_DISTRIBUTABLE}</span>
-                  ) : (
-                    <span className="pill ok">可以使用</span>
-                  ))}
-              </div>
-              <div className={styles.sumRow}>
-                <span>YAML 大小</span>
-                <span className="num">
-                  {lineCount.toLocaleString()} 行 · {byteLen.toLocaleString()} 字节
-                </span>
-              </div>
-              {preview?.build_id && (
+                {!loadError && <Placeholder rows={4} />}
+              </section>
+            ) : (
+              <section className={styles.summaryCard}>
+                <div className={styles.summaryHead}>
+                  <div>
+                    <h2>{stale ? '上次成功生成结果' : '本次生成结果'}</h2>
+                    <p>
+                      {isTemplate
+                        ? '这些数据用于检查模版内容，不代表存在可分发的订阅地址。'
+                        : '这些数据用于排查问题，不影响订阅地址。'}
+                    </p>
+                  </div>
+                  {!loadError &&
+                    loaded &&
+                    (isTemplate ? (
+                      <span className="pill acc">{TEMPLATE_NOT_DISTRIBUTABLE}</span>
+                    ) : (
+                      <span className="pill ok">可以使用</span>
+                    ))}
+                </div>
                 <div className={styles.sumRow}>
-                  <span>构建标识</span>
-                  <span className="num">{preview.build_id}</span>
+                  <span>YAML 大小</span>
+                  <span className="num">
+                    {lineCount.toLocaleString()} 行 · {byteLen.toLocaleString()} 字节
+                  </span>
                 </div>
-              )}
-              <div className={styles.sumRow}>
-                <span>已注入规则</span>
-                <span className="num">
-                  {totalRules.toLocaleString()} 条，分布在 {anchors.length} 个位置
-                </span>
-              </div>
-              <div className={styles.sumRow}>
-                <span>需要注意</span>
-                <span className="num">{unmatched.length} 个未匹配锚点</span>
-              </div>
-              <div className={styles.sumRow}>
-                <span>基础配置</span>
-                <span className="num">{meta?.hasBase === false ? '未完成' : '已就绪'}</span>
-              </div>
-            </section>
+                {preview?.build_id && (
+                  <div className={styles.sumRow}>
+                    <span>构建标识</span>
+                    <span className="num">{preview.build_id}</span>
+                  </div>
+                )}
+                <div className={styles.sumRow}>
+                  <span>已注入规则</span>
+                  <span className="num">
+                    {totalRules.toLocaleString()} 条，分布在 {anchors.length} 个位置
+                  </span>
+                </div>
+                <div className={styles.sumRow}>
+                  <span>需要注意</span>
+                  <span className="num">{unmatched.length} 个未匹配锚点</span>
+                </div>
+                <div className={styles.sumRow}>
+                  <span>基础配置</span>
+                  <span className="num">{meta?.hasBase === false ? '未完成' : '已就绪'}</span>
+                </div>
+              </section>
+            )}
           </div>
         )}
       </div>
@@ -365,47 +380,63 @@ export default function ConfigPage() {
           </button>
         </header>
 
-        <div className={`${styles.checkSummary}${unmatched.length > 0 ? ` ${styles.warn}` : ''}`}>
-          <span>{unmatched.length > 0 ? '!' : '✓'}</span>
-          <div>
-            <b>
-              {unmatched.length > 0 ? `${unmatched.length} 个位置需要注意` : '所有注入位置均已匹配'}
-            </b>
-            <small>本次共注入 {totalRules.toLocaleString()} 条分流规则</small>
-          </div>
-        </div>
-
-        <section className={styles.inspectorSection}>
-          <div className={styles.sectionHead}>
-            <h3>规则注入</h3>
-            <span>{anchors.length} 个位置</span>
-          </div>
-          {anchors.length === 0 ? (
-            <p className={styles.muted}>未注入任何规则。</p>
-          ) : (
-            <div className={styles.injectionList}>
-              {anchors.map((anchor) => (
-                <div className={styles.inj} key={anchor.anchor}>
-                  <span>{anchor.anchor}</span>
-                  <span className={styles.injN}>+{anchor.ruleCount}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
-
-        {unmatched.length > 0 && (
-          <section className={styles.inspectorSection}>
-            <div className={styles.sectionHead}>
-              <h3>需要注意</h3>
-              <span>{unmatched.length} 项</span>
-            </div>
-            <div className={styles.warningList}>
-              {unmatched.map((anchor) => (
-                <div key={anchor}>锚点 {anchor} 没有找到对应标记</div>
-              ))}
-            </div>
+        {!preview ? (
+          <section className={styles.inspectorSection} aria-busy={!loadError || undefined}>
+            {loadError ? (
+              <p className={styles.muted}>还没有生成结果，暂无检查数据。</p>
+            ) : (
+              <Placeholder rows={4} />
+            )}
           </section>
+        ) : (
+          <>
+            <div
+              className={`${styles.checkSummary}${unmatched.length > 0 ? ` ${styles.warn}` : ''}`}
+            >
+              <span>{unmatched.length > 0 ? '!' : '✓'}</span>
+              <div>
+                <b>
+                  {unmatched.length > 0
+                    ? `${unmatched.length} 个位置需要注意`
+                    : '所有注入位置均已匹配'}
+                </b>
+                <small>本次共注入 {totalRules.toLocaleString()} 条分流规则</small>
+              </div>
+            </div>
+
+            <section className={styles.inspectorSection}>
+              <div className={styles.sectionHead}>
+                <h3>规则注入</h3>
+                <span>{anchors.length} 个位置</span>
+              </div>
+              {anchors.length === 0 ? (
+                <p className={styles.muted}>未注入任何规则。</p>
+              ) : (
+                <div className={styles.injectionList}>
+                  {anchors.map((anchor) => (
+                    <div className={styles.inj} key={anchor.anchor}>
+                      <span>{anchor.anchor}</span>
+                      <span className={styles.injN}>+{anchor.ruleCount}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+
+            {unmatched.length > 0 && (
+              <section className={styles.inspectorSection}>
+                <div className={styles.sectionHead}>
+                  <h3>需要注意</h3>
+                  <span>{unmatched.length} 项</span>
+                </div>
+                <div className={styles.warningList}>
+                  {unmatched.map((anchor) => (
+                    <div key={anchor}>锚点 {anchor} 没有找到对应标记</div>
+                  ))}
+                </div>
+              </section>
+            )}
+          </>
         )}
 
         {subUrl && !isTemplate && (

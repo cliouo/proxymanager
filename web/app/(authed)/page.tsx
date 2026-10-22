@@ -11,12 +11,20 @@ import { ScopePill } from '@/components/Topbar';
 import { useProfiles } from '@/components/profile/ProfileContext';
 import { useSetup } from '@/components/setup/SetupContext';
 import { describeFailedDisposition } from '@/lib/ui/subscriptionFetchHealthCopy';
-import { Placeholder, SkeletonStat } from '@/components/ui/Reveal';
+import { Placeholder, SkeletonStat, TimelineSkeleton } from '@/components/ui/Reveal';
+import {
+  ACTIVITY_ICON,
+  IconTile,
+  type IconTileName,
+  type IconTileTone,
+} from '@/components/ui/IconTile';
+import { actorLabel, describeAuditEvent } from '@/lib/ui/auditEventCopy';
 import {
   TEMPLATE_NOT_DISTRIBUTABLE,
   TEMPLATE_TAGLINE,
   isTemplateProfile,
 } from '@/lib/profiles/kind';
+import { NavIcon, type NavIconName } from '@/components/NavIcon';
 import styles from './page.module.css';
 
 /* ---------- API shapes (kept local; only the fields the dashboard reads) ---------- */
@@ -75,45 +83,6 @@ interface Counts {
   rules: number;
 }
 
-/* ---------- audit op → glyph/label (mirrors /history) ---------- */
-
-type Glyph = 'create' | 'update' | 'delete' | 'undo' | 'ai';
-
-const GLYPH_SYM: Record<Glyph, string> = {
-  create: '●',
-  update: '◐',
-  delete: '●',
-  undo: '○',
-  ai: '✦',
-};
-
-const VERBS: Record<string, { label: string; glyph: Glyph }> = {
-  create: { label: '新增', glyph: 'create' },
-  'batch-create': { label: '批量新增', glyph: 'create' },
-  'create-pool-chain': { label: '建链', glyph: 'create' },
-  update: { label: '修改', glyph: 'update' },
-  patch: { label: '修改', glyph: 'update' },
-  'set-section': { label: '设置', glyph: 'update' },
-  'set-fixed-chain': { label: '设固定链', glyph: 'update' },
-  'update-pool-members': { label: '改链成员', glyph: 'update' },
-  mark: { label: '标记', glyph: 'update' },
-  delete: { label: '删除', glyph: 'delete' },
-  'delete-section': { label: '删除', glyph: 'delete' },
-  'delete-pool-chain': { label: '删链', glyph: 'delete' },
-  'clear-chain': { label: '清链', glyph: 'delete' },
-};
-
-function actionOf(op: string): string {
-  const i = op.lastIndexOf('.');
-  return i === -1 ? op : op.slice(i + 1);
-}
-function isAiActor(actor: string): boolean {
-  return /ai|assistant|助手/i.test(actor);
-}
-function describeOp(op: string, actor: string): { label: string; glyph: Glyph } {
-  const base = VERBS[actionOf(op)] ?? { label: actionOf(op), glyph: 'update' as Glyph };
-  return isAiActor(actor) ? { ...base, glyph: 'ai' } : base;
-}
 function fmtTime(ts: number): string {
   const d = new Date(ts);
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
@@ -394,29 +363,29 @@ export default function DashboardPage() {
           ) : (
             <>
               <Link className="stat" href={R.base}>
-                <div className="k">锚点 anchors</div>
+                <StatHead icon="base" label="锚点 anchors" />
                 <div className="v">{counts.anchors}</div>
                 <div className="d">base 结构中可注入位</div>
               </Link>
               <Link className="stat" href={R.proxyGroups}>
-                <div className="k">代理策略</div>
+                <StatHead icon="groups" label="代理策略" />
                 <div className="v">{counts.proxyGroups}</div>
                 <div className="d">
                   {(counts?.proxyGroups ?? 0) > 0 ? groupBreakdown : '尚无策略组'}
                 </div>
               </Link>
               <Link className="stat" href={R.rules}>
-                <div className="k">规则</div>
+                <StatHead icon="rules" label="规则" />
                 <div className="v">{counts.rules}</div>
                 <div className="d">{rulesDesc}</div>
               </Link>
               <Link className="stat" href={R.chained}>
-                <div className="k">链式代理</div>
+                <StatHead icon="chain" label="链式代理" />
                 <div className="v">{chainCount}</div>
                 <div className="d">前置池 / 链式出站</div>
               </Link>
               <Link className="stat" href={R.devices}>
-                <div className="k">设备</div>
+                <StatHead icon="devices" label="设备" />
                 <div className="v">{deviceStats ? deviceStats.total : '–'}</div>
                 <div className="d">
                   {deviceStats && deviceStats.tailscale > 0
@@ -446,7 +415,7 @@ export default function DashboardPage() {
           ) : (
             <>
               <Link className="stat" href={R.subscriptions}>
-                <div className="k">节点订阅</div>
+                <StatHead icon="subscriptions" label="节点订阅" />
                 <div className="v">{counts.subscriptions}</div>
                 <div className="d">
                   {subsInjected !== undefined
@@ -455,7 +424,7 @@ export default function DashboardPage() {
                 </div>
               </Link>
               <Link className="stat" href={R.ruleSets}>
-                <div className="k">规则资源</div>
+                <StatHead icon="ruleSets" label="规则资源" />
                 <div className="v">{counts.ruleSets}</div>
                 <div className="d">rule-set 库，按需注入 rule-providers</div>
               </Link>
@@ -474,31 +443,29 @@ export default function DashboardPage() {
               全部历史 →
             </Link>
           </div>
-          <div className="panel-body" style={{ padding: '10px 8px' }}>
+          <div className="panel-body" style={{ padding: '8px' }}>
             {!loaded ? (
-              <div style={{ padding: '10px 12px' }}>
-                <Placeholder rows={4} />
-              </div>
+              <TimelineSkeleton rows={5} />
             ) : events.length === 0 ? (
               <div className={styles.empty}>暂无操作记录。</div>
             ) : (
               events.map((e) => {
-                const isUndo = !!e.undoes;
-                const { label, glyph } = describeOp(e.op, e.actor);
-                const g: Glyph = isUndo ? 'undo' : glyph;
+                const { title, tone } = describeAuditEvent(e);
+                const icon = ACTIVITY_ICON[tone];
                 return (
                   <div key={e.id} className="tl-item">
-                    <span className="t num">{fmtTime(e.ts)}</span>
-                    <span className={`glyph ${g}`}>{GLYPH_SYM[g]}</span>
+                    <IconTile name={icon.name} tone={icon.tone} />
                     <div className="body">
                       <div className="op">
-                        {isUndo ? '撤销 ' : ''}
-                        {label}
+                        <span className="title">{title}</span>
                       </div>
                       <div className="meta">
-                        <span className="mono">{e.op}</span>
-                        <span>{e.actor}</span>
+                        <span>{actorLabel(e.actor)}</span>
+                        <span className="code">{e.op}</span>
                       </div>
+                    </div>
+                    <div className="aside">
+                      <span className="t">{fmtTime(e.ts)}</span>
                     </div>
                   </div>
                 );
@@ -510,32 +477,52 @@ export default function DashboardPage() {
         <section className="panel">
           <div className="panel-head">
             <h2>需要注意</h2>
+            {loaded && alerts.length > 0 && <span className={styles.count}>{alerts.length}</span>}
+            <div className="grow" />
             {snapshot?.computedAt ? (
               <span className="crumb num" title="摘要来自上次成功渲染的快照">
                 截至 {fmtTime(snapshot.computedAt)}
               </span>
             ) : null}
           </div>
-          <div className="panel-body">
+          <div className="panel-body" style={{ padding: 0 }}>
             {!loaded ? (
-              <Placeholder rows={3} />
+              <div style={{ padding: 18 }}>
+                <Placeholder rows={3} />
+              </div>
             ) : alerts.length === 0 ? (
               <div className={styles.allOk}>
-                <span className="pill ok plain">●</span>
-                <span>暂无需要处理的问题：base 已初始化、订阅源拉取正常、锚点全部匹配。</span>
+                <IconTile name="check" tone="ok" />
+                <div>
+                  <div className={styles.alertTitle}>一切正常</div>
+                  <div className={styles.alertBody}>
+                    base 已初始化、订阅源拉取正常、锚点全部匹配。
+                  </div>
+                </div>
               </div>
             ) : (
-              <div className={styles.alerts}>
-                {alerts.map((a, i) => (
-                  <div key={i} className={styles.alert}>
-                    <span className={`pill ${a.tone}`}>{a.tag}</span>
-                    <div className={styles.txt}>
-                      {a.body}
-                      {a.href && <Link href={a.href}>{a.cta ?? '去处理 →'}</Link>}
-                    </div>
-                  </div>
-                ))}
-              </div>
+              <>
+                {alerts.length > 1 && <AlertSummary alerts={alerts} />}
+                <ul className={styles.alerts}>
+                  {sortBySeverity(alerts).map((a, i) => {
+                    const look = ALERT_LOOK[a.tone];
+                    return (
+                      <li key={i} className={`${styles.alert} ${styles[a.tone]}`}>
+                        <IconTile name={look.icon} tone={look.tile} size={26} />
+                        <div className={styles.alertMain}>
+                          <div className={styles.alertTitle}>{a.tag}</div>
+                          <div className={styles.alertBody}>{a.body}</div>
+                          {a.href && (
+                            <Link className={styles.alertCta} href={a.href}>
+                              {a.cta ?? '去处理 →'}
+                            </Link>
+                          )}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </>
             )}
           </div>
         </section>
@@ -543,6 +530,22 @@ export default function DashboardPage() {
 
       {qrOpen && meta && <QrModal url={meta.subscriptionUrl} onClose={() => setQrOpen(false)} />}
     </>
+  );
+}
+
+/* ---------- stat card head: sidebar icon + label + hover arrow ---------- */
+
+function StatHead({ icon, label }: { icon: NavIconName; label: string }) {
+  return (
+    <div className="stat-head">
+      <span className="stat-ico">
+        <NavIcon name={icon} size={15} />
+      </span>
+      <span className="k">{label}</span>
+      <span className="go" aria-hidden="true">
+        →
+      </span>
+    </div>
   );
 }
 
@@ -554,6 +557,37 @@ interface Alert {
   body: React.ReactNode;
   href?: string;
   cta?: string;
+}
+
+const ALERT_LOOK: Record<Alert['tone'], { icon: IconTileName; tile: IconTileTone; label: string }> =
+  {
+    err: { icon: 'error', tile: 'danger', label: '需处理' },
+    warn: { icon: 'warning', tile: 'warn', label: '警告' },
+    acc: { icon: 'info', tile: 'neutral', label: '提示' },
+  };
+
+const SEVERITY: Alert['tone'][] = ['err', 'warn', 'acc'];
+
+/** Worst first; stable, so buildAlerts' priority order holds within a tone. */
+function sortBySeverity(alerts: Alert[]): Alert[] {
+  return [...alerts].sort((a, b) => SEVERITY.indexOf(a.tone) - SEVERITY.indexOf(b.tone));
+}
+
+/** Severity counts above the list, worst first (Vanta-style "needs attention" strip). */
+function AlertSummary({ alerts }: { alerts: Alert[] }) {
+  return (
+    <div className={styles.alertSummary}>
+      {SEVERITY.map((tone) => {
+        const n = alerts.filter((a) => a.tone === tone).length;
+        if (n === 0) return null;
+        return (
+          <span key={tone} className={`${styles.sev} ${styles[tone]}`}>
+            <b className="num">{n}</b> {ALERT_LOOK[tone].label}
+          </span>
+        );
+      })}
+    </div>
+  );
 }
 
 function buildAlerts(

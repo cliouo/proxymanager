@@ -21,6 +21,7 @@ import { useAssistant } from './AssistantContext';
 import { CollapsibleResult, ResultCard, type ConfirmResolution } from './cards';
 import { ErrorBanner } from './ErrorBanner';
 import { Markdown } from './Markdown';
+import { IconTile } from '@/components/ui/IconTile';
 
 type AssistantBlock =
   | {
@@ -95,7 +96,9 @@ interface Restored {
 function loadPersisted(): Restored | null {
   if (typeof window === 'undefined') return null;
   try {
-    const raw = window.localStorage.getItem(`${STORE_KEY}:${sessionStorage.getItem('pm.profileId') ?? 'unbound'}`);
+    const raw = window.localStorage.getItem(
+      `${STORE_KEY}:${sessionStorage.getItem('pm.profileId') ?? 'unbound'}`,
+    );
     if (!raw) return null;
     const p = JSON.parse(raw) as Persisted;
     if (!p || !CID_RE.test(p.conversationId) || !Array.isArray(p.messages)) return null;
@@ -491,7 +494,12 @@ export function AssistantPanel() {
   // in-flight stream keeps running in the background. The trigger lives in the
   // topbar (`.ai-fab`), wired through AssistantContext.
   return (
-    <aside ref={modalRef} aria-label="配置助手" className={`ai-drawer${open ? ' open' : ''}`} aria-hidden={!open}>
+    <aside
+      ref={modalRef}
+      aria-label="配置助手"
+      className={`ai-drawer${open ? ' open' : ''}`}
+      aria-hidden={!open}
+    >
       <div className="ai-head">
         <div className="ident">✦</div>
         <div>
@@ -520,17 +528,28 @@ export function AssistantPanel() {
       <div className="ai-body" ref={scrollRef} onScroll={onBodyScroll}>
         {messages.length === 0 ? (
           <>
-            <div className="ai-msg bot">
-              <p>
-                你好，我是配置助手。问我任何 mihomo / clash
-                配置问题，我会查官方文档、结合你当前配置作答。
-              </p>
-              <p>写操作（增删改规则、规则集、配置区块）会先给出 diff 卡片，确认后才执行。</p>
+            <div className="ai-welcome">
+              <IconTile name="sparkle" tone="ai" size={44} />
+              <h3>有什么可以帮你？</h3>
+              <p>问我任何 mihomo / clash 配置问题，我会查官方文档、结合你当前配置作答。</p>
+              <div className="ai-caps">
+                <div className="ai-caps-title">可以让我</div>
+                <ul>
+                  <li>解释配置字段、取值和官方文档里的用法</li>
+                  <li>查看当前配置里的策略组、规则和订阅</li>
+                  <li>增删改规则、规则集和配置区块</li>
+                </ul>
+              </div>
+              <p className="ai-welcome-note">写操作会先给出 diff 卡片，确认后才执行。</p>
             </div>
-            <div className="ai-suggests">
+            <div className="ai-starters">
+              <div className="ai-caps-title">试试这些</div>
               {EXAMPLES.map((ex) => (
-                <button key={ex} className="chip" onClick={() => sendText(ex)}>
-                  {ex}
+                <button key={ex} type="button" className="ai-starter" onClick={() => sendText(ex)}>
+                  <span className="ai-starter-text">{ex}</span>
+                  <span className="ai-starter-go" aria-hidden="true">
+                    →
+                  </span>
                 </button>
               ))}
             </div>

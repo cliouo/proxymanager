@@ -1,25 +1,33 @@
+/* —— 详情头属性条：一块表面，单元格之间用细线分隔 —— */
 .metaGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 12px;
-  margin-bottom: 16px;
-}
-.metaGrid .cell {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  margin: 0 0 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
   background: var(--surface-2);
-  border-radius: var(--r-sm);
-  padding: 9px 12px;
+  overflow: hidden;
+}
+.cell {
   min-width: 0;
+  padding: 11px 14px;
+  box-shadow: -1px 0 0 var(--border);
 }
-.metaGrid .cell .k {
-  font: 10px var(--font-mono);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+.k {
+  font-size: 12px;
+  color: var(--muted);
+}
+.v {
+  margin: 4px 0 0;
+  font: 550 13px var(--font-mono);
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
+.v.acc {
+  color: var(--accent);
+}
+.v.faint {
   color: var(--faint);
-}
-.metaGrid .cell .v {
-  font: 550 12.5px var(--font-mono);
-  margin-top: 3px;
-  word-break: break-all;
 }
 
 .usedBy {
@@ -58,6 +66,10 @@
 @media (max-width: 600px) {
   .metaGrid {
     grid-template-columns: 1fr 1fr;
-    gap: 8px;
+  }
+  .cell {
+    box-shadow:
+      -1px 0 0 var(--border),
+      0 -1px 0 var(--border);
   }
 }

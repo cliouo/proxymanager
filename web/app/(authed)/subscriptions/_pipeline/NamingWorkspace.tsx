@@ -519,6 +519,16 @@ export function NamingWorkspace({
     );
   }
 
+  // Fields no source can supply: their chips are dimmed (still insertable —
+  // a collection's members may change).
+  const unavailableEverywhere = new Set<string>(
+    data.health.length > 0
+      ? data.health
+          .map((h) => h.unavailable)
+          .reduce((acc, list) => acc.filter((f) => list.includes(f)))
+      : [],
+  );
+
   const issues = preview?.issues ?? [];
   const issueByCode = (code: string) => issues.filter((i) => i.code === code);
 
@@ -531,344 +541,396 @@ export function NamingWorkspace({
         </span>
       </PageTopbar>
       <div className={styles.workspace}>
-        {/* 1 · naming health */}
-        <section className={styles.card} aria-labelledby="health-title">
-          <h2 id="health-title">命名健康</h2>
-          {data.health.map((source) => (
-            <div key={source.sourceKey} className={styles.healthSource}>
-              <h3>{source.sourceLabel}</h3>
-              <p className={styles.note}>
-                {source.nodeCount} 个节点 · 歧义节点 {source.ambiguousCount}
-                {source.unavailable.length > 0 &&
-                  ` · 不可用字段：${source.unavailable.map((f) => FIELD_HELP[f as NamingField] ?? f).join('、')}`}
-                {source.partial.length > 0 &&
-                  ` · 部分覆盖：${source.partial.map((f) => FIELD_HELP[f as NamingField] ?? f).join('、')}`}
+        <div className={styles.mainCol}>
+          {/* 1 · template editor + full-plan policy */}
+          <section className={styles.card} aria-labelledby="editor-title">
+            <h2 id="editor-title">命名模板</h2>
+            {activation === 'absent' && (
+              <p className={styles.info} role="status">
+                尚未启用「名称统一」。推荐模板（确定性生成，无需 AI）已填入，可直接预览并应用。
               </p>
-              <table className={styles.matrix}>
-                <caption className={styles.srOnly}>字段覆盖率矩阵</caption>
-                <thead>
-                  <tr>
-                    <th scope="col">字段</th>
-                    <th scope="col">覆盖</th>
-                    <th scope="col">置信度分布</th>
-                    <th scope="col">代表值（脱敏）</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {source.fields.map((field) => (
-                    <tr key={field.field}>
-                      <th scope="row">{field.label}</th>
-                      <td>
-                        {field.present}/{field.total}（{field.percent}%）
-                      </td>
-                      <td>
-                        {field.confidence.high > 0 && `高 ${field.confidence.high}`}
-                        {field.confidence.medium > 0 && ` · 中 ${field.confidence.medium}`}
-                        {field.confidence.low > 0 && ` · 低 ${field.confidence.low}`}
-                        {field.confidence.high + field.confidence.medium + field.confidence.low ===
-                          0 && '—'}
-                      </td>
-                      <td className={styles.samples}>
-                        {field.samples.length > 0
-                          ? field.samples.map((s) => (
-                              <span
-                                key={s.value}
-                                className="mono"
-                                title={`${KIND_LABELS[s.kind] ?? s.kind} · 置信 ${CONFIDENCE_LABELS[s.confidence] ?? s.confidence}`}
-                              >
-                                {s.value}×{s.count}
-                              </span>
-                            ))
-                          : '—'}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {source.nodeFacts.length > 0 && (
-                <details className={styles.details}>
-                  <summary>逐节点事实（不透明句柄 · 有界）</summary>
-                  <ul className={styles.factList}>
-                    {source.nodeFacts.slice(0, 20).map((fact, i) => (
-                      <li key={`${fact.node}-${fact.field}-${i}`} className="mono">
-                        {fact.node.slice(0, 8)} ·{' '}
-                        {FIELD_HELP[fact.field as NamingField] ?? fact.field} ·{' '}
-                        {fact.value ?? '未知'} ·{' '}
-                        {CONFIDENCE_LABELS[fact.confidence ?? ''] ?? '未知'} ·{' '}
-                        {KIND_LABELS[fact.kind ?? ''] ?? '未知'}
-                        {fact.ambiguous ? ' · 歧义' : ''}
-                      </li>
-                    ))}
-                  </ul>
-                </details>
-              )}
-              {source.drift.length > 0 && (
-                <div className={styles.warn} role="status">
-                  <b>漂移提示：</b>
-                  {source.drift
-                    .map(
-                      (d) =>
-                        `${FIELD_HELP[d.field as NamingField] ?? d.field}：${d.samples.join(' / ')}`,
-                    )
-                    .join('；')}
-                </div>
-              )}
-            </div>
-          ))}
-        </section>
-
-        {/* 2 · template editor + full-plan policy */}
-        <section className={styles.card} aria-labelledby="editor-title">
-          <h2 id="editor-title">命名模板</h2>
-          {activation === 'absent' && (
-            <p className={styles.warn} role="status">
-              尚未启用「名称统一」。推荐模板（确定性生成，无需 AI）已填入，可直接预览并应用。
-            </p>
-          )}
-          {activation === 'disabled' && (
-            <p className={styles.warn} role="status">
-              「名称统一」当前已停用。已保存的方案已填入，可直接重新应用（无需其他修改）。
-            </p>
-          )}
-          <textarea
-            ref={draftRef}
-            className={`input mono ${styles.templateInput}`}
-            value={draft}
-            rows={3}
-            aria-label="命名模板"
-            aria-describedby="workspace-validation"
-            spellCheck={false}
-            onChange={(e) => setDraft(e.target.value)}
-          />
-          <p
-            id="workspace-validation"
-            className={validation.ok ? styles.note : styles.error}
-            role={validation.ok ? 'note' : 'alert'}
-          >
-            {validation.ok
-              ? '模板合法：${字段} 必选，${?字段: 内容} 可选（字段缺失时整段消失），$$ 转义字面 $，分隔符写在模板里。'
-              : validation.message}
-          </p>
-          <div className={styles.chips} role="group" aria-label="占位符">
-            {NAMING_FIELDS.map((field) => (
-              <button
-                key={field}
-                type="button"
-                className="chip"
-                onClick={() => insertField(field)}
-                title={FIELD_HELP[field]}
-              >
-                {'${'}
-                {field}
-                {'}'}
-              </button>
-            ))}
-          </div>
-          <p className={styles.note}>
-            序号优先复用上游编号（香港 01 → 01），否则由服务端分配并持久化，上游重排不会翻动名称。
-            同配置节点只保留一次（按来源优先级）；格式化重名用「来源-序号」有意义地消歧。
-            保存只改模板时，已有的来源别名 / 识别规则 / 台湾旗策略全部保留；AI
-            建议会整份替换模板与策略。
-          </p>
-        </section>
-
-        {/* 3 · AI suggestion (full-plan draft replacement, truthful disclosure) */}
-        <section className={styles.card} aria-labelledby="ai-title">
-          <h2 id="ai-title">AI 建议</h2>
-          <div className={styles.row}>
-            <button
-              type="button"
-              className="btn"
-              onClick={runAi}
-              disabled={ai.running}
-              aria-busy={ai.running}
-            >
-              {ai.running ? '分析中…' : 'AI 建议模板'}
-            </button>
-            <span className={styles.note}>
-              可选：让 AI 根据脱敏后的节点特征建议完整方案（模板 + 台湾旗策略 + 来源别名 +
-              识别规则）， 应用后会整份替换当前草稿，仍需你保存才生效。
-            </span>
-          </div>
-          {ai.error && (
-            <p className={styles.error} role="alert">
-              {ai.error}（手动配置不受影响）
-            </p>
-          )}
-          {ai.suggestion && ai.payload && (
-            <AiAnalysisPanel suggestion={ai.suggestion} payload={ai.payload} onApply={applyAi} />
-          )}
-        </section>
-
-        {/* 4 · raw → facts → final preview */}
-        <section className={styles.card} aria-labelledby="preview-title">
-          <h2 id="preview-title">原始 → 事实 → 最终名称</h2>
-          <div className={styles.row}>
-            <button
-              type="button"
-              className="btn primary"
-              onClick={runPreview}
-              disabled={busy || !validation.ok}
-            >
-              {busy ? '预览中…' : '预览全部节点'}
-            </button>
-            <span className={styles.note}>只读试算，不会保存。</span>
-          </div>
-          {previewError && (
-            <p className={styles.error} role="alert">
-              {previewError}
-            </p>
-          )}
-          {preview && (
-            <div>
-              <p className={styles.note} role="status">
-                共 {preview.after.count} 个节点
-                {preview.after.truncated ? '（仅显示前 300 个名称）' : ''}
-              </p>
-              {issueByCode('duplicate-final-name').length > 0 && (
-                <div className={styles.warn} role="status">
-                  最终名称仍有重名（保存会被拒绝）：
-                  {issueByCode('duplicate-final-name')
-                    .map((i) => i.name)
-                    .join('、')}
-                </div>
-              )}
-              {issueByCode('rename-collision-resolved').length > 0 && (
-                <div className={styles.warn} role="status">
-                  已用「来源-序号」消歧：
-                  {issueByCode('rename-collision-resolved')
-                    .map((i) => i.name)
-                    .join('、')}
-                </div>
-              )}
-              {issueByCode('true-dedup').length > 0 && (
-                <div className={styles.warn} role="status">
-                  同配置节点已去重（{issueByCode('true-dedup').length} 条）：保留{' '}
-                  {issueByCode('true-dedup')
-                    .slice(0, 3)
-                    .map((i) => i.kept)
-                    .join('、')}
-                </div>
-              )}
-              {issueByCode('orphaned-reference').length > 0 && (
-                <div className={styles.error} role="alert">
-                  改名会让引用悬空（链式代理后端悬空会导致整份配置无法加载）：
-                  {issueByCode('orphaned-reference')
-                    .slice(0, 5)
-                    .map((i) => `${i.node}（${i.via}）`)
-                    .join('、')}
-                </div>
-              )}
-              <ul className={styles.nameList}>
-                {preview.after.names.slice(0, 20).map((name, i) => (
-                  <li key={i} className="mono">
-                    {name}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </section>
-
-        {/* 5 · diagnostics (current state) */}
-        {data.diagnostics.collisions.length + data.diagnostics.deduped.length > 0 && (
-          <section className={styles.card} aria-labelledby="diag-title">
-            <h2 id="diag-title">当前模板诊断</h2>
-            {data.diagnostics.collisions.length > 0 && (
-              <div className={styles.warn} role="status">
-                当前模板下 {data.diagnostics.collisions.length} 个格式化重名已按「来源-序号」消歧。
-              </div>
             )}
-            {data.diagnostics.deduped.length > 0 && (
-              <div className={styles.warn} role="status">
-                当前模板下 {data.diagnostics.deduped.length} 个同配置节点已按来源优先级去重：
-                {data.diagnostics.deduped
-                  .slice(0, 3)
-                  .map((d) => `「${d.kept}」← 「${d.dropped}」`)
-                  .join('；')}
+            {activation === 'disabled' && (
+              <p className={styles.info} role="status">
+                「名称统一」当前已停用。已保存的方案已填入，可直接重新应用（无需其他修改）。
+              </p>
+            )}
+            <textarea
+              ref={draftRef}
+              className={`input mono ${styles.templateInput}`}
+              value={draft}
+              rows={3}
+              aria-label="命名模板"
+              aria-describedby="workspace-validation"
+              spellCheck={false}
+              onChange={(e) => setDraft(e.target.value)}
+            />
+            <p
+              id="workspace-validation"
+              className={validation.ok ? styles.note : styles.error}
+              role={validation.ok ? 'note' : 'alert'}
+            >
+              {validation.ok
+                ? '模板合法：${字段} 必选，${?字段: 内容} 可选（字段缺失时整段消失），$$ 转义字面 $，分隔符写在模板里。'
+                : validation.message}
+            </p>
+            <div className={styles.chips} role="group" aria-label="占位符">
+              {NAMING_FIELDS.map((field) => (
+                <button
+                  key={field}
+                  type="button"
+                  className={`chip${unavailableEverywhere.has(field) ? ` ${styles.chipDim}` : ''}`}
+                  onClick={() => insertField(field)}
+                  title={
+                    unavailableEverywhere.has(field)
+                      ? `${FIELD_HELP[field]} · 这个来源里识别不到，插入后该段会为空`
+                      : FIELD_HELP[field]
+                  }
+                >
+                  {'${'}
+                  {field}
+                  {'}'}
+                </button>
+              ))}
+            </div>
+            <details className={styles.more}>
+              <summary>序号、去重与保存规则</summary>
+              <p className={styles.note}>
+                序号优先复用上游编号（香港 01 →
+                01），否则由服务端分配并持久化，上游重排不会翻动名称。
+                同配置节点只保留一次（按来源优先级）；格式化重名用「来源-序号」有意义地消歧。
+                保存只改模板时，已有的来源别名 / 识别规则 / 台湾旗策略全部保留；AI
+                建议会整份替换模板与策略。
+              </p>
+            </details>
+          </section>
+
+          {/* 2 · AI suggestion (full-plan draft replacement, truthful disclosure) */}
+          <section className={styles.card} aria-labelledby="ai-title">
+            <h2 id="ai-title">AI 建议</h2>
+            <div className={styles.row}>
+              <button
+                type="button"
+                className="btn"
+                onClick={runAi}
+                disabled={ai.running}
+                aria-busy={ai.running}
+              >
+                {ai.running ? '分析中…' : 'AI 建议模板'}
+              </button>
+              <span className={styles.note}>
+                可选：让 AI 根据脱敏后的节点特征建议完整方案（模板 + 台湾旗策略 + 来源别名 +
+                识别规则）， 应用后会整份替换当前草稿，仍需你保存才生效。
+              </span>
+            </div>
+            {ai.error && (
+              <p className={styles.error} role="alert">
+                {ai.error}（手动配置不受影响）
+              </p>
+            )}
+            {ai.suggestion && ai.payload && (
+              <AiAnalysisPanel suggestion={ai.suggestion} payload={ai.payload} onApply={applyAi} />
+            )}
+          </section>
+
+          {/* 3 · raw → facts → final preview */}
+          <section className={styles.card} aria-labelledby="preview-title">
+            <h2 id="preview-title">原始 → 事实 → 最终名称</h2>
+            <div className={styles.row}>
+              <button
+                type="button"
+                className="btn"
+                onClick={runPreview}
+                disabled={busy || !validation.ok}
+              >
+                {busy ? '预览中…' : '预览全部节点'}
+              </button>
+              <span className={styles.note}>只读试算，不会保存。</span>
+            </div>
+            {previewError && (
+              <p className={styles.error} role="alert">
+                {previewError}
+              </p>
+            )}
+            {preview && (
+              <div>
+                <p className={styles.note} role="status">
+                  共 {preview.after.count} 个节点
+                  {preview.after.truncated ? '（仅显示前 300 个名称）' : ''}
+                </p>
+                {issueByCode('duplicate-final-name').length > 0 && (
+                  <div className={styles.warn} role="status">
+                    最终名称仍有重名（保存会被拒绝）：
+                    {issueByCode('duplicate-final-name')
+                      .map((i) => i.name)
+                      .join('、')}
+                  </div>
+                )}
+                {issueByCode('rename-collision-resolved').length > 0 && (
+                  <div className={styles.warn} role="status">
+                    已用「来源-序号」消歧：
+                    {issueByCode('rename-collision-resolved')
+                      .map((i) => i.name)
+                      .join('、')}
+                  </div>
+                )}
+                {issueByCode('true-dedup').length > 0 && (
+                  <div className={styles.warn} role="status">
+                    同配置节点已去重（{issueByCode('true-dedup').length} 条）：保留{' '}
+                    {issueByCode('true-dedup')
+                      .slice(0, 3)
+                      .map((i) => i.kept)
+                      .join('、')}
+                  </div>
+                )}
+                {issueByCode('orphaned-reference').length > 0 && (
+                  <div className={styles.error} role="alert">
+                    改名会让引用悬空（链式代理后端悬空会导致整份配置无法加载）：
+                    {issueByCode('orphaned-reference')
+                      .slice(0, 5)
+                      .map((i) => `${i.node}（${i.via}）`)
+                      .join('、')}
+                  </div>
+                )}
+                <ul className={styles.nameList}>
+                  {preview.after.names.slice(0, 20).map((name, i) => (
+                    <li key={i} className="mono">
+                      {name}
+                    </li>
+                  ))}
+                </ul>
               </div>
             )}
           </section>
-        )}
 
-        {/* 6 · reference impact */}
-        <section className={styles.card} aria-labelledby="refs-title">
-          <h2 id="refs-title">消费方与引用影响</h2>
-          <p className={styles.note}>
-            消费该来源的配置文件：
-            {data.references.consumingProfiles.length > 0
-              ? data.references.consumingProfiles.map((p) => p.name).join('、')
-              : '无（保存仅走 CAS）'}
-          </p>
-          {data.references.orphaned.length > 0 && (
-            <div className={styles.error} role="alert">
-              当前模板会令以下按名引用悬空：
-              {data.references.orphaned
-                .slice(0, 5)
-                .map((r) => `${r.node}（${r.via}）`)
-                .join('、')}
+          {/* 4 · naming health (full matrix) */}
+          <section className={styles.card} aria-labelledby="health-title">
+            <h2 id="health-title">命名健康</h2>
+            {data.health.map((source) => (
+              <div key={source.sourceKey} className={styles.healthSource}>
+                <div className={styles.healthHead}>
+                  <h3>{source.sourceLabel}</h3>
+                  <dl className={styles.healthStats}>
+                    <div>
+                      <dt>节点</dt>
+                      <dd className="num">{source.nodeCount}</dd>
+                    </div>
+                    <div className={source.ambiguousCount > 0 ? styles.statWarn : undefined}>
+                      <dt>歧义</dt>
+                      <dd className="num">{source.ambiguousCount}</dd>
+                    </div>
+                    <div className={source.unavailable.length > 0 ? styles.statMuted : undefined}>
+                      <dt>不可用字段</dt>
+                      <dd className="num">{source.unavailable.length}</dd>
+                    </div>
+                  </dl>
+                </div>
+                {(source.unavailable.length > 0 || source.partial.length > 0) && (
+                  <p className={styles.note}>
+                    {source.unavailable.length > 0 &&
+                      `不可用字段：${source.unavailable.map((f) => FIELD_HELP[f as NamingField] ?? f).join('、')}`}
+                    {source.unavailable.length > 0 && source.partial.length > 0 && ' · '}
+                    {source.partial.length > 0 &&
+                      `部分覆盖：${source.partial.map((f) => FIELD_HELP[f as NamingField] ?? f).join('、')}`}
+                  </p>
+                )}
+                <table className={styles.matrix}>
+                  <caption className={styles.srOnly}>字段覆盖率矩阵</caption>
+                  <thead>
+                    <tr>
+                      <th scope="col">字段</th>
+                      <th scope="col">覆盖</th>
+                      <th scope="col">置信度分布</th>
+                      <th scope="col">代表值（脱敏）</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {source.fields.map((field) => (
+                      <tr key={field.field}>
+                        <th scope="row">{field.label}</th>
+                        <td>
+                          <span className={styles.cover}>
+                            <span className={styles.coverBar} aria-hidden="true">
+                              <i
+                                className={
+                                  field.percent === 0
+                                    ? styles.coverNone
+                                    : field.percent < 100
+                                      ? styles.coverPart
+                                      : undefined
+                                }
+                                style={{ width: `${field.percent}%` }}
+                              />
+                            </span>
+                            <span className="num">
+                              {field.present}/{field.total}（{field.percent}%）
+                            </span>
+                          </span>
+                        </td>
+                        <td>
+                          {field.confidence.high > 0 && `高 ${field.confidence.high}`}
+                          {field.confidence.medium > 0 && ` · 中 ${field.confidence.medium}`}
+                          {field.confidence.low > 0 && ` · 低 ${field.confidence.low}`}
+                          {field.confidence.high +
+                            field.confidence.medium +
+                            field.confidence.low ===
+                            0 && '—'}
+                        </td>
+                        <td className={styles.samples}>
+                          {field.samples.length > 0
+                            ? field.samples.map((s) => (
+                                <span
+                                  key={s.value}
+                                  className="mono"
+                                  title={`${KIND_LABELS[s.kind] ?? s.kind} · 置信 ${CONFIDENCE_LABELS[s.confidence] ?? s.confidence}`}
+                                >
+                                  {s.value}×{s.count}
+                                </span>
+                              ))
+                            : '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {source.nodeFacts.length > 0 && (
+                  <details className={styles.details}>
+                    <summary>逐节点事实（不透明句柄 · 有界）</summary>
+                    <ul className={styles.factList}>
+                      {source.nodeFacts.slice(0, 20).map((fact, i) => (
+                        <li key={`${fact.node}-${fact.field}-${i}`} className="mono">
+                          {fact.node.slice(0, 8)} ·{' '}
+                          {FIELD_HELP[fact.field as NamingField] ?? fact.field} ·{' '}
+                          {fact.value ?? '未知'} ·{' '}
+                          {CONFIDENCE_LABELS[fact.confidence ?? ''] ?? '未知'} ·{' '}
+                          {KIND_LABELS[fact.kind ?? ''] ?? '未知'}
+                          {fact.ambiguous ? ' · 歧义' : ''}
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
+                {source.drift.length > 0 && (
+                  <div className={styles.warn} role="status">
+                    <b>漂移提示：</b>
+                    {source.drift
+                      .map(
+                        (d) =>
+                          `${FIELD_HELP[d.field as NamingField] ?? d.field}：${d.samples.join(' / ')}`,
+                      )
+                      .join('；')}
+                  </div>
+                )}
+              </div>
+            ))}
+          </section>
+
+          {/* 5 · diagnostics (current state) */}
+          {data.diagnostics.collisions.length + data.diagnostics.deduped.length > 0 && (
+            <section className={styles.card} aria-labelledby="diag-title">
+              <h2 id="diag-title">当前模板诊断</h2>
+              {data.diagnostics.collisions.length > 0 && (
+                <div className={styles.warn} role="status">
+                  当前模板下 {data.diagnostics.collisions.length}{' '}
+                  个格式化重名已按「来源-序号」消歧。
+                </div>
+              )}
+              {data.diagnostics.deduped.length > 0 && (
+                <div className={styles.warn} role="status">
+                  当前模板下 {data.diagnostics.deduped.length} 个同配置节点已按来源优先级去重：
+                  {data.diagnostics.deduped
+                    .slice(0, 3)
+                    .map((d) => `「${d.kept}」← 「${d.dropped}」`)
+                    .join('；')}
+                </div>
+              )}
+            </section>
+          )}
+        </div>
+        <aside className={styles.sideCol} aria-label="应用与影响">
+          {/* 6 · apply state (sticky aside) + persisted rollback */}
+          <section className={styles.card} aria-labelledby="apply-title">
+            <h2 id="apply-title">应用</h2>
+            <div className={styles.row}>
+              <button
+                type="button"
+                className="btn primary"
+                onClick={applyDraft}
+                disabled={busy || !validation.ok || !applyable}
+                title={activation === 'enabled' && planMatches ? '方案未变化，无需保存' : undefined}
+              >
+                保存并应用模板
+              </button>
+              <button
+                type="button"
+                className="btn"
+                onClick={rollback}
+                disabled={busy || !canRollback}
+              >
+                回滚到上一方案
+              </button>
+              <button
+                type="button"
+                className="btn"
+                onClick={resetDraft}
+                disabled={!applyable && activation !== 'enabled'}
+              >
+                放弃未保存修改
+              </button>
+              <span className={styles.note} role="status">
+                {lastAction === 'applied' && '已保存并生效。'}
+                {lastAction === 'rolled-back' && '已回滚到上一方案。'}
+                {!lastAction && activation === 'absent' && '首次使用：推荐模板可直接应用。'}
+                {!lastAction && activation === 'disabled' && '已停用：已保存方案可直接重新应用。'}
+                {!lastAction && activation === 'enabled' && applyable && '有未保存的修改。'}
+                {!lastAction && activation === 'enabled' && !applyable && '已与保存状态一致。'}
+              </span>
             </div>
-          )}
-        </section>
-
-        {/* 7 · apply state + persisted rollback */}
-        <section className={styles.card} aria-labelledby="apply-title">
-          <h2 id="apply-title">应用</h2>
-          <div className={styles.row}>
-            <button
-              type="button"
-              className="btn primary"
-              onClick={applyDraft}
-              disabled={busy || !validation.ok || !applyable}
-              title={activation === 'enabled' && planMatches ? '方案未变化，无需保存' : undefined}
-            >
-              保存并应用模板
-            </button>
-            <button
-              type="button"
-              className="btn"
-              onClick={rollback}
-              disabled={busy || !canRollback}
-            >
-              回滚到上一方案
-            </button>
-            <button
-              type="button"
-              className="btn"
-              onClick={resetDraft}
-              disabled={!applyable && activation !== 'enabled'}
-            >
-              放弃未保存修改
-            </button>
-            <span className={styles.note} role="status">
-              {lastAction === 'applied' && '已保存并生效。'}
-              {lastAction === 'rolled-back' && '已回滚到上一方案。'}
-              {!lastAction && activation === 'absent' && '首次使用：推荐模板可直接应用。'}
-              {!lastAction && activation === 'disabled' && '已停用：已保存方案可直接重新应用。'}
-              {!lastAction && activation === 'enabled' && applyable && '有未保存的修改。'}
-              {!lastAction && activation === 'enabled' && !applyable && '已与保存状态一致。'}
-            </span>
-          </div>
-          {saveError && (
-            <p className={styles.error} role="alert">
-              {saveError}
+            {saveError && (
+              <p className={styles.error} role="alert">
+                {saveError}
+              </p>
+            )}
+            {rollbackError && (
+              <p className={styles.error} role="alert">
+                {rollbackError}
+              </p>
+            )}
+            <p className={styles.note}>
+              {canRollback
+                ? data.priorPlan.hadManaged === false
+                  ? '服务端已持久化上一状态（未启用命名），可一键回滚并移除「名称统一」步骤。'
+                  : '服务端已持久化上一方案（含来源别名 / 识别规则 / 台湾旗策略），可随时一键回滚。'
+                : '暂无持久化的上一方案：首次应用后，之前的完整状态（含“未启用”）会成为回滚目标。'}
             </p>
-          )}
-          {rollbackError && (
-            <p className={styles.error} role="alert">
-              {rollbackError}
+            <details className={styles.more}>
+              <summary>保存时会做什么</summary>
+              <p className={styles.note}>
+                保存前会对每个消费方配置文件用同一候选做完整预检（共享来源不被静默改写），并按配置版本
+                CAS 提交。旧版（成分/预设）配置会自动投影为等价模板，首次保存后持久化为模板形态。
+              </p>
+            </details>
+          </section>
+          {/* 7 · reference impact */}
+          <section className={styles.card} aria-labelledby="refs-title">
+            <h2 id="refs-title">消费方与引用影响</h2>
+            <p className={styles.note}>
+              消费该来源的配置文件：
+              {data.references.consumingProfiles.length > 0
+                ? data.references.consumingProfiles.map((p) => p.name).join('、')
+                : '无（保存仅走 CAS）'}
             </p>
-          )}
-          <p className={styles.note}>
-            {canRollback
-              ? data.priorPlan.hadManaged === false
-                ? '服务端已持久化上一状态（未启用命名），可一键回滚并移除「名称统一」步骤。'
-                : '服务端已持久化上一方案（含来源别名 / 识别规则 / 台湾旗策略），可随时一键回滚。'
-              : '暂无持久化的上一方案：首次应用后，之前的完整状态（含“未启用”）会成为回滚目标。'}
-            保存前会对每个消费方配置文件用同一候选做完整预检（共享来源不被静默改写），并按配置版本
-            CAS 提交。旧版（成分/预设）配置会自动投影为等价模板，首次保存后持久化为模板形态。
-          </p>
-        </section>
+            {data.references.orphaned.length > 0 && (
+              <div className={styles.error} role="alert">
+                当前模板会令以下按名引用悬空：
+                {data.references.orphaned
+                  .slice(0, 5)
+                  .map((r) => `${r.node}（${r.via}）`)
+                  .join('、')}
+              </div>
+            )}
+          </section>
+        </aside>
       </div>
     </div>
   );

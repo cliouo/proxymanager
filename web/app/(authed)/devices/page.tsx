@@ -412,7 +412,9 @@ function DeviceCard({
           </span>
           <span className={styles.capabilityCopy}>
             <span>配置差异</span>
-            <strong>{labels.length === 0 ? '无差异' : `${labels.length} 项差异`}</strong>
+            <strong className={labels.length > 0 ? styles.has : undefined}>
+              {labels.length === 0 ? '无差异' : `${labels.length} 项差异`}
+            </strong>
             <small>
               {labels.length === 0
                 ? '完全跟随共享配置'
@@ -430,7 +432,7 @@ function DeviceCard({
           </span>
           <span className={styles.capabilityCopy}>
             <span>Tailscale</span>
-            <strong>{tailscale.label}</strong>
+            <strong className={styles[tailscale.tone]}>{tailscale.label}</strong>
             <small>{tailscale.detail}</small>
           </span>
           <span className={styles.rowArrow} aria-hidden="true">

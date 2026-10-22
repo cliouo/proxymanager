@@ -6,6 +6,7 @@ import { ScopePill } from '@/components/Topbar';
 import { CodeEditor } from '@/components/ui/CodeEditor';
 import { ApiError, api } from '@/lib/client/api';
 import { useUnsavedGuard, confirmUnsavedChanges } from '@/lib/client/useUnsavedGuard';
+import { IconTile } from '@/components/ui/IconTile';
 import styles from './ruleSets.module.css';
 
 type Format = 'yaml' | 'text' | 'mrs';
@@ -78,7 +79,9 @@ export default function RuleSetsPage() {
       const [list, m, rules] = await Promise.all([
         api<{ data: RuleSet[] }>('/api/v1/rule-sets'),
         api<{ data: Meta }>('/api/v1/meta'),
-        api<{ data: { ruleSets: Record<string, number> } }>('/api/v1/rules/summary').catch(() => null),
+        api<{ data: { ruleSets: Record<string, number> } }>('/api/v1/rules/summary').catch(
+          () => null,
+        ),
       ]);
       setSets(list.data);
       setMeta(m.data);
@@ -260,30 +263,36 @@ export default function RuleSetsPage() {
                       setCreating(false);
                     }}
                   >
-                    <b>
-                      {s.name}
-                      <span
-                        className={`pill ${used > 0 || inBase ? 'ai' : usageComplete ? 'warn' : 'plain'} plain`}
-                        style={{ marginLeft: 'auto' }}
-                        title={
-                          !usageComplete && used === 0 && !inBase
-                            ? '当前配置引用统计暂不可用'
-                            : undefined
-                        }
-                      >
-                        {/* P3-27: don't claim "当前配置未引用" when the usage scan was incomplete. */}
-                        {used > 0
-                          ? `被 ${used} 引用`
-                          : inBase
-                            ? 'base 引用'
-                            : usageComplete
-                              ? '当前配置未引用'
-                              : '引用未知'}
+                    <IconTile
+                      name={sourceOf(s) === 'remote' ? 'cloud' : 'file'}
+                      tone="neutral"
+                      size={28}
+                    />
+                    <span className="li-main">
+                      <span className="li-name">
+                        <b title={s.name}>{s.name}</b>
+                        <span
+                          className={`pill ${used > 0 || inBase ? 'ai' : usageComplete ? 'warn' : 'plain'} plain`}
+                          title={
+                            !usageComplete && used === 0 && !inBase
+                              ? '当前配置引用统计暂不可用'
+                              : undefined
+                          }
+                        >
+                          {/* P3-27: don't claim "当前配置未引用" when the usage scan was incomplete. */}
+                          {used > 0
+                            ? `被 ${used} 引用`
+                            : inBase
+                              ? 'base 引用'
+                              : usageComplete
+                                ? '当前配置未引用'
+                                : '引用未知'}
+                        </span>
                       </span>
-                    </b>
-                    <span>
-                      {sourceOf(s)} · {s.format}
-                      {s.behavior ? ` · ${s.behavior}` : ''} · {timeAgo(s.updated_at)}
+                      <span className="li-meta">
+                        {sourceOf(s)} · {s.format}
+                        {s.behavior ? ` · ${s.behavior}` : ''} · {timeAgo(s.updated_at)}
+                      </span>
                     </span>
                   </button>
                 );
@@ -311,7 +320,7 @@ export default function RuleSetsPage() {
                 <LocalDetail
                   key={selected.id}
                   set={detail}
-                  usedBy={usageComplete ? usage[selected.name] ?? 0 : null}
+                  usedBy={usageComplete ? (usage[selected.name] ?? 0) : null}
                   referencedInBase={selected.referenced_in_base ?? false}
                   providerUrl={meta ? `${meta.ruleProvidersBase}/${selected.name}` : ''}
                   onSaved={() => reload(selected.name)}
@@ -335,7 +344,7 @@ export default function RuleSetsPage() {
               <RemoteDetail
                 key={selected.id}
                 set={selected}
-                usedBy={usageComplete ? usage[selected.name] ?? 0 : null}
+                usedBy={usageComplete ? (usage[selected.name] ?? 0) : null}
                 referencedInBase={selected.referenced_in_base ?? false}
                 onSaved={() => reload(selected.name)}
                 onDelete={() => onDelete(selected.id)}
@@ -362,6 +371,24 @@ export default function RuleSetsPage() {
 }
 
 /* ─── local detail ──────────────────────────────────────────────────── */
+
+/** Key/value strip under the detail header: one surface, cells split by hairlines. */
+function MetaStrip({
+  items,
+}: {
+  items: { k: string; v: React.ReactNode; tone?: 'acc' | 'faint' }[];
+}) {
+  return (
+    <dl className={styles.metaGrid}>
+      {items.map((item) => (
+        <div key={item.k} className={styles.cell}>
+          <dt className={styles.k}>{item.k}</dt>
+          <dd className={`${styles.v}${item.tone ? ` ${styles[item.tone]}` : ''}`}>{item.v}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
 
 function LocalDetail({
   set,
@@ -438,32 +465,25 @@ function LocalDetail({
         </button>
       </div>
       <div className="panel-body">
-        <div className={styles.metaGrid}>
-          <div className="cell">
-            <div className="k">behavior</div>
-            <div className="v">{behavior || '—'}</div>
-          </div>
-          <div className="cell">
-            <div className="k">format</div>
-            <div className="v">{format}</div>
-          </div>
-          <div className="cell">
-            <div className="k">被规则引用</div>
-            <div
-              className="v"
-              style={{ color: (usedBy ?? 0) > 0 || referencedInBase ? 'var(--accent)' : 'var(--faint)' }}
-            >
-              {usedBy === null ? '统计暂不可用' : usedBy > 0 ? `${usedBy} 条` : referencedInBase ? 'base 结构' : '当前配置 0 条'}
-            </div>
-          </div>
-          <div className="cell">
-            <div className="k">下发端点</div>
-            <div className="v" style={{ color: 'var(--accent)' }}>
-              {providerUrl || '—'}
-            </div>
-          </div>
-        </div>
-
+        <MetaStrip
+          items={[
+            { k: 'behavior', v: behavior || '—' },
+            { k: 'format', v: format },
+            {
+              k: '被规则引用',
+              v:
+                usedBy === null
+                  ? '统计暂不可用'
+                  : usedBy > 0
+                    ? `${usedBy} 条`
+                    : referencedInBase
+                      ? 'base 结构'
+                      : '当前配置 0 条',
+              tone: (usedBy ?? 0) > 0 || referencedInBase ? 'acc' : 'faint',
+            },
+            { k: '下发端点', v: providerUrl || '—', tone: 'acc' },
+          ]}
+        />
         <div className={styles.fields}>
           <div className={styles.col}>
             <span className={styles.lab}>格式</span>
@@ -513,11 +533,13 @@ function LocalDetail({
         </div>
 
         <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 14 }}>
-          {usedBy === null ? '当前配置引用统计暂不可用。' : (usedBy ?? 0) > 0
-            ? '已被当前配置规则引用，注入 rule-providers 并对外下发。'
-            : referencedInBase
-              ? '被 base 结构直接引用（如 DNS rule-set: 策略），已注入 rule-providers 下发。'
-              : '未被当前配置规则引用 · 此配置不下发（到「规则」页加 RULE-SET 规则启用）。'}
+          {usedBy === null
+            ? '当前配置引用统计暂不可用。'
+            : (usedBy ?? 0) > 0
+              ? '已被当前配置规则引用，注入 rule-providers 并对外下发。'
+              : referencedInBase
+                ? '被 base 结构直接引用（如 DNS rule-set: 策略），已注入 rule-providers 下发。'
+                : '未被当前配置规则引用 · 此配置不下发（到「规则」页加 RULE-SET 规则启用）。'}
           {behavior === 'domain' && (
             <span style={{ color: 'var(--faint)' }}>
               {' '}
@@ -632,32 +654,25 @@ function RemoteDetail({
         </button>
       </div>
       <div className="panel-body">
-        <div className={styles.metaGrid}>
-          <div className="cell">
-            <div className="k">host</div>
-            <div className="v">{hostOf(set.url) || '—'}</div>
-          </div>
-          <div className="cell">
-            <div className="k">format · behavior</div>
-            <div className="v">
-              {format}
-              {behavior ? ` · ${behavior}` : ''}
-            </div>
-          </div>
-          <div className="cell">
-            <div className="k">被规则引用</div>
-            <div
-              className="v"
-              style={{ color: (usedBy ?? 0) > 0 || referencedInBase ? 'var(--accent)' : 'var(--faint)' }}
-            >
-              {usedBy === null ? '统计暂不可用' : usedBy > 0 ? `${usedBy} 条` : referencedInBase ? 'base 结构' : '当前配置 0 条'}
-            </div>
-          </div>
-          <div className="cell">
-            <div className="k">抓取方</div>
-            <div className="v">mihomo 客户端</div>
-          </div>
-        </div>
+        <MetaStrip
+          items={[
+            { k: 'host', v: hostOf(set.url) || '—' },
+            { k: 'format · behavior', v: `${format}${behavior ? ` · ${behavior}` : ''}` },
+            {
+              k: '被规则引用',
+              v:
+                usedBy === null
+                  ? '统计暂不可用'
+                  : usedBy > 0
+                    ? `${usedBy} 条`
+                    : referencedInBase
+                      ? 'base 结构'
+                      : '当前配置 0 条',
+              tone: (usedBy ?? 0) > 0 || referencedInBase ? 'acc' : 'faint',
+            },
+            { k: '抓取方', v: 'mihomo 客户端' },
+          ]}
+        />
 
         <div className="field">
           <label>外部 URL</label>

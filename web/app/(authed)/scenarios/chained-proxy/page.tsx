@@ -5,6 +5,7 @@ import { ApiError, api } from '@/lib/client/api';
 import { PageTopbar } from '@/components/PageChrome';
 import { ScopePill } from '@/components/Topbar';
 import { useToast } from '@/components/ui/Toast';
+import { NavIcon } from '@/components/NavIcon';
 import styles from './chainedProxy.module.css';
 
 interface ProxySummary {
@@ -123,8 +124,8 @@ export default function ChainedProxyPage() {
 
       <p className={styles.intro}>
         链式代理把出口节点的流量先<b>套进前置节点</b>发出（底层写{' '}
-        <code className="mono">dialer-proxy</code> 字段）。目标站点看到的始终是<b>落地出口</b>的 IP，
-        常用于解锁、防风控等需要落地 IP 固定的场景。下图从左到右就是一条数据包的真实路径。
+        <code className="mono">dialer-proxy</code> 字段）。目标站点看到的始终是<b>落地出口</b>的
+        IP， 常用于解锁、防风控等需要落地 IP 固定的场景。下图从左到右就是一条数据包的真实路径。
       </p>
 
       <div className={styles.legend}>
@@ -183,9 +184,18 @@ export default function ChainedProxyPage() {
         )}
 
         {view.fixedChains.length === 0 ? (
-          <p className={styles.empty}>
-            暂无固定链路 — 一条固定链路把一个后端出口包成 group(proxies),再经一个固定前置入口(dialer-proxy)出站;前置可选节点或策略组。
-          </p>
+          <div className={styles.emptyBox}>
+            <span className={styles.emptyIcon}>
+              <NavIcon name="chain" size={18} />
+            </span>
+            <div>
+              <b>还没有固定链路</b>
+              <p>
+                固定链路把一个后端出口包成
+                group(proxies)，再经一个固定前置入口(dialer-proxy)出站；前置可选节点或策略组。
+              </p>
+            </div>
+          </div>
         ) : (
           view.fixedChains.map((c) => (
             <FixedFlow key={c.chainName} chain={c} onChanged={reload} onError={showError} />
@@ -221,9 +231,15 @@ export default function ChainedProxyPage() {
         )}
 
         {view.poolChains.length === 0 ? (
-          <p className={styles.empty}>
-            暂无链路池 — 链路池 = 候选前置节点组 + 把流量落到后端的包装 group。
-          </p>
+          <div className={styles.emptyBox}>
+            <span className={styles.emptyIcon}>
+              <NavIcon name="chain" size={18} />
+            </span>
+            <div>
+              <b>还没有链路池</b>
+              <p>链路池 = 候选前置节点组 + 把流量落到后端的包装 group。</p>
+            </div>
+          </div>
         ) : (
           view.poolChains.map((p) => (
             <PoolFlow
@@ -252,9 +268,25 @@ async function runOp(op: string, payload: unknown): Promise<void> {
 
 /* ---------- flow-lane station primitives ---------- */
 
+/** Long group / node names wrap at their own separators (: - _ space) instead
+ * of being cut mid-word; the full name stays in the tooltip. */
+function SoftName({ name }: { name: string }) {
+  const parts = name.split(/(?<=[:\-_ ])/);
+  return (
+    <>
+      {parts.map((part, i) => (
+        <span key={i}>
+          {part}
+          {i < parts.length - 1 && <wbr />}
+        </span>
+      ))}
+    </>
+  );
+}
+
 function Pipe({ delay, tag }: { delay: number; tag?: string }) {
   return (
-    <div className={styles.pipe}>
+    <div className={`${styles.pipe}${tag ? ` ${styles.pipeTagged}` : ''}`}>
       {tag && <span className={styles.pipeTag}>{tag}</span>}
       <i className={styles.packet} style={{ '--d': `${delay}s` } as React.CSSProperties} />
     </div>
@@ -267,7 +299,9 @@ function GhostStation({ glyph, name, role }: { glyph: string; name: string; role
       <div className={styles.stTop}>
         <div className={styles.stGlyph}>{glyph}</div>
       </div>
-      <div className={styles.stName}>{name}</div>
+      <div className={styles.stName} title={name}>
+        <SoftName name={name} />
+      </div>
       <div className={styles.stRole}>{role}</div>
     </div>
   );
@@ -294,7 +328,9 @@ function Station({
       <div className={styles.stTop}>
         <div className={styles.stGlyph}>{glyph}</div>
       </div>
-      <div className={styles.stName}>{name}</div>
+      <div className={styles.stName} title={name}>
+        <SoftName name={name} />
+      </div>
       <div className={styles.stRole}>{role}</div>
     </div>
   );
@@ -347,10 +383,16 @@ function FixedFlow({
       </div>
 
       <div className={styles.flowMeta}>
-        生成可路由节点 <code className="mono">{chain.chainName}</code>(克隆出口{' '}
-        <code className="mono">{chain.backend}</code> 并套上前置{' '}
-        <code className="mono">{chain.front}</code>)。<b>在规则或策略组里选它</b>，流量才会走这条链
-        —— 要选 <code className="mono">{chain.chainName}</code>，别直接选前置。
+        <p className={styles.usage}>
+          <span className={styles.usageTag}>用法</span>
+          在规则或策略组里选 <code className="mono">{chain.chainName}</code>
+          ，流量才会走这条链；别直接选前置。
+        </p>
+        <p className={styles.detail}>
+          生成可路由节点 <code className="mono">{chain.chainName}</code>（克隆出口{' '}
+          <code className="mono">{chain.backend}</code> 并套上前置{' '}
+          <code className="mono">{chain.front}</code>）。
+        </p>
       </div>
     </div>
   );
@@ -462,29 +504,32 @@ function PoolFlow({
       )}
 
       <div className={styles.flowMeta}>
-        {pool.smart ? (
-          <>
-            可路由节点 <code className="mono">{pool.chainName}</code> · 前置池{' '}
-            <code className="mono">{pool.poolName}</code> 用{' '}
-            <code className="mono">include-all-proxies</code>
-            {pool.smart.filter ? (
-              <>
-                {' '}
-                + <code className="mono">filter</code>
-              </>
-            ) : null}{' '}
-            动态纳入节点，订阅更新后自动重新匹配；落地出口固定为{' '}
-            <code className="mono">{pool.backend}</code>。
-          </>
-        ) : (
-          <>
-            可路由节点 <code className="mono">{pool.chainName}</code> · 前置由{' '}
-            <code className="mono">{pool.poolName}</code> 组按其组规则在池内切换，落地出口固定为{' '}
-            <code className="mono">{pool.backend}</code>。
-          </>
-        )}{' '}
-        <b>在规则或策略组里选 <code className="mono">{pool.chainName}</code></b> 才会用到这条链
-        ——别选前置池 <code className="mono">{pool.poolName}</code>（那只走前置、不经后端）。
+        <p className={styles.usage}>
+          <span className={styles.usageTag}>用法</span>
+          在规则或策略组里选 <code className="mono">{pool.chainName}</code>{' '}
+          才会用到这条链；别选前置池 <code className="mono">{pool.poolName}</code>
+          （那只走前置、不经后端）。
+        </p>
+        <p className={styles.detail}>
+          {pool.smart ? (
+            <>
+              前置池用 <code className="mono">include-all-proxies</code>
+              {pool.smart.filter ? (
+                <>
+                  {' '}
+                  + <code className="mono">filter</code>
+                </>
+              ) : null}{' '}
+              动态纳入节点，订阅更新后自动重新匹配；落地出口固定为{' '}
+              <code className="mono">{pool.backend}</code>。
+            </>
+          ) : (
+            <>
+              前置由 <code className="mono">{pool.poolName}</code>{' '}
+              组按其组规则在池内切换，落地出口固定为 <code className="mono">{pool.backend}</code>。
+            </>
+          )}
+        </p>
       </div>
 
       {editing &&
@@ -743,10 +788,7 @@ function PoolChainForm({
           {allTargets.map((n) => {
             const checked = selected.has(n);
             return (
-              <label
-                key={n}
-                className={`${styles.pickItem} ${checked ? styles.pickItemOn : ''}`}
-              >
+              <label key={n} className={`${styles.pickItem} ${checked ? styles.pickItemOn : ''}`}>
                 <input type="checkbox" checked={checked} onChange={() => toggle(n)} />
                 <span className={styles.nm}>{n}</span>
               </label>
@@ -881,7 +923,9 @@ function SmartPoolForm({
   const [backend, setBackend] = useState('');
   const [poolName, setPoolName] = useState('');
   const [chainName, setChainName] = useState('');
-  const [strategy, setStrategy] = useState<'fallback' | 'url-test'>(initial?.strategy ?? 'fallback');
+  const [strategy, setStrategy] = useState<'fallback' | 'url-test'>(
+    initial?.strategy ?? 'fallback',
+  );
   const [filter, setFilter] = useState(initial?.filter ?? '');
   const [showAdv, setShowAdv] = useState(false);
   const [testUrl, setTestUrl] = useState(initial?.testUrl ?? DEFAULT_TEST_URL);
