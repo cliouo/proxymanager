@@ -33,7 +33,7 @@ import { Wordmark } from '@/ui/viz/logo';
 
 function Section({ id, title, description, children }: { id: string; title: string; description?: ReactNode; children: ReactNode }) {
   return (
-    <section id={id} className="grid scroll-mt-6 gap-x-10 gap-y-3 border-t border-line pt-7 md:grid-cols-[200px_minmax(0,1fr)]">
+    <section id={id} className="grid scroll-mt-6 gap-x-10 gap-y-3 border-t border-line pt-7 @3xl/main:grid-cols-[200px_minmax(0,1fr)]">
       <div>
         <h2 className="text-[15px] font-semibold tracking-tight text-ink">{title}</h2>
         {description && <p className="mt-1 text-xs leading-relaxed text-ink-3">{description}</p>}
@@ -43,14 +43,52 @@ function Section({ id, title, description, children }: { id: string; title: stri
   );
 }
 
-function Row({ label, hint, children }: { label: ReactNode; hint?: ReactNode; children: ReactNode }) {
-  return (
-    <div className="flex flex-col gap-2 px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
-      <div className="min-w-0">
-        <div className="text-sm font-medium text-ink">{label}</div>
-        {hint && <div className="mt-0.5 text-xs leading-relaxed text-ink-3">{hint}</div>}
+/**
+ * Label + hint on the left, value on the right. Values are capped so the text
+ * column always keeps its width; long values (URLs) use `stacked`, which puts
+ * the value on its own full-width line under the text.
+ */
+function Row({
+  label,
+  hint,
+  stacked,
+  children,
+}: {
+  label: ReactNode;
+  hint?: ReactNode;
+  stacked?: boolean;
+  children: ReactNode;
+}) {
+  const text = (
+    <div className="min-w-0 flex-1">
+      <div className="text-sm font-medium text-ink">{label}</div>
+      {hint && <div className="mt-0.5 text-xs leading-relaxed text-ink-3">{hint}</div>}
+    </div>
+  );
+  if (stacked) {
+    return (
+      <div className="flex flex-col gap-2.5 px-4 py-3.5">
+        {text}
+        <div className="min-w-0">{children}</div>
       </div>
-      <div className="min-w-0 shrink-0">{children}</div>
+    );
+  }
+  return (
+    <div className="flex flex-col gap-2 px-4 py-3.5 @xl/main:flex-row @xl/main:items-center @xl/main:justify-between @xl/main:gap-6">
+      {text}
+      <div className="flex min-w-0 @xl/main:max-w-[55%] @xl/main:justify-end">{children}</div>
+    </div>
+  );
+}
+
+/** A copyable value in a quiet field-like box; truncates, full text on hover. */
+function ValueBox({ text, title, children }: { text: string; title?: string; children?: ReactNode }) {
+  return (
+    <div className="flex min-w-0 items-center gap-1 rounded-md border border-line bg-surface-2/60 py-1 pl-2.5 pr-1">
+      <code title={title ?? text} className="min-w-0 flex-1 truncate font-mono text-xs text-ink-2">
+        {text}
+      </code>
+      {children}
     </div>
   );
 }
@@ -259,7 +297,7 @@ function AssistantSettings() {
             <span className="text-ink-2">尚未配置 · 填好 API Key 并保存后即可使用</span>
           )}
         </div>
-        <div className="grid gap-4 p-4 sm:grid-cols-2">
+        <div className="grid gap-4 p-4 @xl/main:grid-cols-2">
           <Field label="接口地址" error={draft ? errors.baseUrl : undefined} hint="OpenAI 兼容的 Base URL，不含 /chat/completions。">
             {(id) => (
               <Input id={id} mono value={form.baseUrl} invalid={!!draft && !!errors.baseUrl} onChange={(e) => set('baseUrl', e.target.value)} />
@@ -269,7 +307,7 @@ function AssistantSettings() {
             {(id) => <Input id={id} mono value={form.model} invalid={!!draft && !!errors.model} onChange={(e) => set('model', e.target.value)} />}
           </Field>
           <Field
-            className="sm:col-span-2"
+            className="@xl/main:col-span-2"
             label={
               <>
                 API Key
@@ -392,11 +430,10 @@ function ConnectionInfo() {
 
   return (
     <Card className="divide-y divide-line">
-      <Row label="管理接口" hint="所有请求都带 Authorization: Bearer <管理密钥>。">
-        <span className="flex items-center gap-1">
-          <code className="truncate font-mono text-xs text-ink-2">{apiBase}</code>
+      <Row stacked label="管理接口" hint="所有请求都带 Authorization: Bearer <管理密钥>。">
+        <ValueBox text={apiBase}>
           <CopyButton text={apiBase} label="复制接口地址" size="sm" />
-        </span>
+        </ValueBox>
       </Row>
       <Row label="OpenAPI 文档" hint="完整的接口描述，公开可读，不含任何数据。">
         <Button asChild size="sm" trailingIcon={ExternalLink}>
@@ -406,6 +443,7 @@ function ConnectionInfo() {
         </Button>
       </Row>
       <Row
+        stacked
         label="订阅链接前缀"
         hint={
           <>
@@ -414,12 +452,11 @@ function ConnectionInfo() {
         }
       >
         {meta.isLoading ? (
-          <Skeleton className="h-5 w-56" />
+          <Skeleton className="h-8 w-full" />
         ) : meta.error || !subBase ? (
           <span className="text-xs text-bad">{meta.error ? errorMessage(meta.error) : '不可用'}</span>
         ) : (
-          <span className="flex min-w-0 items-center gap-1">
-            <code className="min-w-0 truncate font-mono text-xs text-ink-2">{reveal ? subBase : masked}</code>
+          <ValueBox text={reveal ? subBase : (masked ?? '')}>
             <button
               type="button"
               aria-label={reveal ? '隐藏令牌' : '显示令牌'}
@@ -429,7 +466,7 @@ function ConnectionInfo() {
               {reveal ? <EyeOff size={13} /> : <Eye size={13} />}
             </button>
             <CopyButton text={subBase} label="复制前缀" size="sm" />
-          </span>
+          </ValueBox>
         )}
       </Row>
       <Row
@@ -502,7 +539,7 @@ function Shortcuts() {
     },
   ];
   return (
-    <Card className="grid divide-y divide-line sm:grid-cols-2 sm:divide-x sm:divide-y-0">
+    <Card className="grid divide-y divide-line @xl/main:grid-cols-2 @xl/main:divide-x @xl/main:divide-y-0">
       {groups.map((group) => (
         <div key={group.title} className="px-4 py-3.5">
           <div className="mb-2 text-[11px] font-medium text-ink-3">{group.title}</div>
