@@ -1,5 +1,5 @@
 import type { Rule } from '@/schemas';
-import type { RuleSummary } from '@/lib/client/rule-summary';
+import type { RuleSummary } from '@/lib/services/ruleSummaryTypes';
 export function summarizeRules(rules: Rule[]): RuleSummary {
   const anchors: Record<string, { total: number; active: number }> = Object.create(null);
   const policies: Record<string, number> = Object.create(null);

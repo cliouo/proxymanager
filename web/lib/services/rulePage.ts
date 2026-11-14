@@ -6,7 +6,7 @@ import { listRules } from '@/lib/repos/rulesRepo';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { summarizeRules } from './ruleSummary';
 import type { Rule } from '@/schemas';
-import type { RuleSummary } from '@/lib/client/rule-summary';
+import type { RuleSummary } from '@/lib/services/ruleSummaryTypes';
 
 export interface RuleQuery {
   anchor?: string | null;
