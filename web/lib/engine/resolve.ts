@@ -1269,7 +1269,7 @@ function realizeChainWraps(
 
   let seqNode = doc.get('proxies', true);
   if (!isSeq(seqNode)) {
-    doc.set('proxies', []);
+    doc.set('proxies', doc.createNode([]));
     seqNode = doc.get('proxies', true);
   }
   const proxiesSeq = seqNode as YAMLSeq;
@@ -1587,7 +1587,7 @@ function collectRuleSetReferencesFromRule(raw: string, refs: Set<string>): void 
 function appendProxies(doc: ReturnType<typeof parseDocument>, items: unknown[]): void {
   let node = doc.get('proxies', true);
   if (!isSeq(node)) {
-    doc.set('proxies', []);
+    doc.set('proxies', doc.createNode([]));
     node = doc.get('proxies', true);
   }
   const seq = node as YAMLSeq;

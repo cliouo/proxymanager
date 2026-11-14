@@ -10,7 +10,7 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ConfigValidationError } from '@/lib/config/errors';
-import { checkNativeFetchCompatibility } from '@/lib/client/subscriptionLocalRefresh';
+import { checkNativeFetchCompatibility } from '@/ui/data/local-fetch';
 import type { Collection, Profile, Subscription, SubscriptionFetchHealth } from '@/schemas';
 
 const healthRepo = vi.hoisted(() => {

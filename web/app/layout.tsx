@@ -1,44 +1,43 @@
-import type { Metadata } from 'next';
-import { Noto_Sans_SC, JetBrains_Mono } from 'next/font/google';
+import type { Metadata, Viewport } from 'next';
+import { Geist, Geist_Mono, Instrument_Serif } from 'next/font/google';
+import { Providers } from '@/ui/providers';
 import './globals.css';
-import { ThemeProvider } from '@/components/theme/ThemeProvider';
 
-const notoSC = Noto_Sans_SC({
+const geist = Geist({ subsets: ['latin'], variable: '--font-geist', display: 'swap' });
+const geistMono = Geist_Mono({ subsets: ['latin'], variable: '--font-geist-mono', display: 'swap' });
+const serif = Instrument_Serif({
   subsets: ['latin'],
-  weight: ['400', '500', '600', '700'],
-  variable: '--font-noto-sc',
-  display: 'swap',
-});
-
-const jetbrains = JetBrains_Mono({
-  subsets: ['latin'],
-  variable: '--font-jetbrains',
+  weight: '400',
+  style: ['normal', 'italic'],
+  variable: '--font-serif',
   display: 'swap',
 });
 
 export const metadata: Metadata = {
-  title: 'ProxyManager · 代理订阅管家',
-  description: '个人代理订阅与配置管理（Sub-Store 替代）',
+  title: { default: 'ProxyManager', template: '%s · ProxyManager' },
+  description: '自部署的 Clash / Mihomo 订阅与配置管理平台',
+  applicationName: 'ProxyManager',
 };
 
-export default function RootLayout({
-  children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
+export const viewport: Viewport = {
+  // <meta name="color-scheme">: lets the browser paint the right canvas and
+  // native controls before the stylesheet loads (no white flash in dark mode).
+  colorScheme: 'light dark',
+  themeColor: [
+    { media: '(prefers-color-scheme: light)', color: '#f2f1ec' },
+    { media: '(prefers-color-scheme: dark)', color: '#0a0a0c' },
+  ],
+};
+
+export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    // suppressHydrationWarning: browser extensions (e.g. 沉浸式翻译 /
-    // Immersive Translate) inject attributes like
-    // data-immersive-translate-page-theme onto <html>/<body> before React
-    // hydrates. This tolerates that top-level attribute mismatch only; it
-    // does not affect descendants.
     <html
       lang="zh-CN"
-      className={`${notoSC.variable} ${jetbrains.variable}`}
       suppressHydrationWarning
+      className={`${geist.variable} ${geistMono.variable} ${serif.variable}`}
     >
-      <body suppressHydrationWarning>
-        <ThemeProvider>{children}</ThemeProvider>
+      <body>
+        <Providers>{children}</Providers>
       </body>
     </html>
   );

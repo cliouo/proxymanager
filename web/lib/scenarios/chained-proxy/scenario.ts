@@ -701,10 +701,18 @@ export async function summariseChains(profileId: string): Promise<{
     const members = g.proxies ?? [];
     if (!front || members.length !== 1) continue;
     const pool = byName.get(front);
-    // A pool is any managed group the wrap points at that isn't itself a
-    // wrap. Manual pools carry `proxies`; smart pools carry
-    // `include-all-proxies` + an optional filter (and so have no members).
-    if (pool && !pool['dialer-proxy']) {
+    // A pool is a managed group this scenario created as a fronts pool (or
+    // the wrap was created as a pool-chain wrap). Manual pools carry
+    // `proxies`; smart pools carry `include-all-proxies` + an optional filter.
+    // A fixed chain whose front merely happens to be an ordinary group (e.g.
+    // a region url-test group) stays a FIXED chain — otherwise deleting it
+    // the pool way would also delete the user's own group.
+    const createdAsPool =
+      !!pool &&
+      (pool.name.startsWith('pool:') ||
+        /^chained-proxy: (?:smart )?fronts pool/.test(pool.notes ?? '') ||
+        /^chained-proxy: pool-chain wrap/.test(g.notes ?? ''));
+    if (pool && !pool['dialer-proxy'] && createdAsPool) {
       const smart: SmartPoolSnapshot | undefined =
         pool['include-all-proxies'] === true
           ? {

@@ -469,12 +469,13 @@ describe('subscription rename — documented identity reset (not a migration)', 
     expect(schemaSource).toMatch(/aliases/);
     expect(schemaSource).toMatch(/ordinals/);
 
-    const pageSource = readFileSync(
-      new URL('../../app/(authed)/subscriptions/page.tsx', import.meta.url),
+    // The source settings form (where the slug is editable) carries the same warning.
+    const formSource = readFileSync(
+      new URL('../../ui/features/sources/source-settings.tsx', import.meta.url),
       'utf8',
     );
-    expect(pageSource).toMatch(/改名（API）会断开旧分发链接/);
-    expect(pageSource).toMatch(/命名别名/);
-    expect(pageSource).toMatch(/序号/);
+    expect(formSource).toMatch(/改名会断开旧分发链接/);
+    expect(formSource).toMatch(/命名别名/);
+    expect(formSource).toMatch(/序号/);
   });
 });

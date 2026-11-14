@@ -212,6 +212,23 @@ describe('chained-proxy summariseChains', () => {
     expect(summary.fixedChains).toEqual([]);
   });
 
+  it('keeps a fixed chain whose front is an ordinary group (not a pool to delete)', async () => {
+    // e.g. set-fixed-chain with front = a region url-test group the user owns
+    seed({ name: '香港节点', type: 'url-test', 'include-all-proxies': true, filter: '港|HK' });
+    seed({ name: 'chain:香港节点-to-B', proxies: ['B'], 'dialer-proxy': '香港节点', notes: 'chained-proxy: fixed chain' });
+    const summary = await scenarioMod.summariseChains(PID);
+    expect(summary.fixedChains).toEqual([{ chainName: 'chain:香港节点-to-B', backend: 'B', front: '香港节点' }]);
+    expect(summary.poolChains).toEqual([]);
+  });
+
+  it('recognises a custom-named pool by the marker the scenario writes', async () => {
+    seed({ name: '前置池', proxies: ['F1'], notes: 'chained-proxy: fronts pool' });
+    seed({ name: '链路', proxies: ['B'], 'dialer-proxy': '前置池', notes: 'chained-proxy: pool-chain wrap' });
+    const summary = await scenarioMod.summariseChains(PID);
+    expect(summary.poolChains.map((c) => [c.poolName, c.chainName])).toEqual([['前置池', '链路']]);
+    expect(summary.fixedChains).toEqual([]);
+  });
+
   it('does not count a group as a chain wrap when it has multiple proxies', async () => {
     seed({ name: 'multi', proxies: ['A', 'B'], 'dialer-proxy': 'X' });
     const summary = await scenarioMod.summariseChains(PID);

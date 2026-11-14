@@ -5,6 +5,7 @@ import { listSubscriptions } from '@/lib/services/subscriptionService';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { deleteCollection, getCollection, patchCollection } from '@/lib/services/collectionService';
 import { CollectionUpdateSchema } from '@/schemas';
+import { restoreUnchangedNamingRows } from '@/lib/services/namingRoundTrip';
 
 export const dynamic = 'force-dynamic';
 
@@ -36,7 +37,17 @@ export const PATCH = withProblemDetails(async (request: Request, ctx: Ctx) => {
   const raw = await request.json().catch(() => {
     throw ProblemDetailsError.badRequest('Request body must be valid JSON.');
   });
-  const patch = CollectionUpdateSchema.parse(raw);
+  // Clients echo operators as GET projected them (naming alias keys → src- handles,
+  // over the ENABLED member set); map an untouched naming row back to the stored one.
+  let body: unknown = raw;
+  if (raw && typeof raw === 'object' && Array.isArray((raw as { operators?: unknown }).operators)) {
+    const current = await getCollection(id);
+    if (current) {
+      const members = enabledCollectionMemberSubs(current, await listSubscriptions()).map((m) => m.name);
+      body = restoreUnchangedNamingRows(raw, current.operators ?? [], members);
+    }
+  }
+  const patch = CollectionUpdateSchema.parse(body);
   // P2-2: If-Match carries the client's last-known updated_at (optimistic
   // version). Absent → undefined → unchanged last-write-wins behavior.
   const ifMatch = request.headers.get('if-match');
