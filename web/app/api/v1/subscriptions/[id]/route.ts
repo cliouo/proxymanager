@@ -3,11 +3,13 @@ import { projectAliasKeysToHandles } from '@/lib/services/sourceAliasResolver';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import {
   deleteSubscription,
+  getSubscription,
   getSubscriptionAdminView,
   patchSubscription,
   projectSubscriptionAdminView,
   replaceSubscription,
 } from '@/lib/services/subscriptionService';
+import { restoreUnchangedNamingRows } from '@/lib/services/namingRoundTrip';
 import { getSubscriptionFetchHealth } from '@/lib/repos/subscriptionFetchHealthRepo';
 import {
   effectiveSubscriptionRefreshMode,
@@ -45,12 +47,23 @@ export const GET = withProblemDetails(async (_request: Request, ctx: Ctx) => {
   return Response.json({ data });
 });
 
+/**
+ * Clients echo the operators exactly as GET returned them (managed naming row
+ * with src- handle alias keys). Map an untouched echo back to the stored row
+ * so the generic operator policy doesn't mistake it for a naming edit.
+ */
+async function withStoredNamingRows(id: string, raw: unknown): Promise<unknown> {
+  if (!raw || typeof raw !== 'object' || !Array.isArray((raw as { operators?: unknown }).operators)) return raw;
+  const current = await getSubscription(id);
+  return current ? restoreUnchangedNamingRows(raw, current.operators ?? [], [current.name]) : raw;
+}
+
 export const PUT = withProblemDetails(async (request: Request, ctx: Ctx) => {
   const { id } = await ctx.params;
   const raw = await request.json().catch(() => {
     throw ProblemDetailsError.badRequest('Request body must be valid JSON.');
   });
-  const input = SubscriptionCreateSchema.parse(raw);
+  const input = SubscriptionCreateSchema.parse(await withStoredNamingRows(id, raw));
   const next = await replaceSubscription(id, input);
   // Project only the committed candidate: local/manual rows are health-inert,
   // while effective server-auto rows retain the fingerprint-joined health read.
@@ -63,7 +76,7 @@ export const PATCH = withProblemDetails(async (request: Request, ctx: Ctx) => {
   const raw = await request.json().catch(() => {
     throw ProblemDetailsError.badRequest('Request body must be valid JSON.');
   });
-  const patch = SubscriptionUpdateSchema.parse(raw);
+  const patch = SubscriptionUpdateSchema.parse(await withStoredNamingRows(id, raw));
   // P2-2: If-Match carries the client's last-known updated_at (optimistic
   // version). Absent → undefined → unchanged last-write-wins behavior.
   const ifMatch = request.headers.get('if-match');

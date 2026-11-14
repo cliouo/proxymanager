@@ -202,6 +202,25 @@ describe('resolveConfig — subscription injection', () => {
     expect(result.content).toContain('US-01');
   });
 
+  it('creates the proxies sequence when the base has none (fresh starter base + bound source)', async () => {
+    // Regression: the starter skeleton has no `proxies:` key; appending injected
+    // nodes used to set a plain array and then call `.add` on it (render 500).
+    resolveSubMock.mockResolvedValueOnce({
+      proxies: providerProxies([{ name: 'HK-01' }, { name: 'JP-02' }]),
+      proxyCount: 2,
+    });
+    const base = `mixed-port: 7890
+rules:
+  # === ANCHOR: manual ===
+  - MATCH,DIRECT
+`;
+    const result = await resolveConfig(base, [], [makeSub({ name: 'air-a' })], [], [], {});
+
+    expect(result.inlinedProxyCount).toBe(2);
+    expect(result.nodeNames).toEqual(['HK-01', 'JP-02']);
+    expect(result.content).toMatch(/^proxies:\n\s+- name: HK-01/m);
+  });
+
   it('skips disabled subscriptions entirely', async () => {
     resolveSubMock.mockResolvedValueOnce({
       proxies: providerProxies([{ name: 'HK-01' }]),
