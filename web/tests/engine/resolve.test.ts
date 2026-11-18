@@ -1228,11 +1228,53 @@ rules:
 
     const doc = parse(result.content) as { 'proxy-groups': Array<Record<string, unknown>> };
     const pickedGroup = doc['proxy-groups'].find((g) => g.name === 'ebay-static');
-    expect(pickedGroup?.proxies).toEqual(['DIRECT', 'chain:to-B']);
+    // include-all already pulls the clone in; mihomo does not dedupe, so the
+    // explicit copy is dropped and the clone appears exactly once.
+    expect(pickedGroup?.proxies).toEqual(['DIRECT']);
     expect(pickedGroup?.['exclude-filter']).toBeUndefined();
     // Groups that did not pick the clone still keep it out.
     const otherGroup = doc['proxy-groups'].find((g) => g.name === '默认');
     expect(otherGroup?.['exclude-filter']).toBe('^chain:to-B$');
+  });
+
+  it('keeps an explicit chain clone when the include-all filter would not match it', async () => {
+    const base = `mixed-port: 7890
+proxies:
+  - name: B
+    type: ss
+    server: b.example.com
+    port: 443
+    cipher: aes-128-gcm
+    password: pw
+
+# === PROXY-GROUPS ===
+
+rules:
+  - MATCH,DIRECT
+`;
+    const front = makeGroup({ name: 'front', type: 'select', proxies: ['DIRECT'], rank: 10 });
+    const picked = makeGroup({
+      name: 'hk',
+      kind: 'raw',
+      type: 'select',
+      'include-all-proxies': true,
+      filter: 'HK',
+      proxies: ['chain:to-B', 'DIRECT'],
+      rank: 20,
+    });
+    const wrap = makeGroup({
+      name: 'chain:to-B',
+      type: 'select',
+      proxies: ['B'],
+      'dialer-proxy': 'front',
+      rank: 30,
+    });
+    const result = await resolveConfig(base, [], [], [front, picked, wrap], [], {});
+
+    const doc = parse(result.content) as { 'proxy-groups': Array<Record<string, unknown>> };
+    const group = doc['proxy-groups'].find((g) => g.name === 'hk');
+    expect(group?.proxies).toEqual(['chain:to-B', 'DIRECT']);
+    expect(group?.['exclude-filter']).toBeUndefined();
   });
 
   it('still rejects a chain clone listed explicitly in its own front pool', async () => {
