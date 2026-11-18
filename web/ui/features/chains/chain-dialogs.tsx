@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { AlertTriangle, ChevronDown, CircleAlert, RefreshCw } from 'lucide-react';
+import { ChevronDown, CircleAlert, RefreshCw } from 'lucide-react';
 import { matchFilter } from '@/lib/proxies/filterMatch';
 import { errorMessage } from '@/ui/data/api';
 import { refreshProfile } from '@/ui/data/hooks';
@@ -122,15 +122,18 @@ function SmartFields({
   backend: string;
   tried: boolean;
 }) {
-  const result = useMemo(() => matchFilter(nodeNames, draft.filter.trim() || undefined), [nodeNames, draft.filter]);
+  // The pool always excludes its exit node (server writes an exclude-filter),
+  // so the preview matches against every other node.
+  const candidates = useMemo(() => nodeNames.filter((n) => n !== backend), [nodeNames, backend]);
+  const backendExcluded = candidates.length !== nodeNames.length;
+  const result = useMemo(() => matchFilter(candidates, draft.filter.trim() || undefined), [candidates, draft.filter]);
   const errors = smartErrors(draft);
-  const backendMatched = !!backend && result.matched.includes(backend);
   return (
     <div className="flex flex-col gap-4">
       <Field
         label="筛选前置节点"
         optional
-        hint="按节点名称实时挑选（正则）。订阅更新、节点改名后自动跟着变，不用回来改。留空 = 全部节点。"
+        hint="按节点名称实时挑选（正则）。订阅更新、节点改名后自动跟着变，不用回来改。留空 = 除落地节点外的全部节点。"
         error={result.error ? `正则无效：${result.error}` : null}
       >
         {(id) => (
@@ -165,7 +168,7 @@ function SmartFields({
         <div className="rounded-lg border border-line bg-surface-2/50 px-3 py-2.5">
           <div className="flex flex-wrap items-center gap-2 text-xs text-ink-2">
             <span>
-              现在匹配 <span className="tnum font-semibold text-ink">{result.matched.length}</span> / {nodeNames.length} 个节点
+              现在匹配 <span className="tnum font-semibold text-ink">{result.matched.length}</span> / {candidates.length} 个节点
             </span>
             <RegionStrip names={result.matched} max={6} />
           </div>
@@ -181,11 +184,8 @@ function SmartFields({
           ) : (
             <p className="mt-1 text-xs text-warn">没有节点匹配，链路会无法连通。</p>
           )}
-          {backendMatched && (
-            <p className="mt-2 flex items-start gap-1.5 text-xs text-warn">
-              <AlertTriangle size={13} className="mt-px shrink-0" />
-              落地节点本身也被筛进了前置池；它被选作前置时链路会失效，建议收窄筛选。
-            </p>
+          {backendExcluded && (
+            <p className="mt-2 text-xs text-ink-3">已自动排除落地节点「{backend}」。</p>
           )}
         </div>
       )}

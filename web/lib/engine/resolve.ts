@@ -849,7 +849,10 @@ async function resolveConfigInternal(
   const groupsToRender = transformedGroups.filter((g) => !chainWrapNames.has(g.name));
   const proxyGroupRender = renderProxyGroupsBlock(groupsToRender, templates, chainWrapNames);
   if (PROXY_GROUPS_MARKER.test(expandedContent)) {
-    expandedContent = expandedContent.replace(PROXY_GROUPS_MARKER, proxyGroupRender.block);
+    // Function replacer: the block is user data (e.g. an exclude-filter of
+    // "^直连$`^chain$" contains "$`"), and a string replacement would expand
+    // `$``/`$'`/`$&` patterns and splice the surrounding document in.
+    expandedContent = expandedContent.replace(PROXY_GROUPS_MARKER, () => proxyGroupRender.block);
   } else if (proxyGroupRender.count > 0) {
     throw new Error(
       'Full config render rejected: base.yaml is missing the PROXY-GROUPS marker required by managed proxy groups.',
