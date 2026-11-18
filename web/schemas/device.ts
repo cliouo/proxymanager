@@ -1,4 +1,5 @@
 import { z } from '@/lib/openapi/zod';
+import { canonicalIpLiteral, ipLiteralFamily } from '@/lib/net/ipLiteral';
 import { NAME_REGEX, NAME_HINT } from './profile';
 import { RuleCreateSchema } from './rule';
 
@@ -77,9 +78,65 @@ const TailscaleControlUrlSchema = z
     }
   });
 
-/** Persisted device-scoped Tailscale instance. The auth key never leaves server APIs. */
-export const TailscaleDeviceFeatureSchema = z
+/**
+ * One exact `IP + port` destination routed to a Tailscale instance.
+ *
+ * Service routes exist so a device can pick *which* embedded Tailscale handles
+ * a named service instead of sending the whole tailnet range to one node. The
+ * address must be a literal (hostnames would need resolver-dependent routing
+ * and mihomo evaluates these rules before any DNS answer exists).
+ */
+export const TailscaleServiceRouteSchema = z
   .object({
+    ip: z
+      .string()
+      .trim()
+      .min(1)
+      .max(64)
+      .superRefine((value, ctx) => {
+        if (ipLiteralFamily(value) === 0) {
+          ctx.addIssue({ code: 'custom', message: '必须是合法的 IPv4 或 IPv6 地址' });
+        }
+      }),
+    port: z.number().int().min(0).max(65_535),
+  })
+  .strict();
+
+export type TailscaleServiceRoute = z.infer<typeof TailscaleServiceRouteSchema>;
+
+/**
+ * Comparison key for a service route: the canonical IP spelling plus the port.
+ * `2001:DB8::1` and `2001:db8:0:0:0:0:0:1` are the same destination, so two
+ * instances must not both claim them.
+ */
+export function tailscaleServiceRouteKey(route: { ip: string; port: number }): string {
+  const canonical = canonicalIpLiteral(route.ip) || route.ip.trim().toLowerCase();
+  return `${canonical}#${route.port}`;
+}
+
+/**
+ * Routing mode of one instance.
+ *
+ * - `cidr` — historical behaviour: the tailnet CIDR (`100.64.0.0/10`) plus any
+ *   extra CIDRs. Only the legacy slot may use it, and it can never be combined
+ *   with `serviceRoutes`.
+ * - `service` — only the explicitly listed `IP + port` pairs. Additional
+ *   instances always use this mode.
+ */
+export const TailscaleRouteModeSchema = z.enum(['cidr', 'service']);
+
+export type TailscaleRouteMode = z.infer<typeof TailscaleRouteModeSchema>;
+
+/**
+ * Shape of one persisted instance, before the cross-field routing checks.
+ *
+ * Kept separate because the update payload is derived with `.omit()` (zod
+ * refuses `.omit()` on a refined object) and because a service-mode route list
+ * may legitimately be *preserved* by a legacy PUT that omits it.
+ */
+const TailscaleDeviceFeatureShape = z
+  .object({
+    id: z.uuid().optional(),
     hostname: TailscaleHostnameSchema,
     authKey: z.string().trim().min(1).max(256).regex(/^\S+$/, 'authKey 不能包含空白').optional(),
     controlUrl: TailscaleControlUrlSchema.optional(),
@@ -97,6 +154,16 @@ export const TailscaleDeviceFeatureSchema = z
     exitNodeAllowLanAccess: z.boolean().default(false),
     nodeName: FeatureGeneratedNameSchema.optional(),
     groupName: FeatureGeneratedNameSchema.optional(),
+    /**
+     * Explicit routing mode. Absent means the historical broad-tailnet mode
+     * (the legacy slot) or service mode (any additional instance).
+     */
+    routeMode: TailscaleRouteModeSchema.optional(),
+    /**
+     * Exact `IP + port` services routed to this instance. Only the legacy slot
+     * may switch to `cidr` mode; additional instances must carry at least one.
+     */
+    serviceRoutes: z.array(TailscaleServiceRouteSchema).max(64).optional(),
     extraCidrs: z
       .array(TailscaleCidrSchema)
       .max(64)
@@ -117,20 +184,121 @@ export const TailscaleDeviceFeatureSchema = z
   })
   .strict();
 
+/** Persisted device-scoped Tailscale instance. The auth key never leaves server APIs. */
+export const TailscaleDeviceFeatureSchema = TailscaleDeviceFeatureShape.superRefine(
+  (feature, ctx) => {
+    const routes = feature.serviceRoutes ?? [];
+    if (feature.routeMode === 'service') {
+      if (routes.length === 0) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['serviceRoutes'],
+          message: '服务模式的实例至少要配置一条「目标 IP + 端口」',
+        });
+      }
+      if (feature.extraCidrs.length > 0) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['extraCidrs'],
+          message: '服务模式与额外 CIDR 互斥；要按网段分流请显式切回 CIDR 模式',
+        });
+      }
+    } else if (routes.length > 0) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['serviceRoutes'],
+        message: 'CIDR 模式的实例不能同时携带服务路由；请先显式切换到服务模式',
+      });
+    }
+    const seen = new Set<string>();
+    routes.forEach((route, index) => {
+      const key = tailscaleServiceRouteKey(route);
+      if (seen.has(key)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['serviceRoutes', index],
+          message: '同一实例内不能重复配置同一个「目标 IP + 端口」',
+        });
+      }
+      seen.add(key);
+    });
+  },
+);
+
 export type TailscaleDeviceFeature = z.infer<typeof TailscaleDeviceFeatureSchema>;
+
+/** Max total Tailscale instances per device, the legacy slot included. */
+export const MAX_TAILSCALE_INSTANCES_PER_DEVICE = 8;
 
 export const DeviceFeaturesSchema = z
   .object({
+    /** The original slot. Legacy callers keep operating exactly this entry. */
     tailscale: TailscaleDeviceFeatureSchema.optional(),
+    /**
+     * Additional instances, keyed by a server-generated immutable id. The
+     * legacy slot never lives here, so deleting the legacy instance cannot
+     * promote anything and removing an additional instance cannot repoint
+     * legacy callers.
+     */
+    tailscaleInstances: z.array(TailscaleDeviceFeatureSchema).max(15).optional(),
   })
   .strict()
-  .default({});
+  .default({})
+  .superRefine((features, ctx) => {
+    const legacy = features.tailscale;
+    if (legacy?.routeMode === 'service' && (legacy.serviceRoutes ?? []).length === 0) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['tailscale', 'serviceRoutes'],
+        message: '服务模式的实例至少要配置一条「目标 IP + 端口」',
+      });
+    }
+
+    const instances = features.tailscaleInstances ?? [];
+    if (instances.length === 0) return;
+    if ((legacy ? 1 : 0) + instances.length > MAX_TAILSCALE_INSTANCES_PER_DEVICE) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['tailscaleInstances'],
+        message: `每台设备最多 ${MAX_TAILSCALE_INSTANCES_PER_DEVICE} 个 Tailscale 实例`,
+      });
+    }
+    const seenIds = new Set<string>();
+    instances.forEach((instance, index) => {
+      if (!instance.id) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['tailscaleInstances', index, 'id'],
+          message: '附加实例必须携带服务端生成的稳定 id',
+        });
+        return;
+      }
+      if (seenIds.has(instance.id) || instance.id === legacy?.id) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['tailscaleInstances', index, 'id'],
+          message: '附加实例 id 不能重复，也不能与原实例相同',
+        });
+      }
+      seenIds.add(instance.id);
+      if (instance.routeMode !== 'service') {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['tailscaleInstances', index, 'routeMode'],
+          message: '附加实例只能使用服务模式（显式「目标 IP + 端口」）',
+        });
+      }
+    });
+  });
 
 export type DeviceFeatures = z.infer<typeof DeviceFeaturesSchema>;
 
 /** Dedicated write payload. Omitted key means preserve; null explicitly clears it. */
-export const TailscaleDeviceFeatureUpdateSchema = TailscaleDeviceFeatureSchema.omit({
+export const TailscaleDeviceFeatureUpdateSchema = TailscaleDeviceFeatureShape.omit({
   authKey: true,
+  id: true,
+  routeMode: true,
+  serviceRoutes: true,
 }).extend({
   authKey: z
     .string()
@@ -140,9 +308,70 @@ export const TailscaleDeviceFeatureUpdateSchema = TailscaleDeviceFeatureSchema.o
     .regex(/^\S+$/, 'authKey 不能包含空白')
     .nullable()
     .optional(),
+  /**
+   * Omitted = preserve the stored routing (and therefore the stored auth key
+   * semantics). `null` on the legacy slot explicitly returns it to CIDR mode;
+   * additional instances reject `null` because they cannot fall back to a
+   * broad route. `[]` is rejected: switching modes must be explicit, so an
+   * empty list can never quietly widen routing back to the whole /10.
+   */
+  serviceRoutes: z.array(TailscaleServiceRouteSchema).min(1).max(64).nullable().optional(),
 });
 
 export type TailscaleDeviceFeatureUpdate = z.input<typeof TailscaleDeviceFeatureUpdateSchema>;
+
+/**
+ * Create/update payload for an *additional* instance (never the legacy slot).
+ * `routeMode` may only be spelled as `service`; it is forced on the server.
+ */
+export const TailscaleInstanceCreateSchema = TailscaleDeviceFeatureUpdateSchema.extend({
+  routeMode: z.literal('service').optional(),
+  serviceRoutes: z.array(TailscaleServiceRouteSchema).min(1).max(64),
+  /** Service mode and extra CIDRs are mutually exclusive. */
+  extraCidrs: z.array(TailscaleCidrSchema).max(0).optional(),
+});
+
+export type TailscaleInstanceCreate = z.input<typeof TailscaleInstanceCreateSchema>;
+
+/**
+ * PATCH-like update for one additional instance: every field is optional and
+ * **no default is filled in**, so an omitted boolean keeps its stored value
+ * instead of silently resetting to the schema default.
+ */
+export const TailscaleInstanceUpdateSchema = z
+  .object({
+    hostname: TailscaleHostnameSchema.optional(),
+    authKey: z
+      .string()
+      .trim()
+      .min(1)
+      .max(256)
+      .regex(/^\S+$/, 'authKey 不能包含空白')
+      .nullable()
+      .optional(),
+    controlUrl: TailscaleControlUrlSchema.optional(),
+    stateDir: z
+      .string()
+      .trim()
+      .min(1)
+      .max(256)
+      .regex(/^[^\u0000-\u001f\u007f]+$/, 'stateDir 不能包含控制字符')
+      .optional(),
+    ephemeral: z.boolean().optional(),
+    acceptRoutes: z.boolean().optional(),
+    udp: z.boolean().optional(),
+    exitNode: z.string().trim().min(1).max(128).optional(),
+    exitNodeAllowLanAccess: z.boolean().optional(),
+    nodeName: FeatureGeneratedNameSchema.optional(),
+    groupName: FeatureGeneratedNameSchema.optional(),
+    routeMode: z.literal('service').optional(),
+    serviceRoutes: z.array(TailscaleServiceRouteSchema).min(1).max(64).optional(),
+    /** Service mode and extra CIDRs are mutually exclusive. */
+    extraCidrs: z.array(TailscaleCidrSchema).max(0).optional(),
+  })
+  .strict();
+
+export type TailscaleInstanceUpdate = z.input<typeof TailscaleInstanceUpdateSchema>;
 
 export interface PublicTailscaleDeviceFeature extends Omit<TailscaleDeviceFeature, 'authKey'> {
   hasAuthKey: boolean;
@@ -150,6 +379,7 @@ export interface PublicTailscaleDeviceFeature extends Omit<TailscaleDeviceFeatur
 
 export interface PublicDeviceFeatures {
   tailscale?: PublicTailscaleDeviceFeature;
+  tailscaleInstances?: PublicTailscaleDeviceFeature[];
 }
 
 export const DeviceSchema = z.object({
@@ -199,8 +429,15 @@ export type DeviceUpdate = z.infer<typeof DeviceUpdateSchema>;
 
 export function publicDeviceFeatures(features: DeviceFeatures): PublicDeviceFeatures {
   const tailscale = features.tailscale;
-  if (!tailscale) return {};
-  const safe = { ...tailscale };
+  const instances = features.tailscaleInstances ?? [];
+  const out: PublicDeviceFeatures = {};
+  if (tailscale) out.tailscale = publicFeature(tailscale);
+  if (instances.length > 0) out.tailscaleInstances = instances.map(publicFeature);
+  return out;
+}
+
+function publicFeature(feature: TailscaleDeviceFeature): PublicTailscaleDeviceFeature {
+  const safe = { ...feature };
   delete safe.authKey;
-  return { tailscale: { ...safe, hasAuthKey: Boolean(tailscale.authKey) } };
+  return { ...safe, hasAuthKey: Boolean(feature.authKey) };
 }

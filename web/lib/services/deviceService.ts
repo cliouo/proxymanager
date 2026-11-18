@@ -26,9 +26,13 @@ import {
   DeviceCreateSchema,
   TailscaleDeviceFeatureSchema,
   TailscaleDeviceFeatureUpdateSchema,
+  TailscaleInstanceCreateSchema,
+  TailscaleInstanceUpdateSchema,
   DeviceUpdateSchema,
   MAX_DEVICES_PER_PROFILE,
+  MAX_TAILSCALE_INSTANCES_PER_DEVICE,
   publicDeviceFeatures,
+  tailscaleServiceRouteKey,
   type Device,
   type DeviceCreate,
   type Profile,
@@ -36,6 +40,8 @@ import {
   type PublicTailscaleDeviceFeature,
   type TailscaleDeviceFeature,
   type TailscaleDeviceFeatureUpdate,
+  type TailscaleInstanceCreate,
+  type TailscaleInstanceUpdate,
   type DeviceUpdate,
 } from '@/schemas';
 
@@ -113,19 +119,19 @@ function assertNameFree(devices: readonly Device[], name: string, exceptId?: str
 function auditSnapshot(device: Device | null): unknown {
   if (!device) return undefined;
   const tailscale = device.features.tailscale;
+  const instances = device.features.tailscaleInstances ?? [];
+  const snapshots: Record<string, unknown> = {};
+  const snapshot = (feature: TailscaleDeviceFeature) => {
+    const { authKey, ...safe } = feature;
+    // Presence metadata is useful for a non-undoable secret-bearing event.
+    // Do not add `hasAuthKey:false`: snapshots without a secret remain
+    // schema-faithful and can safely power generic undo.
+    return { ...safe, ...(authKey ? { hasAuthKey: true } : {}) };
+  };
   let safeFeatures: unknown = {};
-  if (tailscale) {
-    const { authKey, ...safeTailscale } = tailscale;
-    safeFeatures = {
-      tailscale: {
-        ...safeTailscale,
-        // Presence metadata is useful for a non-undoable secret-bearing
-        // event. Do not add `hasAuthKey:false`: snapshots without a secret
-        // remain schema-faithful and can safely power generic undo.
-        ...(authKey ? { hasAuthKey: true } : {}),
-      },
-    };
-  }
+  if (tailscale) snapshots.tailscale = snapshot(tailscale);
+  if (instances.length > 0) snapshots.tailscaleInstances = instances.map(snapshot);
+  if (Object.keys(snapshots).length > 0) safeFeatures = snapshots;
   return {
     id: device.id,
     name: device.name,
@@ -143,7 +149,10 @@ function auditSnapshot(device: Device | null): unknown {
 
 function touchesDeviceSecrets(device: Device | null): boolean {
   return Boolean(
-    device && (touchesSensitiveKeys(device.base_patch) || device.features?.tailscale?.authKey),
+    device &&
+    (touchesSensitiveKeys(device.base_patch) ||
+      device.features?.tailscale?.authKey ||
+      (device.features?.tailscaleInstances ?? []).some((instance) => instance.authKey)),
   );
 }
 
@@ -420,8 +429,32 @@ async function deleteDeviceImpl(profileId: string, deviceId: string): Promise<bo
 
 /* ─── 设备级 Tailscale ─────────────────────────────────────────────── */
 
+/**
+ * 一台设备可以同时挂多个互相独立的内嵌 Tailscale。
+ *
+ * 存储形状刻意分成两块：
+ *   - `features.tailscale` —— **原槽位**。旧 API / 旧 MCP 工具永远只操作它，
+ *     它的默认节点名、策略组名、状态目录、CIDR 行为全部保持不变；
+ *   - `features.tailscaleInstances` —— 附加实例，每条带服务端生成的不可变 id。
+ *
+ * 附加实例只能配置**精确服务**（目标 IP + 端口），原槽位可以在 CIDR 模式与
+ * 服务模式之间显式切换；两者互斥，清空服务列表不会隐式退回整个 /10。
+ * 两个槽位共用同一条写入通道（版本括号内的候选 → preflight → CAS → 审计），
+ * 因此「冲突检查」和「落库的那份状态」永远是同一代。
+ */
+
 export interface TailscaleFeatureResult {
   feature: PublicTailscaleDeviceFeature | null;
+  warnings: string[];
+}
+
+export interface TailscaleInstancesResult {
+  instances: PublicTailscaleDeviceFeature[];
+  warnings: string[];
+}
+
+export interface TailscaleInstanceResult {
+  instance: PublicTailscaleDeviceFeature;
   warnings: string[];
 }
 
@@ -431,6 +464,10 @@ function publicTailscale(
   feature: TailscaleDeviceFeature | undefined,
 ): PublicTailscaleDeviceFeature | null {
   return publicDeviceFeatures({ tailscale: feature }).tailscale ?? null;
+}
+
+function publicInstance(feature: TailscaleDeviceFeature): PublicTailscaleDeviceFeature {
+  return publicDeviceFeatures({ tailscaleInstances: [feature] }).tailscaleInstances![0];
 }
 
 function sameTailnetIdentity(
@@ -449,34 +486,136 @@ function canonicalControlUrl(value: string | undefined): string {
   return `${parsed.protocol}//${parsed.host.toLowerCase()}${path}`;
 }
 
+function isServiceMode(feature: TailscaleDeviceFeature): boolean {
+  return feature.routeMode === 'service' || (feature.serviceRoutes ?? []).length > 0;
+}
+
+/** Human label for one instance in conflict messages. */
+function instanceLabel(feature: TailscaleDeviceFeature, legacy: boolean): string {
+  return legacy ? `原实例「${feature.hostname}」` : `实例「${feature.hostname}」`;
+}
+
+/**
+ * Reject a candidate that makes two instances of the *same device* claim one
+ * destination. Equivalent IP spellings compare equal, so `2001:DB8::1` and
+ * `2001:db8:0:0:0:0:0:1` cannot target different instances on one port.
+ *
+ * Runs inside the version-bracketed plan, so two concurrent writers cannot
+ * each validate against a stale instance list.
+ */
+function assertServiceRoutesDistinct(
+  entries: ReadonlyArray<{ feature: TailscaleDeviceFeature; legacy: boolean }>,
+  deviceName: string,
+): void {
+  const owners = new Map<string, string>();
+  entries.forEach(({ feature, legacy }) => {
+    if (!isServiceMode(feature)) return;
+    const owner = instanceLabel(feature, legacy);
+    for (const route of feature.serviceRoutes ?? []) {
+      const key = tailscaleServiceRouteKey(route);
+      const existing = owners.get(key);
+      if (existing !== undefined) {
+        throw ProblemDetailsError.conflict(
+          `设备「${deviceName}」上的 Tailscale ${owner}与${existing}都配置了目标 ${route.ip}:${route.port}；每对「目标 IP + 端口」只能属于一个实例，请先改掉冲突的那一条。`,
+        );
+      }
+      owners.set(key, owner);
+    }
+  });
+}
+
+/** Two embedded nodes on one device must not share a tailnet identity either. */
+function assertInstancesDistinctIdentities(
+  entries: ReadonlyArray<{ feature: TailscaleDeviceFeature; legacy: boolean }>,
+  deviceName: string,
+): void {
+  const seen = new Set<string>();
+  entries.forEach(({ feature }) => {
+    const key = `${feature.hostname.toLowerCase()}@${canonicalControlUrl(feature.controlUrl)}`;
+    if (seen.has(key)) {
+      throw ProblemDetailsError.conflict(
+        `设备「${deviceName}」上写了两次相同的 control-url + hostname（${instanceLabel(feature, false)}），请为每个 Tailscale 实例设置独立 hostname。`,
+      );
+    }
+    seen.add(key);
+  });
+}
+
+/**
+ * One tailnet identity belongs to one embedded node across the whole profile.
+ *
+ * The legacy slot keeps its historical check; additional instances of other
+ * devices are included too, because they are just as capable of colliding.
+ */
+function assertTailnetIdentityFree(
+  current: readonly Device[],
+  deviceId: string,
+  feature: TailscaleDeviceFeature,
+): void {
+  const duplicate = current.find(
+    (device) =>
+      device.id !== deviceId &&
+      [device.features?.tailscale, ...(device.features?.tailscaleInstances ?? [])].some(
+        (candidate) => candidate && sameTailnetIdentity(feature, candidate),
+      ),
+  );
+  if (duplicate) {
+    throw ProblemDetailsError.conflict(
+      `设备「${duplicate.name}」已经使用相同的 control-url + hostname，请为每台设备设置独立 hostname。`,
+    );
+  }
+}
+
+function deviceInstances(device: Device): TailscaleDeviceFeature[] {
+  return device.features?.tailscaleInstances ?? [];
+}
+
 async function crossProfileWarnings(
   profileId: string,
   deviceId: string,
-  feature: TailscaleDeviceFeature | undefined,
+  features: readonly (TailscaleDeviceFeature | undefined)[],
 ): Promise<string[]> {
-  if (!feature) return [];
+  const present = features.filter((feature): feature is TailscaleDeviceFeature => !!feature);
+  if (present.length === 0) return [];
   try {
     const profiles = await listProfiles();
     const collisions: string[] = [];
     for (const profile of profiles) {
       if (profile.id === profileId || profile.kind === 'template') continue;
       for (const device of await listDevices(profile.id)) {
-        const other = device.features.tailscale;
-        if (device.id !== deviceId && other && sameTailnetIdentity(feature, other)) {
-          collisions.push(`${profile.name}/${device.name}`);
+        if (device.id === deviceId) continue;
+        const others = [device.features.tailscale, ...deviceInstances(device)].filter(
+          (feature): feature is TailscaleDeviceFeature => !!feature,
+        );
+        for (const feature of present) {
+          if (others.some((other) => sameTailnetIdentity(feature, other))) {
+            collisions.push(`${profile.name}/${device.name}`);
+          }
         }
       }
     }
     return collisions.length === 0
       ? []
       : [
-          `另有设备使用相同 control-url + hostname：${collisions.join('、')}。如果它们属于同一 tailnet，请改 hostname。`,
+          `另有设备使用相同 control-url + hostname：${[...new Set(collisions)].join('、')}。如果它们属于同一 tailnet，请改 hostname。`,
         ];
   } catch {
     // 跨 profile 检查只是建议，不能让一次已经通过 preflight + CAS 的保存
     // 因后置读取暂时失败而向客户端谎报“保存失败”。
     return ['已保存；跨配置文件的 hostname 冲突检查暂时不可用，请稍后刷新确认。'];
   }
+}
+
+async function tailscaleWarnings(
+  profileId: string,
+  deviceId: string,
+  features: readonly (TailscaleDeviceFeature | undefined)[],
+  auditWarning: string | null = null,
+): Promise<string[]> {
+  return [
+    ...(auditWarning ? [auditWarning] : []),
+    ...(await crossProfileWarnings(profileId, deviceId, features)),
+  ];
 }
 
 export async function getDeviceTailscaleFeature(
@@ -486,7 +625,45 @@ export async function getDeviceTailscaleFeature(
   const device = await getProfileDevice(profileId, deviceId);
   return {
     feature: publicTailscale(device.features.tailscale),
-    warnings: await crossProfileWarnings(profileId, deviceId, device.features.tailscale),
+    warnings: await crossProfileWarnings(profileId, deviceId, [device.features.tailscale]),
+  };
+}
+
+/** Additional instances only — the legacy slot always stays in its own entry. */
+/**
+ * Resolve the routing mode of a legacy PUT.
+ *
+ * Omitted `serviceRoutes` **preserves** what is stored (so an old caller that
+ * never heard of service routing cannot accidentally wipe an administrator's
+ * service allowlist). `null` is the explicit switch back to CIDR mode. A list
+ * switches to service mode and must be non-empty.
+ */
+function resolveLegacyRouting(
+  submitted: TailscaleDeviceFeatureUpdate,
+  existing: TailscaleDeviceFeature | undefined,
+): Pick<TailscaleDeviceFeature, 'routeMode' | 'serviceRoutes'> {
+  if (submitted.serviceRoutes === undefined) {
+    return {
+      ...(existing?.routeMode ? { routeMode: existing.routeMode } : {}),
+      ...(existing?.serviceRoutes ? { serviceRoutes: existing.serviceRoutes } : {}),
+    };
+  }
+  if (submitted.serviceRoutes === null) {
+    // Explicit switch back to CIDR mode: drop the service list entirely so the
+    // broad tailnet route is what the administrator asked for, not a leftover.
+    return { routeMode: 'cidr' };
+  }
+  return { routeMode: 'service', serviceRoutes: submitted.serviceRoutes };
+}
+
+async function listDeviceTailscaleInstancesImpl(
+  profileId: string,
+  deviceId: string,
+): Promise<TailscaleInstancesResult> {
+  const device = await getProfileDevice(profileId, deviceId);
+  return {
+    instances: deviceInstances(device).map(publicInstance),
+    warnings: await crossProfileWarnings(profileId, deviceId, deviceInstances(device)),
   };
 }
 
@@ -508,7 +685,10 @@ async function putDeviceTailscaleFeatureImpl(
       );
     }
     const existing = target.features?.tailscale;
-    const { authKey: submittedAuthKey, ...featureFields } = parsed;
+    // Routing is resolved separately below: an omitted list must preserve what
+    // is stored, so it can never be spread straight into the new record.
+    const { authKey: submittedAuthKey, serviceRoutes: submittedRoutes, ...featureFields } = parsed;
+    void submittedRoutes;
     const authKey =
       submittedAuthKey === undefined
         ? existing?.authKey
@@ -517,19 +697,19 @@ async function putDeviceTailscaleFeatureImpl(
           : submittedAuthKey;
     const feature = TailscaleDeviceFeatureSchema.parse({
       ...featureFields,
+      ...resolveLegacyRouting(parsed, existing),
       ...(authKey ? { authKey } : {}),
     });
-    const duplicate = current.find(
-      (device) =>
-        device.id !== deviceId &&
-        device.features?.tailscale &&
-        sameTailnetIdentity(feature, device.features.tailscale),
-    );
-    if (duplicate) {
-      throw ProblemDetailsError.conflict(
-        `设备「${duplicate.name}」已经使用相同的 control-url + hostname，请为每台设备设置独立 hostname。`,
-      );
-    }
+    assertTailnetIdentityFree(current, deviceId, feature);
+
+    const instances = deviceInstances(target);
+    const entries = [
+      { feature, legacy: true },
+      ...instances.map((instance) => ({ feature: instance, legacy: false })),
+    ];
+    assertInstancesDistinctIdentities(entries, target.name);
+    assertServiceRoutesDistinct(entries, target.name);
+
     beforeFeature = target.features?.tailscale;
     const next: Device = {
       ...target,
@@ -560,13 +740,23 @@ async function putDeviceTailscaleFeatureImpl(
   }
   return {
     feature: publicTailscale(updated.features.tailscale),
-    warnings: [
-      ...(auditWarning ? [auditWarning] : []),
-      ...(await crossProfileWarnings(profileId, deviceId, updated.features.tailscale)),
-    ],
+    warnings: await tailscaleWarnings(
+      profileId,
+      deviceId,
+      [updated.features.tailscale],
+      auditWarning,
+    ),
   };
 }
 
+/**
+ * Remove the legacy slot only.
+ *
+ * Additional instances stay exactly where they are: nothing is promoted into
+ * the legacy slot, so legacy HTTP / MCP callers never silently start operating
+ * a different tailnet. A removal that breaks a named group reference is
+ * rejected by the shared device preflight below.
+ */
 async function deleteDeviceTailscaleFeatureImpl(
   profileId: string,
   deviceId: string,
@@ -591,7 +781,7 @@ async function deleteDeviceTailscaleFeatureImpl(
   });
   if (!changed || !before) return null;
   const previous: Device = before;
-  const warnings: string[] = [];
+  let auditWarning: string | null = null;
   try {
     await recordEvent({
       op: 'device.tailscale.delete',
@@ -602,9 +792,219 @@ async function deleteDeviceTailscaleFeatureImpl(
       undoable: false,
     });
   } catch {
-    warnings.push(AUDIT_WARNING);
+    auditWarning = AUDIT_WARNING;
   }
-  return { feature: null, warnings };
+  return {
+    feature: null,
+    warnings: await tailscaleWarnings(profileId, deviceId, [], auditWarning),
+  };
+}
+
+async function createDeviceTailscaleInstanceImpl(
+  profileId: string,
+  deviceId: string,
+  input: TailscaleInstanceCreate,
+): Promise<TailscaleInstanceResult> {
+  await requireProfile(profileId);
+  const parsed = TailscaleInstanceCreateSchema.parse(input);
+
+  const updated = await mutateDevices(profileId, (current, stableProfile) => {
+    const target = current.find((d) => d.id === deviceId);
+    if (!target) throw ProblemDetailsError.notFound(`设备 ${deviceId} 不存在。`);
+    if (stableProfile.kind === 'template') {
+      throw ProblemDetailsError.unprocessable(
+        '模版不保存 Tailscale 设备身份；请从模版新建普通配置后，再在具体设备上添加实例。',
+      );
+    }
+    const instances = deviceInstances(target);
+    if (
+      (target.features?.tailscale ? 1 : 0) + instances.length >=
+      MAX_TAILSCALE_INSTANCES_PER_DEVICE
+    ) {
+      throw ProblemDetailsError.conflict(
+        `设备「${target.name}」的 Tailscale 实例已达上限 ${MAX_TAILSCALE_INSTANCES_PER_DEVICE} 个。`,
+      );
+    }
+    const { authKey, ...featureFields } = parsed;
+    const feature = TailscaleDeviceFeatureSchema.parse({
+      ...featureFields,
+      id: crypto.randomUUID(),
+      routeMode: 'service',
+      ...(authKey ? { authKey } : {}),
+    });
+
+    const entries = [
+      ...(target.features?.tailscale ? [{ feature: target.features.tailscale, legacy: true }] : []),
+      ...instances.map((instance) => ({ feature: instance, legacy: false })),
+      { feature, legacy: false },
+    ];
+    assertTailnetIdentityFree(current, deviceId, feature);
+    assertInstancesDistinctIdentities(entries, target.name);
+    assertServiceRoutesDistinct(entries, target.name);
+
+    const next: Device = {
+      ...target,
+      features: { ...(target.features ?? {}), tailscaleInstances: [...instances, feature] },
+      updated_at: nowSeconds(),
+    };
+    return {
+      devices: current.map((device) => (device.id === deviceId ? next : device)),
+      changes: { writes: [next] },
+      outcome: next,
+    };
+  });
+
+  const created = deviceInstances(updated).at(-1)!;
+  let auditWarning: string | null = null;
+  try {
+    await recordEvent({
+      op: 'device.tailscale.instance.create',
+      actor: 'admin',
+      target: { kind: 'device', id: updated.id, name: updated.name },
+      after: publicInstance(created),
+      profileId,
+      undoable: false,
+    });
+  } catch {
+    auditWarning = AUDIT_WARNING;
+  }
+  return {
+    instance: publicInstance(created),
+    warnings: await tailscaleWarnings(profileId, deviceId, [created], auditWarning),
+  };
+}
+
+/**
+ * Update exactly one additional instance.
+ *
+ * `id` is immutable and never derived from the hostname, so editing the
+ * hostname cannot move the stable default state directory or reassign another
+ * instance's credentials. Omitted `serviceRoutes` / `authKey` are preserved.
+ */
+async function putDeviceTailscaleInstanceImpl(
+  profileId: string,
+  deviceId: string,
+  instanceId: string,
+  input: TailscaleInstanceUpdate,
+): Promise<TailscaleInstanceResult> {
+  await requireProfile(profileId);
+  const parsed = TailscaleInstanceUpdateSchema.parse(input);
+
+  const updated = await mutateDevices(profileId, (current, stableProfile) => {
+    const target = current.find((d) => d.id === deviceId);
+    if (!target) throw ProblemDetailsError.notFound(`设备 ${deviceId} 不存在。`);
+    if (stableProfile.kind === 'template') {
+      throw ProblemDetailsError.unprocessable('模版不保存 Tailscale 设备身份。');
+    }
+    const instances = deviceInstances(target);
+    const index = instances.findIndex((instance) => instance.id === instanceId);
+    if (index < 0) {
+      throw ProblemDetailsError.notFound(`设备「${target.name}」没有实例 ${instanceId}。`);
+    }
+    const existing = instances[index];
+    const { authKey: submittedAuthKey, serviceRoutes: submittedRoutes, ...featureFields } = parsed;
+    const authKey =
+      submittedAuthKey === undefined
+        ? existing.authKey
+        : submittedAuthKey === null
+          ? undefined
+          : submittedAuthKey;
+    const feature = TailscaleDeviceFeatureSchema.parse({
+      ...existing,
+      ...featureFields,
+      id: existing.id,
+      routeMode: 'service',
+      serviceRoutes: submittedRoutes ?? existing.serviceRoutes,
+      ...(authKey ? { authKey } : {}),
+    });
+
+    const replaced = instances.map((instance, position) =>
+      position === index ? feature : instance,
+    );
+    const entries = [
+      ...(target.features?.tailscale ? [{ feature: target.features.tailscale, legacy: true }] : []),
+      ...replaced.map((instance) => ({ feature: instance, legacy: false })),
+    ];
+    assertTailnetIdentityFree(current, deviceId, feature);
+    assertInstancesDistinctIdentities(entries, target.name);
+    assertServiceRoutesDistinct(entries, target.name);
+
+    const next: Device = {
+      ...target,
+      features: { ...(target.features ?? {}), tailscaleInstances: replaced },
+      updated_at: nowSeconds(),
+    };
+    return {
+      devices: current.map((device) => (device.id === deviceId ? next : device)),
+      changes: { writes: [next] },
+      outcome: next,
+    };
+  });
+
+  const saved = deviceInstances(updated).find((instance) => instance.id === instanceId)!;
+  let auditWarning: string | null = null;
+  try {
+    await recordEvent({
+      op: 'device.tailscale.instance.update',
+      actor: 'admin',
+      target: { kind: 'device', id: updated.id, name: updated.name },
+      after: publicInstance(saved),
+      profileId,
+      undoable: false,
+    });
+  } catch {
+    auditWarning = AUDIT_WARNING;
+  }
+  return {
+    instance: publicInstance(saved),
+    warnings: await tailscaleWarnings(profileId, deviceId, [saved], auditWarning),
+  };
+}
+
+async function deleteDeviceTailscaleInstanceImpl(
+  profileId: string,
+  deviceId: string,
+  instanceId: string,
+): Promise<{ deleted: boolean; warnings: string[] }> {
+  await requireProfile(profileId);
+  let removed: TailscaleDeviceFeature | null = null;
+  const changed = await mutateDevices(profileId, (current) => {
+    const target = current.find((d) => d.id === deviceId);
+    if (!target) throw ProblemDetailsError.notFound(`设备 ${deviceId} 不存在。`);
+    const instances = deviceInstances(target);
+    const index = instances.findIndex((instance) => instance.id === instanceId);
+    if (index < 0) {
+      throw ProblemDetailsError.notFound(`设备「${target.name}」没有实例 ${instanceId}。`);
+    }
+    removed = instances[index];
+    const remaining = instances.filter((instance) => instance.id !== instanceId);
+    const features = { ...(target.features ?? {}) };
+    if (remaining.length > 0) features.tailscaleInstances = remaining;
+    else delete features.tailscaleInstances;
+    const next: Device = { ...target, features, updated_at: nowSeconds() };
+    return {
+      devices: current.map((device) => (device.id === deviceId ? next : device)),
+      changes: { writes: [next] },
+      outcome: next,
+    };
+  });
+
+  if (!removed) return { deleted: false, warnings: [] };
+  const deleted: TailscaleDeviceFeature = removed;
+  let auditWarning: string | null = null;
+  try {
+    await recordEvent({
+      op: 'device.tailscale.instance.delete',
+      actor: 'admin',
+      target: { kind: 'device', id: changed.id, name: changed.name },
+      before: publicInstance(deleted),
+      profileId,
+      undoable: false,
+    });
+  } catch {
+    auditWarning = AUDIT_WARNING;
+  }
+  return { deleted: true, warnings: auditWarning ? [auditWarning] : [] };
 }
 
 export const createDevice = atomicService(createDeviceImpl);
@@ -616,3 +1016,11 @@ export const deleteDevice = atomicService(deleteDeviceImpl);
 export const putDeviceTailscaleFeature = atomicService(putDeviceTailscaleFeatureImpl);
 
 export const deleteDeviceTailscaleFeature = atomicService(deleteDeviceTailscaleFeatureImpl);
+
+export const listDeviceTailscaleInstances = atomicService(listDeviceTailscaleInstancesImpl);
+
+export const createDeviceTailscaleInstance = atomicService(createDeviceTailscaleInstanceImpl);
+
+export const putDeviceTailscaleInstance = atomicService(putDeviceTailscaleInstanceImpl);
+
+export const deleteDeviceTailscaleInstance = atomicService(deleteDeviceTailscaleInstanceImpl);

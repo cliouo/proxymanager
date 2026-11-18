@@ -45,11 +45,15 @@ import { ProblemDetailsError } from '@/lib/http/problem';
 import { ConfigValidationError } from '@/lib/config/errors';
 import {
   createDevice,
+  createDeviceTailscaleInstance,
   deleteDeviceTailscaleFeature,
+  deleteDeviceTailscaleInstance,
   deleteDevice,
   getDeviceTailscaleFeature,
+  listDeviceTailscaleInstances,
   patchDevice,
   putDeviceTailscaleFeature,
+  putDeviceTailscaleInstance,
   undoDeviceEvent,
 } from '@/lib/services/deviceService';
 import { MAX_DEVICES_PER_PROFILE } from '@/schemas';
@@ -616,6 +620,360 @@ describe('deviceService Tailscale feature', () => {
   });
 });
 
+const INSTANCE_ID = '22222222-2222-4222-8222-222222222222';
+
+function legacyFeature(over: Record<string, unknown> = {}) {
+  return {
+    hostname: 'synthetic-legacy',
+    acceptRoutes: true,
+    udp: true,
+    ephemeral: false,
+    exitNodeAllowLanAccess: false,
+    extraCidrs: [],
+    ...over,
+  };
+}
+
+function serviceFeature(over: Record<string, unknown> = {}) {
+  return {
+    id: INSTANCE_ID,
+    hostname: 'synthetic-extra',
+    routeMode: 'service' as const,
+    serviceRoutes: [{ ip: '100.100.1.2', port: 443 }],
+    acceptRoutes: true,
+    udp: true,
+    ephemeral: false,
+    exitNodeAllowLanAccess: false,
+    extraCidrs: [],
+    ...over,
+  };
+}
+
+describe('deviceService Tailscale instances', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    bracketDevices = [];
+    lastCandidateDevices = null;
+    mocks.getProfile.mockResolvedValue({
+      id: PROFILE_ID,
+      name: 'home',
+      kind: 'normal',
+      source: { type: 'none' },
+      updated_at: 1,
+    });
+    mocks.listProfiles.mockResolvedValue([
+      { id: PROFILE_ID, name: 'home', kind: 'normal', source: { type: 'none' }, updated_at: 1 },
+    ]);
+    mocks.listDevices.mockResolvedValue([]);
+    mocks.preflightProfileConfig.mockImplementation(
+      async (_profileId: string, build: (s: { devices: Device[] }) => { devices: Device[] }) => {
+        const state = {
+          devices: bracketDevices,
+          profile: { id: PROFILE_ID, name: 'home', kind: 'normal' as const },
+        };
+        const patch = await build(state);
+        lastCandidateDevices = patch.devices;
+        return { configVersion: 42, candidate: { ...state, ...patch } };
+      },
+    );
+    mocks.commitDeviceChanges.mockResolvedValue({ ok: true, currentVersion: 43 });
+    mocks.recordEvent.mockResolvedValue(undefined);
+  });
+
+  it('keeps legacy service routes and the auth key when a legacy PUT omits both', async () => {
+    const current = device({
+      name: 'server',
+      features: {
+        tailscale: legacyFeature({
+          authKey: 'keep-me',
+          routeMode: 'service',
+          serviceRoutes: [{ ip: '100.100.1.2', port: 443 }],
+        }),
+      },
+    });
+    setBracketSnapshot([current]);
+
+    await putDeviceTailscaleFeature(PROFILE_ID, current.id, { hostname: 'renamed' });
+
+    expect(lastCandidateDevices?.[0].features.tailscale).toMatchObject({
+      hostname: 'renamed',
+      authKey: 'keep-me',
+      routeMode: 'service',
+      serviceRoutes: [{ ip: '100.100.1.2', port: 443 }],
+    });
+  });
+
+  it('switches back to CIDR mode only when serviceRoutes is explicitly null', async () => {
+    const current = device({
+      name: 'server',
+      features: {
+        tailscale: legacyFeature({
+          routeMode: 'service',
+          serviceRoutes: [{ ip: '100.100.1.2', port: 443 }],
+        }),
+      },
+    });
+    setBracketSnapshot([current]);
+
+    await putDeviceTailscaleFeature(PROFILE_ID, current.id, {
+      hostname: 'synthetic-legacy',
+      serviceRoutes: null,
+    });
+
+    const saved = lastCandidateDevices?.[0].features.tailscale;
+    expect(saved?.routeMode).toBe('cidr');
+    expect(saved?.serviceRoutes).toBeUndefined();
+  });
+
+  it('rejects an explicit empty service list instead of silently restoring the /10 route', async () => {
+    const current = device({ name: 'server', features: { tailscale: legacyFeature() } });
+    setBracketSnapshot([current]);
+
+    await expect(
+      putDeviceTailscaleFeature(PROFILE_ID, current.id, {
+        hostname: 'synthetic-legacy',
+        serviceRoutes: [],
+      }),
+    ).rejects.toThrow();
+    expect(mocks.commitDeviceChanges).not.toHaveBeenCalled();
+  });
+
+  it('creates an additional instance with a server-generated stable id', async () => {
+    const current = device({ name: 'server', features: { tailscale: legacyFeature() } });
+    setBracketSnapshot([current]);
+
+    const result = await createDeviceTailscaleInstance(PROFILE_ID, current.id, {
+      hostname: 'synthetic-extra',
+      routeMode: 'service',
+      serviceRoutes: [{ ip: '100.100.1.2', port: 443 }],
+    });
+
+    const saved = lastCandidateDevices?.[0].features.tailscaleInstances ?? [];
+    expect(saved).toHaveLength(1);
+    expect(saved[0].id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(saved[0]).toMatchObject({ routeMode: 'service', hostname: 'synthetic-extra' });
+    expect(saved[0].serviceRoutes).toEqual([{ ip: '100.100.1.2', port: 443 }]);
+    expect(result.instance).toMatchObject({ hasAuthKey: false });
+    expect(lastCandidateDevices?.[0].features.tailscale).toMatchObject({
+      hostname: 'synthetic-legacy',
+    });
+  });
+
+  it('rejects a service that already belongs to another instance on the same device', async () => {
+    const current = device({
+      name: 'server',
+      features: {
+        tailscale: legacyFeature({ hostname: 'synthetic-legacy' }),
+        tailscaleInstances: [serviceFeature()],
+      },
+    });
+    setBracketSnapshot([current]);
+
+    const error = await createDeviceTailscaleInstance(PROFILE_ID, current.id, {
+      hostname: 'synthetic-extra-b',
+      routeMode: 'service',
+      serviceRoutes: [{ ip: '100.100.1.2', port: 443 }],
+    }).catch((e: unknown) => e);
+
+    expect(statusOf(error)).toBe(409);
+    expect((error as Error).message).toContain('synthetic-extra');
+    expect(mocks.commitDeviceChanges).not.toHaveBeenCalled();
+  });
+
+  it('treats equivalent IP spellings as the same destination', async () => {
+    const current = device({
+      name: 'server',
+      features: {
+        tailscale: legacyFeature({
+          hostname: 'synthetic-legacy',
+          routeMode: 'service',
+          serviceRoutes: [{ ip: '2001:db8::1', port: 443 }],
+        }),
+      },
+    });
+    setBracketSnapshot([current]);
+
+    const error = await createDeviceTailscaleInstance(PROFILE_ID, current.id, {
+      hostname: 'synthetic-extra',
+      routeMode: 'service',
+      serviceRoutes: [{ ip: '2001:DB8:0:0:0:0:0:1', port: 443 }],
+    }).catch((e: unknown) => e);
+
+    expect(statusOf(error)).toBe(409);
+  });
+
+  it('edits only the targeted instance and preserves its id, routes and key', async () => {
+    const current = device({
+      name: 'server',
+      features: {
+        tailscale: legacyFeature(),
+        tailscaleInstances: [
+          serviceFeature({ authKey: 'extra-keep' }),
+          serviceFeature({
+            id: '33333333-3333-4333-8333-333333333333',
+            hostname: 'synthetic-other',
+            serviceRoutes: [{ ip: '100.100.1.3', port: 8443 }],
+          }),
+        ],
+      },
+    });
+    setBracketSnapshot([current]);
+
+    await putDeviceTailscaleInstance(PROFILE_ID, current.id, INSTANCE_ID, {
+      hostname: 'renamed-extra',
+      extraCidrs: [],
+    });
+
+    const instances = lastCandidateDevices?.[0].features.tailscaleInstances ?? [];
+    expect(instances[0]).toMatchObject({
+      id: INSTANCE_ID,
+      hostname: 'renamed-extra',
+      authKey: 'extra-keep',
+      serviceRoutes: [{ ip: '100.100.1.2', port: 443 }],
+    });
+    expect(instances[1]).toMatchObject({
+      id: '33333333-3333-4333-8333-333333333333',
+      hostname: 'synthetic-other',
+    });
+  });
+
+  it('404s updates for an unknown instance id instead of touching a neighbouring one', async () => {
+    const current = device({
+      name: 'server',
+      features: { tailscaleInstances: [serviceFeature()] },
+    });
+    setBracketSnapshot([current]);
+
+    const error = await putDeviceTailscaleInstance(
+      PROFILE_ID,
+      current.id,
+      '44444444-4444-4444-8444-444444444444',
+      { hostname: 'ghost', extraCidrs: [] },
+    ).catch((e: unknown) => e);
+
+    expect(statusOf(error)).toBe(404);
+    expect(mocks.commitDeviceChanges).not.toHaveBeenCalled();
+  });
+
+  it('deletes only the targeted instance', async () => {
+    const current = device({
+      name: 'server',
+      features: {
+        tailscale: legacyFeature(),
+        tailscaleInstances: [
+          serviceFeature(),
+          serviceFeature({
+            id: '33333333-3333-4333-8333-333333333333',
+            hostname: 'synthetic-other',
+            serviceRoutes: [{ ip: '100.100.1.3', port: 8443 }],
+          }),
+        ],
+      },
+    });
+    setBracketSnapshot([current]);
+
+    await expect(
+      deleteDeviceTailscaleInstance(PROFILE_ID, current.id, INSTANCE_ID),
+    ).resolves.toMatchObject({ deleted: true });
+
+    const next = lastCandidateDevices?.[0];
+    expect(next?.features.tailscaleInstances).toHaveLength(1);
+    expect(next?.features.tailscaleInstances?.[0].hostname).toBe('synthetic-other');
+    expect(next?.features.tailscale).toBeDefined();
+    expect(mocks.recordEvent.mock.calls[0][0].op).toBe('device.tailscale.instance.delete');
+  });
+
+  it('deletes the legacy slot without promoting another instance', async () => {
+    const current = device({
+      name: 'server',
+      features: {
+        tailscale: legacyFeature(),
+        tailscaleInstances: [serviceFeature()],
+      },
+    });
+    setBracketSnapshot([current]);
+
+    await deleteDeviceTailscaleFeature(PROFILE_ID, current.id);
+
+    const next = lastCandidateDevices?.[0];
+    expect(next?.features.tailscale).toBeUndefined();
+    expect(next?.features.tailscaleInstances?.[0].hostname).toBe('synthetic-extra');
+    // A later read of the persisted generation still has no legacy slot.
+    mocks.getDevice.mockResolvedValue(next);
+    expect((await getDeviceTailscaleFeature(PROFILE_ID, current.id)).feature).toBeNull();
+  });
+
+  it('lists additional instances without ever returning an auth key', async () => {
+    const current = device({
+      name: 'server',
+      features: {
+        tailscale: legacyFeature({ authKey: 'legacy-secret' }),
+        tailscaleInstances: [serviceFeature({ authKey: 'extra-secret' })],
+      },
+    });
+    mocks.getDevice.mockResolvedValue(current);
+
+    const result = await listDeviceTailscaleInstances(PROFILE_ID, current.id);
+    expect(result.instances).toHaveLength(1);
+    expect(result.instances[0]).toMatchObject({ hostname: 'synthetic-extra', hasAuthKey: true });
+    expect(JSON.stringify(result)).not.toContain('extra-secret');
+    expect(JSON.stringify(result)).not.toContain('legacy-secret');
+  });
+
+  it('keeps every instance key out of generic device audit snapshots', async () => {
+    const current = device({
+      name: 'server',
+      features: {
+        tailscale: legacyFeature({ authKey: 'legacy-secret' }),
+        tailscaleInstances: [serviceFeature({ authKey: 'extra-secret' })],
+      },
+    });
+    setBracketSnapshot([current]);
+
+    await patchDevice(PROFILE_ID, current.id, { notes: 'rack b' });
+
+    const event = mocks.recordEvent.mock.calls[0][0];
+    expect(event.before.features.tailscaleInstances[0].hasAuthKey).toBe(true);
+    expect(JSON.stringify(event)).not.toContain('extra-secret');
+    expect(JSON.stringify(event)).not.toContain('legacy-secret');
+    expect(event.undoable).toBe(false);
+  });
+
+  it('rejects a collision announced by a concurrent writer before any write', async () => {
+    const current = device({
+      name: 'server',
+      features: { tailscaleInstances: [serviceFeature()] },
+    });
+    // Outside the bracket the device looked empty; inside it already holds the
+    // winner of the race, so the plan must re-check and refuse to commit.
+    setBracketSnapshot([current], [device({ name: 'server' })]);
+
+    const error = await createDeviceTailscaleInstance(PROFILE_ID, current.id, {
+      hostname: 'synthetic-late',
+      routeMode: 'service',
+      serviceRoutes: [{ ip: '100.100.1.2', port: 443 }],
+    }).catch((e: unknown) => e);
+
+    expect(statusOf(error)).toBe(409);
+    expect(mocks.commitDeviceChanges).not.toHaveBeenCalled();
+  });
+
+  it('maps a lost CAS race on an instance write to 412', async () => {
+    const current = device({ name: 'server' });
+    setBracketSnapshot([current]);
+    mocks.commitDeviceChanges.mockResolvedValue({ ok: false, currentVersion: 99 });
+
+    const error = await createDeviceTailscaleInstance(PROFILE_ID, current.id, {
+      hostname: 'synthetic-extra',
+      routeMode: 'service',
+      serviceRoutes: [{ ip: '100.100.1.2', port: 443 }],
+    }).catch((e: unknown) => e);
+
+    expect(statusOf(error)).toBe(412);
+    expect(mocks.recordEvent).not.toHaveBeenCalled();
+  });
+});
+
 /* ─── 撤销 ──────────────────────────────────────────────────────────── */
 
 describe('undoDeviceEvent', () => {
@@ -735,5 +1093,55 @@ describe('undoDeviceEvent', () => {
       before: { name: 'no-id' },
     }).catch((e: unknown) => e);
     expect(statusOf(error)).toBe(422);
+  });
+});
+
+describe('deviceService Tailscale instance identity', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    bracketDevices = [];
+    lastCandidateDevices = null;
+    mocks.getProfile.mockResolvedValue({
+      id: PROFILE_ID,
+      name: 'home',
+      kind: 'normal',
+      source: { type: 'none' },
+      updated_at: 1,
+    });
+    mocks.listProfiles.mockResolvedValue([
+      { id: PROFILE_ID, name: 'home', kind: 'normal', source: { type: 'none' }, updated_at: 1 },
+    ]);
+    mocks.listDevices.mockResolvedValue([]);
+    mocks.preflightProfileConfig.mockImplementation(
+      async (_profileId: string, build: (s: { devices: Device[] }) => { devices: Device[] }) => {
+        const state = {
+          devices: bracketDevices,
+          profile: { id: PROFILE_ID, name: 'home', kind: 'normal' as const },
+        };
+        const patch = await build(state);
+        lastCandidateDevices = patch.devices;
+        return { configVersion: 42, candidate: { ...state, ...patch } };
+      },
+    );
+    mocks.commitDeviceChanges.mockResolvedValue({ ok: true, currentVersion: 43 });
+    mocks.recordEvent.mockResolvedValue(undefined);
+  });
+
+  it('refuses a new instance that repeats another device’s tailnet identity', async () => {
+    const target = device({ name: 'server' });
+    const occupied = device({
+      name: 'laptop',
+      features: { tailscaleInstances: [serviceFeature({ hostname: 'synthetic-extra' })] },
+    });
+    setBracketSnapshot([target, occupied]);
+
+    const error = await createDeviceTailscaleInstance(PROFILE_ID, target.id, {
+      hostname: 'synthetic-extra',
+      routeMode: 'service',
+      serviceRoutes: [{ ip: '100.100.1.2', port: 443 }],
+    }).catch((e: unknown) => e);
+
+    expect(statusOf(error)).toBe(409);
+    expect((error as Error).message).toContain('laptop');
   });
 });

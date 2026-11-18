@@ -388,10 +388,23 @@ scope?: 'profile' | 'device';
 
 ### 9.2 设备级功能的存储与渲染
 
-设备实体增类型化的 `features`。当前只开放 `features.tailscale`，不接受任意
-`Record<string, unknown>`，避免未知功能数据绕过专用 schema 与写入闸口。Tailscale
-实例包含 hostname、authKey、controlUrl、stateDir、acceptRoutes、udp、ephemeral、
-exitNode、exitNodeAllowLanAccess、nodeName、groupName 与 extraCidrs。
+设备实体增类型化的 `features`。当前只开放 `features.tailscale`（原实例）与
+`features.tailscaleInstances`（附加实例），不接受任意 `Record<string, unknown>`，
+避免未知功能数据绕过专用 schema 与写入闸口。Tailscale 实例包含 hostname、authKey、
+controlUrl、stateDir、acceptRoutes、udp、ephemeral、exitNode、
+exitNodeAllowLanAccess、nodeName、groupName、extraCidrs，以及可选的 `routeMode` 与
+`serviceRoutes`（`{ip, port}` 列表）。
+
+**多实例与服务分流（追加）**：原槽位 `features.tailscale` 是旧 API / 旧 MCP 工具的
+唯一目标，默认仍是「整个 tailnet」（`100.64.0.0/10` + extraCidrs），也可显式切到服务
+模式；附加实例存在 `features.tailscaleInstances`，每条带服务端生成的不可变 id，只能用
+服务模式，且与 extraCidrs 互斥。服务模式至少一条路由，`serviceRoutes` 省略表示保留、
+`null` 表示显式切回 CIDR，空数组被拒——清空不会隐式恢复大范围分流。渲染时精确服务
+规则（`AND,((IP-CIDR,<ip>/32,no-resolve),(DST-PORT,<port>))`，IPv6 为 `/128` +
+`IP-CIDR6`）排在所有宽 CIDR 规则之前；同一设备上同一对「目标 IP + 端口」只能属于一个
+实例（按规范化后的 IP 比较），冲突在写入前 409 并指出冲突实例。附加实例的默认策略组名
+与状态目录由不可变 id 派生，改 hostname 不会移动运行中的状态目录；两个实例解析出同一
+状态目录直接拒渲染。删除原槽位不会把任何附加实例提升为原槽位。
 
 渲染注入点在 §4.1 管线第三步：
 `共享渲染 → RFC 7386 patch → emitDeviceFeaturesYaml → 最终结构与 Mihomo 校验`。
@@ -407,7 +420,10 @@ Tailscale 纯函数向该设备的最终文档注入节点、单成员 select �
 - auth-key 只允许专用 PUT 写入，省略表示保留、null 表示清除；所有读取面只返回
   `hasAuthKey`，预览继续递归掩码，设备审计使用类型化投影移除 camelCase
   `authKey`，不能只依赖 YAML 键名脱敏；
-- 设备功能与补丁共享 preflight + config-version CAS，不新增旁路；
+- 设备功能与补丁共享 preflight + config-version CAS，不新增旁路；实例级 CRUD 也走
+  同一条 `mutateDevices` 通道，冲突检查基于版本括号内的完整候选；
+- 附加实例的路由与密钥只存在于该实例；所有读取面（设备列表、诊断、审计、迁移）都只
+  返回 `hasAuthKey`；
 - 旧共享 Tailscale 与设备实例不能同时渲染，必须显式迁移。
 
 ### 9.4 迁移与页面

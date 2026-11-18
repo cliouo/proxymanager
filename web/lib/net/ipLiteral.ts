@@ -44,3 +44,65 @@ function isStrictIpv6(value: string): boolean {
   }
   return compressed ? units < 8 : units === 8;
 }
+
+/**
+ * Canonical spelling of an IPv4/IPv6 literal, used only for *comparison*
+ * (e.g. deciding whether two Tailscale service routes point at the same
+ * address). Returns '' for anything the strict parsers above reject.
+ *
+ * IPv4 drops leading zeros; IPv6 expands to eight numeric groups and applies
+ * RFC 5952-style lowercase hex plus longest-zero-run compression, so
+ * `2001:DB8:0:0:0:0:0:1` and `2001:db8::1` compare equal.
+ */
+export function canonicalIpLiteral(value: string): string {
+  const family = ipLiteralFamily(value);
+  if (family === 4) {
+    return value
+      .split('.')
+      .map((part) => String(Number(part)))
+      .join('.');
+  }
+  if (family !== 6) return '';
+
+  const groupsOf = (part: string): number[] => {
+    const groups: number[] = [];
+    for (const unit of part === '' ? [] : part.split(':')) {
+      if (unit.includes('.')) {
+        const [a, b, c, d] = unit.split('.').map(Number);
+        groups.push((a << 8) | b, (c << 8) | d);
+        continue;
+      }
+      groups.push(Number.parseInt(unit, 16));
+    }
+    return groups;
+  };
+
+  const compressed = value.includes('::');
+  const [head = '', tail] = value.split('::');
+  const left = groupsOf(head);
+  const right = compressed ? groupsOf(tail ?? '') : [];
+  const zeros = compressed ? Math.max(0, 8 - left.length - right.length) : 0;
+  const groups = [...left, ...new Array<number>(zeros).fill(0), ...right];
+
+  let bestStart = -1;
+  let bestLength = 1;
+  for (let index = 0; index < groups.length; ) {
+    if (groups[index] !== 0) {
+      index += 1;
+      continue;
+    }
+    let end = index;
+    while (end < groups.length && groups[end] === 0) end += 1;
+    if (end - index > bestLength) {
+      bestStart = index;
+      bestLength = end - index;
+    }
+    index = end;
+  }
+
+  const hex = groups.map((group) => group.toString(16));
+  if (bestStart < 0) return hex.join(':');
+  const before = hex.slice(0, bestStart).join(':');
+  const after = hex.slice(bestStart + bestLength).join(':');
+  return `${before}::${after}`;
+}

@@ -299,7 +299,12 @@ function DeviceCard({
       </div>
 
       <div className="mt-auto flex items-center gap-1.5">
-        {device.features.tailscale && <TailscaleBadge hostname={device.features.tailscale.hostname} />}
+        {(device.features.tailscale || (device.features.tailscaleInstances?.length ?? 0) > 0) && (
+          <TailscaleBadge
+            hostname={device.features.tailscale?.hostname}
+            extra={device.features.tailscaleInstances?.length ?? 0}
+          />
+        )}
         <span className="flex-1" />
         {link && (
           <div className="relative z-10 flex items-center">

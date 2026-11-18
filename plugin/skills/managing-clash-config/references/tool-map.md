@@ -48,6 +48,7 @@
 | `inspect_naming_drift`                | editing            | 漂移模式（残片近失信号）                                                           |
 | `preview_naming_target`               | editing            | 完整命名方案（模板+策略+规则）对真实节点试算（可反复迭代的往返候选）               |
 | `list_devices`                        | devices            | 当前 profile 的设备列表（补丁脱敏；Tailscale 只含 hasAuthKey）                     |
+| `list_device_tailscale_instances`     | devices            | 一台设备的附加 Tailscale 实例（不含原实例；只含 hasAuthKey）                       |
 | `preview_device_config`               | devices            | 设备补丁对真实共享渲染试算（**改补丁前必做**，非法补丁回结构化 issues）            |
 | `preview_direct_alias_migration`      | hub                | 预检 direct 别名；返回引用计数、隔离失败数及并发守卫                               |
 | `preview_legacy_profile_repair`       | hub / synthesizing | 完整预检直连别名 + 2–16 个非法筛选的跨资源恢复候选，返回 version 与 base ETag      |
@@ -70,7 +71,8 @@
 | `save_naming_plan`                                                           | editing            | 应用完整命名方案（模板+tw2cn+别名+识别规则）为 rename-template，CAS 保存（一张确认卡）       |
 | `rename_local_node`                                                          | editing            | 本地源节点直接改名                                                                           |
 | `create_device` / `update_device` / `delete_device`                          | devices            | 设备增删改（base_patch 整份替换；`***` 占位符还原为存量真实值；改名/删除断设备订阅链接）     |
-| `set_device_tailscale` / `remove_device_tailscale`                           | devices            | 设备级 Tailscale 整份 PUT / 关闭；auth_key 三态（省略=保留/null=清除）；模版 profile 拒绝    |
+| `set_device_tailscale` / `remove_device_tailscale`                           | devices            | **原**设备级 Tailscale 整份 PUT / 关闭；auth_key 与 service_routes 三态；模版 profile 拒绝   |
+| `add_device_tailscale_instance` / `update_device_tailscale_instance` / `remove_device_tailscale_instance` | devices | 附加 Tailscale 实例增改删（只能做「目标 IP + 端口」精确分流；按不可变 instance_id 定位） |
 | `create_profile` / `update_profile`                                          | hub                | 配置文件新建（`copy_from`=模版 id 即「从模版新建」，克隆不继承绑定）与元数据/绑定修改        |
 | `migrate_direct_alias`                                                       | hub                | 当前 profile 内原子删除纯 direct 别名并把已知引用改为内建 `DIRECT`；必须使用刚预检的并发守卫 |
 | `repair_legacy_profile`                                                      | hub / synthesizing | 原子迁移安全 direct 别名并修复 2–16 个当前非法筛选；一次完整渲染和一张确认卡                 |

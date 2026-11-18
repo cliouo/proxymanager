@@ -442,3 +442,317 @@ proxies:
     expect(redactRenderedYaml('key: [unclosed\n')).toBe('key: [unclosed\n');
   });
 });
+
+/* ─── 设备级 Tailscale：多实例与服务分流 ─────────────────────────────── */
+
+const EXTRA_INSTANCE_ID = '22222222-2222-4222-8222-222222222222';
+
+function tailscaleFixture(over: Record<string, unknown> = {}) {
+  return {
+    hostname: 'synthetic-ts',
+    acceptRoutes: true,
+    udp: true,
+    ephemeral: false,
+    exitNodeAllowLanAccess: false,
+    extraCidrs: [],
+    ...over,
+  };
+}
+
+interface TailscaleRender {
+  proxies: Array<Record<string, unknown>>;
+  'proxy-groups': Array<Record<string, unknown>>;
+  rules: string[];
+}
+
+describe('device Tailscale instances', () => {
+  it('keeps the historical single-instance output byte for byte', () => {
+    const out = buildDeviceConfig(SHARED, {}, 'server', {
+      // A legacy record has no explicit routeMode and no serviceRoutes.
+      tailscale: tailscaleFixture({ extraCidrs: ['10.23.0.0/16'] }) as never,
+    });
+    const parsed = parse(out) as TailscaleRender;
+    expect(parsed['proxy-groups']).toContainEqual({
+      name: 'Tailscale',
+      type: 'select',
+      proxies: ['ts-synthetic-ts'],
+    });
+    expect(parsed.rules).toEqual([
+      'IP-CIDR,100.64.0.0/10,Tailscale,no-resolve',
+      'IP-CIDR,10.23.0.0/16,Tailscale,no-resolve',
+      'MATCH,DIRECT',
+    ]);
+  });
+
+  it('emits an exact host + port conjunction and no broad CIDR in service mode', () => {
+    const out = buildDeviceConfig(SHARED, {}, 'server', {
+      tailscale: tailscaleFixture({
+        routeMode: 'service',
+        serviceRoutes: [
+          { ip: '100.100.1.2', port: 443 },
+          { ip: 'fd7a:115c:a1e0::1', port: 8443 },
+        ],
+      }) as never,
+    });
+    const parsed = parse(out) as TailscaleRender;
+    expect(parsed.rules).toEqual([
+      'AND,((IP-CIDR,100.100.1.2/32,no-resolve),(DST-PORT,443)),Tailscale',
+      'AND,((IP-CIDR6,fd7a:115c:a1e0::1/128,no-resolve),(DST-PORT,8443)),Tailscale',
+      'MATCH,DIRECT',
+    ]);
+    expect(parsed.rules.join('\n')).not.toContain('100.64.0.0/10');
+  });
+
+  it('renders two instances as separate nodes with service rules before the CIDR instance', () => {
+    const out = buildDeviceConfig(SHARED, {}, 'server', {
+      tailscale: tailscaleFixture({ hostname: 'legacy-ts' }),
+      tailscaleInstances: [
+        {
+          id: EXTRA_INSTANCE_ID,
+          hostname: 'extra-ts',
+          routeMode: 'service',
+          serviceRoutes: [{ ip: '100.100.1.2', port: 443 }],
+          acceptRoutes: true,
+          udp: true,
+          ephemeral: false,
+          exitNodeAllowLanAccess: false,
+          extraCidrs: [],
+        },
+      ],
+    } as never);
+    const parsed = parse(out) as TailscaleRender;
+
+    expect(parsed.proxies).toContainEqual(
+      expect.objectContaining({ name: 'ts-legacy-ts', type: 'tailscale' }),
+    );
+    expect(parsed.proxies).toContainEqual(
+      expect.objectContaining({ name: 'ts-extra-ts', type: 'tailscale' }),
+    );
+    expect(parsed['proxy-groups']).toContainEqual(
+      expect.objectContaining({ name: 'Tailscale', proxies: ['ts-legacy-ts'] }),
+    );
+    expect(parsed['proxy-groups']).toContainEqual(
+      expect.objectContaining({
+        name: `Tailscale-${EXTRA_INSTANCE_ID}`,
+        proxies: ['ts-extra-ts'],
+      }),
+    );
+    expect(parsed.rules).toEqual([
+      `AND,((IP-CIDR,100.100.1.2/32,no-resolve),(DST-PORT,443)),Tailscale-${EXTRA_INSTANCE_ID}`,
+      'IP-CIDR,100.64.0.0/10,Tailscale,no-resolve',
+      'MATCH,DIRECT',
+    ]);
+  });
+
+  it('gives additional instances id-based state dirs that survive a hostname edit', () => {
+    const instance = (hostname: string) => ({
+      id: EXTRA_INSTANCE_ID,
+      hostname,
+      routeMode: 'service',
+      serviceRoutes: [{ ip: '100.100.1.2', port: 443 }],
+      acceptRoutes: true,
+      udp: true,
+      ephemeral: false,
+      exitNodeAllowLanAccess: false,
+      extraCidrs: [],
+    });
+    const before = parse(
+      buildDeviceConfig(SHARED, {}, 'server', {
+        tailscaleInstances: [instance('first-name')],
+      } as never),
+    ) as TailscaleRender;
+    const after = parse(
+      buildDeviceConfig(SHARED, {}, 'server', {
+        tailscaleInstances: [instance('renamed')],
+      } as never),
+    ) as TailscaleRender;
+
+    const stateDirOf = (render: TailscaleRender) =>
+      render.proxies.find(
+        (proxy) => proxy.name === 'ts-first-name' || proxy.name === 'ts-renamed',
+      )!['state-dir'];
+    expect(stateDirOf(before)).toBe(`./ts-${EXTRA_INSTANCE_ID}`);
+    expect(stateDirOf(after)).toBe(`./ts-${EXTRA_INSTANCE_ID}`);
+  });
+
+  it('rejects two instances that resolve to the same state directory', () => {
+    const issue = issueOf(() =>
+      buildDeviceConfig(SHARED, {}, 'server', {
+        tailscale: tailscaleFixture({ hostname: 'legacy-ts', stateDir: './shared-ts' }),
+        tailscaleInstances: [
+          {
+            id: EXTRA_INSTANCE_ID,
+            hostname: 'extra-ts',
+            stateDir: './shared-ts/',
+            routeMode: 'service',
+            serviceRoutes: [{ ip: '100.100.1.2', port: 443 }],
+            acceptRoutes: true,
+            udp: true,
+            ephemeral: false,
+            exitNodeAllowLanAccess: false,
+            extraCidrs: [],
+          },
+        ],
+      } as never),
+    );
+    expect(issue.code).toBe('device_tailscale_state_dir_conflict');
+  });
+
+  it('rejects an additional instance whose node or group name collides with the legacy one', () => {
+    const issue = issueOf(() =>
+      buildDeviceConfig(SHARED, {}, 'server', {
+        tailscale: tailscaleFixture({ hostname: 'legacy-ts' }),
+        tailscaleInstances: [
+          {
+            id: EXTRA_INSTANCE_ID,
+            hostname: 'extra-ts',
+            groupName: 'Tailscale',
+            routeMode: 'service',
+            serviceRoutes: [{ ip: '100.100.1.2', port: 443 }],
+            acceptRoutes: true,
+            udp: true,
+            ephemeral: false,
+            exitNodeAllowLanAccess: false,
+            extraCidrs: [],
+          },
+        ],
+      } as never),
+    );
+    expect(issue.code).toBe('device_tailscale_name_conflict');
+  });
+
+  it('leaves other devices and the shared output untouched', () => {
+    const withInstances = buildDeviceConfig(SHARED, {}, 'server', {
+      tailscale: tailscaleFixture({ hostname: 'legacy-ts' }),
+      tailscaleInstances: [
+        {
+          id: EXTRA_INSTANCE_ID,
+          hostname: 'extra-ts',
+          routeMode: 'service',
+          serviceRoutes: [{ ip: '100.100.1.2', port: 443 }],
+          acceptRoutes: true,
+          udp: true,
+          ephemeral: false,
+          exitNodeAllowLanAccess: false,
+          extraCidrs: [],
+        },
+      ],
+    } as never);
+    expect(buildDeviceConfig(SHARED, {}, 'other', {} as never)).toBe(SHARED);
+    const otherDevice = parse(
+      buildDeviceConfig(SHARED, {}, 'other', {} as never),
+    ) as TailscaleRender;
+    expect(otherDevice.proxies).toEqual([]);
+    expect(otherDevice.rules).toEqual(['MATCH,DIRECT']);
+    expect(withInstances).toContain('extra-ts');
+  });
+});
+
+describe('device Tailscale duplicate destinations', () => {
+  it('rejects two instances claiming the same target IP and port', () => {
+    const issue = issueOf(() =>
+      buildDeviceConfig(SHARED, {}, 'server', {
+        tailscale: tailscaleFixture({
+          hostname: 'legacy-ts',
+          routeMode: 'service',
+          serviceRoutes: [{ ip: '100.100.1.2', port: 443 }],
+        }),
+        tailscaleInstances: [
+          {
+            id: EXTRA_INSTANCE_ID,
+            hostname: 'extra-ts',
+            routeMode: 'service',
+            serviceRoutes: [{ ip: '100.100.1.2', port: 443 }],
+            acceptRoutes: true,
+            udp: true,
+            ephemeral: false,
+            exitNodeAllowLanAccess: false,
+            extraCidrs: [],
+          },
+        ],
+      } as never),
+    );
+    expect(issue.code).toBe('device_tailscale_service_conflict');
+    expect(issue.message).toContain('100.100.1.2:443');
+  });
+
+  it('accepts the same IP on a different port', () => {
+    const out = buildDeviceConfig(SHARED, {}, 'server', {
+      tailscale: tailscaleFixture({
+        hostname: 'legacy-ts',
+        routeMode: 'service',
+        serviceRoutes: [{ ip: '100.100.1.2', port: 443 }],
+      }),
+      tailscaleInstances: [
+        {
+          id: EXTRA_INSTANCE_ID,
+          hostname: 'extra-ts',
+          routeMode: 'service',
+          serviceRoutes: [{ ip: '100.100.1.2', port: 8443 }],
+          acceptRoutes: true,
+          udp: true,
+          ephemeral: false,
+          exitNodeAllowLanAccess: false,
+          extraCidrs: [],
+        },
+      ],
+    } as never);
+    const parsed = parse(out) as TailscaleRender;
+    expect(parsed.rules).toEqual([
+      'AND,((IP-CIDR,100.100.1.2/32,no-resolve),(DST-PORT,443)),Tailscale',
+      `AND,((IP-CIDR,100.100.1.2/32,no-resolve),(DST-PORT,8443)),Tailscale-${EXTRA_INSTANCE_ID}`,
+      'MATCH,DIRECT',
+    ]);
+  });
+});
+
+describe('device Tailscale additional instance guard', () => {
+  it('refuses to render an added instance that has no service route', () => {
+    const issue = issueOf(() =>
+      buildDeviceConfig(SHARED, {}, 'server', {
+        tailscaleInstances: [
+          {
+            id: EXTRA_INSTANCE_ID,
+            hostname: 'extra-ts',
+            acceptRoutes: true,
+            udp: true,
+            ephemeral: false,
+            exitNodeAllowLanAccess: false,
+            extraCidrs: [],
+          },
+        ],
+      } as never),
+    );
+    expect(issue.code).toBe('device_tailscale_service_required');
+  });
+});
+
+describe('device Tailscale group references', () => {
+  it('rejects removing the instance that a sub-rule still points at', () => {
+    const shared = `${SHARED}sub-rules:
+  home:
+    - AND,((DOMAIN,service.lan),(DST-PORT,443)),Tailscale
+`;
+    const issue = issueOf(() => buildDeviceConfig(shared, {}, 'server', {} as never));
+    // The shared sub-rule still targets the removed instance group, so the
+    // final rendered-config gate refuses to serve a broken device config.
+    expect(issue.code).toBe('device_patch_final_invalid');
+    expect(issue.message).toMatch(/policy is missing/);
+  });
+
+  it('accepts the sub-rule while the referenced instance group exists', () => {
+    const shared = `${SHARED}sub-rules:
+  home:
+    - AND,((DOMAIN,service.lan),(DST-PORT,443)),Tailscale
+`;
+    const out = buildDeviceConfig(shared, {}, 'server', {
+      tailscale: tailscaleFixture({
+        hostname: 'legacy-ts',
+        routeMode: 'service',
+        serviceRoutes: [{ ip: '100.100.1.2', port: 443 }],
+      }),
+    } as never);
+    const parsed = parse(out) as TailscaleRender;
+    expect(parsed['proxy-groups']).toContainEqual(expect.objectContaining({ name: 'Tailscale' }));
+  });
+});

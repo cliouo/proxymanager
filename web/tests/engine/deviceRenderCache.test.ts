@@ -187,6 +187,53 @@ describe('renderDeviceConfig', () => {
     expect([...store.kv.keys()].some((key) => key.startsWith('render:'))).toBe(false);
   });
 
+  it('renders a device with two Tailscale instances through the real build path', async () => {
+    mocks.getDeviceByName.mockResolvedValue(
+      device({
+        base_patch: {},
+        features: {
+          tailscale: {
+            hostname: 'synthetic-legacy',
+            routeMode: 'service',
+            serviceRoutes: [{ ip: '100.100.1.2', port: 443 }],
+            ephemeral: false,
+            acceptRoutes: true,
+            udp: true,
+            exitNodeAllowLanAccess: false,
+            extraCidrs: [],
+          },
+          tailscaleInstances: [
+            {
+              id: '22222222-2222-4222-8222-222222222222',
+              hostname: 'synthetic-extra',
+              routeMode: 'service',
+              serviceRoutes: [{ ip: '100.100.1.3', port: 8443 }],
+              ephemeral: false,
+              acceptRoutes: true,
+              udp: true,
+              exitNodeAllowLanAccess: false,
+              extraCidrs: [],
+            },
+          ],
+        },
+      }),
+    );
+    const actual =
+      await vi.importActual<typeof import('@/lib/engine/resolve')>('@/lib/engine/resolve');
+    mocks.resolveConfig.mockImplementation(actual.resolveConfig);
+
+    const out = await renderDeviceConfig('home', 'macbook');
+    expect(out.resolved.content).toContain(
+      '- AND,((IP-CIDR,100.100.1.2/32,no-resolve),(DST-PORT,443)),Tailscale\n',
+    );
+    expect(out.resolved.content).toContain(
+      '- AND,((IP-CIDR,100.100.1.3/32,no-resolve),(DST-PORT,8443)),Tailscale-22222222-2222-4222-8222-222222222222\n',
+    );
+    expect(out.resolved.content).toContain('state-dir: ./ts-22222222-2222-4222-8222-222222222222');
+    expect(out.resolved.content).not.toContain('100.64.0.0/10');
+    expect(out.deviceDisplayName).toBeNull();
+  });
+
   it('fails closed after three concurrent device changes', async () => {
     mocks.resolveConfig.mockImplementation(async () => {
       await fakeRedis.incr(REDIS_KEYS.configVersion);

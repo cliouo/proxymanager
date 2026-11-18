@@ -15,6 +15,10 @@ const mocks = vi.hoisted(() => ({
   deleteDevice: vi.fn(),
   putDeviceTailscaleFeature: vi.fn(),
   deleteDeviceTailscaleFeature: vi.fn(),
+  listDeviceTailscaleInstances: vi.fn(),
+  createDeviceTailscaleInstance: vi.fn(),
+  putDeviceTailscaleInstance: vi.fn(),
+  deleteDeviceTailscaleInstance: vi.fn(),
   buildDeviceConfig: vi.fn(),
   renderProfileConfig: vi.fn(),
   getProfile: vi.fn(),
@@ -30,6 +34,10 @@ vi.mock('@/lib/services/deviceService', async () => {
     deleteDevice: mocks.deleteDevice,
     putDeviceTailscaleFeature: mocks.putDeviceTailscaleFeature,
     deleteDeviceTailscaleFeature: mocks.deleteDeviceTailscaleFeature,
+    listDeviceTailscaleInstances: mocks.listDeviceTailscaleInstances,
+    createDeviceTailscaleInstance: mocks.createDeviceTailscaleInstance,
+    putDeviceTailscaleInstance: mocks.putDeviceTailscaleInstance,
+    deleteDeviceTailscaleInstance: mocks.deleteDeviceTailscaleInstance,
     publicDevice: (device: Device) => ({
       ...device,
       features: publicDeviceFeatures(device.features ?? {}),
@@ -47,7 +55,10 @@ const CTX = { actor: 'test', profileId: 'profile-test' };
 
 interface TestWriteAction {
   summary(input: Record<string, unknown>): string;
-  preview(ctx: typeof CTX, input: Record<string, unknown>): Promise<{ diff: unknown }>;
+  preview(
+    ctx: typeof CTX,
+    input: Record<string, unknown>,
+  ): Promise<{ diff: Record<string, unknown> }>;
   execute(ctx: typeof CTX, input: Record<string, unknown>): Promise<unknown>;
 }
 
@@ -302,5 +313,226 @@ describe('device write actions', () => {
 
     mocks.device = { ...fixtureDevice(), features: {} };
     await expect(action.preview(CTX, { device_id: DEVICE_ID })).rejects.toThrow(/未启用/);
+  });
+});
+
+describe('additional Tailscale instances', () => {
+  const INSTANCE_ID = '33333333-3333-4333-8333-333333333333';
+
+  function deviceWithInstances(): Device {
+    return {
+      ...fixtureDevice(),
+      features: {
+        tailscale: {
+          hostname: 'mbp',
+          authKey: AUTH_KEY,
+          routeMode: 'service',
+          serviceRoutes: [{ ip: '100.100.1.2', port: 443 }],
+          ephemeral: false,
+          acceptRoutes: true,
+          udp: true,
+          exitNodeAllowLanAccess: false,
+          extraCidrs: [],
+        },
+        tailscaleInstances: [
+          {
+            id: INSTANCE_ID,
+            hostname: 'mbp-extra',
+            authKey: 'tskey-extra-secret',
+            routeMode: 'service',
+            serviceRoutes: [{ ip: '100.100.1.3', port: 8443 }],
+            ephemeral: false,
+            acceptRoutes: true,
+            udp: true,
+            exitNodeAllowLanAccess: false,
+            extraCidrs: [],
+          },
+        ],
+      },
+    };
+  }
+
+  it('keeps the legacy tool scoped to the original slot and surfaces stored routing', async () => {
+    const { DEVICE_WRITE_ACTIONS } = await import('@/lib/ai/actions/primitives/deviceWrites');
+    mocks.device = deviceWithInstances();
+    mocks.putDeviceTailscaleFeature.mockResolvedValue({
+      feature: { hostname: 'mbp', hasAuthKey: true },
+      warnings: [],
+    });
+    const action = requireWriteAction(DEVICE_WRITE_ACTIONS, 'set_device_tailscale');
+
+    // Omitted service_routes must keep the stored allowlist in the card.
+    const preview = await action.preview(CTX, { device_id: DEVICE_ID, hostname: 'mbp' });
+    expect(preview.diff.afterYaml).toContain('100.100.1.2');
+    expect(preview.diff.afterYaml).not.toContain('100.100.1.3');
+
+    await action.execute(CTX, { device_id: DEVICE_ID, hostname: 'mbp' });
+    expect(mocks.putDeviceTailscaleFeature).toHaveBeenCalledWith('profile-test', DEVICE_ID, {
+      hostname: 'mbp',
+    });
+    expect(mocks.putDeviceTailscaleInstance).not.toHaveBeenCalled();
+    expect(mocks.createDeviceTailscaleInstance).not.toHaveBeenCalled();
+  });
+
+  it('maps an explicit service switch and a null switch back to CIDR', async () => {
+    const { DEVICE_WRITE_ACTIONS } = await import('@/lib/ai/actions/primitives/deviceWrites');
+    mocks.device = fixtureDevice();
+    mocks.putDeviceTailscaleFeature.mockResolvedValue({
+      feature: { hostname: 'mbp', hasAuthKey: true },
+      warnings: [],
+    });
+    const action = requireWriteAction(DEVICE_WRITE_ACTIONS, 'set_device_tailscale');
+
+    await action.execute(CTX, {
+      device_id: DEVICE_ID,
+      hostname: 'mbp',
+      service_routes: [{ ip: '100.100.1.2', port: 443 }],
+    });
+    expect(mocks.putDeviceTailscaleFeature).toHaveBeenLastCalledWith('profile-test', DEVICE_ID, {
+      hostname: 'mbp',
+      serviceRoutes: [{ ip: '100.100.1.2', port: 443 }],
+    });
+
+    await action.execute(CTX, { device_id: DEVICE_ID, hostname: 'mbp', service_routes: null });
+    expect(mocks.putDeviceTailscaleFeature).toHaveBeenLastCalledWith('profile-test', DEVICE_ID, {
+      hostname: 'mbp',
+      serviceRoutes: null,
+    });
+  });
+
+  it('refuses a legacy service that another instance already owns', async () => {
+    const { DEVICE_WRITE_ACTIONS } = await import('@/lib/ai/actions/primitives/deviceWrites');
+    mocks.device = deviceWithInstances();
+    const action = requireWriteAction(DEVICE_WRITE_ACTIONS, 'set_device_tailscale');
+
+    await expect(
+      action.preview(CTX, {
+        device_id: DEVICE_ID,
+        hostname: 'mbp',
+        service_routes: [{ ip: '100.100.1.3', port: 8443 }],
+      }),
+    ).rejects.toThrow(/100.100.1.3:8443/);
+  });
+
+  it('lists additional instances without leaking either key', async () => {
+    const { DEVICE_READ_ACTIONS } = await import('@/lib/ai/actions/primitives/deviceWrites');
+    mocks.device = deviceWithInstances();
+    mocks.listDeviceTailscaleInstances.mockResolvedValue({
+      instances: [
+        {
+          id: INSTANCE_ID,
+          hostname: 'mbp-extra',
+          hasAuthKey: true,
+          routeMode: 'service',
+          serviceRoutes: [{ ip: '100.100.1.3', port: 8443 }],
+        },
+      ],
+      warnings: [],
+    });
+    const action = requireReadAction(DEVICE_READ_ACTIONS, 'list_device_tailscale_instances');
+
+    const result = await action.run(CTX, { device_id: DEVICE_ID });
+    const serialized = JSON.stringify(result.data);
+    expect(serialized).toContain('mbp-extra');
+    expect(serialized).toContain('hasAuthKey');
+    expect(serialized).not.toContain('tskey-extra-secret');
+    expect(serialized).not.toContain(AUTH_KEY);
+  });
+
+  it('adds an instance through the instance service, not the legacy path', async () => {
+    const { DEVICE_WRITE_ACTIONS } = await import('@/lib/ai/actions/primitives/deviceWrites');
+    mocks.device = fixtureDevice();
+    mocks.createDeviceTailscaleInstance.mockResolvedValue({
+      instance: { id: INSTANCE_ID, hostname: 'mbp-extra', hasAuthKey: false },
+      warnings: [],
+    });
+    const action = requireWriteAction(DEVICE_WRITE_ACTIONS, 'add_device_tailscale_instance');
+
+    const preview = await action.preview(CTX, {
+      device_id: DEVICE_ID,
+      hostname: 'mbp-extra',
+      service_routes: [{ ip: '100.100.1.4', port: 22 }],
+    });
+    expect(preview.diff.afterYaml).toContain('100.100.1.4');
+
+    await action.execute(CTX, {
+      device_id: DEVICE_ID,
+      hostname: 'mbp-extra',
+      service_routes: [{ ip: '100.100.1.4', port: 22 }],
+      auth_key: 'tskey-new-instance',
+    });
+    expect(mocks.createDeviceTailscaleInstance).toHaveBeenCalledWith('profile-test', DEVICE_ID, {
+      hostname: 'mbp-extra',
+      serviceRoutes: [{ ip: '100.100.1.4', port: 22 }],
+      authKey: 'tskey-new-instance',
+    });
+    expect(mocks.putDeviceTailscaleFeature).not.toHaveBeenCalled();
+  });
+
+  it('updates only the requested instance and reports the other one separately', async () => {
+    const { DEVICE_WRITE_ACTIONS } = await import('@/lib/ai/actions/primitives/deviceWrites');
+    mocks.device = deviceWithInstances();
+    mocks.putDeviceTailscaleInstance.mockResolvedValue({
+      instance: { id: INSTANCE_ID, hostname: 'mbp-extra-2', hasAuthKey: true },
+      warnings: [],
+    });
+    const action = requireWriteAction(DEVICE_WRITE_ACTIONS, 'update_device_tailscale_instance');
+
+    const preview = await action.preview(CTX, {
+      device_id: DEVICE_ID,
+      instance_id: INSTANCE_ID,
+      hostname: 'mbp-extra-2',
+    });
+    expect(preview.diff.afterYaml).toContain('mbp-extra-2');
+    expect(preview.diff.afterYaml).toContain('100.100.1.3');
+    expect(preview.diff.afterYaml).not.toContain('100.100.1.2');
+
+    await action.execute(CTX, {
+      device_id: DEVICE_ID,
+      instance_id: INSTANCE_ID,
+      hostname: 'mbp-extra-2',
+    });
+    expect(mocks.putDeviceTailscaleInstance).toHaveBeenCalledWith(
+      'profile-test',
+      DEVICE_ID,
+      INSTANCE_ID,
+      { hostname: 'mbp-extra-2' },
+    );
+    expect(mocks.putDeviceTailscaleFeature).not.toHaveBeenCalled();
+  });
+
+  it('refuses an update that would reuse a destination already taken', async () => {
+    const { DEVICE_WRITE_ACTIONS } = await import('@/lib/ai/actions/primitives/deviceWrites');
+    mocks.device = deviceWithInstances();
+    const action = requireWriteAction(DEVICE_WRITE_ACTIONS, 'update_device_tailscale_instance');
+
+    await expect(
+      action.preview(CTX, {
+        device_id: DEVICE_ID,
+        instance_id: INSTANCE_ID,
+        service_routes: [{ ip: '100.100.1.2', port: 443 }],
+      }),
+    ).rejects.toThrow(/100.100.1.2:443/);
+  });
+
+  it('removes a single instance and leaves the legacy slot alone', async () => {
+    const { DEVICE_WRITE_ACTIONS } = await import('@/lib/ai/actions/primitives/deviceWrites');
+    mocks.device = deviceWithInstances();
+    mocks.deleteDeviceTailscaleInstance.mockResolvedValue({ deleted: true, warnings: [] });
+    const action = requireWriteAction(DEVICE_WRITE_ACTIONS, 'remove_device_tailscale_instance');
+
+    const preview = await action.preview(CTX, {
+      device_id: DEVICE_ID,
+      instance_id: INSTANCE_ID,
+    });
+    expect(preview.diff.beforeYaml).toContain('mbp-extra');
+
+    await action.execute(CTX, { device_id: DEVICE_ID, instance_id: INSTANCE_ID });
+    expect(mocks.deleteDeviceTailscaleInstance).toHaveBeenCalledWith(
+      'profile-test',
+      DEVICE_ID,
+      INSTANCE_ID,
+    );
+    expect(mocks.deleteDeviceTailscaleFeature).not.toHaveBeenCalled();
   });
 });

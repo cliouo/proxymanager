@@ -69,10 +69,17 @@ export function PatchSticker({ chip, className }: { chip: PatchChip; className?:
   );
 }
 
-export function TailscaleBadge({ hostname }: { hostname?: string }) {
+/**
+ * `hostname` is the original slot; `extra` counts additional instances, so a
+ * device with two extras reads "Tailscale +2".
+ */
+export function TailscaleBadge({ hostname, extra = 0 }: { hostname?: string; extra?: number }) {
+  const title = hostname
+    ? `Tailscale · ${hostname}${extra > 0 ? ` + ${extra} 个附加实例` : ''}`
+    : `Tailscale${extra > 0 ? ` · ${extra} 个附加实例` : ''}`;
   return (
-    <Badge tone="accent" icon={Network} title={hostname ? `Tailscale · ${hostname}` : 'Tailscale'}>
-      Tailscale
+    <Badge tone="accent" icon={Network} title={title}>
+      Tailscale{extra > 0 ? ` +${extra}` : ''}
     </Badge>
   );
 }

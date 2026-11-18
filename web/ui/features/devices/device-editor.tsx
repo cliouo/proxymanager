@@ -248,7 +248,13 @@ function Workbench({ device }: { device: PublicDevice }) {
           <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <span className="font-mono text-xs text-ink-3">{baseline.name}</span>
             {baseline.notes && <span className="text-ink-3">· {baseline.notes}</span>}
-            {baseline.features.tailscale && <TailscaleBadge hostname={baseline.features.tailscale.hostname} />}
+            {(baseline.features.tailscale ||
+              (baseline.features.tailscaleInstances?.length ?? 0) > 0) && (
+              <TailscaleBadge
+                hostname={baseline.features.tailscale?.hostname}
+                extra={baseline.features.tailscaleInstances?.length ?? 0}
+              />
+            )}
           </span>
         }
         actions={
@@ -414,7 +420,10 @@ function Workbench({ device }: { device: PublicDevice }) {
             deviceId={baseline.id}
             draft={patch && problems.length === 0 && rowErrorList.length === 0 ? patch : null}
             dirty={patchDirty}
-            hasTailscale={!!baseline.features.tailscale}
+            hasTailscale={
+              !!baseline.features.tailscale ||
+              (baseline.features.tailscaleInstances?.length ?? 0) > 0
+            }
           />
           <LinksCard url={sub.url} loading={sub.loading} isTemplate={sub.isTemplate} name={baseline.name} label={label} renamed={info.name.trim() !== baseline.name} />
         </div>
