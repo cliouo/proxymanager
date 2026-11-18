@@ -143,6 +143,75 @@ describe('tailscaleDeviceMigrationService', () => {
     expect(plan.expectedVersion).toBe(41);
   });
 
+  it('migrates into the legacy slot in explicit CIDR mode and keeps added instances untouched', async () => {
+    const instance = {
+      id: '55555555-5555-4555-8555-555555555555',
+      hostname: 'extra-ts',
+      routeMode: 'service' as const,
+      serviceRoutes: [{ ip: '100.100.1.2', port: 443 }],
+      acceptRoutes: true,
+      udp: true,
+      ephemeral: false,
+      exitNodeAllowLanAccess: false,
+      extraCidrs: [],
+    };
+    mocks.preflightProfileConfig.mockImplementation(
+      async (
+        _profileId: string,
+        build: (value: Readonly<ProfileConfigState>) => Partial<ProfileConfigState>,
+      ) => {
+        const current = state();
+        current.devices[0] = {
+          ...current.devices[0],
+          features: { tailscaleInstances: [instance] },
+        };
+        const patch = await build(current);
+        candidate = patch;
+        return { configVersion: 41, candidate: { ...current, ...patch } };
+      },
+    );
+
+    await planTailscaleDeviceMigration('home', 'server');
+
+    const migrated = candidate?.devices?.[0].features;
+    expect(migrated?.tailscale).toMatchObject({ hostname: 'server-ts', routeMode: 'cidr' });
+    expect(migrated?.tailscaleInstances).toEqual([instance]);
+  });
+
+  it('refuses to migrate a shared node onto a device that already has the same tailnet identity', async () => {
+    mocks.preflightProfileConfig.mockImplementation(
+      async (
+        _profileId: string,
+        build: (value: Readonly<ProfileConfigState>) => Partial<ProfileConfigState>,
+      ) => {
+        const current = state();
+        current.devices[0] = {
+          ...current.devices[0],
+          features: {
+            tailscaleInstances: [
+              {
+                id: '55555555-5555-4555-8555-555555555555',
+                hostname: 'server-ts',
+                routeMode: 'service',
+                serviceRoutes: [{ ip: '100.100.1.2', port: 443 }],
+                acceptRoutes: true,
+                udp: true,
+                ephemeral: false,
+                exitNodeAllowLanAccess: false,
+                extraCidrs: [],
+              },
+            ],
+          },
+        };
+        return build(current);
+      },
+    );
+
+    await expect(planTailscaleDeviceMigration('home', 'server')).rejects.toThrow(
+      /相同 control-url/,
+    );
+  });
+
   it('rejects an ambiguous base with more than one legacy Tailscale node', async () => {
     const second = BASE.replace(
       'proxy-groups: []',

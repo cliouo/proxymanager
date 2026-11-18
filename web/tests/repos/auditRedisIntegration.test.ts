@@ -261,6 +261,23 @@ describe.skipIf(!server || !cli)('isolated real Redis: atomic config and audit',
     expect(JSON.stringify(summary)).not.toContain('private-body');
     expect(JSON.stringify(summary).length).toBeLessThan(1000);
   });
+  it('counts a device once when it only has added Tailscale instances', async () => {
+    command(
+      'HSET',
+      'devices:profile-a',
+      'legacy',
+      JSON.stringify({ id: 'legacy', features: { tailscale: { hostname: 'a' } } }),
+    );
+    command(
+      'HSET',
+      'devices:profile-a',
+      'added',
+      JSON.stringify({ id: 'added', features: { tailscaleInstances: [{ id: 'i-1' }] } }),
+    );
+    command('HSET', 'devices:profile-a', 'plain', JSON.stringify({ id: 'plain', features: {} }));
+    const summary = await getDashboardSummary('profile-a');
+    expect(summary.deviceCounts).toEqual({ total: 3, tailscale: 2 });
+  });
   it('unauthenticated identity lookups project no legacy inline body', async () => {
     for (const [kind, key] of [
       ['subscription', 'subscriptions'],

@@ -332,10 +332,14 @@ function buildMigrationCandidate(
   }
   const managedRules = findManagedRules(state, legacy.nodeName, group.name);
   assertRulePlacementPreserved(state, managedRules.rules);
+  // The migration always produces the historical CIDR behaviour on the legacy
+  // slot; a service-mode record would silently drop the tailnet routes this
+  // legacy node used to own.
   const feature = TailscaleDeviceFeatureSchema.parse({
     ...legacy.feature,
     groupName: group.name,
     extraCidrs: managedRules.extraCidrs,
+    routeMode: 'cidr',
   });
   if (state.profile.kind === 'template') {
     fixedError('模版不保存设备身份功能；请迁移到普通配置文件的具体设备。');
@@ -351,6 +355,26 @@ function buildMigrationCandidate(
   );
   if (duplicate) {
     fixedError(`设备「${duplicate.name}」已使用相同的 control-url + hostname。`);
+  }
+
+  // Moving a shared node onto this device must not create a second embedded
+  // node with the same tailnet identity, nor a group name that another
+  // instance already uses.
+  const sameDevice = [
+    target.features?.tailscale,
+    ...(target.features?.tailscaleInstances ?? []),
+  ].filter((candidate): candidate is TailscaleDeviceFeature => !!candidate);
+  if (
+    sameDevice.some(
+      (candidate) =>
+        candidate.hostname.toLowerCase() === feature.hostname.toLowerCase() &&
+        canonicalControlUrl(candidate.controlUrl) === canonicalControlUrl(feature.controlUrl),
+    )
+  ) {
+    fixedError(`设备「${target.name}」已经有使用相同 control-url + hostname 的 Tailscale 实例。`);
+  }
+  if (sameDevice.some((candidate) => candidate.groupName === feature.groupName)) {
+    fixedError(`设备「${target.name}」的附加实例已经使用策略组名「${feature.groupName}」。`);
   }
 
   const updated: Device = {

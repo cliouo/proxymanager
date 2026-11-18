@@ -16,10 +16,19 @@ import {
   Field,
   Input,
   notify,
+  SegmentedControl,
   Skeleton,
   Switch,
   TagInput,
 } from '@/ui/primitives';
+import { AdditionalInstances, ServiceRouteEditor } from './tailscale-instances';
+import {
+  EMPTY_ROUTE,
+  draftsToRoutes,
+  routeSetError,
+  routeToDraft,
+  type ServiceRouteDraft,
+} from './tailscale-model';
 
 interface TailscaleResult {
   feature: PublicTailscaleDeviceFeature | null;
@@ -40,6 +49,9 @@ interface Form {
   extraCidrs: string[];
   nodeName: string;
   groupName: string;
+  /** `cidr` routes the whole tailnet; `service` routes only the listed pairs. */
+  routeMode: 'cidr' | 'service';
+  routes: ServiceRouteDraft[];
 }
 
 const HOSTNAME_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/;
@@ -59,6 +71,11 @@ function fromFeature(feature: PublicTailscaleDeviceFeature | null, deviceName: s
     extraCidrs: feature?.extraCidrs ?? [],
     nodeName: feature?.nodeName ?? '',
     groupName: feature?.groupName ?? '',
+    routeMode: feature?.routeMode === 'service' ? 'service' : 'cidr',
+    routes:
+      feature?.serviceRoutes && feature.serviceRoutes.length > 0
+        ? feature.serviceRoutes.map(routeToDraft)
+        : [EMPTY_ROUTE],
   };
 }
 
@@ -73,7 +90,11 @@ function toPayload(form: Form): TailscaleDeviceFeatureUpdate {
     udp: form.udp,
     exitNode: opt(form.exitNode),
     exitNodeAllowLanAccess: form.exitNodeAllowLanAccess,
-    extraCidrs: form.extraCidrs,
+    // Switching back to CIDR is an explicit `null`, never an empty list: the
+    // server must never widen routing just because a list became empty.
+    ...(form.routeMode === 'service'
+      ? { serviceRoutes: draftsToRoutes(form.routes) }
+      : { serviceRoutes: null, extraCidrs: form.extraCidrs }),
     nodeName: opt(form.nodeName),
     groupName: opt(form.groupName),
     ...(form.authMode === 'set' && form.authKey.trim()
@@ -117,6 +138,11 @@ function formErrors(form: Form) {
   return errors;
 }
 
+/** Route-set level error (empty list / duplicate destination) for the service mode. */
+function serviceRoutesError(form: Form): string | null {
+  return form.routeMode === 'service' ? routeSetError(form.routes) : null;
+}
+
 export function TailscaleCard({
   profileId,
   device,
@@ -147,7 +173,8 @@ export function TailscaleCard({
   const baseline = feature ? fromFeature(feature, device.name) : null;
   const dirty = !!form && JSON.stringify(form) !== JSON.stringify(baseline);
   const errors = form ? formErrors(form) : {};
-  const hasErrors = Object.keys(errors).length > 0;
+  const routesError = form ? serviceRoutesError(form) : null;
+  const hasErrors = Object.keys(errors).length > 0 || !!routesError;
   const update = (patch: Partial<Form>) => setForm((current) => (current ? { ...current, ...patch } : current));
 
   const save = async () => {
@@ -310,17 +337,46 @@ export function TailscaleCard({
                 <Input id={id} mono value={form.exitNode} placeholder="100.64.0.1" onChange={(e) => update({ exitNode: e.target.value })} />
               )}
             </Field>
-            <Field label="额外路由网段" optional hint="除 100.64.0.0/10 外，还要经由 Tailscale 访问的网段">
-              {() => (
-                <TagInput
-                  mono
-                  value={form.extraCidrs}
-                  onChange={(extraCidrs) => update({ extraCidrs })}
-                  validate={cidrError}
-                  placeholder="192.168.10.0/24，回车添加"
+            <div className="flex flex-col gap-2">
+              <SegmentedControl
+                size="sm"
+                value={form.routeMode}
+                onChange={(routeMode) => update({ routeMode })}
+                options={[
+                  { value: 'cidr', label: '整个 tailnet' },
+                  { value: 'service', label: '只分流指定服务' },
+                ]}
+              />
+              <p className="text-xs leading-relaxed text-ink-3">
+                「整个 tailnet」把 100.64.0.0/10（外加下面的网段）都交给这个实例；「只分流指定服务」只接管列出的「目标 IP + 端口」，其余流量沿用共享规则。
+              </p>
+            </div>
+            {form.routeMode === 'cidr' ? (
+              <Field label="额外路由网段" optional hint="除 100.64.0.0/10 外，还要经由 Tailscale 访问的网段">
+                {() => (
+                  <TagInput
+                    mono
+                    value={form.extraCidrs}
+                    onChange={(extraCidrs) => update({ extraCidrs })}
+                    validate={cidrError}
+                    placeholder="192.168.10.0/24，回车添加"
+                  />
+                )}
+              </Field>
+            ) : (
+              <div className="flex flex-col gap-2">
+                <p className="text-sm font-medium text-ink">目标 IP + 端口</p>
+                <p className="text-xs text-ink-3">
+                  只有这些具体服务走这个实例；清空后需要显式切回「整个 tailnet」，不会自动恢复大范围分流。
+                </p>
+                <ServiceRouteEditor
+                  routes={form.routes}
+                  onChange={(routes) => update({ routes })}
+                  disabled={busy === 'save'}
+                  error={tried ? (routesError ?? undefined) : undefined}
                 />
-              )}
-            </Field>
+              </div>
+            )}
             <div>
               <button
                 type="button"
@@ -401,6 +457,15 @@ export function TailscaleCard({
               </Button>
             </div>
           </form>
+        )}
+        {!isTemplate && (
+          <div className="mt-4">
+            <AdditionalInstances
+              profileId={profileId}
+              device={{ id: device.id, name: device.name }}
+              isTemplate={isTemplate}
+            />
+          </div>
         )}
       </div>
     </Card>

@@ -22,7 +22,11 @@ local devices = redis.call('HVALS', KEYS[7])
 local tailscale = 0
 for _, raw in ipairs(devices) do
   local device = decode(raw)
-  if device.features and device.features.tailscale then tailscale = tailscale + 1 end
+  -- A device counts once it has any embedded Tailscale instance: the legacy
+  -- slot, additional instances, or both. No key material is read here.
+  if device.features and (device.features.tailscale or (device.features.tailscaleInstances and #device.features.tailscaleInstances > 0)) then
+    tailscale = tailscale + 1
+  end
 end
 local subscriptions = {}
 for _, raw in ipairs(redis.call('HVALS', KEYS[3])) do

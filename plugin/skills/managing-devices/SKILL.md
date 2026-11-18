@@ -4,8 +4,9 @@ description: >-
   Manages the per-device layer (设备) in ProxyManager — devices under a
   profile that reuse the shared render plus an RFC 7386 base_patch over
   top-level keys (ports / secret / external-ui / find-process-mode), the
-  per-device subscription URL, and the typed device-scoped Tailscale feature
-  (hostname / auth key / exit node / extra CIDRs). Use when the user creates,
+  per-device subscription URL, and the typed device-scoped Tailscale features
+  (one legacy instance with CIDR or service routing, plus optional additional
+  instances that each take exact IP + port services). Use when the user creates,
   edits, previews, or deletes a device, wants per-device differences (不同端口
   / 不同 secret / 这台设备单独…), mentions 设备 / 设备差量 / 补丁 / 设备订阅链接
   / Tailscale, or asks why a template profile (模版) cannot distribute or hold
@@ -60,7 +61,15 @@ Tailscale 是**类型化设备功能**，走 `set_device_tailscale` / `remove_de
 规则**置于规则最前**（防上游 IP-CIDR/DIRECT 规则遮蔽）。
 
 - `set_device_tailscale` 是**整份替换**：只改一项也要带上要保留的其它字段（先 `list_devices`
-  看现状）。唯一例外 `auth_key` 三态：**省略=保留已存 key / null=清除 / 传值=替换**。
+  看现状）。两处例外——`auth_key` 三态：**省略=保留已存 key / null=清除 / 传值=替换**；
+  `service_routes` 三态：**省略=保留已存路由 / null=显式切回 CIDR 模式 / 非空列表=切到服务模式**
+  （`[]` 会被拒，清空不会隐式恢复整个 `100.64.0.0/10`）。
+- **分流模式**：原实例默认「整个 tailnet」——`100.64.0.0/10` + `extra_cidrs`；也可以显式切到
+  服务模式，只接管列出的「目标 IP + 端口」。服务模式与 `extra_cidrs` 互斥。
+- **多实例**：同一设备还能再挂若干**附加实例**（`add/update/remove_device_tailscale_instance`），
+  它们只能做精确分流，各有独立 auth key / hostname / 状态目录 / 策略组。原实例槽位永远不会
+  被其它实例顶替；删除原实例时附加实例保持原样。同一设备上同一对「目标 IP + 端口」只能属于
+  一个实例（等价 IPv6 写法也算同一个），冲突返回 409 并点名冲突实例。
 - auth key **永不回显**：所有读取只给 `hasAuthKey`。确认卡 diff 也只显示 presence 变化。
 - 同一 profile 内 `control_url + hostname` 重复 → 409（每台设备要独立 hostname）；
   跨 profile 撞名只提示不拒绝。
@@ -88,9 +97,10 @@ Tailscale 是**类型化设备功能**，走 `set_device_tailscale` / `remove_de
 
 ## 拥有的工具
 
-读：`list_devices` · `preview_device_config`
+读：`list_devices` · `preview_device_config` · `list_device_tailscale_instances`
 写：`create_device` · `update_device` · `delete_device` · `set_device_tailscale` ·
-`remove_device_tailscale`
+`remove_device_tailscale` · `add_device_tailscale_instance` ·
+`update_device_tailscale_instance` · `remove_device_tailscale_instance`
 
 > 跨界常见：设备补丁被拒说要改 `proxy-groups` → 那是共享层，回 hub 路由到
 > `synthesizing-proxy-groups`，或引导克隆 profile。
