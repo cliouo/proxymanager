@@ -1139,6 +1139,51 @@ rules:
     expect(poolGroup?.['empty-fallback']).toBe('REJECT');
   });
 
+  it('keeps "$`" in a merged exclude-filter literal instead of expanding it as a replace pattern', async () => {
+    // Regression: an existing anchored filter (`^直连$`) joined with the clone
+    // exclusion yields "^直连$`^chain…$". Passing the block as a replacement
+    // string expanded "$`" into the document prefix and duplicated sections.
+    const base = `mixed-port: 7890
+proxies:
+  - name: B
+    type: ss
+    server: b.example.com
+    port: 443
+    cipher: aes-128-gcm
+    password: pw
+
+# === PROXY-GROUPS ===
+
+rules:
+  - MATCH,DIRECT
+`;
+    const all = makeGroup({
+      name: '默认',
+      kind: 'all',
+      type: 'select',
+      'include-all-proxies': true,
+      'exclude-filter': '^直连$',
+      rank: 10,
+    });
+    const front = makeGroup({ name: 'front', type: 'select', proxies: ['DIRECT'], rank: 20 });
+    const wrap = makeGroup({
+      name: 'chain:pool-to-B',
+      type: 'select',
+      proxies: ['B'],
+      'dialer-proxy': 'front',
+      rank: 30,
+    });
+    const result = await resolveConfig(base, [], [], [all, front, wrap], [], {});
+
+    const doc = parse(result.content) as {
+      proxies: Array<Record<string, unknown>>;
+      'proxy-groups': Array<Record<string, unknown>>;
+    };
+    expect(doc.proxies.map((p) => p.name)).toEqual(['B', 'chain:pool-to-B']);
+    const group = doc['proxy-groups'].find((g) => g.name === '默认');
+    expect(group?.['exclude-filter']).toBe('^直连$`^chain:pool-to-B$');
+  });
+
   it('rejects overwriting a backend dialer-proxy while realizing a chain wrap', async () => {
     const base = BASE_WITH_F.replace('password: pw', 'password: pw\n    dialer-proxy: upstream');
     const wrap = makeGroup({
