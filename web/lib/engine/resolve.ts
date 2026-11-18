@@ -1398,6 +1398,11 @@ function renderProxyGroupsBlock(
  * the same pool. Mihomo treats a backtick as a separator between independent
  * exclude patterns, so preserve every existing pattern verbatim and append
  * the generated anchored alternation as one additional pattern.
+ *
+ * Mihomo applies exclude-filter to explicitly listed `proxies` too (unlike
+ * `filter`), so a clone the user deliberately listed is not excluded. If that
+ * listing closes a loop (the clone's own front pool), the final validator's
+ * dependency-cycle check still rejects it.
  */
 function excludeChainClonesFromIncludeAll(
   group: Record<string, unknown>,
@@ -1405,7 +1410,10 @@ function excludeChainClonesFromIncludeAll(
 ): void {
   if (cloneNames.size === 0) return;
   if (group['include-all-proxies'] !== true && group['include-all'] !== true) return;
-  const ours = [...cloneNames]
+  const explicit = new Set(Array.isArray(group.proxies) ? group.proxies : []);
+  const excluded = [...cloneNames].filter((name) => !explicit.has(name));
+  if (excluded.length === 0) return;
+  const ours = excluded
     .sort((a, b) => a.localeCompare(b))
     .map((name) => `^${escapeRegExp(name)}$`)
     .join('|');

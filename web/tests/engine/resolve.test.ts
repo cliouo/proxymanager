@@ -1184,6 +1184,90 @@ rules:
     expect(group?.['exclude-filter']).toBe('^直连$`^chain:pool-to-B$');
   });
 
+  it('does not exclude a chain clone from an include-all group that lists it explicitly', async () => {
+    // Mihomo applies exclude-filter to explicit `proxies` as well, so the
+    // auto clone exclusion would silently drop a member the user picked.
+    const base = `mixed-port: 7890
+proxies:
+  - name: B
+    type: ss
+    server: b.example.com
+    port: 443
+    cipher: aes-128-gcm
+    password: pw
+
+# === PROXY-GROUPS ===
+
+rules:
+  - MATCH,DIRECT
+`;
+    const front = makeGroup({ name: 'front', type: 'select', proxies: ['DIRECT'], rank: 10 });
+    const picked = makeGroup({
+      name: 'ebay-static',
+      kind: 'raw',
+      type: 'select',
+      'include-all-proxies': true,
+      proxies: ['DIRECT', 'chain:to-B'],
+      rank: 20,
+    });
+    const other = makeGroup({
+      name: '默认',
+      kind: 'all',
+      type: 'select',
+      'include-all-proxies': true,
+      rank: 30,
+    });
+    const wrap = makeGroup({
+      name: 'chain:to-B',
+      type: 'select',
+      proxies: ['B'],
+      'dialer-proxy': 'front',
+      rank: 40,
+    });
+    const result = await resolveConfig(base, [], [], [front, picked, other, wrap], [], {});
+
+    const doc = parse(result.content) as { 'proxy-groups': Array<Record<string, unknown>> };
+    const pickedGroup = doc['proxy-groups'].find((g) => g.name === 'ebay-static');
+    expect(pickedGroup?.proxies).toEqual(['DIRECT', 'chain:to-B']);
+    expect(pickedGroup?.['exclude-filter']).toBeUndefined();
+    // Groups that did not pick the clone still keep it out.
+    const otherGroup = doc['proxy-groups'].find((g) => g.name === '默认');
+    expect(otherGroup?.['exclude-filter']).toBe('^chain:to-B$');
+  });
+
+  it('still rejects a chain clone listed explicitly in its own front pool', async () => {
+    const base = `mixed-port: 7890
+proxies:
+  - name: B
+    type: ss
+    server: b.example.com
+    port: 443
+    cipher: aes-128-gcm
+    password: pw
+
+# === PROXY-GROUPS ===
+
+rules:
+  - MATCH,DIRECT
+`;
+    const pool = makeGroup({
+      name: 'pool:B',
+      kind: 'raw',
+      type: 'select',
+      'include-all-proxies': true,
+      proxies: ['chain:pool-to-B'],
+      rank: 10,
+    });
+    const wrap = makeGroup({
+      name: 'chain:pool-to-B',
+      type: 'select',
+      proxies: ['B'],
+      'dialer-proxy': 'pool:B',
+      rank: 20,
+    });
+    await expect(resolveConfig(base, [], [], [pool, wrap], [], {})).rejects.toThrow(/cycle/i);
+  });
+
   it('rejects overwriting a backend dialer-proxy while realizing a chain wrap', async () => {
     const base = BASE_WITH_F.replace('password: pw', 'password: pw\n    dialer-proxy: upstream');
     const wrap = makeGroup({
