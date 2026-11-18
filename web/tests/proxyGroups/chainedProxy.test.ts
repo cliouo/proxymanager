@@ -366,6 +366,69 @@ describe('chained-proxy ops — integration with the proxy-group service', () =>
     expect(pool?.type).toBe('url-test');
     expect(pool?.filter).toBeUndefined();
     expect(pool?.['include-all-proxies']).toBe(true);
+    // The backend exclusion survives an update that clears the filter.
+    expect(pool?.['exclude-filter']).toBe('^B$');
+  });
+
+  it('create-smart-pool-chain always excludes the backend, even without a filter', async () => {
+    const { chainedProxyScenario } = scenarioMod;
+    const ctx = {
+      actor: 'test',
+      profileId: PID,
+      taxonomy: {
+        all: async () => ({}),
+        get: async () => null,
+        set: async () => undefined,
+        delete: async () => false,
+      },
+      base: {} as never,
+      rules: {} as never,
+    };
+    await chainedProxyScenario.ops['create-smart-pool-chain'](ctx, {
+      backend: 'web.share',
+      strategy: 'fallback',
+    });
+    const groups = Array.from(bucket(`proxy-groups:${PID}`).values()) as ProxyGroup[];
+    const pool = groups.find((g) => g.name === 'pool:web.share');
+    expect(pool?.filter).toBeUndefined();
+    expect(pool?.['exclude-filter']).toBe('^web\\.share$');
+  });
+
+  it('update-smart-pool backfills the backend exclusion on legacy pools and undo removes it', async () => {
+    const { chainedProxyScenario } = scenarioMod;
+    const ctx = {
+      actor: 'test',
+      profileId: PID,
+      taxonomy: {
+        all: async () => ({}),
+        get: async () => null,
+        set: async () => undefined,
+        delete: async () => false,
+      },
+      base: {} as never,
+      rules: {} as never,
+    };
+    await chainedProxyScenario.ops['create-smart-pool-chain'](ctx, {
+      backend: 'B',
+      strategy: 'fallback',
+    });
+    const store = bucket(`proxy-groups:${PID}`);
+    const poolOf = () =>
+      (Array.from(store.values()) as ProxyGroup[]).find((g) => g.name === 'pool:B');
+    // Simulate a pool created before smart pools excluded their backend.
+    const legacy = { ...poolOf()! };
+    delete legacy['exclude-filter'];
+    store.set(legacy.id, legacy);
+
+    const result = await chainedProxyScenario.ops['update-smart-pool'](ctx, {
+      poolName: 'pool:B',
+      strategy: 'url-test',
+    });
+    expect(poolOf()?.['exclude-filter']).toBe('^B$');
+
+    await chainedProxyScenario.inverses!['update-smart-pool'](ctx, result.events[0] as never);
+    expect(poolOf()?.type).toBe('fallback');
+    expect(poolOf()?.['exclude-filter']).toBeUndefined();
   });
 
   it('create-pool-chain rejects backend appearing in fronts', async () => {

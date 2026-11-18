@@ -125,6 +125,11 @@ interface SmartPoolSnapshot {
   interval: number;
 }
 
+/** update-smart-pool before-state; `excludeFilter` present iff that update backfilled it. */
+interface UpdateSmartPoolSnapshot extends SmartPoolSnapshot {
+  excludeFilter?: string | null;
+}
+
 interface PoolChainSnapshot {
   poolName: string;
   /** Manual pools list their members; smart pools leave this empty. */
@@ -161,6 +166,14 @@ async function loadChainWrap(
   return { group, backend: members[0], front };
 }
 
+/** Backends of every chain wrap that dials through `poolName`. */
+async function wrapBackendsDialingThrough(profileId: string, poolName: string): Promise<string[]> {
+  const groups = await listProxyGroups(profileId);
+  return groups
+    .filter((g) => g['dialer-proxy'] === poolName && g.proxies?.length === 1)
+    .map((g) => g.proxies![0]);
+}
+
 /* ─── Naming helpers ────────────────────────────────────────────────── */
 
 function defaultFixedChainName(front: string, backend: string): string {
@@ -174,6 +187,19 @@ function defaultPoolChainName(backend: string): string {
 }
 
 /* ─── Smart-pool helpers ────────────────────────────────────────────── */
+
+/**
+ * A smart pool never offers the exit node it fronts — even with no filter,
+ * "every node" means every node except the backend (picking the backend as
+ * its own front makes the chain pointless or broken). Exact anchored
+ * literals; Mihomo splits exclude patterns on backticks, so a name containing
+ * one cannot be expressed and is left to the user's filter.
+ */
+function backendExcludeFilter(backends: string[]): string | undefined {
+  const names = [...new Set(backends)].filter((name) => !name.includes('`'));
+  if (names.length === 0) return undefined;
+  return names.map((name) => `^${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`).join('|');
+}
 
 /** Normalise a parsed SmartPoolSpec into the concrete values we persist. */
 function resolveSmartSpec(spec: z.infer<typeof SmartPoolSpec>): SmartPoolSnapshot {
@@ -191,13 +217,15 @@ function resolveSmartSpec(spec: z.infer<typeof SmartPoolSpec>): SmartPoolSnapsho
  * let the `url-test`/`fallback` type pick a live front at runtime. No node
  * names are stored, so a subscription refresh can't break the pool.
  */
-function smartPoolGroupInput(poolName: string, snap: SmartPoolSnapshot) {
+function smartPoolGroupInput(poolName: string, snap: SmartPoolSnapshot, backend: string) {
+  const excludeFilter = backendExcludeFilter([backend]);
   return {
     kind: 'filter' as const,
     name: poolName,
     type: snap.strategy,
     'include-all-proxies': true,
     ...(snap.filter ? { filter: snap.filter } : {}),
+    ...(excludeFilter ? { 'exclude-filter': excludeFilter } : {}),
     url: snap.testUrl,
     interval: snap.interval,
     notes: 'chained-proxy: smart fronts pool',
@@ -373,7 +401,7 @@ const createSmartPoolChain: OpHandler = async (ctx, raw) => {
   await createProxyGroups(
     ctx.profileId,
     [
-      smartPoolGroupInput(poolName, smart),
+      smartPoolGroupInput(poolName, smart, p.backend),
       {
         kind: 'raw',
         name: chainName,
@@ -416,11 +444,18 @@ const updateSmartPool: OpHandler = async (ctx, raw) => {
   if (!group) {
     throw ProblemDetailsError.notFound(`proxy-group "${poolName}" not found.`);
   }
-  const before: SmartPoolSnapshot = {
+  // Backfill the backend exclusion on pools created before smart pools
+  // excluded their exit node. A user-set exclude-filter is left untouched.
+  const backfill =
+    group['exclude-filter'] === undefined
+      ? backendExcludeFilter(await wrapBackendsDialingThrough(ctx.profileId, poolName))
+      : undefined;
+  const before: UpdateSmartPoolSnapshot = {
     strategy: group.type === 'url-test' ? 'url-test' : 'fallback',
     filter: group.filter,
     testUrl: group.url ?? DEFAULT_TEST_URL,
     interval: group.interval ?? DEFAULT_INTERVAL,
+    ...(backfill ? { excludeFilter: null } : {}),
   };
   const after = resolveSmartSpec(spec);
 
@@ -434,6 +469,7 @@ const updateSmartPool: OpHandler = async (ctx, raw) => {
       filter: after.filter ?? null,
       url: after.testUrl,
       interval: after.interval,
+      ...(backfill ? { 'exclude-filter': backfill } : {}),
     },
     ctx.configVersion,
   );
@@ -591,7 +627,7 @@ const inverseUpdatePoolMembers: InverseHandler = async (ctx, event) => {
 };
 
 const inverseUpdateSmartPool: InverseHandler = async (ctx, event) => {
-  const before = event.before as SmartPoolSnapshot | undefined;
+  const before = event.before as UpdateSmartPoolSnapshot | undefined;
   const target = event.target;
   if (!before || target?.kind !== 'proxy-group') {
     throw ProblemDetailsError.unprocessable('Missing before-state or target.');
@@ -609,6 +645,9 @@ const inverseUpdateSmartPool: InverseHandler = async (ctx, event) => {
       filter: before.filter ?? null,
       url: before.testUrl,
       interval: before.interval,
+      // Only events that backfilled the exclusion record it; older events
+      // never touched exclude-filter and must not clear a user's value.
+      ...(before.excludeFilter !== undefined ? { 'exclude-filter': before.excludeFilter } : {}),
     },
     ctx.configVersion,
   );
@@ -629,7 +668,7 @@ const inverseDeletePoolChain: InverseHandler = async (ctx, event) => {
   if (!before) throw ProblemDetailsError.unprocessable('Missing before-state.');
   const poolInput = before.smart
     ? {
-        ...smartPoolGroupInput(before.poolName, before.smart),
+        ...smartPoolGroupInput(before.poolName, before.smart, before.backend),
         notes: 'chained-proxy: smart fronts pool (restored via undo)',
       }
     : {
