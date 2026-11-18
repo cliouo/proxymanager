@@ -1403,6 +1403,10 @@ function renderProxyGroupsBlock(
  * `filter`), so a clone the user deliberately listed is not excluded. If that
  * listing closes a loop (the clone's own front pool), the final validator's
  * dependency-cycle check still rejects it.
+ *
+ * Mihomo also appends every include-all node after the explicit list without
+ * deduplicating, so when include-all will pull the listed clone in anyway the
+ * explicit copy is dropped — otherwise the clone shows up twice.
  */
 function excludeChainClonesFromIncludeAll(
   group: Record<string, unknown>,
@@ -1410,7 +1414,16 @@ function excludeChainClonesFromIncludeAll(
 ): void {
   if (cloneNames.size === 0) return;
   if (group['include-all-proxies'] !== true && group['include-all'] !== true) return;
-  const explicit = new Set(Array.isArray(group.proxies) ? group.proxies : []);
+  const members: unknown[] = Array.isArray(group.proxies) ? group.proxies : [];
+  const explicit = new Set(members);
+  const autoIncluded = new Set(
+    [...cloneNames].filter((name) => explicit.has(name) && includeAllFilterMatches(group.filter, name)),
+  );
+  if (autoIncluded.size > 0) {
+    const kept = members.filter((name) => !autoIncluded.has(name as string));
+    if (kept.length > 0) group.proxies = kept;
+    else delete group.proxies;
+  }
   const excluded = [...cloneNames].filter((name) => !explicit.has(name));
   if (excluded.length === 0) return;
   const ours = excluded
@@ -1419,6 +1432,22 @@ function excludeChainClonesFromIncludeAll(
     .join('|');
   const existing = typeof group['exclude-filter'] === 'string' ? group['exclude-filter'] : '';
   group['exclude-filter'] = existing ? `${existing}\`${ours}` : ours;
+}
+
+/**
+ * Whether include-all would add `name` given the group's `filter` (backtick-
+ * separated patterns, any match). No filter = every node. A pattern JS cannot
+ * compile counts as a miss, so the explicit copy is kept rather than lost.
+ */
+function includeAllFilterMatches(filter: unknown, name: string): boolean {
+  if (typeof filter !== 'string' || filter === '') return true;
+  return filter.split('`').some((pattern) => {
+    try {
+      return new RegExp(pattern, 'u').test(name);
+    } catch {
+      return false;
+    }
+  });
 }
 
 function escapeRegExp(value: string): string {
