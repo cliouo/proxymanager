@@ -689,7 +689,7 @@ function wireguardUri(p: Record<string, unknown>): string {
   if (!addresses.length) throw new UnsupportedNodeError('wireguard 缺少本地地址');
   q.push(['address', addresses.join(',')]);
   const preshared = optStr(p, 'pre-shared-key');
-  if (preshared !== undefined) q.push(['pre-shared-key', preshared]);
+  if (preshared !== undefined) q.push(['presharedkey', preshared]);
   if (p.reserved !== undefined) {
     if (
       !Array.isArray(p.reserved) ||
@@ -752,7 +752,7 @@ function httpUri(p: Record<string, unknown>): string {
 }
 
 /** 分享链接序列化规则版本:改变导出结果时递增,让 Base64 订阅的 ETag 失效。 */
-export const SHARE_URI_FORMAT_VERSION = 2;
+export const SHARE_URI_FORMAT_VERSION = 3;
 
 const SERIALIZERS: Record<string, (p: Record<string, unknown>) => string> = {
   ss: ssUri,

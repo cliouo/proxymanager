@@ -2089,6 +2089,49 @@ describe('QUIC URI hardening — TUIC v5 and WireGuard flat dialect', () => {
     expect(errors).toHaveLength(1);
   });
 
+  it.each([
+    'pre-shared-key',
+    'pre_shared_key',
+    'PRE-SHARED-KEY',
+    'presharedkey',
+    'preSharedKey',
+    'psk',
+    'PSK',
+  ])('wireguard://: accepts PSK query spelling %s and rejects invalid values', (key) => {
+    for (const scheme of ['wireguard', 'wg']) {
+      for (const value of [preSharedKey, '', 'bad']) {
+        const query = new URLSearchParams({
+          publickey: publicKey,
+          address: '10.0.0.2/32',
+          [key]: value,
+        });
+        const { proxies, errors } = parseProxyUriList(
+          wgUri(query.toString()).replace('wireguard:', `${scheme}:`),
+        );
+        if (value === preSharedKey) {
+          expect(errors).toEqual([]);
+          expect(proxies).toHaveLength(1);
+          expect(proxies[0]['pre-shared-key']).toBe(preSharedKey);
+        } else {
+          expect(proxies).toEqual([]);
+          expect(errors).toHaveLength(1);
+        }
+      }
+    }
+  });
+
+  it('wireguard://: rejects duplicate PSK aliases', () => {
+    const query = new URLSearchParams({
+      publickey: publicKey,
+      address: '10.0.0.2/32',
+      presharedkey: preSharedKey,
+      psk: preSharedKey,
+    });
+    const { proxies, errors } = parseProxyUriList(wgUri(query.toString()));
+    expect(proxies).toEqual([]);
+    expect(errors).toHaveLength(1);
+  });
+
   it('wireguard://: emits valid keys, prefixes, and known typed options', () => {
     const query = new URLSearchParams({
       'public-key': publicKey,

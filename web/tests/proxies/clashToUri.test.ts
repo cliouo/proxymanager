@@ -72,6 +72,17 @@ describe('proxiesToShareUris 往返', () => {
     delete node.udp;
     expect(roundTrip(node)).toEqual({ ...node, udp: false });
   });
+  it('WireGuard PSK 使用客户端通用 presharedkey 查询名并完整往返', () => {
+    const psk = Buffer.alloc(32, 253).toString('base64');
+    const node = { ...wg, 'pre-shared-key': psk };
+    const { lines, skipped } = proxiesToShareUris([node]);
+    expect(skipped).toEqual([]);
+    const query = new URL(lines[0]).searchParams;
+    expect(query.get('presharedkey')).toBe(psk);
+    expect(query.has('pre-shared-key')).toBe(false);
+    expect(roundTrip(node)).toEqual(node);
+    expect(new URL(proxiesToShareUris([wg]).lines[0]).searchParams.has('presharedkey')).toBe(false);
+  });
   it('WireGuard 空列表不产生订阅', () => {
     expect(buildBase64Subscription([]).content).toBe('');
   });
