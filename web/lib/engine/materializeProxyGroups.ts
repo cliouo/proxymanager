@@ -66,11 +66,18 @@ export function materializeDynamicProxyGroups(content: string): string {
       }
     }
     let changed = false;
+    const hasProviders =
+      isYamlMap(document['proxy-providers']) && Object.keys(document['proxy-providers']).length > 0;
 
     for (const group of document['proxy-groups']) {
       if (!isYamlMap(group)) continue;
       if (group['include-all-proxies'] !== true && group['include-all'] !== true) continue;
       groupNames.push(typeof group.name === 'string' ? group.name : '(unnamed)');
+      if (
+        stringMembers(group.use).length > 0 ||
+        (hasProviders && (group['include-all'] === true || group['include-all-providers'] === true))
+      )
+        continue;
 
       const filter = typeof group.filter === 'string' ? group.filter : undefined;
       const excludeFilter =
