@@ -172,3 +172,16 @@ npm run build   # 产物在 build/chrome-mv3/，Chrome 开发者模式 Load unpa
 
 
 分发 token、审计提交与读取缓存的兼容性变化见 [2026-10-12 修复说明](docs/audit-fixes-2026-10-12.md)。旧式裸名称派生 token 不再接受；master token 轮换机制不变。
+
+### Shadowrocket（iOS）
+
+在「订阅链接 → 通用 Base64」下，将共享节点链接作为 Subscribe 添加，备注填
+`ProxyManager-Nodes`。再在 Shadowrocket 的「配置」页导入并启用配套的分流配置
+（共享 Profile URL 加 `?format=shadowrocket`）。节点和配置分别更新。
+
+配置导出支持 select/url-test、按节点名筛选，以及域名、IP、GEOIP 和 FINAL
+规则。桌面进程规则会跳过并在配置注释中计数。测速由 Shadowrocket 执行，
+Mihomo 的 lazy 与 empty-fallback 行为不随配置迁移。其他未支持的策略组属性或
+规则会返回 422。此入口只导出共享配置中的策略组和规则，不迁移 DNS 或设备覆盖。
+
+设备专用链接加 `?client=shadowrocket` 可下载含设备覆盖的 Clash YAML；未验证的选路行为会返回 422 兼容性诊断，而非原生 `.conf`。

@@ -23,10 +23,12 @@ export interface ShareUriSkip {
 
 export interface ShareUriResult {
   lines: string[];
+  exportedNames: string[];
   skipped: ShareUriSkip[];
 }
 
 export interface Base64SubscriptionResult {
+  exportedNames: string[];
   /** base64(每行一条分享链接) —— 空列表时为空串。 */
   content: string;
   /** 成功导出的节点数。 */
@@ -710,6 +712,7 @@ const SERIALIZERS: Record<string, (p: Record<string, unknown>) => string> = {
 /** 逐节点序列化;每条链接再经 parseProxyUriList 回验,不合格的跳过。 */
 export function proxiesToShareUris(proxies: Record<string, unknown>[]): ShareUriResult {
   const lines: string[] = [];
+  const exportedNames: string[] = [];
   const skipped: ShareUriSkip[] = [];
   for (const proxy of proxies) {
     const name = typeof proxy.name === 'string' ? proxy.name : '(未命名)';
@@ -738,16 +741,18 @@ export function proxiesToShareUris(proxies: Record<string, unknown>[]): ShareUri
       continue;
     }
     lines.push(uri);
+    exportedNames.push(roundTrip.proxies[0].name);
   }
-  return { lines, skipped };
+  return { lines, exportedNames, skipped };
 }
 
 /** 分享链接列表 → Base64 订阅正文(v2ray 订阅格式,Shadowrocket / v2rayN 通用)。 */
 export function buildBase64Subscription(
   proxies: Record<string, unknown>[],
 ): Base64SubscriptionResult {
-  const { lines, skipped } = proxiesToShareUris(proxies);
+  const { lines, exportedNames, skipped } = proxiesToShareUris(proxies);
   return {
+    exportedNames,
     content: lines.length > 0 ? b64Standard(`${lines.join('\n')}\n`) : '',
     lineCount: lines.length,
     skipped,

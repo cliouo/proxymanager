@@ -518,6 +518,7 @@ describe('buildBase64Subscription', () => {
       { name: 'B', type: 'trojan', server: 't.example.com', port: 443, password: 'pw' },
     ]);
     expect(result.lineCount).toBe(2);
+    expect(result.exportedNames).toEqual(['A', 'B']);
     expect(result.skipped).toEqual([]);
     const text = Buffer.from(result.content, 'base64').toString('utf8');
     const lines = text.trim().split('\n');
@@ -534,5 +535,16 @@ describe('buildBase64Subscription', () => {
     const result = buildBase64Subscription([]);
     expect(result.content).toBe('');
     expect(result.lineCount).toBe(0);
+    expect(result.exportedNames).toEqual([]);
+  });
+
+  it('names only nodes actually exported to the companion subscription', () => {
+    const result = buildBase64Subscription([
+      { name: 'A', type: 'http', server: 'proxy.example', port: 8080 },
+      { name: 'Skipped', type: 'wireguard' },
+      { name: 'Chained', type: 'http', server: 'proxy.example', port: 8080, 'dialer-proxy': 'DIRECT' },
+    ]);
+    expect(result.exportedNames).toEqual(['A']);
+    expect(result.skipped.map((node) => node.name)).toEqual(['Skipped', 'Chained']);
   });
 });
