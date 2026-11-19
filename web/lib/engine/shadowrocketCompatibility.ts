@@ -35,7 +35,12 @@ function targetChecker(config: FinalConfig) {
     const group = groups.get(name);
     if (!group) {
       const proxy = proxies.get(name);
-      if (parent && proxy?.type === 'http' && onlyKeys(proxy, ['name', 'type', 'server', 'port']))
+      if (
+        parent &&
+        proxy?.type === 'http' &&
+        typeof proxy.port === 'number' &&
+        onlyKeys(proxy, ['name', 'type', 'server', 'port'])
+      )
         return null;
       return {
         reference: parent,
@@ -88,8 +93,7 @@ function targetChecker(config: FinalConfig) {
 
 // Plain ASCII DNS labels as in the exit probes. Other payload forms (e.g.
 // wildcards, leading dots and Unicode) have their own matching semantics.
-const DNS_NAME =
-  /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+const DNS_NAME = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
 export function checkShadowrocketRules(content: string): ShadowrocketRuleIssue[] {
   const config: FinalConfig = parse(content);

@@ -214,3 +214,42 @@ test('discards a late check after navigating to another device', async ({ page }
   });
   await expect(card.getByRole('status')).toHaveText('检查通过');
 });
+
+test('reads all issues in a long report in batches', async ({ page }) => {
+  await workspace(page);
+  const url = base + '/phone?client=shadowrocket';
+  const errors = Array.from({ length: 120 }, (_, i) => ({ ...issue, ruleNumber: i + 1 }));
+  await page.route(url, (route) => route.fulfill({ status: 422, json: { errors } }));
+  await page.goto('/p/home/devices/phone');
+  const card = page.getByRole('region', { name: '设备订阅链接' });
+  await card.getByLabel('订阅用途').selectOption('shadowrocket');
+  await card.getByRole('button', { name: '重新检查' }).click();
+  await expect(card.getByRole('status')).toContainText('第 1 条');
+  await expect(card.getByRole('status')).not.toContainText('第 120 条');
+  while (await card.getByRole('button', { name: '显示更多诊断' }).isVisible()) {
+    await card.getByRole('button', { name: '显示更多诊断' }).click();
+  }
+  await expect(card.getByRole('status')).toContainText('第 120 条');
+});
+
+test('invalidates a successful check after saving the same device URL', async ({ page }) => {
+  await workspace(page);
+  const device = { ...devices[0], updated_at: 1, notes: '' };
+  await page.route('**/api/v1/profiles/p/devices/phone', (route) => {
+    if (route.request().method() === 'PATCH')
+      Object.assign(device, route.request().postDataJSON(), { updated_at: 2 });
+    return route.fulfill({ json: { data: device } });
+  });
+  await page.route(base + '/phone?client=shadowrocket', (route) =>
+    route.fulfill({ contentType: 'text/yaml', body: 'rules: []' }),
+  );
+  await page.goto('/p/home/devices/phone');
+  const card = page.getByRole('region', { name: '设备订阅链接' });
+  await card.getByLabel('订阅用途').selectOption('shadowrocket');
+  await card.getByRole('button', { name: '重新检查' }).click();
+  await expect(card.getByRole('status')).toHaveText('检查通过');
+  await page.getByPlaceholder('例如：书房 NAS，只跑下载').fill('更新设备');
+  await page.keyboard.press('ControlOrMeta+s');
+  await expect(page.getByText('已保存', { exact: true })).toBeVisible();
+  await expect(card.getByRole('status')).toBeEmpty();
+});

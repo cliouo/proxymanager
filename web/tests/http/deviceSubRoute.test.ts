@@ -142,6 +142,29 @@ describe('/api/sub/{token}/{profile}/{device}', () => {
     },
   );
 
+  it('streams large 422 reports with every diagnostic in final rule order', async () => {
+    const { checkShadowrocketRules } = await import('@/lib/engine/shadowrocketCompatibility');
+    const issues = Array.from({ length: 28000 }, (_, i) => ({
+      status: 'unverified' as const,
+      ruleNumber: i + 1,
+      ruleType: 'DST-PORT',
+      target: '出口',
+      reason: '该规则类型、匹配条件或参数缺少 Clash YAML 导入后的分流依据。',
+    }));
+    vi.mocked(checkShadowrocketRules).mockReturnValueOnce(issues);
+    const response = await special();
+    expect(response.status).toBe(422);
+    const reader = response.body!.getReader();
+    const chunks: Uint8Array[] = [];
+    for (let part = await reader.read(); !part.done; part = await reader.read()) {
+      expect(part.value.length).toBeLessThan(256 * 1024);
+      chunks.push(part.value);
+    }
+    const body = Buffer.concat(chunks);
+    expect(body.length).toBeGreaterThan(4.5 * 1024 * 1024);
+    expect(JSON.parse(body.toString()).errors).toEqual(issues);
+  });
+
   it('uses the real checker for a mutable rule provider without exposing its URL', async () => {
     const content =
       CONFIG.replace('MATCH,DIRECT', 'RULE-SET,remote,DIRECT') +

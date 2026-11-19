@@ -14,7 +14,11 @@ it('builds all three device links from the saved resource', () => {
 });
 
 it('reads the token-scoped link without cookies, administrator headers or cached responses', async () => {
-  const fetch = vi.fn().mockResolvedValue(new Response('yaml'));
+  const fetch = vi
+    .fn()
+    .mockResolvedValue(
+      new Response('yaml', { headers: { 'Content-Type': 'text/yaml; charset=utf-8' } }),
+    );
   vi.stubGlobal('fetch', fetch);
   expect(await recheckShadowrocket(url, signal)).toEqual([]);
   expect(fetch).toHaveBeenCalledExactlyOnceWith(url, {
@@ -34,3 +38,11 @@ it.each([[], [{ path: 'base_patch' }], [{ status: 'unverified', ruleNumber: 1 }]
     await expect(recheckShadowrocket(url, signal)).rejects.toThrow('渲染失败');
   },
 );
+
+it('reports a login page in place of a successful YAML download', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn().mockResolvedValue(new Response('login', { headers: { 'Content-Type': 'text/html' } })),
+  );
+  await expect(recheckShadowrocket(url, signal)).rejects.toThrow('YAML');
+});

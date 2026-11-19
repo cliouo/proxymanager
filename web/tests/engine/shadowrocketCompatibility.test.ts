@@ -105,6 +105,21 @@ describe('Shadowrocket/3488 Clash YAML routing evidence', () => {
     ]);
   });
 
+  it('requires a numeric port in the actual distributed YAML', () => {
+    expect(
+      check({ proxies: [{ ...http('A'), port: '08080' }, http('B'), http('C')] }),
+    ).toMatchObject([
+      { ruleNumber: 1, reference: '固定' },
+      { ruleNumber: 2, reference: '出口' },
+    ]);
+  });
+
+  it.each(['DOMAIN', 'DOMAIN-SUFFIX'])('keeps IP literals outside %s hostname evidence', (type) => {
+    expect(check({ rules: [type + ',192.0.2.1,固定'] })).toMatchObject([
+      { ruleNumber: 1, status: 'unverified' },
+    ]);
+  });
+
   it('checks group options and HTTP transport options even when the rule is familiar', () => {
     expect(
       check({

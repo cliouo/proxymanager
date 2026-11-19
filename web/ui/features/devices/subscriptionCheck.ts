@@ -26,7 +26,11 @@ export async function recheckShadowrocket(
     if (signal.aborted) throw error;
     throw new Error('网络连接失败，请重试。');
   }
-  if (response.status === 200) return [];
+  if (response.status === 200) {
+    if (response.headers.get('Content-Type')?.split(';')[0].trim().toLowerCase() === 'text/yaml')
+      return [];
+    throw new Error('订阅链接未返回 YAML 配置，请检查访问地址。');
+  }
   if (response.status === 401) throw new Error('订阅令牌已失效，请重新获取设备链接。');
   const problem = await response.json().catch(() => null);
   if (

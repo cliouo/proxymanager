@@ -1,5 +1,5 @@
 import { parse } from 'yaml';
-import { checkShadowrocketRules } from '@/lib/engine/shadowrocketCompatibility';
+import { checkShadowrocketRules, type ShadowrocketRuleIssue } from '@/lib/engine/shadowrocketCompatibility';
 import { renderDeviceConfig } from '@/lib/engine/renderCache';
 import { attachmentDisposition } from '@/lib/http/contentDisposition';
 import { etagMatches } from '@/lib/http/etag';
@@ -109,15 +109,7 @@ export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
 
   if (shadowrocket) {
     const issues = checkShadowrocketRules(resolved.content);
-    const first = issues[0];
-    if (first) {
-      const status = first.status === 'incompatible' ? '已知不兼容' : '待验证';
-      const reference = first.reference ? `（关联：${first.reference}）` : '';
-      throw ProblemDetailsError.unprocessable(
-        `第 ${first.ruleNumber} 条规则 ${first.ruleType} → ${first.target}${reference}${status}：${first.reason}`,
-        issues,
-      );
-    }
+    if (issues.length) return shadowrocketProblem(issues);
   }
 
   const filename = custom || `${profilePart}-${device}.yaml`;
@@ -144,3 +136,34 @@ export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
     },
   });
 });
+
+function shadowrocketProblem(issues: ShadowrocketRuleIssue[]): Response {
+  const first = issues[0];
+  const status = first.status === 'incompatible' ? '已知不兼容' : '待验证';
+  const reference = first.reference ? `（关联：${first.reference}）` : '';
+  const detail = `第 ${first.ruleNumber} 条规则 ${first.ruleType} → ${first.target}${reference}${status}：${first.reason}`;
+  const { problem } = ProblemDetailsError.unprocessable(detail);
+
+  // Stream the complete Problem Details document: large rule lists can exceed
+  // Vercel's buffered response limit even when their source YAML fits easily.
+  const encoder = new TextEncoder();
+  let offset = 0;
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(encoder.encode(JSON.stringify(problem).slice(0, -1) + ',"errors":['));
+    },
+    pull(controller) {
+      const batch = issues.slice(offset, offset + 64);
+      const prefix = offset ? ',' : '';
+      offset += batch.length;
+      const last = offset === issues.length;
+      const json = batch.map((issue) => JSON.stringify(issue)).join(',');
+      controller.enqueue(encoder.encode(prefix + json + (last ? ']}' : '')));
+      if (last) controller.close();
+    },
+  });
+  return new Response(stream, {
+    status: problem.status,
+    headers: { 'Content-Type': 'application/problem+json', 'Cache-Control': 'no-store' },
+  });
+}

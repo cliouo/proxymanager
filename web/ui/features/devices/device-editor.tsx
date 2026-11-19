@@ -420,7 +420,7 @@ function Workbench({ device }: { device: PublicDevice }) {
               (baseline.features.tailscaleInstances?.length ?? 0) > 0
             }
           />
-          <LinksCard url={sub.url} loading={sub.loading} isTemplate={sub.isTemplate} name={baseline.name} label={label} renamed={info.name.trim() !== baseline.name} />
+          <LinksCard updatedAt={baseline.updated_at} url={sub.url} loading={sub.loading} isTemplate={sub.isTemplate} name={baseline.name} label={label} renamed={info.name.trim() !== baseline.name} />
         </div>
       </div>
 
@@ -430,6 +430,7 @@ function Workbench({ device }: { device: PublicDevice }) {
 }
 
 function LinksCard({
+  updatedAt,
   url,
   loading,
   isTemplate,
@@ -443,6 +444,7 @@ function LinksCard({
   name: string;
   label: string;
   renamed: boolean;
+  updatedAt: number;
 }) {
   const [active, setActive] = useState<DeviceLinkVariant>('clash');
   const current = url ? deviceLink(url, name, active) : null;
@@ -468,7 +470,7 @@ function LinksCard({
                   ? '完整配置 = 共享配置 + 这台设备的差异，包含分流规则。'
                   : active === 'shadowrocket' ? SHADOWROCKET_HINT : 'Base64 只含节点。'}
               </p>
-              {active === 'shadowrocket' && <SubscriptionCheck key={current} url={current} />}
+              {active === 'shadowrocket' && <SubscriptionCheck key={`${current}:${updatedAt}`} url={current} />}
             </div>
             <div className="flex flex-col items-center gap-2">
               <QrImage key={current} text={current} size={148} />
@@ -483,6 +485,7 @@ function LinksCard({
 
 function SubscriptionCheck({ url }: { url: string }) {
   const request = useRef<AbortController | null>(null);
+  const [visibleCount, setVisibleCount] = useState(50);
   const [result, setResult] = useState<string | ShadowrocketRuleIssue[]>('');
   useEffect(() => () => request.current?.abort(), []);
 
@@ -490,6 +493,7 @@ function SubscriptionCheck({ url }: { url: string }) {
     request.current?.abort();
     const controller = new AbortController();
     request.current = controller;
+    setVisibleCount(50);
     setResult('正在检查已保存的设备配置…');
     try {
       const issues = await recheckShadowrocket(url, controller.signal);
@@ -502,13 +506,18 @@ function SubscriptionCheck({ url }: { url: string }) {
     <div className="space-y-2">
       <Button size="sm" icon={RefreshCw} onClick={() => void check()}>重新检查</Button>
       <div role="status" className="space-y-1 text-xs text-ink-2">
-        {typeof result === 'string' ? result : result.map((issue) => (
+        {typeof result === 'string' ? result : result.slice(0, visibleCount).map((issue) => (
           <p key={issue.ruleNumber}>
             {issue.status === 'incompatible' ? '已知不兼容' : '待验证'} · 第 {issue.ruleNumber} 条 {issue.ruleType} → {issue.target}
             {issue.reference && `（关联：${issue.reference}）`}：{issue.reason}
           </p>
         ))}
       </div>
+      {Array.isArray(result) && result.length > visibleCount && (
+        <Button size="sm" aria-label="显示更多诊断" onClick={() => setVisibleCount((n) => n + 50)}>
+          显示更多诊断（已显示 {visibleCount} / {result.length}）
+        </Button>
+      )}
     </div>
   );
 }
