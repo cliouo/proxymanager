@@ -85,6 +85,8 @@ WireGuard 修复使用已有解析器的平面方言：
 支持双栈地址、预共享密钥、reserved、MTU、UDP、keepalive、workers、刷新间隔；
 不伪造 peers/allowed-ips/DNS 等无法表达的字段。Mihomo 导入失败不再归因为产品漏导出。
 这不构成每个 GUI 都支持全部可选参数的保证。
+PSK 统一导出为 `presharedkey`（v2rayNG、Hiddify、Karing 可读）；导入同时接受
+`psk` 和原有的 `pre-shared-key` / `pre_shared_key`，不改变内部 YAML 字段名。
 
 ## Reality 默认值不能统一改为 true
 
@@ -132,3 +134,105 @@ VLESS `encryption=…` 不是 Reality 混合密钥交换开关；不能据此推
 矩阵来自分阶段运行，旧 YAML/分享链接结果与新原生客户端、旧版 Reality 对照合并，
 不是一次同时运行；实验目录的 JSON 保留来源。未发现上述 fixture 的产品字段丢失，
 但不能外推为所有核心版本、客户端导入器或任意 YAML 字段都支持。
+
+## Android 客户端
+
+2026-11-19，Android 15 / API 35 Google APIs x86_64 模拟器；Karing 为 ARM64 转译。
+客户端通过自身订阅功能读取产品实际输出，未用转换器代替导入。实验 CA 已加入系统信任库。
+每个 PASS 均通过真实 VPN 发起 UID 2000 的 HTTP nonce 请求，并核对响应、宿主目标日志和
+选中节点证据；不是延迟测试成功或仅启动成功。SSR 无可用服务端，不在这 46 个节点中。
+
+| 客户端 | 应用版本 / 核心 | YAML 导入 | Base64 导入 | 实测结果 |
+| --- | --- | --- | --- | --- |
+| Clash Meta (CMFA) | 2.11.37.Meta / alpha-0455d0d-cmfa-2.11.37.meta | 46 | 未测 | 46 PASS |
+| v2rayNG | 2.3.15 / Xray 26.10.31 | 未测 | 39 | 17 PASS、22 FAIL、7 未导入 |
+| NekoBox | 1.4.2 / sing-box 1.12.19-neko-1 | 43 | 43 | Base64 的 43 个全部实测：34 PASS、9 FAIL；3 未导入 |
+| Hiddify | 5.5.5 / sing-box 1.15.0-alpha.13¹ | 0 | 0 | 完整订阅均拒绝保存 |
+| SFA | 1.14.4 | 0 | 0 | 远程配置要求 sing-box JSON；两种格式均解码失败 |
+| Karing | 1.2.26.2934 / 声明核心 1.14.0² | 45 | 41 | 导入可用，VPN 启动 SIGILL，未逐节点测连通性 |
+
+¹ 核心版本来自单独的 PSK 配置运行；没有用删减订阅替代完整订阅测试。
+² Karing 未取得实际运行核心版本。两种导入的并集覆盖 46 个节点，不代表连通性通过。
+
+下表 `未入` = 导入器省略；`拒绝` = 整份配置被拒，**不是逐协议失败**；
+`阻断` = Karing 原生 VPN 启动崩溃，**不是该节点失败**；`阻断†` = 仅 Base64 导入。
+CMFA 使用 YAML；v2rayNG、NekoBox 使用 Base64；Karing 优先使用导入更多的 YAML。
+
+| 节点 | CMFA | v2rayNG | NekoBox | Hiddify | SFA | Karing |
+| --- | --- | --- | --- | --- | --- | --- |
+| ss-aes-128-gcm | PASS | PASS | PASS | 拒绝 | 拒绝 | 阻断 |
+| ss-2022-blake3-aes-128-gcm | PASS | PASS | PASS | 拒绝 | 拒绝 | 阻断 |
+| ss-obfs-http | PASS | FAIL VP | PASS | 拒绝 | 拒绝 | 阻断 |
+| ss-obfs-tls | PASS | FAIL VP | PASS | 拒绝 | 拒绝 | 阻断 |
+| ss-v2ray-plugin-ws | PASS | FAIL VP | PASS | 拒绝 | 拒绝 | 阻断 |
+| ss-v2ray-plugin-ws-tls | PASS | FAIL VP | PASS | 拒绝 | 拒绝 | 阻断 |
+| ss-shadow-tls-v3 | PASS | FAIL VP | FAIL NP | 拒绝 | 拒绝 | 阻断 |
+| vmess-tcp | PASS | PASS | PASS | 拒绝 | 拒绝 | 阻断 |
+| vmess-ws | PASS | PASS | PASS | 拒绝 | 拒绝 | 阻断 |
+| vmess-ws-tls | PASS | FAIL VL | PASS | 拒绝 | 拒绝 | 阻断 |
+| vmess-grpc | PASS | PASS | PASS | 拒绝 | 拒绝 | 阻断 |
+| vmess-h2 | PASS | FAIL VH | PASS | 拒绝 | 拒绝 | 阻断 |
+| vmess-httpupgrade | PASS | FAIL VU | PASS | 拒绝 | 拒绝 | 阻断 |
+| vmess-mkcp | PASS | PASS | FAIL NT | 拒绝 | 拒绝 | 阻断 |
+| vless-tcp-tls | PASS | FAIL VL | PASS | 拒绝 | 拒绝 | 阻断 |
+| vless-ws | PASS | PASS | PASS | 拒绝 | 拒绝 | 阻断 |
+| vless-grpc | PASS | PASS | PASS | 拒绝 | 拒绝 | 阻断 |
+| vless-httpupgrade | PASS | FAIL VU | PASS | 拒绝 | 拒绝 | 阻断 |
+| vless-h2 | PASS | FAIL VH | PASS | 拒绝 | 拒绝 | 阻断 |
+| vless-reality-vision-xray26 | PASS | PASS | FAIL NR | 拒绝 | 拒绝 | 阻断 |
+| vless-reality-vision-sing-box | PASS | PASS | PASS | 拒绝 | 拒绝 | 阻断 |
+| vless-reality-grpc-xray26 | PASS | PASS | FAIL NR | 拒绝 | 拒绝 | 阻断 |
+| vless-reality-grpc-sing-box | PASS | PASS | PASS | 拒绝 | 拒绝 | 阻断 |
+| vless-xhttp-tls | PASS | FAIL VL | FAIL NT | 拒绝 | 拒绝 | 阻断 |
+| vless-xhttp-reality-xray26 | PASS | PASS | FAIL NT | 拒绝 | 拒绝 | 阻断 |
+| vless-encryption-x25519 | PASS | PASS | FAIL NE | 拒绝 | 拒绝 | 阻断 |
+| vless-encryption-mlkem | PASS | PASS | FAIL NE | 拒绝 | 拒绝 | 阻断 |
+| trojan-tls | PASS | FAIL VL | PASS | 拒绝 | 拒绝 | 阻断 |
+| trojan-ws | PASS | FAIL VL | PASS | 拒绝 | 拒绝 | 阻断 |
+| trojan-grpc | PASS | FAIL VL | PASS | 拒绝 | 拒绝 | 阻断 |
+| hysteria-v1 | PASS | 未入 | PASS | 拒绝 | 拒绝 | 阻断 |
+| hysteria2-plain | PASS | FAIL VL | PASS | 拒绝 | 拒绝 | 阻断 |
+| hysteria2-salamander | PASS | FAIL VL | PASS | 拒绝 | 拒绝 | 阻断 |
+| hysteria2-port-hopping | PASS | FAIL VL | FAIL NH | 拒绝 | 拒绝 | 阻断† |
+| tuic-v5 | PASS | 未入 | PASS | 拒绝 | 拒绝 | 阻断 |
+| anytls | PASS | 未入 | PASS | 拒绝 | 拒绝 | 阻断 |
+| snell-v4 | PASS | 未入 | 未入 | 拒绝 | 拒绝 | 阻断 |
+| snell-v5 | PASS | 未入 | 未入 | 拒绝 | 拒绝 | 阻断 |
+| wireguard | PASS | PASS | 未入 | 拒绝 | 拒绝 | 阻断 |
+| socks5-auth | PASS | PASS | PASS | 拒绝 | 拒绝 | 阻断 |
+| http-auth | PASS | 未入 | PASS | 拒绝 | 拒绝 | 阻断 |
+| https-auth | PASS | 未入 | PASS | 拒绝 | 拒绝 | 阻断 |
+| vless-reality-vision-xray18 | PASS | FAIL VR | PASS | 拒绝 | 拒绝 | 阻断 |
+| vless-reality-vision-xray25 | PASS | FAIL VR | PASS | 拒绝 | 拒绝 | 阻断 |
+| vless-reality-grpc-xray18 | PASS | FAIL VR | PASS | 拒绝 | 拒绝 | 阻断 |
+| vless-reality-grpc-xray25 | PASS | FAIL VR | PASS | 拒绝 | 拒绝 | 阻断 |
+
+失败原因（均为已测版本和实验条件，不外推所有版本）：
+
+- **VP**：v2rayNG 导入器忽略部分 SIP003 插件；obfs HTTP 的 Xray 近似映射不兼容，TLS 无对应映射。
+- **VL**：v2rayNG 保留 insecure 字段，但 Xray 构建配置时拒绝已移除的 `allowInsecure`；不是 CA 缺失。
+- **VH**：Xray 拒绝已移除的旧 HTTP/H2 传输，导入的路径等字段仍存在。
+- **VU**：请求到达 sing-box 服务端，日志 `real websocket request received`，对应 HTTPUpgrade 握手差异。
+- **VR**：当前 Xray 到旧 Xray Reality 认证失败；同客户端的新 Xray / sing-box 对照成功。
+- **NP**：NekoBox 启动报 `plugin not found: shadow-tls`，此 SIP003 路径没有转换为独立 ShadowTLS outbound。
+- **NT**：NekoBox 保存传输名称但原生构建器无 mKCP / XHTTP 分支；XHTTP 服务端还记录了错误 preface。
+- **NE**：NekoBox 未读取 VLESS 的 `encryption` 查询，服务端记录加密握手失败。
+- **NR**：NekoBox 到当前 Xray Reality 失败，旧 Xray 和 sing-box 对照通过，属版本互操作限制。
+- **NH**：NekoBox 保留全部 16 个 singleton 端口，但范围转换函数全部丢弃；不是据此断言最小间隔限制。
+- **未入**：v2rayNG 无对应 Hysteria v1 / TUIC / AnyTLS / Snell / HTTP(S) URI 分派；NekoBox 省略 Snell 和 WireGuard。
+- **Hiddify**：YAML 报 `不支持的类型 snell`；Base64 报 `snell: unsupported version: 5`，均未保存配置。
+- **SFA**：YAML / Base64 分别报 `invalid character 'a'` / `'c' looking for beginning of value: row 1, column 1`；未保存配置，未写转换器。
+- **Karing**：YAML 缺跳端口节点（具体原因未隔离）；Base64 缺 shadow-tls（String→int 转换错误）、Snell v4/v5、HTTP(S)（不支持的 scheme）。
+- **Karing VPN**：同意 VPN 后 `libbox.so` 加载，再报 `Fatal signal 4 (SIGILL)`；栈含转译库、Sentry 和 libbox，未进一步隔离原生根因。
+
+普通 WireGuard 行原本无 PSK，不能覆盖 PSK 兼容性。单独的 PSK 必需端点已证明：旧导出
+`pre-shared-key` 被 v2rayNG 丢弃而失败；仅改为 `presharedkey` 即可通过 VPN nonce 和目标日志。
+本次修复让产品直接输出后一拼写，并用新导出链接重新验证。Hiddify 可保留旧、新 PSK 拼写，
+但单独 VPN 测试被其 Warp 补丁替换 `10.0.2.2` 私网端点所阻；Karing 的六种别名导入实验仅保留
+`presharedkey` / `preSharedKey`，没有因其启动崩溃而声称网络通过。
+
+实验原始 JSON、截图及日志保存在本地被忽略的 `web/.tmp/android-core/clients/`；不提交密钥、
+凭据或完整运行配置。此表为前两轮真实客户端报告的合并，不表示本次重跑六个客户端。
+v2rayNG 使用 Global 并禁用实验目标被 `geoip:private` 直连的规则；NekoBox 关闭 FakeDNS，
+两项 LAN bypass 均为 false。选节点采用 UI / 客户端自身控制器或原生选择入口，未改导入字段。
+通用 UDP、WAN 性能和真实跳端口多样性仍未验证。

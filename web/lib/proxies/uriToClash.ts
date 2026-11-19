@@ -2282,6 +2282,7 @@ function parseWireGuard(uri: string): ClashProxy {
     let key = rawKey.toLowerCase().replace(/_/g, '-');
     if (key === 'publickey') key = 'public-key';
     if (key === 'privatekey') key = 'private-key';
+    if (key === 'presharedkey' || key === 'psk') key = 'pre-shared-key';
     if (['allowed-ips', 'peers', 'dns'].includes(key)) {
       throw new Error(`wireguard flat dialect does not support ${key}`);
     }

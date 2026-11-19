@@ -40,6 +40,15 @@ describe('fetch cache parser epoch', () => {
     });
   });
 
+  it('invalidates caches created before WireGuard PSK aliases were accepted', () => {
+    const url = 'https://upstream.example/wireguard';
+    const previous = createHash('sha256')
+      .update(`proxy-parser-v13\x00${url}\x00\x00`)
+      .digest('hex')
+      .slice(0, 16);
+    expect(buildCacheKey({ url })).not.toBe(previous);
+  });
+
   it.each([
     ['non-object', 'FAKE_SECRET_DO_NOT_LOG'],
     ['missing content', { fetched_at: 1, proxy_count: 1 }],

@@ -549,7 +549,14 @@ rules: []
     const decoded = Buffer.from(await res.text(), 'base64').toString('utf8');
     expect(decoded).toContain('ss://');
     // base64 与 yaml 必须是不同的 ETag，否则客户端换格式拿到 304 空响应。
-    expect(res.headers.get('ETag')).toBe('"dev-build-b64v2"');
+    expect(res.headers.get('ETag')).toBe('"dev-build-b64v3"');
+    const stale = await GET(
+      new Request('https://pm.test/api/sub/tk/home/macbook?format=base64', {
+        headers: { 'If-None-Match': '"dev-build-b64v2"' },
+      }),
+      ctx('tk', 'home', 'macbook'),
+    );
+    expect(stale.status).toBe(200);
   });
 
   it('materializes dynamic proxy-group members when requested', async () => {
@@ -698,6 +705,23 @@ rules: []\n`,
 });
 
 describe('shared profile conditional requests', () => {
+  it.each([
+    ['"dev-build-b64v2"', 200],
+    ['"dev-build-b64v3"', 304],
+  ])('versions shared base64 ETags (%s)', async (etag, status) => {
+    getProfileByName.mockResolvedValue({ id: 'p-home', name: 'home', kind: 'normal' });
+    renderProfileConfig.mockResolvedValue(rendered());
+    const { GET } = await import('@/app/api/sub/[token]/[profile]/route');
+    const response = await GET(
+      new Request('https://pm.test/api/sub/tk/home?format=base64', {
+        headers: { 'If-None-Match': etag },
+      }),
+      ctx('tk', 'home', ''),
+    );
+    expect(response.status).toBe(status);
+    expect(response.headers.get('ETag')).toBe('"dev-build-b64v3"');
+  });
+
   it.each([
     ['dev-build', 304],
     ['updated-build', 200],

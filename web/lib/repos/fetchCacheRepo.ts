@@ -46,6 +46,9 @@ const MAX_CACHE_CLOCK_SKEW_MS = 5 * 60 * 1000;
  * part of the cache identity. Bump this whenever those semantics change; an
  * unversioned key is treated as epoch 1.
  *
+ * 14 → accept WireGuard PSK query aliases presharedkey and psk, so previously
+ *       rejected links are re-fetched into normalized provider YAML.
+ *
  * 13 → accept inert Hysteria 2 hop intervals on single-port endpoints in
  *       both provider YAML and URI input. Previously rejected URI nodes must
  *       be re-fetched instead of remaining absent from cached node sets.
@@ -57,7 +60,7 @@ const MAX_CACHE_CLOCK_SKEW_MS = 5 * 60 * 1000;
  *       cached normalized lists with duplicate names are only legal under the
  *       new semantics.
  */
-export const FETCH_CACHE_EPOCH = 13;
+export const FETCH_CACHE_EPOCH = 14;
 
 export function buildCacheKey({ url, userAgent, headers }: CacheKeyParts): string {
   const headerStr = headers ? JSON.stringify(sortRecord(headers)) : '';
