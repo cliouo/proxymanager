@@ -2296,7 +2296,7 @@ interface ParsedFinalRule {
 
 /** Parse exactly like fixed Mihomo's ParseRulePayload, then reject every
  * silent-ignore/coercion surface with a portable closed grammar. */
-function parseAndValidateFinalRule(
+export function parseAndValidateFinalRule(
   raw: string,
   nested = false,
   depth = 0,
