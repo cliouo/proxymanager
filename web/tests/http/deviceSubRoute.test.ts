@@ -583,3 +583,18 @@ describe('shared profile conditional requests', () => {
     expect(response.headers.get('X-Render-Cache')).toBe('miss');
   });
 });
+
+it('serves Shadowrocket only on the shared profile with its own validator', async () => {
+  getProfileByName.mockResolvedValue({ id: 'p-home', name: 'home', kind: 'normal' });
+  renderProfileConfig.mockResolvedValue(rendered());
+  const { GET } = await import('@/app/api/sub/[token]/[profile]/route');
+  const url = 'https://pm.test/api/sub/tk/home?format=shadowrocket';
+  const response = await GET(new Request(url), ctx('tk', 'home', ''));
+  expect(response.status).toBe(200);
+  expect(response.headers.get('content-disposition')).toContain('.conf');
+  expect(await response.text()).toContain('FINAL,DIRECT');
+  const etag = response.headers.get('etag')!;
+  expect(etag).not.toBe('"dev-build"');
+  const cached = await GET(new Request(url, { headers: { 'if-none-match': etag } }), ctx('tk', 'home', ''));
+  expect(cached.status).toBe(304);
+});

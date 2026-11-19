@@ -1,3 +1,4 @@
+import { renderShadowrocket } from '@/lib/proxies/shadowrocket';
 import { parse } from 'yaml';
 import { buildBase64Subscription } from '@/lib/proxies/clashToUri';
 import { renderProfileConfig } from '@/lib/engine/renderCache';
@@ -42,8 +43,9 @@ export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
   const url = new URL(request.url);
   const noCache = url.searchParams.get('noCache') === '1';
   const format = url.searchParams.get('format');
-  if (format && !['clash', 'yaml', 'base64', 'v2ray'].includes(format))
+  if (format && !['clash', 'yaml', 'shadowrocket', 'base64', 'v2ray'].includes(format))
     throw ProblemDetailsError.badRequest('Unsupported config format.');
+  const asShadowrocket = format === 'shadowrocket';
   const asBase64 = format === 'base64' || format === 'v2ray';
   const providerUrlBase = `${url.origin}/api/rule-providers/${token}`;
   // Rebuild before comparing ETags: a retained manifest can hide refreshed source content.
@@ -59,16 +61,17 @@ export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
   // since the user named it deliberately and clients show the name as-is. Only
   // the generated fallback keeps `.yaml` (it's a bare slug, not a chosen name).
   const custom = displayName?.trim();
-  const filename = custom || `proxymanager-${profile}.yaml`;
+  const filename = asShadowrocket ? `${custom || profile}.conf` : custom || `proxymanager-${profile}.yaml`;
 
   // buildId is content-addressed, so it doubles as a strong ETag — Mihomo /
   // clients polling on Profile-Update-Interval can skip the body transfer.
-  const doc = asBase64 ? parse(resolved.content) : null;
+  const doc = asBase64 || asShadowrocket ? parse(resolved.content) : null;
   const proxies = Array.isArray(doc?.proxies) ? doc.proxies : [];
   const encoded = asBase64 ? buildBase64Subscription(proxies) : null;
   if (encoded && !encoded.lineCount && proxies.length)
     throw ProblemDetailsError.unprocessable('没有可导出为通用订阅的节点。');
-  const etag = `"${resolved.buildId}${asBase64 ? '-b64' : ''}"`;
+  const conf = asShadowrocket ? renderShadowrocket(doc) : null;
+  const etag = `"${resolved.buildId}${asBase64 ? '-b64' : asShadowrocket ? '-sr1' : ''}"`;
   const ifNoneMatch = request.headers.get('if-none-match');
   if (ifNoneMatch && etagMatches(ifNoneMatch, etag)) {
     return new Response(null, {
@@ -80,10 +83,10 @@ export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
     });
   }
 
-  return new Response(encoded?.content ?? resolved.content, {
+  return new Response(conf ?? encoded?.content ?? resolved.content, {
     status: 200,
     headers: {
-      'Content-Type': asBase64 ? 'text/plain; charset=utf-8' : 'text/yaml; charset=utf-8',
+      'Content-Type': asBase64 || asShadowrocket ? 'text/plain; charset=utf-8' : 'text/yaml; charset=utf-8',
       ...(encoded
         ? {
             'X-Proxy-Count': String(encoded.lineCount),
