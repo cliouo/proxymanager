@@ -234,7 +234,21 @@ export function SourceDetail() {
             )}
             {visited.has('settings') && (
               <TabPanel value="settings" forceMount className="outline-none data-[state=inactive]:hidden">
-                <SourceSettings key={source.updated_at ?? 0} source={source} active={tab === 'settings'} />
+                {detail.data ? (
+                  <SourceSettings key={detail.data.updated_at ?? 0} source={detail.data} active={tab === 'settings'} />
+                ) : detail.error ? (
+                  <EmptyState
+                    icon={RadioTower}
+                    title={errorMessage(detail.error)}
+                    actions={
+                      <Button icon={RotateCcw} onClick={() => void detail.refetch()}>
+                        重试
+                      </Button>
+                    }
+                  />
+                ) : (
+                  <Skeleton className="h-64 w-full rounded-xl" />
+                )}
               </TabPanel>
             )}
             {visited.has('usage') && (
