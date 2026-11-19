@@ -15,6 +15,19 @@ function stringMembers(value: unknown): string[] {
     : [];
 }
 
+function adapterType(type: string): string {
+  switch (type) {
+    case 'ss':
+      return 'shadowsocks';
+    case 'ssr':
+      return 'shadowsocksr';
+    case 'select':
+      return 'selector';
+    default:
+      return type.toLowerCase().replaceAll('-', '');
+  }
+}
+
 /**
  * Expands Mihomo's dynamic `include-all-proxies` groups into explicit members.
  *
@@ -39,6 +52,19 @@ export function materializeDynamicProxyGroups(content: string): string {
     const nodeNames = document.proxies.flatMap((proxy) =>
       isYamlMap(proxy) && typeof proxy.name === 'string' ? [proxy.name] : [],
     );
+    const memberTypes = new Map<string, string>([
+      ['DIRECT', 'direct'],
+      ['REJECT', 'reject'],
+      ['REJECT-DROP', 'rejectdrop'],
+      ['COMPATIBLE', 'compatible'],
+      ['PASS', 'pass'],
+      ['PASS-RULE', 'passrule'],
+    ]);
+    for (const member of [...document.proxies, ...document['proxy-groups']]) {
+      if (isYamlMap(member) && typeof member.name === 'string' && typeof member.type === 'string') {
+        memberTypes.set(member.name, adapterType(member.type));
+      }
+    }
     let changed = false;
 
     for (const group of document['proxy-groups']) {
@@ -56,13 +82,17 @@ export function materializeDynamicProxyGroups(content: string): string {
         );
       }
 
-      // Combine explicit members with the currently-matched names, then keep the
-      // original filter so clients that understand it can re-filter on top of
-      // the delivered list. Members are rewritten rather than deleted, which
-      // keeps Shadowrocket happy, while Mihomo/Clash.Meta semantics are kept
-      // by retaining `filter` and `exclude-filter` (they continue to apply to
-      // `include-all`-style dynamic pools).
-      const members = [...new Set([...stringMembers(group.proxies), ...matched])];
+      const explicit = matchFilter(stringMembers(group.proxies), undefined, excludeFilter);
+      if (explicit.error) throw new Error(explicit.error);
+
+      const excludedTypes = new Set(
+        typeof group['exclude-type'] === 'string'
+          ? group['exclude-type'].toLowerCase().split('|')
+          : [],
+      );
+      const members = [...new Set([...explicit.matched, ...matched])].filter(
+        (name) => !excludedTypes.has(memberTypes.get(name) ?? ''),
+      );
       if (members.length === 0) {
         if (typeof group['empty-fallback'] === 'string') {
           members.push(group['empty-fallback']);
@@ -74,8 +104,9 @@ export function materializeDynamicProxyGroups(content: string): string {
       delete group['include-all-proxies'];
       delete group['include-all'];
       delete group['empty-fallback'];
-      if (filter === undefined) delete group.filter;
-      if (excludeFilter === undefined) delete group['exclude-filter'];
+      delete group.filter;
+      delete group['exclude-filter'];
+      delete group['exclude-type'];
       changed = true;
     }
 

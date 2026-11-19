@@ -642,6 +642,19 @@ rules: []\n`,
     expect(parse(body)['proxy-groups'][0]).toEqual({name: '出口', type: 'select', proxies: ['A']});
   });
 
+  it('accepts a filtered materialized select with the real Shadowrocket checker', async () => {
+    const actual = await vi.importActual<typeof import('@/lib/engine/shadowrocketCompatibility')>('@/lib/engine/shadowrocketCompatibility');
+    const { checkShadowrocketRules } = await import('@/lib/engine/shadowrocketCompatibility');
+    vi.mocked(checkShadowrocketRules).mockImplementation(actual.checkShadowrocketRules);
+    const content = TERMINAL_CONFIG.replace('proxies: [A]', 'include-all-proxies: true, filter: ^A$, exclude-filter: ^JP, empty-fallback: REJECT');
+    renderDeviceConfig.mockResolvedValue(rendered({resolved: {content, buildId: 'filtered-dynamic', inlinedProxyCount: 1}}));
+    const response = await special(undefined, '&materialize=proxy-groups');
+    expect(response.status).toBe(200);
+    const body = await response.text();
+    expect(checkShadowrocketRules).toHaveBeenLastCalledWith(body);
+    expect(parse(body)['proxy-groups'][0]).toEqual({name: '出口', type: 'select', proxies: ['A']});
+  });
+
   it('returns a named 422 rather than empty members when zero matches have no valid fallback', async () => {
     renderDeviceConfig.mockResolvedValue(rendered({resolved: {content: 'proxies: []\nproxy-groups:\n  - {name: HK, type: select, include-all: true}\n', buildId: 'empty', inlinedProxyCount: 0}}));
     const response = await GET(new Request(deviceUrl + '?materialize=proxy-groups'), ctx('tk', 'home', 'macbook'));

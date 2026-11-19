@@ -18,7 +18,6 @@ rules: ["MATCH,REJECT"]
       expect(parse(output)['proxy-groups'][0]).toEqual({
         name: 'HK',
         type: 'select',
-        filter: 'HK',
         proxies: ['REJECT'],
       });
     },
@@ -69,8 +68,6 @@ proxy-groups:
       name: 'Auto',
       type: 'url-test',
       proxies: ['DIRECT', 'HK-1'],
-      filter: 'HK',
-      'exclude-filter': '-2',
     });
   });
 
@@ -80,7 +77,7 @@ proxy-groups:
   });
 });
 
-it('keeps the original filter so membership still tracks newly added nodes', () => {
+it('recomputes membership from each fresh rendered subscription', () => {
   const initial = `proxies:
   - { name: HK-1, type: http, server: hk.example, port: 8080 }
 proxy-groups:
@@ -104,7 +101,7 @@ proxy-groups:
     'proxy-groups': Array<Record<string, unknown>>;
   };
   expect(first['proxy-groups'][0]['proxies']).toEqual(['HK-1']);
-  expect(first['proxy-groups'][0]['filter']).toBe('HK');
+  expect(first['proxy-groups'][0]['filter']).toBeUndefined();
 
   // Re-running materialization on an updated subscription (a fresh render
   // with HK-2 now present) produces a list that includes the new node, so
@@ -114,7 +111,7 @@ proxy-groups:
     'proxy-groups': Array<Record<string, unknown>>;
   };
   expect(second['proxy-groups'][0]['proxies']).toEqual(['HK-1', 'HK-2']);
-  expect(second['proxy-groups'][0]['filter']).toBe('HK');
+  expect(second['proxy-groups'][0]['filter']).toBeUndefined();
 });
 
 it('drops only fields that have no effect after expansion', () => {
@@ -134,7 +131,7 @@ proxy-groups:
   const group = out['proxy-groups'][0];
   expect(group['include-all-proxies']).toBeUndefined();
   expect(group['empty-fallback']).toBeUndefined();
-  expect(group['filter']).toBe('HK');
-  expect(group['exclude-filter']).toBe('-2');
+  expect(group['filter']).toBeUndefined();
+  expect(group['exclude-filter']).toBeUndefined();
   expect(group['proxies']).toEqual(['HK-1']);
 });
