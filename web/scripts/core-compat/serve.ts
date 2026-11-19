@@ -147,9 +147,16 @@ async function main() {
   ]);
   const targetLog = join(directory, 'target.log');
   const target = http.createServer((request, response) => {
-    const url = new URL(request.url ?? '/', 'http://localhost');
     appendFileSync(targetLog, `${new Date().toISOString()} ${request.headers.host} ${request.url}\n`);
-    response.end(url.pathname.slice(1));
+    let pathname: string;
+    try {
+      pathname = new URL(request.url ?? '/', 'http://localhost').pathname;
+    } catch {
+      response.statusCode = 400;
+      response.end();
+      return;
+    }
+    response.end(pathname.slice(1));
   });
   const camouflage = http2.createSecureServer(
     { cert: readFileSync(cert), key: readFileSync(key), minVersion: 'TLSv1.3', allowHTTP1: true },
