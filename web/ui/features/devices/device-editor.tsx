@@ -41,6 +41,7 @@ import {
 } from './model';
 import { DeviceGlyph, DeviceShareButton, TailscaleBadge, useSubscriptionUrl } from './parts';
 import type { ShadowrocketRuleIssue } from '@/lib/engine/shadowrocketCompatibility';
+import { describeShadowrocketIssueLocation } from '@/lib/engine/shadowrocketIssueFormat';
 import { SHADOWROCKET_HINT, SubscriptionPurpose } from './subscription-purpose';
 import { recheckShadowrocket } from './subscriptionCheck';
 import { AddDifference, PatchForm } from './patch-editor';
@@ -420,7 +421,7 @@ function Workbench({ device }: { device: PublicDevice }) {
               (baseline.features.tailscaleInstances?.length ?? 0) > 0
             }
           />
-          <LinksCard updatedAt={baseline.updated_at} url={sub.url} loading={sub.loading} isTemplate={sub.isTemplate} name={baseline.name} label={label} renamed={info.name.trim() !== baseline.name} />
+          <LinksCard updatedAt={baseline.updated_at} shared={preview.data?.shared} url={sub.url} loading={sub.loading} isTemplate={sub.isTemplate} name={baseline.name} label={label} renamed={info.name.trim() !== baseline.name} />
         </div>
       </div>
 
@@ -431,6 +432,7 @@ function Workbench({ device }: { device: PublicDevice }) {
 
 function LinksCard({
   updatedAt,
+  shared,
   url,
   loading,
   isTemplate,
@@ -438,6 +440,7 @@ function LinksCard({
   label,
   renamed,
 }: {
+  shared: string | undefined;
   url: string | null;
   loading: boolean;
   isTemplate: boolean;
@@ -470,7 +473,9 @@ function LinksCard({
                   ? '完整配置 = 共享配置 + 这台设备的差异，包含分流规则。'
                   : active === 'shadowrocket' ? SHADOWROCKET_HINT : 'Base64 只含节点。'}
               </p>
-              {active === 'shadowrocket' && <SubscriptionCheck key={`${current}:${updatedAt}`} url={current} />}
+              {active === 'shadowrocket' && (
+                <SubscriptionCheck key={`${current}:${updatedAt}`} url={current} revision={shared ?? ''} />
+              )}
             </div>
             <div className="flex flex-col items-center gap-2">
               <QrImage key={current} text={current} size={148} />
@@ -483,11 +488,21 @@ function LinksCard({
   );
 }
 
-function SubscriptionCheck({ url }: { url: string }) {
+function SubscriptionCheck({ url, revision }: { url: string; revision: string }) {
   const request = useRef<AbortController | null>(null);
   const [visibleCount, setVisibleCount] = useState(50);
   const [result, setResult] = useState<string | ShadowrocketRuleIssue[]>('');
   useEffect(() => () => request.current?.abort(), []);
+
+  // The saved shared config can change without touching this device's URL or
+  // updated_at. A refreshed preview is the existing change signal, so discard
+  // the old verdict and ignore a request that only finishes afterwards.
+  useEffect(() => {
+    request.current?.abort();
+    request.current = null;
+    setVisibleCount(50);
+    setResult('');
+  }, [revision]);
 
   async function check() {
     request.current?.abort();
@@ -497,19 +512,22 @@ function SubscriptionCheck({ url }: { url: string }) {
     setResult('正在检查已保存的设备配置…');
     try {
       const issues = await recheckShadowrocket(url, controller.signal);
-      if (!controller.signal.aborted) setResult(issues.length ? issues : '检查通过');
+      if (request.current === controller && !controller.signal.aborted)
+        setResult(issues.length ? issues : '检查通过');
     } catch (error) {
-      if (!controller.signal.aborted) setResult(errorMessage(error));
+      if (request.current === controller && !controller.signal.aborted)
+        setResult(errorMessage(error));
     }
   }
   return (
     <div className="space-y-2">
       <Button size="sm" icon={RefreshCw} onClick={() => void check()}>重新检查</Button>
       <div role="status" className="space-y-1 text-xs text-ink-2">
-        {typeof result === 'string' ? result : result.slice(0, visibleCount).map((issue) => (
-          <p key={issue.ruleNumber}>
-            {issue.status === 'incompatible' ? '已知不兼容' : '待验证'} · 第 {issue.ruleNumber} 条 {issue.ruleType} → {issue.target}
-            {issue.reference && `（关联：${issue.reference}）`}：{issue.reason}
+        {typeof result === 'string' ? result : result.slice(0, visibleCount).map((issue, index) => (
+          <p key={`${issue.listener ?? ''}:${issue.table ?? ''}:${issue.field ?? ''}:${issue.mode ?? ''}:${issue.ruleNumber ?? ''}:${index}`}>
+            {issue.status === 'incompatible' ? '已知不兼容' : '待验证'} · {describeShadowrocketIssueLocation(issue)}
+            {issue.member ? ` · 成员 ${issue.member}${issue.option ? `（${issue.option}）` : ''}` : issue.option ? ` · 选项 ${issue.option}` : ''}
+            {issue.reference && !issue.field && !issue.mode ? `（关联：${issue.reference}）` : ''}：{issue.reason}
           </p>
         ))}
       </div>

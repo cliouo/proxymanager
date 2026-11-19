@@ -49,17 +49,36 @@ describe('Shadowrocket/3488 Clash YAML routing evidence', () => {
     ]);
   });
 
-  it('locates an untested node protocol in a reachable inner group', () => {
+  it('locates an untested member and its protocol inside a reachable group', () => {
     expect(
-      check({ proxies: [http('A'), http('B'), { ...http('C'), type: 'socks5' }] }),
+      check({
+        proxies: [
+          http('A'),
+          http('B'),
+          { name: 'C', type: 'socks5', server: 'secret.example', port: 1080, password: 'secret' },
+        ],
+      }),
     ).toMatchObject([
       {
         ruleNumber: 2,
         target: '业务',
         reference: '地区',
-        reason: expect.stringContaining('业务 → 出口 → 地区'),
+        member: 'C',
+        option: expect.stringContaining('type=socks5'),
+        reason: expect.stringContaining('业务 → 出口 → 地区 → 成员 C（type=socks5'),
       },
     ]);
+    const leaked = JSON.stringify(
+      check({
+        proxies: [
+          http('A'),
+          http('B'),
+          { name: 'C', type: 'socks5', server: 'secret.example', port: 1080, password: 'secret' },
+        ],
+      }),
+    );
+    expect(leaked).not.toContain('secret.example');
+    expect(leaked).not.toContain('"secret"');
   });
 
   it.each(['PROCESS-NAME', 'PROCESS-PATH'])('locates %s after final rule insertion', (type) => {
@@ -120,15 +139,228 @@ describe('Shadowrocket/3488 Clash YAML routing evidence', () => {
     ]);
   });
 
+  it('reports an active TUN route-set by field and set name without inventing a rule number', () => {
+    const tun = {
+      enable: true,
+      'auto-route': true,
+      'auto-redirect': true,
+      'route-exclude-address-set': ['remote-ip'],
+    };
+    const config = {
+      ...nested,
+      tun,
+      'rule-providers': { 'remote-ip': { type: 'http' }, unused: { type: 'http' } },
+      rules: [],
+    };
+    const issues = check(config);
+    expect(issues).toMatchObject([
+      {
+        status: 'unverified',
+        field: 'route-exclude-address-set',
+        setName: 'remote-ip',
+        reason: expect.stringContaining('route-exclude-address-set'),
+      },
+    ]);
+    expect(issues[0]).not.toHaveProperty('ruleNumber');
+    expect(issues[0]?.reason).toContain('remote-ip');
+    expect(check({ ...config, tun: { ...tun, enable: false } })).toEqual([]);
+    expect(check({ ...config, tun: { ...tun, 'auto-redirect': false } })).toEqual([]);
+    expect(
+      check({ ...config, tun: { ...tun, 'auto-route': false, 'auto-redirect': false } }),
+    ).toEqual([]);
+    expect(check({ ...config, tun: undefined })).toEqual([]);
+  });
+
+  it('checks applicable TUN listeners and both address-set fields', () => {
+    expect(
+      check({
+        ...nested,
+        rules: [],
+        listeners: [
+          {
+            name: 'tun-in',
+            type: 'tun',
+            'auto-route': true,
+            'auto-redirect': true,
+            'route-address-set': ['remote-ip'],
+            'route-exclude-address-set': ['remote-ip'],
+          },
+        ],
+        'rule-providers': { 'remote-ip': { type: 'http' } },
+      }),
+    ).toMatchObject([
+      { field: 'route-address-set', setName: 'remote-ip' },
+      { field: 'route-exclude-address-set', setName: 'remote-ip' },
+    ]);
+    expect(
+      check({
+        ...nested,
+        rules: [],
+        listeners: [
+          {
+            name: 'tun-in',
+            type: 'tun',
+            'auto-route': true,
+            'auto-redirect': false,
+            'route-address-set': ['remote-ip'],
+          },
+        ],
+        'rule-providers': { 'remote-ip': { type: 'http' } },
+      }),
+    ).toEqual([]);
+  });
+
   it('checks group options and HTTP transport options even when the rule is familiar', () => {
     expect(
       check({
         'proxy-groups': [{ ...select('固定', 'A'), 'disable-udp': true }],
         rules: [nested.rules[0]],
       }),
-    ).toHaveLength(1);
+    ).toMatchObject([
+      {
+        ruleNumber: 1,
+        reference: '固定',
+        option: 'disable-udp',
+        reason: expect.stringContaining('disable-udp'),
+      },
+    ]);
     expect(
       check({ proxies: [{ ...http('A'), 'dialer-proxy': 'B' }, http('B'), http('C')] }),
-    ).toHaveLength(2);
+    ).toMatchObject([
+      { ruleNumber: 1, reference: '固定' },
+      { ruleNumber: 2, reference: '出口' },
+    ]);
+  });
+
+  it('checks a listener-selected sub-rule table and skips unreferenced tables', () => {
+    const base = {
+      ...nested,
+      rules: [],
+      'sub-rules': {
+        office: ['PROCESS-NAME,reader,出口'],
+        parked: ['PROCESS-NAME,parked,出口'],
+      },
+    };
+    expect(
+      check({
+        ...base,
+        listeners: [
+          { name: 'mixed-in', type: 'mixed', port: 7890, rule: 'office' },
+          { name: 'plain', type: 'mixed', port: 7891 },
+        ],
+      }),
+    ).toMatchObject([
+      {
+        status: 'unverified',
+        listener: 'mixed-in',
+        table: 'office',
+        ruleNumber: 1,
+        ruleType: 'PROCESS-NAME',
+        target: '出口',
+      },
+    ]);
+    expect(
+      check({
+        ...base,
+        listeners: [{ name: 'mixed-in', type: 'mixed', port: 7890, rule: 'parked' }],
+      }),
+    ).toMatchObject([{ listener: 'mixed-in', table: 'parked', ruleNumber: 1 }]);
+  });
+
+  it('distinguishes the first rule of two listener-selected tables', () => {
+    expect(
+      check({
+        ...nested,
+        rules: [],
+        'sub-rules': {
+          office: ['PROCESS-NAME,reader,出口'],
+          lab: ['PROCESS-PATH,/bin/tool,出口'],
+        },
+        listeners: [
+          { name: 'office-in', type: 'mixed', port: 7890, rule: 'office' },
+          { name: 'lab-in', type: 'mixed', port: 7891, rule: 'lab' },
+        ],
+      }),
+    ).toMatchObject([
+      {
+        listener: 'office-in',
+        table: 'office',
+        ruleNumber: 1,
+        ruleType: 'PROCESS-NAME',
+        target: '出口',
+      },
+      {
+        listener: 'lab-in',
+        table: 'lab',
+        ruleNumber: 1,
+        ruleType: 'PROCESS-PATH',
+        target: '出口',
+      },
+    ]);
+  });
+
+  it('uses the effective running mode and actual exit instead of inactive rules', () => {
+    const globalProxy = http('GLOBAL-EXIT');
+    const socks = { name: 'B', type: 'socks5', server: 'secret.example', port: 1080 };
+    const global = {
+      ...nested,
+      mode: 'global',
+      proxies: [globalProxy, socks],
+      'proxy-groups': [select('GLOBAL', 'GLOBAL-EXIT', 'B')],
+      rules: [],
+    };
+    const empty = check(global);
+    const withIdleRule = check({ ...global, rules: ['DOMAIN,idle.example,业务'] });
+    expect(empty).toMatchObject([
+      {
+        status: 'unverified',
+        mode: 'global',
+        reference: 'GLOBAL',
+        member: 'B',
+        option: 'type=socks5',
+      },
+    ]);
+    expect(empty).not.toHaveProperty([0, 'ruleNumber']);
+    expect(withIdleRule).toEqual(empty);
+  });
+
+  it('keeps mode-level evidence locatable and defaults to rule mode', () => {
+    expect(
+      check({
+        ...nested,
+        mode: 'global',
+        proxies: [http('A'), http('B'), http('C')],
+        'proxy-groups': [{ name: 'GLOBAL', type: 'url-test', proxies: ['A'] }],
+        rules: ['PROCESS-NAME,reader,固定'],
+      }),
+    ).toMatchObject([
+      {
+        status: 'unverified',
+        mode: 'global',
+        reference: 'GLOBAL',
+        option: 'type=url-test',
+      },
+    ]);
+    expect(check({ ...nested, mode: 'direct', rules: ['PROCESS-NAME,reader,固定'] })).toMatchObject(
+      [
+        {
+          status: 'unverified',
+          mode: 'direct',
+          reference: 'DIRECT',
+          reason: expect.stringContaining('direct'),
+        },
+      ],
+    );
+    expect(check({ ...nested, mode: undefined })).toEqual([]);
+    expect(check({ ...nested, mode: 'rule' })).toEqual([]);
+    expect(check({ ...nested, mode: 'GLOBAL', rules: ['PROCESS-NAME,reader,固定'] })).toMatchObject(
+      [
+        {
+          status: 'unverified',
+          mode: 'GLOBAL',
+          reason: expect.stringContaining('运行模式 GLOBAL'),
+        },
+      ],
+    );
   });
 });

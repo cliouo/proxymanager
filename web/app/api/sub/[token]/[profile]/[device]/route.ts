@@ -1,5 +1,9 @@
 import { parse } from 'yaml';
-import { checkShadowrocketRules, type ShadowrocketRuleIssue } from '@/lib/engine/shadowrocketCompatibility';
+import {
+  checkShadowrocketRules,
+  type ShadowrocketRuleIssue,
+} from '@/lib/engine/shadowrocketCompatibility';
+import { describeShadowrocketIssueLocation } from '@/lib/engine/shadowrocketIssueFormat';
 import { renderDeviceConfig } from '@/lib/engine/renderCache';
 import { attachmentDisposition } from '@/lib/http/contentDisposition';
 import { etagMatches } from '@/lib/http/etag';
@@ -57,7 +61,9 @@ export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
 
   const shadowrocket = url.searchParams.get('client') === 'shadowrocket';
   if (shadowrocket && asBase64) {
-    throw ProblemDetailsError.badRequest('Shadowrocket 完整配置与 Base64 仅节点订阅是两种用途，请选择一项。');
+    throw ProblemDetailsError.badRequest(
+      'Shadowrocket 完整配置与 Base64 仅节点订阅是两种用途，请选择一项。',
+    );
   }
 
   const { resolved, displayName, deviceDisplayName, cache } = await renderDeviceConfig(
@@ -140,8 +146,11 @@ export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
 function shadowrocketProblem(issues: ShadowrocketRuleIssue[]): Response {
   const first = issues[0];
   const status = first.status === 'incompatible' ? '已知不兼容' : '待验证';
-  const reference = first.reference ? `（关联：${first.reference}）` : '';
-  const detail = `第 ${first.ruleNumber} 条规则 ${first.ruleType} → ${first.target}${reference}${status}：${first.reason}`;
+  // TUN and mode findings already name their location; a rule finding still
+  // gains context from the provider/group it references.
+  const reference =
+    first.reference && !first.field && !first.mode ? `（关联：${first.reference}）` : '';
+  const detail = `${describeShadowrocketIssueLocation(first)}${reference}${status}：${first.reason}`;
   const { problem } = ProblemDetailsError.unprocessable(detail);
 
   // Stream the complete Problem Details document: large rule lists can exceed

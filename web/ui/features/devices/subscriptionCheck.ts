@@ -1,18 +1,43 @@
 import type { ShadowrocketRuleIssue } from '@/lib/engine/shadowrocketCompatibility';
 
+function optionalString(value: unknown): boolean {
+  return value === undefined || typeof value === 'string';
+}
+
 function isRuleIssue(value: unknown): value is ShadowrocketRuleIssue {
   if (!value || typeof value !== 'object') return false;
   const issue = value as Partial<ShadowrocketRuleIssue>;
-  return (
-    (issue.status === 'incompatible' || issue.status === 'unverified') &&
-    typeof issue.ruleNumber === 'number' &&
-    Number.isInteger(issue.ruleNumber) &&
-    issue.ruleNumber > 0 &&
-    typeof issue.ruleType === 'string' &&
-    typeof issue.target === 'string' &&
-    typeof issue.reason === 'string' &&
-    (issue.reference === undefined || typeof issue.reference === 'string')
-  );
+  if (issue.status !== 'incompatible' && issue.status !== 'unverified') return false;
+  if (typeof issue.reason !== 'string') return false;
+  const hasRule =
+    issue.ruleNumber !== undefined || issue.ruleType !== undefined || issue.target !== undefined;
+  if (hasRule) {
+    if (
+      typeof issue.ruleNumber !== 'number' ||
+      !Number.isInteger(issue.ruleNumber) ||
+      issue.ruleNumber <= 0 ||
+      typeof issue.ruleType !== 'string' ||
+      typeof issue.target !== 'string'
+    )
+      return false;
+  }
+  const hasTun = issue.field !== undefined || issue.setName !== undefined;
+  if (hasTun && (typeof issue.field !== 'string' || typeof issue.setName !== 'string'))
+    return false;
+  const hasListener = issue.listener !== undefined || issue.table !== undefined;
+  if (hasListener && (typeof issue.listener !== 'string' || typeof issue.table !== 'string'))
+    return false;
+  if (!hasRule && !hasTun && !hasListener && typeof issue.mode !== 'string') return false;
+  return [
+    issue.reference,
+    issue.listener,
+    issue.table,
+    issue.member,
+    issue.option,
+    issue.field,
+    issue.setName,
+    issue.mode,
+  ].every(optionalString);
 }
 
 export async function recheckShadowrocket(

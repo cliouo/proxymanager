@@ -1998,12 +1998,26 @@ function collectRuleLineRuleSetReferences(value: unknown, refs: Set<string>): vo
   }
 }
 
-function collectFinalTunRuleSetReferences(
+export type ActiveTunRouteSetField = 'route-address-set' | 'route-exclude-address-set';
+
+export interface ActiveTunRouteSetReference {
+  field: ActiveTunRouteSetField;
+  name: string;
+}
+
+/**
+ * The TUN route sets fixed Mihomo actually installs. Root TUN is active only
+ * when `enable` is true and (unless overridden) `auto-route` defaults on; a
+ * `type: tun` listener must opt into both switches explicitly. `auto-redirect`
+ * is the gate that installs either address set. Keep this one predicate shared
+ * by the final validator and the Shadowrocket compatibility checker so neither
+ * invents a reference the renderer would not emit.
+ */
+export function collectActiveTunRuleSetReferences(
   value: unknown,
-  refs: Set<string>,
   requireEnabled: boolean,
-): void {
-  if (!isPlainObject(value)) return;
+): ActiveTunRouteSetReference[] {
+  if (!isPlainObject(value)) return [];
   const contextualFields = new Set([
     'auto-route',
     'auto-redirect',
@@ -2035,17 +2049,29 @@ function collectFinalTunRuleSetReferences(
       throw new Error('Full config render rejected: a TUN route-set list is mistyped.');
     }
   }
-  if (requireEnabled && value.enable !== true) return;
-  if (value['auto-redirect'] !== true) return;
+  if (requireEnabled && value.enable !== true) return [];
+  if (value['auto-redirect'] !== true) return [];
   const autoRouteEnabled =
     value['auto-route'] === true || (requireEnabled && value['auto-route'] === undefined);
   if (!autoRouteEnabled) {
     throw new Error('Full config render rejected: TUN auto-redirect requires auto-route.');
   }
-  for (const field of ['route-address-set', 'route-exclude-address-set']) {
+  const refs: ActiveTunRouteSetReference[] = [];
+  for (const field of ['route-address-set', 'route-exclude-address-set'] as const) {
     const names = value[field];
     if (!Array.isArray(names)) continue;
-    for (const name of names) refs.add(name as string);
+    for (const name of names) refs.push({ field, name: name as string });
+  }
+  return refs;
+}
+
+function collectFinalTunRuleSetReferences(
+  value: unknown,
+  refs: Set<string>,
+  requireEnabled: boolean,
+): void {
+  for (const reference of collectActiveTunRuleSetReferences(value, requireEnabled)) {
+    refs.add(reference.name);
   }
 }
 

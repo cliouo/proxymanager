@@ -26,6 +26,25 @@ rules:
   - MATCH,DIRECT
 `;
 
+// The real checker accepts only plain HTTP exits reached through a select
+// group; an SS node named directly by a rule is still unverified.
+const COMPATIBLE_CONFIG = `mode: rule
+proxies:
+  - {name: A, type: http, server: proxy.example, port: 8080}
+proxy-groups:
+  - {name: 出口, type: select, proxies: [A]}
+rules:
+  - DOMAIN,example.com,出口
+`;
+
+const BROKEN_CONFIG = `mode: rule
+proxies:
+  - {name: HK-1, type: ss, server: hk.example.com, port: 8388, cipher: aes-128-gcm, password: p}
+proxy-groups: []
+rules:
+  - DOMAIN,example.com,HK-1
+`;
+
 function ctx(token: string, profile: string, device: string) {
   return { params: Promise.resolve({ token, profile, device }) } as never;
 }
@@ -94,8 +113,149 @@ describe('/api/sub/{token}/{profile}/{device}', () => {
     expect(checkShadowrocketRules).not.toHaveBeenCalled();
   });
 
+  it('runs the real compatibility checker through 200 → 422 → 200 and a compatible 304', async () => {
+    const actual = await vi.importActual<typeof import('@/lib/engine/shadowrocketCompatibility')>(
+      '@/lib/engine/shadowrocketCompatibility',
+    );
+    const { checkShadowrocketRules } = await import('@/lib/engine/shadowrocketCompatibility');
+    vi.mocked(checkShadowrocketRules).mockImplementation(actual.checkShadowrocketRules);
+    renderDeviceConfig.mockReset();
+    renderDeviceConfig
+      .mockResolvedValueOnce(
+        rendered({
+          resolved: { content: COMPATIBLE_CONFIG, buildId: 'compatible-1', inlinedProxyCount: 1 },
+        }),
+      )
+      // Fresh bytes under the client's old ETag must still be checked first.
+      .mockResolvedValueOnce(
+        rendered({
+          resolved: { content: BROKEN_CONFIG, buildId: 'compatible-1', inlinedProxyCount: 1 },
+        }),
+      )
+      .mockResolvedValueOnce(
+        rendered({
+          resolved: { content: COMPATIBLE_CONFIG, buildId: 'compatible-2', inlinedProxyCount: 1 },
+        }),
+      )
+      .mockResolvedValueOnce(
+        rendered({
+          resolved: { content: COMPATIBLE_CONFIG, buildId: 'compatible-2', inlinedProxyCount: 1 },
+        }),
+      );
+
+    const first = await special();
+    expect(first.status).toBe(200);
+    const etag = first.headers.get('etag')!;
+    expect(etag).toBe('"compatible-1"');
+
+    const blocked = await special(etag);
+    expect(blocked.status).toBe(422);
+    const problem = await blocked.json();
+    expect(problem.errors).toMatchObject([
+      { status: 'unverified', ruleNumber: 1, ruleType: 'DOMAIN', target: 'HK-1' },
+    ]);
+    expect(problem.detail).toContain('HK-1');
+    expect(checkShadowrocketRules).toHaveBeenCalledTimes(2);
+
+    const recovered = await special(etag);
+    expect(recovered.status).toBe(200);
+    expect(await recovered.text()).toBe(COMPATIBLE_CONFIG);
+
+    const cached = await special('"compatible-2"');
+    expect(cached.status).toBe(304);
+    expect(await cached.text()).toBe('');
+    expect(checkShadowrocketRules).toHaveBeenCalledTimes(4);
+  });
+
+  it('locates listener and TUN diagnostics in the 422 detail without a fake rule number', async () => {
+    const actual = await vi.importActual<typeof import('@/lib/engine/shadowrocketCompatibility')>(
+      '@/lib/engine/shadowrocketCompatibility',
+    );
+    const { checkShadowrocketRules } = await import('@/lib/engine/shadowrocketCompatibility');
+    vi.mocked(checkShadowrocketRules).mockImplementation(actual.checkShadowrocketRules);
+
+    const listenerConfig =
+      COMPATIBLE_CONFIG +
+      `listeners:
+  - {name: mixed-in, type: mixed, port: 7890, rule: office}
+sub-rules:
+  office:
+    - PROCESS-NAME,reader,出口
+`;
+    renderDeviceConfig.mockResolvedValueOnce(
+      rendered({
+        resolved: { content: listenerConfig, buildId: 'listener', inlinedProxyCount: 1 },
+      }),
+    );
+    const listenerProblem = await (await special()).json();
+    expect(listenerProblem.errors).toMatchObject([
+      {
+        status: 'unverified',
+        listener: 'mixed-in',
+        table: 'office',
+        ruleNumber: 1,
+        ruleType: 'PROCESS-NAME',
+        target: '出口',
+      },
+    ]);
+    expect(listenerProblem.detail).toContain('监听器 mixed-in');
+    expect(listenerProblem.detail).toContain('子规则表 office');
+    expect(listenerProblem.detail).toContain('PROCESS-NAME');
+    expect(listenerProblem.detail).toContain('出口');
+
+    const tunConfig =
+      COMPATIBLE_CONFIG +
+      `tun: {enable: true, auto-route: true, auto-redirect: true, route-exclude-address-set: [remote-ip]}
+rule-providers:
+  remote-ip: {type: http, behavior: ipcidr}
+`;
+    renderDeviceConfig.mockResolvedValueOnce(
+      rendered({ resolved: { content: tunConfig, buildId: 'tun', inlinedProxyCount: 1 } }),
+    );
+    const tunProblem = await (await special()).json();
+    expect(tunProblem.errors).toMatchObject([
+      {
+        status: 'unverified',
+        field: 'route-exclude-address-set',
+        setName: 'remote-ip',
+      },
+    ]);
+    expect(tunProblem.errors[0].ruleNumber).toBeUndefined();
+    expect(tunProblem.detail).toContain('TUN 字段 route-exclude-address-set');
+    expect(tunProblem.detail).toContain('remote-ip');
+
+    const globalConfig = `mode: global
+proxies:
+  - {name: A, type: http, server: proxy.example, port: 8080}
+  - {name: B, type: socks5, server: secret.example, port: 1080, password: secret}
+proxy-groups:
+  - {name: GLOBAL, type: select, proxies: [A, B]}
+rules: []
+`;
+    renderDeviceConfig.mockResolvedValueOnce(
+      rendered({ resolved: { content: globalConfig, buildId: 'global', inlinedProxyCount: 2 } }),
+    );
+    const globalProblem = await (await special()).json();
+    expect(globalProblem.errors).toMatchObject([
+      {
+        status: 'unverified',
+        mode: 'global',
+        reference: 'GLOBAL',
+        member: 'B',
+        option: expect.stringContaining('type=socks5'),
+      },
+    ]);
+    expect(globalProblem.errors[0].ruleNumber).toBeUndefined();
+    expect(globalProblem.detail).toContain('运行模式 global');
+    expect(globalProblem.detail).toContain('GLOBAL');
+    expect(globalProblem.detail).toContain('B');
+    expect(globalProblem.detail).toContain('type=socks5');
+    expect(JSON.stringify(globalProblem)).not.toContain('secret.example');
+    expect(JSON.stringify(globalProblem)).not.toContain('"secret"');
+  });
+
   it.each(['incompatible', 'unverified'] as const)(
-    'rechecks cached bytes before 304 and recovers (%s)',
+    'rechecks synthetic cached bytes before 304 and recovers (%s)',
     async (status) => {
       const { checkShadowrocketRules } = await import('@/lib/engine/shadowrocketCompatibility');
       const issue = {
@@ -132,7 +292,7 @@ describe('/api/sub/{token}/{profile}/{device}', () => {
       }
       expect((await special()).status).toBe(200);
       expect((await special(etag)).status).toBe(304);
-      const fixed = CONFIG.replace('MATCH,DIRECT', 'DOMAIN,example.com,HK-1');
+      const fixed = COMPATIBLE_CONFIG;
       renderDeviceConfig.mockResolvedValue(
         rendered({ resolved: { content: fixed, buildId: 'fixed', inlinedProxyCount: 1 } }),
       );

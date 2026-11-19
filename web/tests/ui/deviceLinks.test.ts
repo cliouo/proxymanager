@@ -39,6 +39,40 @@ it.each([[], [{ path: 'base_patch' }], [{ status: 'unverified', ruleNumber: 1 }]
   },
 );
 
+it('keeps listener, TUN and mode locations in a compatibility 422', async () => {
+  const issues = [
+    {
+      status: 'unverified',
+      listener: 'mixed-in',
+      table: 'office',
+      ruleNumber: 1,
+      ruleType: 'PROCESS-NAME',
+      target: '出口',
+      reason: '进程规则待核验',
+    },
+    {
+      status: 'unverified',
+      field: 'route-exclude-address-set',
+      setName: 'remote-ip',
+      reference: 'remote-ip',
+      reason: '远程集合待核验',
+    },
+    {
+      status: 'unverified',
+      mode: 'global',
+      reference: 'GLOBAL',
+      member: 'B',
+      option: 'type=socks5',
+      reason: '全局选路待核验',
+    },
+  ];
+  vi.stubGlobal(
+    'fetch',
+    vi.fn().mockResolvedValue(Response.json({ errors: issues }, { status: 422 })),
+  );
+  expect(await recheckShadowrocket(url, signal)).toEqual(issues);
+});
+
 it('reports a login page in place of a successful YAML download', async () => {
   vi.stubGlobal(
     'fetch',

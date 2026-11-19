@@ -253,3 +253,130 @@ test('invalidates a successful check after saving the same device URL', async ({
   await expect(page.getByText('已保存', { exact: true })).toBeVisible();
   await expect(card.getByRole('status')).toBeEmpty();
 });
+
+test('invalidates a successful check when only the shared config refreshes', async ({ page }) => {
+  await workspace(page);
+  let shared = 'rules:\n  - DOMAIN,old.example,DIRECT\n';
+  await page.route('**/api/v1/profiles/p/devices/phone/preview', (route) =>
+    route.fulfill({ json: { data: { shared, device: '{}', issues: [] } } }),
+  );
+  const url = base + '/phone?client=shadowrocket';
+  let attempt = 0;
+  let finishOld: (() => void) | undefined;
+  let oldResponded: (() => void) | undefined;
+  const oldGate = new Promise<void>((resolve) => {
+    finishOld = resolve;
+  });
+  const oldDone = new Promise<void>((resolve) => {
+    oldResponded = resolve;
+  });
+  await page.route(url, async (route) => {
+    attempt++;
+    if (attempt === 2)
+      return route.fulfill({
+        status: 422,
+        json: {
+          errors: [
+            {
+              status: 'unverified',
+              ruleNumber: 2,
+              ruleType: 'DOMAIN',
+              target: 'DIRECT',
+              reason: '新共享配置待核验',
+            },
+          ],
+        },
+      });
+    if (attempt === 3) {
+      await oldGate;
+      await route.fulfill({
+        status: 422,
+        json: {
+          errors: [
+            {
+              status: 'unverified',
+              ruleNumber: 9,
+              ruleType: 'DOMAIN',
+              target: 'DIRECT',
+              reason: '迟到的旧结果',
+            },
+          ],
+        },
+      });
+      oldResponded?.();
+      return;
+    }
+    return route.fulfill({ contentType: 'text/yaml', body: 'rules: []' });
+  });
+
+  await page.goto('/p/home/devices/phone');
+  const card = page.getByRole('region', { name: '设备订阅链接' });
+  await card.getByLabel('订阅用途').selectOption('shadowrocket');
+  await card.getByRole('button', { name: '重新检查' }).click();
+  await expect(card.getByRole('status')).toHaveText('检查通过');
+
+  shared = 'rules:\n  - DOMAIN,new.example,DIRECT\n';
+  await page.getByRole('button', { name: '重新渲染预览' }).click();
+  await expect(card.getByRole('status')).toHaveText('');
+  await card.getByRole('button', { name: '重新检查' }).click();
+  await expect(card.getByRole('status')).toContainText('新共享配置待核验');
+
+  await card.getByRole('button', { name: '重新检查' }).click();
+  await expect(card.getByRole('status')).toContainText('正在检查');
+  shared = 'rules:\n  - DOMAIN,newer.example,DIRECT\n';
+  await page.getByRole('button', { name: '重新渲染预览' }).click();
+  await expect(card.getByRole('status')).toHaveText('');
+  finishOld?.();
+  await oldDone;
+  await expect(card.getByRole('status')).toHaveText('');
+  await card.getByRole('button', { name: '重新检查' }).click();
+  await expect(card.getByRole('status')).toHaveText('检查通过');
+});
+
+test('keeps the share dialog usable while devices load, after a failure and on retry', async ({
+  page,
+}) => {
+  await workspace(page);
+  let release: (() => void) | undefined;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let attempts = 0;
+  await page.route('**/api/v1/profiles/p/devices', async (route) => {
+    attempts++;
+    if (attempts === 1) {
+      await gate;
+      return route.fulfill({ json: { data: devices } });
+    }
+    if (attempts === 2 || attempts === 3)
+      return route.fulfill({ status: 500, json: { title: '合成设备列表失败' } });
+    return route.fulfill({ json: { data: devices } });
+  });
+
+  await page.goto('/p/home/devices');
+  const share = await globalShare(page);
+  await expect(share.getByLabel('设备链接加载中')).toBeVisible();
+  await expect(share.getByText('共享配置', { exact: true })).toBeVisible();
+  release?.();
+  await expect(share.getByText('设备 · phone')).toBeVisible();
+
+  attempts = 1;
+  await page.evaluate(() => localStorage.removeItem('pm.query-cache.v1'));
+  await page.reload();
+  const failed = await globalShare(page);
+  await expect(failed.getByRole('alert')).toContainText('设备链接加载失败');
+  await expect(failed.getByText('共享配置', { exact: true })).toBeVisible();
+  await failed.getByRole('button', { name: '重试' }).click();
+  await expect(failed.getByText('设备 · phone')).toBeVisible();
+});
+
+test('shows the ordinary shared link for a normally empty device list', async ({ page }) => {
+  await workspace(page, []);
+  await page.goto('/p/home/devices');
+  const share = await globalShare(page);
+  await expect(share.getByText('共享配置', { exact: true })).toBeVisible();
+  await expect(share).toContainText('还没有设备，当前只有共享配置链接。');
+  await share.getByLabel('订阅用途').selectOption('shadowrocket');
+  await expect(share).toContainText('请先添加设备');
+  await expect(share.getByRole('img')).toHaveCount(0);
+});
