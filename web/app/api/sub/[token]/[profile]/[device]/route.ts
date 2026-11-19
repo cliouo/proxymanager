@@ -1,4 +1,6 @@
+import { createHash } from 'node:crypto';
 import { parse } from 'yaml';
+import { materializeDynamicProxyGroups } from '@/lib/engine/materializeProxyGroups';
 import {
   checkShadowrocketRules,
   type ShadowrocketRuleIssue,
@@ -58,6 +60,17 @@ export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
     );
   }
   const asBase64 = format === 'base64' || format === 'v2ray';
+  const materialize = url.searchParams.get('materialize');
+  if (materialize !== null && materialize !== 'proxy-groups') {
+    throw ProblemDetailsError.badRequest(
+      `未知的策略组兼容模式 "${materialize}" —— 支持 materialize=proxy-groups。`,
+    );
+  }
+  if (materialize !== null && asBase64) {
+    throw ProblemDetailsError.badRequest(
+      'Base64 分享链接不包含策略组，不能使用 materialize=proxy-groups。',
+    );
+  }
 
   const shadowrocket = url.searchParams.get('client') === 'shadowrocket';
   if (shadowrocket && asBase64) {
@@ -75,6 +88,15 @@ export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
       noCache,
     },
   );
+  const content =
+    materialize === 'proxy-groups'
+      ? materializeDynamicProxyGroups(resolved.content)
+      : resolved.content;
+  const materializedBuildId =
+    materialize === 'proxy-groups'
+      ? `${createHash('sha256').update(resolved.buildId).update(content, 'utf8').digest('hex').slice(0, 8)}-pg`
+      : resolved.buildId;
+  const buildId = shadowrocket ? `${materializedBuildId}-sr` : materializedBuildId;
 
   // 文件名 = 设备自己的显示名优先,否则 `{profile 显示名 | proxymanager-{profile}}-{device}`。
   // 客户端把它当订阅名展示,同一份配置的多台设备必须一眼能分辨。
@@ -85,7 +107,7 @@ export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
   if (asBase64) {
     // 完整配置里的 `proxies:` 转分享链接。个别无法表达为链接的节点会被跳过,
     // 经 X-Skipped-Nodes 如实标注 —— 与资源分发链接同一套约定。
-    const doc = parse(resolved.content) as { proxies?: unknown } | null;
+    const doc = parse(content) as { proxies?: unknown } | null;
     const proxies = Array.isArray(doc?.proxies) ? (doc.proxies as Record<string, unknown>[]) : [];
     const sub = buildBase64Subscription(proxies);
     if (sub.lineCount === 0 && proxies.length > 0) {
@@ -93,7 +115,7 @@ export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
         `共 ${proxies.length} 个节点,但没有一个能表达为通用分享链接。`,
       );
     }
-    const etag = `"${resolved.buildId}-b64"`;
+    const etag = `"${buildId}-b64"`;
     const ifNoneMatch = request.headers.get('if-none-match');
     if (ifNoneMatch && etagMatches(ifNoneMatch, etag)) {
       return new Response(null, { status: 304, headers: { ETag: etag, 'X-Render-Cache': cache } });
@@ -114,21 +136,21 @@ export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
   }
 
   if (shadowrocket) {
-    const issues = checkShadowrocketRules(resolved.content);
+    const issues = checkShadowrocketRules(content);
     if (issues.length) return shadowrocketProblem(issues);
   }
 
   const filename = custom || `${profilePart}-${device}.yaml`;
-  const etag = `"${resolved.buildId}"`;
+  const etag = `"${buildId}"`;
   const ifNoneMatch = request.headers.get('if-none-match');
   if (ifNoneMatch && etagMatches(ifNoneMatch, etag)) {
     return new Response(null, {
       status: 304,
-      headers: { ETag: etag, 'X-Render-Cache': cache },
+      headers: { ETag: etag, 'X-Build-Id': buildId, 'X-Render-Cache': cache },
     });
   }
 
-  return new Response(resolved.content, {
+  return new Response(content, {
     status: 200,
     headers: {
       'Content-Type': 'text/yaml; charset=utf-8',
@@ -136,9 +158,10 @@ export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
       'Cache-Control': 'no-store',
       'Profile-Update-Interval': '24',
       ETag: etag,
-      'X-Build-Id': resolved.buildId,
+      'X-Build-Id': buildId,
       'X-Inlined-Proxy-Count': String(resolved.inlinedProxyCount),
       'X-Render-Cache': cache,
+      ...(materialize === 'proxy-groups' ? { 'X-Proxy-Groups-Materialized': 'true' } : {}),
     },
   });
 });
