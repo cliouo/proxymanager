@@ -45,6 +45,16 @@ rules:
   - DOMAIN,example.com,HK-1
 `;
 
+// A GLOBAL select holding one plain HTTP node passes the final validator, so
+// only the unverified running mode stands between this input and a 200.
+const GLOBAL_HTTP_CONFIG = (rules: string) => `mode: global
+proxies:
+  - {name: A, type: http, server: proxy.example, port: 8080}
+proxy-groups:
+  - {name: GLOBAL, type: select, proxies: [A]}
+${rules}
+`;
+
 function ctx(token: string, profile: string, device: string) {
   return { params: Promise.resolve({ token, profile, device }) } as never;
 }
@@ -58,6 +68,26 @@ function rendered(over: Record<string, unknown> = {}) {
     sharedCache: 'miss',
     ...over,
   };
+}
+
+function expectModeGlobalProblem(problem: {
+  detail: string;
+  errors: Record<string, unknown>[];
+}): void {
+  expect(problem.errors).toHaveLength(1);
+  expect(problem.errors[0]).toMatchObject({
+    status: 'unverified',
+    mode: 'global',
+    reference: 'GLOBAL',
+  });
+  // The gap is mode: global itself: no member or option is implicated and no
+  // rule position is invented for rules the mode never evaluates.
+  expect(problem.errors[0]).not.toHaveProperty('member');
+  expect(problem.errors[0]).not.toHaveProperty('option');
+  expect(problem.errors[0]).not.toHaveProperty('ruleNumber');
+  expect(problem.detail).toContain('运行模式 global');
+  expect(problem.detail).toContain('GLOBAL');
+  expect(problem.detail).not.toContain('条规则');
 }
 
 describe('/api/sub/{token}/{profile}/{device}', () => {
@@ -253,6 +283,64 @@ rules: []
     expect(JSON.stringify(globalProblem)).not.toContain('secret.example');
     expect(JSON.stringify(globalProblem)).not.toContain('"secret"');
   });
+
+  const GLOBAL_RULE_INPUTS = [
+    ['empty rules', 'rules: []'],
+    [
+      'a DOMAIN rule for GLOBAL that global mode never evaluates',
+      'rules:\n  - DOMAIN,idle.example,GLOBAL',
+    ],
+  ] as const;
+
+  it.each(GLOBAL_RULE_INPUTS)(
+    '422s the first mode:global request with %s and a plain HTTP GLOBAL',
+    async (_label, rules) => {
+      const actual = await vi.importActual<typeof import('@/lib/engine/shadowrocketCompatibility')>(
+        '@/lib/engine/shadowrocketCompatibility',
+      );
+      const { checkShadowrocketRules } = await import('@/lib/engine/shadowrocketCompatibility');
+      vi.mocked(checkShadowrocketRules).mockImplementation(actual.checkShadowrocketRules);
+      renderDeviceConfig.mockResolvedValue(
+        rendered({
+          resolved: {
+            content: GLOBAL_HTTP_CONFIG(rules),
+            buildId: 'global-http',
+            inlinedProxyCount: 1,
+          },
+        }),
+      );
+
+      const response = await special();
+      expect(response.status).toBe(422);
+      expectModeGlobalProblem(await response.json());
+      expect(checkShadowrocketRules).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each(GLOBAL_RULE_INPUTS)(
+    '422s the conditional mode:global request with %s instead of 304',
+    async (_label, rules) => {
+      const actual = await vi.importActual<typeof import('@/lib/engine/shadowrocketCompatibility')>(
+        '@/lib/engine/shadowrocketCompatibility',
+      );
+      const { checkShadowrocketRules } = await import('@/lib/engine/shadowrocketCompatibility');
+      vi.mocked(checkShadowrocketRules).mockImplementation(actual.checkShadowrocketRules);
+      renderDeviceConfig.mockResolvedValue(
+        rendered({
+          resolved: {
+            content: GLOBAL_HTTP_CONFIG(rules),
+            buildId: 'global-http',
+            inlinedProxyCount: 1,
+          },
+        }),
+      );
+
+      const response = await special('"global-http"');
+      expect(response.status).toBe(422);
+      expectModeGlobalProblem(await response.json());
+      expect(checkShadowrocketRules).toHaveBeenCalledOnce();
+    },
+  );
 
   it.each(['incompatible', 'unverified'] as const)(
     'rechecks synthetic cached bytes before 304 and recovers (%s)',

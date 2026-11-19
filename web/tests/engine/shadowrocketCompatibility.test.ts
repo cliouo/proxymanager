@@ -324,6 +324,32 @@ describe('Shadowrocket/3488 Clash YAML routing evidence', () => {
     expect(withIdleRule).toEqual(empty);
   });
 
+  it('keeps mode: global itself unverified when GLOBAL is a verified plain HTTP exit', () => {
+    const global = {
+      ...nested,
+      mode: 'global',
+      proxies: [http('A')],
+      'proxy-groups': [select('GLOBAL', 'A')],
+      rules: [],
+    };
+    const empty = check(global);
+    expect(empty).toMatchObject([
+      {
+        status: 'unverified',
+        mode: 'global',
+        reference: 'GLOBAL',
+        reason: expect.stringContaining('运行模式 global'),
+      },
+    ]);
+    // GLOBAL already resolves to an evidenced rule-mode exit; the gap is the
+    // running mode itself, so no member, option or invented rule position.
+    expect(empty[0]).not.toHaveProperty('member');
+    expect(empty[0]).not.toHaveProperty('option');
+    expect(empty[0]).not.toHaveProperty('ruleNumber');
+    expect(empty[0].reason).toContain('GLOBAL');
+    expect(check({ ...global, rules: ['DOMAIN,idle.example,GLOBAL'] })).toEqual(empty);
+  });
+
   it('keeps mode-level evidence locatable and defaults to rule mode', () => {
     expect(
       check({

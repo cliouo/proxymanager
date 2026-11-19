@@ -295,17 +295,21 @@ export function checkShadowrocketRules(content: string): ShadowrocketRuleIssue[]
       reason: `运行模式 ${label} 的选路行为缺少导入后的依据。`,
     });
   } else if (mode === 'global') {
+    // Resolving GLOBAL to a plain HTTP exit only evidences a rule-mode target;
+    // no import probe covers the global running mode itself, so it stays
+    // unverified even when every member resolves. Concrete member/option
+    // findings keep their detail.
     const finding = checkTarget('GLOBAL');
-    if (finding) {
-      issues.push({
-        status: 'unverified',
-        mode,
-        reference: finding.reference ?? 'GLOBAL',
-        ...(finding.member !== undefined ? { member: finding.member } : {}),
-        ...(finding.option !== undefined ? { option: finding.option } : {}),
-        reason: `全局选路（mode: global → GLOBAL）缺少出口对照：${finding.reason}`,
-      });
-    }
+    issues.push({
+      status: 'unverified',
+      mode,
+      reference: finding?.reference ?? 'GLOBAL',
+      ...(finding?.member !== undefined ? { member: finding.member } : {}),
+      ...(finding?.option !== undefined ? { option: finding.option } : {}),
+      reason: finding
+        ? `全局选路（mode: global → GLOBAL）缺少出口对照：${finding.reason}`
+        : '运行模式 global 的全局选路（GLOBAL）缺少导入后的出口对照：GLOBAL 组虽能解析到具体节点，但该模式本身的选路尚未验证。',
+    });
   } else if (mode === 'direct') {
     issues.push({
       status: 'unverified',
