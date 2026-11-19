@@ -42,14 +42,15 @@ export function materializeDynamicProxyGroups(content: string): string {
     const document = parse(content);
     if (
       !isYamlMap(document) ||
-      !Array.isArray(document.proxies) ||
+      (document.proxies !== undefined && !Array.isArray(document.proxies)) ||
       !Array.isArray(document['proxy-groups'])
     ) {
       validateFinalRenderedConfig(content);
       return content;
     }
 
-    const nodeNames = document.proxies.flatMap((proxy) =>
+    const proxies = (document.proxies ?? []) as unknown[];
+    const nodeNames = proxies.flatMap((proxy) =>
       isYamlMap(proxy) && typeof proxy.name === 'string' ? [proxy.name] : [],
     );
     const memberTypes = new Map<string, string>([
@@ -60,7 +61,7 @@ export function materializeDynamicProxyGroups(content: string): string {
       ['PASS', 'pass'],
       ['PASS-RULE', 'passrule'],
     ]);
-    for (const member of [...document.proxies, ...document['proxy-groups']]) {
+    for (const member of [...proxies, ...document['proxy-groups']]) {
       if (isYamlMap(member) && typeof member.name === 'string' && typeof member.type === 'string') {
         memberTypes.set(member.name, adapterType(member.type));
       }
