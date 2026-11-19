@@ -16,6 +16,8 @@ vi.mock('@/lib/engine/renderCache', () => ({ renderDeviceConfig, renderProfileCo
 vi.mock('@/lib/repos/profilesRepo', () => ({ getProfileByName }));
 vi.mock('@/lib/http/subGuard', () => ({ guardSubToken }));
 
+vi.mock('@/lib/engine/shadowrocketCompatibility', { spy: true });
+
 const CONFIG = `mixed-port: 7891
 proxies:
   - {name: HK-1, type: ss, server: hk.example.com, port: 8388, cipher: aes-128-gcm, password: p}
@@ -50,6 +52,114 @@ describe('/api/sub/{token}/{profile}/{device}', () => {
   });
 
   afterEach(() => vi.resetModules());
+
+  const deviceUrl = 'https://pm.test/api/sub/tk/home/macbook';
+  const special = (etag?: string, query = '') =>
+    GET(
+      new Request(deviceUrl + '?client=shadowrocket' + query, {
+        headers: etag ? { 'If-None-Match': etag } : {},
+      }),
+      ctx('tk', 'home', 'macbook'),
+    );
+
+  it('uses the link parameter and preserves the scoped render and bytes', async () => {
+    const { checkShadowrocketRules } = await import('@/lib/engine/shadowrocketCompatibility');
+    vi.mocked(checkShadowrocketRules).mockReturnValueOnce([]);
+    const response = await special(undefined, '&noCache=1');
+    expect(response.status).toBe(200);
+    expect(Buffer.from(await response.arrayBuffer())).toEqual(Buffer.from(CONFIG));
+    expect(checkShadowrocketRules).toHaveBeenCalledExactlyOnceWith(CONFIG);
+    expect(renderDeviceConfig).toHaveBeenCalledWith('home', 'macbook', {
+      expectedProfileId: 'p-home',
+      providerUrlBase: 'https://pm.test/api/rule-providers/tk',
+      noCache: true,
+    });
+    expect(
+      (
+        await GET(
+          new Request(deviceUrl, { headers: { 'User-Agent': 'Shadowrocket/3488' } }),
+          ctx('tk', 'home', 'macbook'),
+        )
+      ).status,
+    ).toBe(200);
+    expect(checkShadowrocketRules).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects the token before rendering or checking', async () => {
+    const { ProblemDetailsError } = await import('@/lib/http/problem');
+    const { checkShadowrocketRules } = await import('@/lib/engine/shadowrocketCompatibility');
+    guardSubToken.mockRejectedValueOnce(ProblemDetailsError.unauthorized());
+    expect((await special()).status).toBe(401);
+    expect(renderDeviceConfig).not.toHaveBeenCalled();
+    expect(checkShadowrocketRules).not.toHaveBeenCalled();
+  });
+
+  it.each(['incompatible', 'unverified'] as const)(
+    'rechecks cached bytes before 304 and recovers (%s)',
+    async (status) => {
+      const { checkShadowrocketRules } = await import('@/lib/engine/shadowrocketCompatibility');
+      const issue = {
+        status,
+        ruleNumber: 2,
+        ruleType: 'RULE-SET',
+        target: '出口',
+        reference: 'remote',
+        reason: '合成诊断',
+      };
+      vi.mocked(checkShadowrocketRules)
+        .mockReturnValueOnce([])
+        .mockReturnValueOnce([issue])
+        .mockReturnValueOnce([])
+        .mockReturnValueOnce([])
+        .mockReturnValueOnce([]);
+      const previous = await special();
+      const etag = previous.headers.get('etag')!;
+      renderDeviceConfig.mockResolvedValue(rendered({ cache: 'hit' }));
+      const blocked = await special(etag);
+      expect(blocked.status).toBe(422);
+      expect(blocked.headers.get('Content-Type')).toContain('application/problem+json');
+      const problem = await blocked.json();
+      expect(problem.errors).toEqual([issue]);
+      for (const part of [
+        status === 'incompatible' ? '已知不兼容' : '待验证',
+        '2',
+        'RULE-SET',
+        '出口',
+        'remote',
+        '合成诊断',
+      ]) {
+        expect(problem.detail).toContain(part);
+      }
+      expect((await special()).status).toBe(200);
+      expect((await special(etag)).status).toBe(304);
+      const fixed = CONFIG.replace('MATCH,DIRECT', 'DOMAIN,example.com,HK-1');
+      renderDeviceConfig.mockResolvedValue(
+        rendered({ resolved: { content: fixed, buildId: 'fixed', inlinedProxyCount: 1 } }),
+      );
+      const recovered = await special(etag);
+      expect(recovered.status).toBe(200);
+      expect(await recovered.text()).toBe(fixed);
+    },
+  );
+
+  it('uses the real checker for a mutable rule provider without exposing its URL', async () => {
+    const content =
+      CONFIG.replace('MATCH,DIRECT', 'RULE-SET,remote,DIRECT') +
+      'rule-providers: {remote: {type: http, behavior: domain, url: "https://example.org/private-path"}}';
+    renderDeviceConfig.mockResolvedValue(rendered({ resolved: { content, buildId: 'remote' } }));
+    const response = await special('"dev-build"');
+    expect(response.status).toBe(422);
+    const problem = await response.json();
+    expect(problem.errors).toMatchObject([
+      { reference: 'remote', status: 'unverified', ruleNumber: 1 },
+    ]);
+    expect(JSON.stringify(problem)).not.toContain('private-path');
+  });
+
+  it.each(['base64', 'v2ray'])('rejects conflicting device link purposes (%s)', async (format) => {
+    expect((await special(undefined, '&format=' + format)).status).toBe(400);
+    expect(renderDeviceConfig).not.toHaveBeenCalled();
+  });
 
   it('serves the device config with a device-specific ETag', async () => {
     const res = await GET(

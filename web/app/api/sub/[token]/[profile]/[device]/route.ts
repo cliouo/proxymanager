@@ -1,4 +1,5 @@
 import { parse } from 'yaml';
+import { checkShadowrocketRules } from '@/lib/engine/shadowrocketCompatibility';
 import { renderDeviceConfig } from '@/lib/engine/renderCache';
 import { attachmentDisposition } from '@/lib/http/contentDisposition';
 import { etagMatches } from '@/lib/http/etag';
@@ -54,6 +55,11 @@ export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
   }
   const asBase64 = format === 'base64' || format === 'v2ray';
 
+  const shadowrocket = url.searchParams.get('client') === 'shadowrocket';
+  if (shadowrocket && asBase64) {
+    throw ProblemDetailsError.badRequest('Shadowrocket 完整配置与 Base64 仅节点订阅是两种用途，请选择一项。');
+  }
+
   const { resolved, displayName, deviceDisplayName, cache } = await renderDeviceConfig(
     profile,
     device,
@@ -99,6 +105,19 @@ export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
         'X-Render-Cache': cache,
       },
     });
+  }
+
+  if (shadowrocket) {
+    const issues = checkShadowrocketRules(resolved.content);
+    const first = issues[0];
+    if (first) {
+      const status = first.status === 'incompatible' ? '已知不兼容' : '待验证';
+      const reference = first.reference ? `（关联：${first.reference}）` : '';
+      throw ProblemDetailsError.unprocessable(
+        `第 ${first.ruleNumber} 条规则 ${first.ruleType} → ${first.target}${reference}${status}：${first.reason}`,
+        issues,
+      );
+    }
   }
 
   const filename = custom || `${profilePart}-${device}.yaml`;
