@@ -28,12 +28,12 @@ import { HeaderRowsEditor, PolicyPicker } from './shared';
 
 function Section({ title, description, children }: { title: string; description?: string; children: React.ReactNode }) {
   return (
-    <section className="grid gap-3 md:grid-cols-[220px_1fr] md:gap-8">
+    <section className="grid gap-3 md:grid-cols-[220px_minmax(0,1fr)] md:gap-8">
       <div>
         <h3 className="text-[13px] font-semibold text-ink">{title}</h3>
         {description && <p className="mt-1 text-xs leading-relaxed text-ink-3">{description}</p>}
       </div>
-      <Card className="flex flex-col gap-4 p-4">{children}</Card>
+      <Card className="flex min-w-0 flex-col gap-4 p-4">{children}</Card>
     </section>
   );
 }
