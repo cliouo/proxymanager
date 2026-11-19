@@ -92,10 +92,11 @@ export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
     materialize === 'proxy-groups'
       ? materializeDynamicProxyGroups(resolved.content)
       : resolved.content;
-  const buildId =
-    content === resolved.content
-      ? resolved.buildId
-      : createHash('sha256').update(content, 'utf8').digest('hex').slice(0, 8);
+  const materializedBuildId =
+    materialize === 'proxy-groups'
+      ? `${createHash('sha256').update(resolved.buildId).update(content, 'utf8').digest('hex').slice(0, 8)}-pg`
+      : resolved.buildId;
+  const buildId = shadowrocket ? `${materializedBuildId}-sr` : materializedBuildId;
 
   // 文件名 = 设备自己的显示名优先,否则 `{profile 显示名 | proxymanager-{profile}}-{device}`。
   // 客户端把它当订阅名展示,同一份配置的多台设备必须一眼能分辨。
@@ -135,7 +136,7 @@ export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
   }
 
   if (shadowrocket) {
-    const issues = checkShadowrocketRules(resolved.content);
+    const issues = checkShadowrocketRules(content);
     if (issues.length) return shadowrocketProblem(issues);
   }
 
@@ -145,7 +146,7 @@ export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
   if (ifNoneMatch && etagMatches(ifNoneMatch, etag)) {
     return new Response(null, {
       status: 304,
-      headers: { ETag: etag, 'X-Render-Cache': cache },
+      headers: { ETag: etag, 'X-Build-Id': buildId, 'X-Render-Cache': cache },
     });
   }
 

@@ -181,9 +181,9 @@ describe('/api/sub/{token}/{profile}/{device}', () => {
     const first = await special();
     expect(first.status).toBe(200);
     expect(Buffer.from(await first.arrayBuffer())).toEqual(Buffer.from(TERMINAL_CONFIG));
-    expect(first.headers.get('ETag')).toBe('"compatible-1"');
+    expect(first.headers.get('ETag')).toBe('"compatible-1-sr"');
 
-    const blocked = await special('"compatible-1"');
+    const blocked = await special('"compatible-1-sr"');
     expect(blocked.status).toBe(422);
     const problem = await blocked.json();
     expect(problem.errors).toMatchObject([
@@ -192,7 +192,7 @@ describe('/api/sub/{token}/{profile}/{device}', () => {
     ]);
     expect(problem.detail).toContain('HK-1');
     expect(checkShadowrocketRules).toHaveBeenCalledTimes(2);
-    expect((await special('"compatible-1"')).status).toBe(304);
+    expect((await special('"compatible-1-sr"')).status).toBe(304);
     expect(checkShadowrocketRules).toHaveBeenCalledTimes(3);
   });
 
@@ -582,6 +582,77 @@ rules: []\n`,
     expect(document['proxy-groups'][0]['include-all-proxies']).toBeUndefined();
     expect(res.headers.get('X-Proxy-Groups-Materialized')).toBe('true');
     expect(res.headers.get('ETag')).not.toBe('"dynamic-build"');
+  });
+
+  it.each([false, true])('isolates all four delivery variants, including no-op materialization (%s)', async (dynamic) => {
+    const { materializeDynamicProxyGroups } = await import('@/lib/engine/materializeProxyGroups');
+    const { checkShadowrocketRules } = await import('@/lib/engine/shadowrocketCompatibility');
+    vi.mocked(checkShadowrocketRules).mockReturnValue([]);
+    const content = dynamic
+      ? TERMINAL_CONFIG.replace('proxies: [A]', 'include-all-proxies: true, empty-fallback: REJECT')
+      : TERMINAL_CONFIG;
+    renderDeviceConfig.mockResolvedValue(rendered({resolved: {content, buildId: 'variants', inlinedProxyCount: 1}}));
+    const queries = ['', '?client=shadowrocket', '?materialize=proxy-groups', '?materialize=proxy-groups&client=shadowrocket'];
+    const etags: string[] = [];
+    const builds: string[] = [];
+    for (const query of queries) {
+      vi.mocked(checkShadowrocketRules).mockClear();
+      const response = await GET(new Request(deviceUrl + query), ctx('tk', 'home', 'macbook'));
+      expect(response.status).toBe(200);
+      const expected = query.includes('materialize=') ? materializeDynamicProxyGroups(content) : content;
+      expect(Buffer.from(await response.arrayBuffer())).toEqual(Buffer.from(expected));
+      if (query.includes('client=')) expect(checkShadowrocketRules).toHaveBeenCalledExactlyOnceWith(expected);
+      else expect(checkShadowrocketRules).not.toHaveBeenCalled();
+      etags.push(response.headers.get('ETag')!);
+      builds.push(response.headers.get('X-Build-Id')!);
+    }
+    expect(new Set(etags).size).toBe(4);
+    expect(new Set(builds).size).toBe(4);
+    for (const [index, query] of queries.entries()) {
+      for (const [previous, etag] of etags.entries()) {
+        const response = await GET(new Request(deviceUrl + query, {headers: {'If-None-Match': etag}}), ctx('tk', 'home', 'macbook'));
+        expect(response.status).toBe(index === previous ? 304 : 200);
+        expect(response.headers.get('ETag')).toBe(etags[index]);
+        expect(response.headers.get('X-Build-Id')).toBe(builds[index]);
+      }
+    }
+  });
+
+  it('checks materialized bytes before returning a conditional 304', async () => {
+    const { checkShadowrocketRules } = await import('@/lib/engine/shadowrocketCompatibility');
+    vi.mocked(checkShadowrocketRules).mockReturnValueOnce([]);
+    const first = await special(undefined, '&materialize=proxy-groups');
+    expect(first.status).toBe(200);
+    vi.mocked(checkShadowrocketRules).mockReturnValueOnce([{status: 'unverified', ruleNumber: 1, ruleType: 'MATCH', target: 'DIRECT', reason: '待验证'}]);
+    const blocked = await special(first.headers.get('ETag')!, '&materialize=proxy-groups');
+    expect(blocked.status).toBe(422);
+  });
+
+  it('accepts the materialized select with the real checker even when the dynamic original is unverified', async () => {
+    const actual = await vi.importActual<typeof import('@/lib/engine/shadowrocketCompatibility')>('@/lib/engine/shadowrocketCompatibility');
+    const { checkShadowrocketRules } = await import('@/lib/engine/shadowrocketCompatibility');
+    vi.mocked(checkShadowrocketRules).mockImplementation(actual.checkShadowrocketRules);
+    const content = TERMINAL_CONFIG.replace('proxies: [A]', 'include-all-proxies: true, empty-fallback: REJECT');
+    renderDeviceConfig.mockResolvedValue(rendered({resolved: {content, buildId: 'real-dynamic', inlinedProxyCount: 1}}));
+    expect((await special()).status).toBe(422);
+    const response = await special(undefined, '&materialize=proxy-groups');
+    expect(response.status).toBe(200);
+    const body = await response.text();
+    expect(checkShadowrocketRules).toHaveBeenLastCalledWith(body);
+    expect(parse(body)['proxy-groups'][0]).toEqual({name: '出口', type: 'select', proxies: ['A']});
+  });
+
+  it('returns a named 422 rather than empty members when zero matches have no valid fallback', async () => {
+    renderDeviceConfig.mockResolvedValue(rendered({resolved: {content: 'proxies: []\nproxy-groups:\n  - {name: HK, type: select, include-all: true}\n', buildId: 'empty', inlinedProxyCount: 0}}));
+    const response = await GET(new Request(deviceUrl + '?materialize=proxy-groups'), ctx('tk', 'home', 'macbook'));
+    expect(response.status).toBe(422);
+    expect((await response.json()).detail).toContain('HK');
+  });
+
+  it.each(['base64', 'v2ray'])('still rejects materialization with %s', async (format) => {
+    const response = await GET(new Request(deviceUrl + `?materialize=proxy-groups&format=${format}&client=shadowrocket`), ctx('tk', 'home', 'macbook'));
+    expect(response.status).toBe(400);
+    expect(renderDeviceConfig).not.toHaveBeenCalled();
   });
 
   it('400s an unknown format instead of silently falling back', async () => {
