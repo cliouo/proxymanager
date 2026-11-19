@@ -45,6 +45,8 @@ rules:
   - DOMAIN,example.com,HK-1
 `;
 
+const TERMINAL_CONFIG = COMPATIBLE_CONFIG + '  - MATCH,出口\n';
+
 const IMPLICIT_ISSUE = {
   status: 'unverified',
   mode: 'rule',
@@ -160,7 +162,7 @@ describe('/api/sub/{token}/{profile}/{device}', () => {
     renderDeviceConfig
       .mockResolvedValueOnce(
         rendered({
-          resolved: { content: COMPATIBLE_CONFIG, buildId: 'compatible-1', inlinedProxyCount: 1 },
+          resolved: { content: TERMINAL_CONFIG, buildId: 'compatible-1', inlinedProxyCount: 1 },
         }),
       )
       // Fresh bytes under the client's old ETag must still be checked first.
@@ -168,11 +170,17 @@ describe('/api/sub/{token}/{profile}/{device}', () => {
         rendered({
           resolved: { content: BROKEN_CONFIG, buildId: 'compatible-1', inlinedProxyCount: 1 },
         }),
+      )
+      .mockResolvedValueOnce(
+        rendered({
+          resolved: { content: TERMINAL_CONFIG, buildId: 'compatible-1', inlinedProxyCount: 1 },
+        }),
       );
 
     const first = await special();
-    expect(first.status).toBe(422);
-    expect((await first.json()).errors).toMatchObject([IMPLICIT_ISSUE]);
+    expect(first.status).toBe(200);
+    expect(Buffer.from(await first.arrayBuffer())).toEqual(Buffer.from(TERMINAL_CONFIG));
+    expect(first.headers.get('ETag')).toBe('"compatible-1"');
 
     const blocked = await special('"compatible-1"');
     expect(blocked.status).toBe(422);
@@ -183,6 +191,8 @@ describe('/api/sub/{token}/{profile}/{device}', () => {
     ]);
     expect(problem.detail).toContain('HK-1');
     expect(checkShadowrocketRules).toHaveBeenCalledTimes(2);
+    expect((await special('"compatible-1"')).status).toBe(304);
+    expect(checkShadowrocketRules).toHaveBeenCalledTimes(3);
   });
 
   it.each(['rules: []', '', 'rules:\n  - DOMAIN,example.com,出口'])(

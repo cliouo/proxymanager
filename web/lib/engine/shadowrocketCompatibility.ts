@@ -197,6 +197,7 @@ function checkRule(
   context: RuleContext,
   config: FinalConfig,
   checkTarget: (target: string) => Finding | null,
+  terminal: boolean,
 ): ShadowrocketRuleIssue | null {
   const refs = new Set<string>();
   const { type, target, params, payload } = parseAndValidateFinalRule(raw, false, 0, refs);
@@ -212,6 +213,13 @@ function checkRule(
     };
   } else if (type === 'MATCH' && target === 'DIRECT') {
     finding = { reason: '尚无导入此 YAML 后未命中域名走直连的出口对照。' };
+  } else if (
+    type === 'MATCH' &&
+    terminal &&
+    (config['proxy-groups']?.some((group) => group.name === target) ||
+      config.proxies?.some((proxy) => proxy.name === target))
+  ) {
+    finding = checkTarget(target);
   } else if (type === 'PROCESS-NAME' || type === 'PROCESS-PATH') {
     finding = { reason: '尚未验证 iOS 导入此 YAML 后按进程名称或路径分流的行为。' };
   } else if (
@@ -329,7 +337,14 @@ export function checkShadowrocketRules(content: string): ShadowrocketRuleIssue[]
         continue;
       }
       for (const [index, raw] of table.rules.entries()) {
-        const issue = checkRule(raw, index, table.context, config, checkTarget);
+        const issue = checkRule(
+          raw,
+          index,
+          table.context,
+          config,
+          checkTarget,
+          index === table.rules.length - 1,
+        );
         if (issue) issues.push(issue);
       }
       const lastRule = table.rules.at(-1);

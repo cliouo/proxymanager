@@ -55,6 +55,26 @@ describe('Shadowrocket/3488 Clash YAML routing evidence', () => {
     ]);
   });
 
+  it('accepts terminal MATCH through the existing select target checks', () => {
+    expect(check({ rules: [...nested.rules, 'MATCH,业务'] })).toEqual([]);
+  });
+
+  it('keeps terminal MATCH to an unverified group or node unverified', () => {
+    expect(check({
+      'proxy-groups': [{ name: '出口', type: 'url-test', proxies: ['A'] }],
+      rules: ['MATCH,出口'],
+    })).toMatchObject([{ status: 'unverified', target: '出口', option: 'type=url-test' }]);
+    expect(check({ rules: ['MATCH,A'] })).toMatchObject([
+      { status: 'unverified', target: 'A', member: 'A' },
+    ]);
+  });
+
+  it.each(['REJECT', 'REJECT-DROP', 'PASS'])('keeps MATCH to builtin %s unverified', (target) => {
+    expect(check({ rules: [`MATCH,${target}`] })).toMatchObject([
+      { status: 'unverified', ruleType: 'MATCH', target },
+    ]);
+  });
+
   it.each([
     ['HK-A', 'HK-B'],
     ['HK-A', 'HK-B', 'HK-C'],
