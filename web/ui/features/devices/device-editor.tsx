@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Code2, Compass, FileCode2, ListChecks, MoreHorizontal, RefreshCw, Smartphone, Trash2 } from 'lucide-react';
@@ -14,7 +14,6 @@ import {
   Card,
   CardHeader,
   confirmAction,
-  CopyIcon,
   EmptyState,
   Field,
   Input,
@@ -23,7 +22,6 @@ import {
   SegmentedControl,
   Skeleton,
   Textarea,
-  useCopy,
 } from '@/ui/primitives';
 import { useHotkey } from '@/ui/shell/hotkeys';
 import { Page, PageHeader, SaveBar } from '@/ui/shell/page';
@@ -38,9 +36,13 @@ import {
   samePatch,
   toYaml,
   validatePatch,
+  type DeviceLinkVariant,
   type Patch,
 } from './model';
-import { DeviceGlyph, QrButton, TailscaleBadge, useSubscriptionUrl } from './parts';
+import { DeviceGlyph, DeviceShareButton, TailscaleBadge, useSubscriptionUrl } from './parts';
+import type { ShadowrocketRuleIssue } from '@/lib/engine/shadowrocketCompatibility';
+import { SHADOWROCKET_HINT, SubscriptionPurpose } from './subscription-purpose';
+import { recheckShadowrocket } from './subscriptionCheck';
 import { AddDifference, PatchForm } from './patch-editor';
 import { PreviewPanel } from './preview-panel';
 import { TailscaleCard } from './tailscale-card';
@@ -107,7 +109,6 @@ function Workbench({ device }: { device: PublicDevice }) {
   const devices = useDevices(profileId);
   const preview = useDevicePreview(profileId, device.id);
   const sub = useSubscriptionUrl(profile);
-  const { copied, copy } = useCopy();
 
   const [baseline, setBaseline] = useState(device);
   const [mode, setMode] = useState<'form' | 'source'>('form');
@@ -155,7 +156,6 @@ function Workbench({ device }: { device: PublicDevice }) {
 
   const sharedRoot = useMemo(() => parseShared(preview.data?.shared), [preview.data?.shared]);
   const label = baseline.display_name || baseline.name;
-  const link = sub.url ? deviceLink(sub.url, baseline.name) : null;
 
   const switchMode = (next: 'form' | 'source') => {
     if (next === mode) return;
@@ -259,13 +259,8 @@ function Workbench({ device }: { device: PublicDevice }) {
         }
         actions={
           <>
-            {link && (
-              <>
-                <Button icon={<CopyIcon copied={copied} />} onClick={() => void copy(link, `已复制「${label}」的订阅链接`)}>
-                  复制订阅链接
-                </Button>
-                <QrButton subscriptionUrl={sub.url!} name={baseline.name} label={label} size="md" variant="secondary" />
-              </>
+            {sub.url && (
+              <DeviceShareButton subscriptionUrl={sub.url} name={baseline.name} label={label} size="md" variant="secondary" />
             )}
             <Menu
               items={[{ label: '删除设备', icon: Trash2, tone: 'danger', onSelect: () => void remove() }]}
@@ -449,14 +444,8 @@ function LinksCard({
   label: string;
   renamed: boolean;
 }) {
-  const [active, setActive] = useState<'clash' | 'base64'>('clash');
-  const links = url
-    ? [
-        { key: 'clash' as const, label: 'Clash / Mihomo', hint: '完整配置', url: deviceLink(url, name), icon: FileCode2 },
-        { key: 'base64' as const, label: '通用 Base64', hint: '仅节点', url: deviceLink(url, name, 'base64'), icon: Smartphone },
-      ]
-    : [];
-  const current = links.find((l) => l.key === active);
+  const [active, setActive] = useState<DeviceLinkVariant>('clash');
+  const current = url ? deviceLink(url, name, active) : null;
   return (
     <Card className="animate-rise [animation-delay:120ms]">
       <CardHeader title="订阅链接" description="粘贴到客户端，或用手机扫码导入；链接含访问令牌，请勿公开" />
@@ -469,34 +458,57 @@ function LinksCard({
             <Skeleton className="h-14" />
           </div>
         ) : (
-          <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_auto]">
+          <div role="region" aria-label="设备订阅链接" className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_auto]">
             <div className="flex min-w-0 flex-col gap-2">
-              {links.map((link) => (
-                <LinkRow
-                  key={link.key}
-                  label={link.label}
-                  hint={link.hint}
-                  url={link.url}
-                  icon={link.icon}
-                  active={link.key === active}
-                  onShowQr={() => setActive(link.key)}
-                />
-              ))}
+              <SubscriptionPurpose value={active} onChange={setActive} />
+              <LinkRow label={label} url={current} icon={active === 'base64' ? Smartphone : FileCode2} />
+              {renamed && <p className="text-xs text-ink-3">链接名已修改：保存后链接会变，客户端需要重新导入。</p>}
               <p className="text-[11px] leading-relaxed text-ink-3">
-                {renamed
-                  ? '链接名已修改：保存后链接会变，客户端需要重新导入。'
-                  : active === 'clash'
-                    ? '完整配置 = 共享配置 + 这台设备的差异，包含分流规则。'
-                    : 'Base64 只含节点，适合 Shadowrocket、v2rayN 等非 Clash 客户端。'}
+                {active === 'clash'
+                  ? '完整配置 = 共享配置 + 这台设备的差异，包含分流规则。'
+                  : active === 'shadowrocket' ? SHADOWROCKET_HINT : 'Base64 只含节点。'}
               </p>
+              {active === 'shadowrocket' && <SubscriptionCheck key={current} url={current} />}
             </div>
             <div className="flex flex-col items-center gap-2">
-              <QrImage text={current.url} size={148} />
+              <QrImage key={current} text={current} size={148} />
               <span className="text-[11px] text-ink-3">扫码 · {label}</span>
             </div>
           </div>
         )}
       </div>
     </Card>
+  );
+}
+
+function SubscriptionCheck({ url }: { url: string }) {
+  const request = useRef<AbortController | null>(null);
+  const [result, setResult] = useState<string | ShadowrocketRuleIssue[]>('');
+  useEffect(() => () => request.current?.abort(), []);
+
+  async function check() {
+    request.current?.abort();
+    const controller = new AbortController();
+    request.current = controller;
+    setResult('正在检查已保存的设备配置…');
+    try {
+      const issues = await recheckShadowrocket(url, controller.signal);
+      if (!controller.signal.aborted) setResult(issues.length ? issues : '检查通过');
+    } catch (error) {
+      if (!controller.signal.aborted) setResult(errorMessage(error));
+    }
+  }
+  return (
+    <div className="space-y-2">
+      <Button size="sm" icon={RefreshCw} onClick={() => void check()}>重新检查</Button>
+      <div role="status" className="space-y-1 text-xs text-ink-2">
+        {typeof result === 'string' ? result : result.map((issue) => (
+          <p key={issue.ruleNumber}>
+            {issue.status === 'incompatible' ? '已知不兼容' : '待验证'} · 第 {issue.ruleNumber} 条 {issue.ruleType} → {issue.target}
+            {issue.reference && `（关联：${issue.reference}）`}：{issue.reason}
+          </p>
+        ))}
+      </div>
+    </div>
   );
 }

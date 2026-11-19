@@ -12,8 +12,6 @@ import {
   Button,
   Card,
   confirmAction,
-  copyText,
-  CopyButton,
   Dialog,
   EmptyState,
   Field,
@@ -30,7 +28,6 @@ import {
   buildPresetPatch,
   chipFor,
   DEVICE_PRESETS,
-  deviceLink,
   DISPLAY_NAME_MAX,
   guessPlatform,
   MAX_DEVICES_PER_PROFILE,
@@ -40,7 +37,7 @@ import {
   summarizePatch,
   type DevicePreset,
 } from './model';
-import { DeviceGlyph, PatchSticker, QrButton, TailscaleBadge, useSubscriptionUrl } from './parts';
+import { DeviceGlyph, PatchSticker, DeviceShareButton, TailscaleBadge, useSubscriptionUrl } from './parts';
 
 type PresetId = DevicePreset['id'];
 
@@ -240,7 +237,7 @@ function DeviceCard({
 }) {
   const label = device.display_name || device.name;
   const chips = summarizePatch(device.base_patch);
-  const link = subscriptionUrl ? deviceLink(subscriptionUrl, device.name) : null;
+  const [shareOpen, setShareOpen] = useState(false);
   return (
     <Card
       as="article"
@@ -263,12 +260,12 @@ function DeviceCard({
           <Menu
             items={[
               { label: '编辑', icon: Pencil, onSelect: onEdit },
-              ...(link
+              ...(subscriptionUrl
                 ? [
                     {
                       label: '复制链接',
                       icon: ArrowUpRight,
-                      onSelect: () => void copyText(link).then((ok) => ok && notify.success(`已复制「${label}」的订阅链接`)),
+                      onSelect: () => setShareOpen(true),
                     },
                   ]
                 : []),
@@ -306,11 +303,8 @@ function DeviceCard({
           />
         )}
         <span className="flex-1" />
-        {link && (
-          <div className="relative z-10 flex items-center">
-            <CopyButton text={link} label="复制订阅链接" message={`已复制「${label}」的订阅链接`} />
-            <QrButton subscriptionUrl={subscriptionUrl!} name={device.name} label={label} />
-          </div>
+        {subscriptionUrl && (
+          <DeviceShareButton subscriptionUrl={subscriptionUrl} name={device.name} label={label} open={shareOpen} onOpenChange={setShareOpen} />
         )}
       </div>
     </Card>
