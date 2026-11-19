@@ -50,15 +50,15 @@ rules: ["MATCH,REJECT"]
 
   it('expands live nodes while preserving explicit group members', () => {
     const content = `proxies:
-  - { name: HK-1, type: ss }
-  - { name: JP-1, type: ss }
+  - { name: HK-1, type: http, server: hk.example, port: 8080 }
+  - { name: JP-1, type: http, server: jp.example, port: 8080 }
 proxy-groups:
   - name: Auto
     type: url-test
     proxies: [DIRECT]
     include-all-proxies: true
     filter: HK
-    exclude-filter: -2
+    exclude-filter: "-2"
     empty-fallback: REJECT
 `;
 
@@ -70,6 +70,7 @@ proxy-groups:
       type: 'url-test',
       proxies: ['DIRECT', 'HK-1'],
       filter: 'HK',
+      'exclude-filter': '-2',
     });
   });
 
@@ -81,7 +82,7 @@ proxy-groups:
 
 it('keeps the original filter so membership still tracks newly added nodes', () => {
   const initial = `proxies:
-  - { name: HK-1, type: ss }
+  - { name: HK-1, type: http, server: hk.example, port: 8080 }
 proxy-groups:
   - name: Auto
     type: url-test
@@ -89,8 +90,8 @@ proxy-groups:
     filter: HK
 `;
   const withNewNode = `proxies:
-  - { name: HK-1, type: ss }
-  - { name: HK-2, type: ss }
+  - { name: HK-1, type: http, server: hk.example, port: 8080 }
+  - { name: HK-2, type: http, server: hk2.example, port: 8080 }
 proxy-groups:
   - name: Auto
     type: url-test
@@ -118,7 +119,7 @@ proxy-groups:
 
 it('drops only fields that have no effect after expansion', () => {
   const content = `proxies:
-  - { name: HK-1, type: ss }
+  - { name: HK-1, type: http, server: hk.example, port: 8080 }
 proxy-groups:
   - name: Auto
     type: url-test
