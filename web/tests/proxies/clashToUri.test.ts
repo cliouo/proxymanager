@@ -20,6 +20,61 @@ function roundTrip(proxy: Record<string, unknown>): Record<string, unknown> {
 }
 
 describe('proxiesToShareUris 往返', () => {
+  const wg = {
+    name: '隧道 + /',
+    type: 'wireguard',
+    server: '2001:db8::1',
+    port: 51820,
+    'private-key': Buffer.alloc(32, 255).toString('base64'),
+    'public-key': Buffer.alloc(32, 254).toString('base64'),
+    udp: true,
+    ip: '10.0.0.2/32',
+  };
+  it.each([
+    {},
+    {
+      ipv6: 'fd00::2/128',
+      'pre-shared-key': Buffer.alloc(32, 253).toString('base64'),
+      reserved: [0, 2, 255],
+      mtu: 1420,
+      udp: false,
+      'persistent-keepalive': 25,
+      workers: 2,
+      'refresh-server-ip-interval': 60,
+    },
+  ])('WireGuard 平面链接完整往返 %j', (options) => {
+    const node = { ...wg, ...options };
+    expect(roundTrip(node)).toEqual(node);
+    const subscription = buildBase64Subscription([node]);
+    expect(subscription.skipped).toEqual([]);
+    expect(
+      parseProxyUriList(Buffer.from(subscription.content, 'base64').toString()).proxies,
+    ).toEqual([node]);
+  });
+  it.each([
+    { 'private-key': '' },
+    { 'public-key': 'bad' },
+    { ip: undefined },
+    { reserved: [1, 2, 256] },
+    { mtu: 0 },
+    { workers: 257 },
+    { udp: 'true' },
+    { peers: [] },
+    { 'allowed-ips': ['10.0.0.0/8'] },
+    { dns: ['1.1.1.1'] },
+  ])('WireGuard 不可表达或非法字段诚实跳过 %j', (options) => {
+    const result = proxiesToShareUris([{ ...wg, ...options }]);
+    expect(result.lines).toEqual([]);
+    expect(result.skipped).toHaveLength(1);
+  });
+  it('WireGuard 缺省 udp 按 Mihomo 语义导出为关闭', () => {
+    const node: Record<string, unknown> = { ...wg };
+    delete node.udp;
+    expect(roundTrip(node)).toEqual({ ...node, udp: false });
+  });
+  it('WireGuard 空列表不产生订阅', () => {
+    expect(buildBase64Subscription([]).content).toBe('');
+  });
   it('ss 基本节点(含中文名与特殊字符密码)', () => {
     const back = roundTrip({
       name: '香港 HK-01 ①',
@@ -430,7 +485,7 @@ describe('proxiesToShareUris 往返', () => {
 describe('proxiesToShareUris 诚实跳过', () => {
   it('没有通用分享链接格式的协议', () => {
     const { lines, skipped } = proxiesToShareUris([
-      { name: 'WG', type: 'wireguard', server: '1.1.1.1', port: 51820 },
+      { name: 'SSH', type: 'ssh', server: '1.1.1.1', port: 22 },
       { name: 'Mieru', type: 'mieru', server: '1.1.1.2', port: 3000 },
     ]);
     expect(lines).toEqual([]);

@@ -13,7 +13,7 @@ import { withProblemDetails } from '@/lib/http/handler';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { guardSubToken } from '@/lib/http/subGuard';
 import { TEMPLATE_NOT_DISTRIBUTABLE, isTemplateProfile } from '@/lib/profiles/kind';
-import { buildBase64Subscription } from '@/lib/proxies/clashToUri';
+import { buildBase64Subscription, SHARE_URI_FORMAT_VERSION } from '@/lib/proxies/clashToUri';
 import { getProfileByName } from '@/lib/repos/profilesRepo';
 
 export const dynamic = 'force-dynamic';
@@ -115,7 +115,7 @@ export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
         `共 ${proxies.length} 个节点,但没有一个能表达为通用分享链接。`,
       );
     }
-    const etag = `"${buildId}-b64"`;
+    const etag = `"${buildId}-b64v${SHARE_URI_FORMAT_VERSION}"`;
     const ifNoneMatch = request.headers.get('if-none-match');
     if (ifNoneMatch && etagMatches(ifNoneMatch, etag)) {
       return new Response(null, { status: 304, headers: { ETag: etag, 'X-Render-Cache': cache } });

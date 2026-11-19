@@ -9,6 +9,7 @@ import { normaliseToClashProviderYaml } from '@/lib/services/subscriptionFetcher
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { matchFilter } from '@/lib/proxies/filterMatch';
 import { parse as parseYaml } from 'yaml';
+import { proxiesToShareUris } from '@/lib/proxies/clashToUri';
 
 // Deterministic, synthetic 32-byte X25519 public-key payload. It is test data,
 // not credential material.
@@ -2115,6 +2116,9 @@ describe('QUIC URI hardening — TUIC v5 and WireGuard flat dialect', () => {
       workers: 2,
       'refresh-server-ip-interval': 60,
     });
+    const exported = proxiesToShareUris(proxies);
+    expect(exported.skipped).toEqual([]);
+    expect(parseProxyUriList(exported.lines[0]).proxies).toEqual(proxies);
   });
 
   it.each([

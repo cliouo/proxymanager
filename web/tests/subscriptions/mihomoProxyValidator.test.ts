@@ -376,6 +376,32 @@ describe('fixed Mihomo v1.19.28 proxy node validation', () => {
     );
   });
 
+  it.each([undefined, false, true])(
+    'preserves optional Reality hybrid flag %s without a default',
+    (flag) => {
+      const options = {
+        'public-key': Buffer.alloc(32, 3).toString('base64url'),
+        ...(flag === undefined ? {} : { 'support-x25519mlkem768': flag }),
+      };
+      const node = { ...portableStructuralMinimums[5], tls: true, 'reality-opts': options };
+      expect(validateMihomoProxyList([node])).toEqual([node]);
+      expect(validateMihomoProxyList([node])[0]['reality-opts']).toEqual(options);
+    },
+  );
+  it.each(['true', 1, null])('rejects nonboolean Reality hybrid flag %s', (flag) => {
+    expect(() =>
+      validateMihomoProxyList([
+        {
+          ...portableStructuralMinimums[5],
+          tls: true,
+          'reality-opts': {
+            'public-key': Buffer.alloc(32, 3).toString('base64url'),
+            'support-x25519mlkem768': flag,
+          },
+        },
+      ]),
+    ).toThrow(/support-x25519mlkem768.*boolean/);
+  });
   it('rejects present but incomplete or malformed Reality options before fixed Mihomo', () => {
     const vless = portableStructuralMinimums[5];
     expect(() => validateMihomoProxyList([{ ...vless, tls: true, 'reality-opts': {} }])).toThrow(

@@ -549,7 +549,7 @@ rules: []
     const decoded = Buffer.from(await res.text(), 'base64').toString('utf8');
     expect(decoded).toContain('ss://');
     // base64 与 yaml 必须是不同的 ETag，否则客户端换格式拿到 304 空响应。
-    expect(res.headers.get('ETag')).toBe('"dev-build-b64"');
+    expect(res.headers.get('ETag')).toBe('"dev-build-b64v2"');
   });
 
   it('materializes dynamic proxy-group members when requested', async () => {

@@ -8,7 +8,7 @@ import { parseProxyUriList } from '@/lib/proxies/uriToClash';
  * 节点如实跳过 —— 绝不下发一条生态解析不了的链接。
  *
  * 表达力边界(诚实跳过,不静默降级):
- *   - 没有通用分享链接格式的协议(wireguard / mieru / ssh / direct …)跳过;
+ *   - 没有通用分享链接格式的协议(mieru / ssh / direct …)跳过;
  *   - `dialer-proxy` 链式前置在分享链接里无法表达 —— 丢掉它会让节点从
  *     「经前置跳板」静默变成「直连该服务器」,必须跳过;
  *   - 无法映射的字段(未知 ss plugin、非 vision 的 vless flow、xhttp 高级
@@ -659,6 +659,67 @@ function snellUri(p: Record<string, unknown>): string {
   return assemble(base, q, nameOf(p));
 }
 
+function wireguardUri(p: Record<string, unknown>): string {
+  const allowed = new Set([
+    'name',
+    'type',
+    'server',
+    'port',
+    'private-key',
+    'public-key',
+    'pre-shared-key',
+    'ip',
+    'ipv6',
+    'reserved',
+    'mtu',
+    'udp',
+    'persistent-keepalive',
+    'workers',
+    'refresh-server-ip-interval',
+  ]);
+  for (const key of Object.keys(p)) {
+    if (!allowed.has(key))
+      throw new UnsupportedNodeError(`wireguard ${key} 无法映射为平面分享链接`);
+  }
+  const server = needStr(p, 'server');
+  const port = portOf(p);
+  const privateKey = needStr(p, 'private-key');
+  const q: QueryPairs = [['publickey', needStr(p, 'public-key')]];
+  const addresses = [optStr(p, 'ip'), optStr(p, 'ipv6')].filter((v) => v !== undefined);
+  if (!addresses.length) throw new UnsupportedNodeError('wireguard 缺少本地地址');
+  q.push(['address', addresses.join(',')]);
+  const preshared = optStr(p, 'pre-shared-key');
+  if (preshared !== undefined) q.push(['pre-shared-key', preshared]);
+  if (p.reserved !== undefined) {
+    if (
+      !Array.isArray(p.reserved) ||
+      p.reserved.length !== 3 ||
+      !p.reserved.every((v) => typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 255)
+    ) {
+      throw new UnsupportedNodeError('wireguard reserved 字段不合法');
+    }
+    q.push(['reserved', p.reserved.join(',')]);
+  }
+  if (p.udp !== undefined && typeof p.udp !== 'boolean')
+    throw new UnsupportedNodeError('wireguard udp 字段不合法');
+  // Mihomo YAML 缺省 udp=false,而链接解析缺省 udp=true,必须显式写出。
+  q.push(['udp', p.udp === true ? '1' : '0']);
+  for (const key of ['mtu', 'persistent-keepalive', 'workers', 'refresh-server-ip-interval']) {
+    const value = p[key];
+    if (value !== undefined) {
+      if (typeof value !== 'number' || !Number.isSafeInteger(value)) {
+        throw new UnsupportedNodeError(`wireguard ${key} 字段不合法`);
+      }
+      q.push([key, String(value)]);
+    }
+  }
+  return assemble(
+    `wireguard://${encodeURIComponent(privateKey)}@${hostSegment(server)}:${port}`,
+    q,
+    nameOf(p),
+  );
+}
+
 function socksUri(p: Record<string, unknown>): string {
   if (p.tls === true) throw new UnsupportedNodeError('TLS socks5 没有分享链接表示');
   const server = needStr(p, 'server');
@@ -690,6 +751,9 @@ function httpUri(p: Record<string, unknown>): string {
   return assemble(`${scheme}://${userinfo}${hostSegment(server)}:${port}`, q, nameOf(p));
 }
 
+/** 分享链接序列化规则版本:改变导出结果时递增,让 Base64 订阅的 ETag 失效。 */
+export const SHARE_URI_FORMAT_VERSION = 2;
+
 const SERIALIZERS: Record<string, (p: Record<string, unknown>) => string> = {
   ss: ssUri,
   ssr: ssrUri,
@@ -701,6 +765,7 @@ const SERIALIZERS: Record<string, (p: Record<string, unknown>) => string> = {
   tuic: tuicUri,
   anytls: anytlsUri,
   snell: snellUri,
+  wireguard: wireguardUri,
   socks5: socksUri,
   http: httpUri,
 };

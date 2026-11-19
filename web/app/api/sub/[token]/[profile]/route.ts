@@ -1,6 +1,6 @@
 import { renderShadowrocket } from '@/lib/proxies/shadowrocket';
 import { parse } from 'yaml';
-import { buildBase64Subscription } from '@/lib/proxies/clashToUri';
+import { buildBase64Subscription, SHARE_URI_FORMAT_VERSION } from '@/lib/proxies/clashToUri';
 import { renderProfileConfig } from '@/lib/engine/renderCache';
 import { attachmentDisposition } from '@/lib/http/contentDisposition';
 import { etagMatches } from '@/lib/http/etag';
@@ -71,7 +71,7 @@ export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
   if (encoded && !encoded.lineCount && proxies.length)
     throw ProblemDetailsError.unprocessable('没有可导出为通用订阅的节点。');
   const conf = asShadowrocket ? renderShadowrocket(doc) : null;
-  const etag = `"${resolved.buildId}${asBase64 ? '-b64' : asShadowrocket ? '-sr1' : ''}"`;
+  const etag = `"${resolved.buildId}${asBase64 ? `-b64v${SHARE_URI_FORMAT_VERSION}` : asShadowrocket ? '-sr1' : ''}"`;
   const ifNoneMatch = request.headers.get('if-none-match');
   if (ifNoneMatch && etagMatches(ifNoneMatch, etag)) {
     return new Response(null, {
