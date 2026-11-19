@@ -1,4 +1,9 @@
 import { parse } from 'yaml';
+import {
+  checkShadowrocketRules,
+  type ShadowrocketRuleIssue,
+} from '@/lib/engine/shadowrocketCompatibility';
+import { describeShadowrocketIssueLocation } from '@/lib/engine/shadowrocketIssueFormat';
 import { renderDeviceConfig } from '@/lib/engine/renderCache';
 import { attachmentDisposition } from '@/lib/http/contentDisposition';
 import { etagMatches } from '@/lib/http/etag';
@@ -54,6 +59,13 @@ export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
   }
   const asBase64 = format === 'base64' || format === 'v2ray';
 
+  const shadowrocket = url.searchParams.get('client') === 'shadowrocket';
+  if (shadowrocket && asBase64) {
+    throw ProblemDetailsError.badRequest(
+      'Shadowrocket 完整配置与 Base64 仅节点订阅是两种用途，请选择一项。',
+    );
+  }
+
   const { resolved, displayName, deviceDisplayName, cache } = await renderDeviceConfig(
     profile,
     device,
@@ -101,6 +113,11 @@ export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
     });
   }
 
+  if (shadowrocket) {
+    const issues = checkShadowrocketRules(resolved.content);
+    if (issues.length) return shadowrocketProblem(issues);
+  }
+
   const filename = custom || `${profilePart}-${device}.yaml`;
   const etag = `"${resolved.buildId}"`;
   const ifNoneMatch = request.headers.get('if-none-match');
@@ -125,3 +142,37 @@ export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
     },
   });
 });
+
+function shadowrocketProblem(issues: ShadowrocketRuleIssue[]): Response {
+  const first = issues[0];
+  const status = first.status === 'incompatible' ? '已知不兼容' : '待验证';
+  // TUN and mode findings already name their location; a rule finding still
+  // gains context from the provider/group it references.
+  const reference =
+    first.reference && !first.field && !first.mode ? `（关联：${first.reference}）` : '';
+  const detail = `${describeShadowrocketIssueLocation(first)}${reference}${status}：${first.reason}`;
+  const { problem } = ProblemDetailsError.unprocessable(detail);
+
+  // Stream the complete Problem Details document: large rule lists can exceed
+  // Vercel's buffered response limit even when their source YAML fits easily.
+  const encoder = new TextEncoder();
+  let offset = 0;
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(encoder.encode(JSON.stringify(problem).slice(0, -1) + ',"errors":['));
+    },
+    pull(controller) {
+      const batch = issues.slice(offset, offset + 64);
+      const prefix = offset ? ',' : '';
+      offset += batch.length;
+      const last = offset === issues.length;
+      const json = batch.map((issue) => JSON.stringify(issue)).join(',');
+      controller.enqueue(encoder.encode(prefix + json + (last ? ']}' : '')));
+      if (last) controller.close();
+    },
+  });
+  return new Response(stream, {
+    status: problem.status,
+    headers: { 'Content-Type': 'application/problem+json', 'Cache-Control': 'no-store' },
+  });
+}

@@ -5,9 +5,11 @@ import { ExternalLink, KeyRound, Network, QrCode } from 'lucide-react';
 import { useDashboard } from '@/ui/data/hooks';
 import type { Profile } from '@/ui/data/types';
 import { cn } from '@/ui/lib/cn';
-import { Badge, Button, Popover, SegmentedControl } from '@/ui/primitives';
+import { Badge, Button, CopyButton, Popover } from '@/ui/primitives';
 import { QrImage } from '@/ui/shell/share-dialog';
-import { deviceLink, guessPlatform, PLATFORM_META, type PatchChip } from './model';
+import { deviceLink, guessPlatform, PLATFORM_META, type DeviceLinkVariant, type PatchChip } from './model';
+
+import { SHADOWROCKET_HINT, SubscriptionPurpose } from './subscription-purpose';
 
 /* ─── glyph ──────────────────────────────────────────────────────────── */
 
@@ -99,52 +101,48 @@ export function useSubscriptionUrl(profile: Profile) {
 }
 
 /** QR code for a device link, in a popover. */
-export function QrButton({
+export function DeviceShareButton({
   subscriptionUrl,
   name,
   label,
   size = 'sm',
   variant = 'ghost',
+  open,
+  onOpenChange,
 }: {
   subscriptionUrl: string;
   name: string;
   label: string;
   size?: 'sm' | 'md';
   variant?: 'ghost' | 'secondary';
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }) {
-  const [format, setFormat] = useState<'clash' | 'base64'>('clash');
+  const [format, setFormat] = useState<DeviceLinkVariant>('clash');
   const url = deviceLink(subscriptionUrl, name, format);
   return (
     <Popover
       align="end"
+      open={open}
+      onOpenChange={onOpenChange}
       className="w-[244px] p-3"
       trigger={
         <Button
           variant={variant}
           size={size}
-          iconOnly
           icon={QrCode}
-          title="订阅二维码"
-          aria-label={`显示「${label}」的订阅二维码`}
+          aria-label={`复制或扫码 · ${label}`}
           className="relative z-10"
-        />
+        >复制或扫码</Button>
       }
     >
       <div className="flex flex-col items-center gap-3">
-        <SegmentedControl
-          size="sm"
-          stretch
-          value={format}
-          onChange={setFormat}
-          options={[
-            { value: 'clash', label: 'Clash 配置' },
-            { value: 'base64', label: '仅节点' },
-          ]}
-        />
-        <QrImage text={url} size={196} />
+        <SubscriptionPurpose value={format} onChange={setFormat} />
+        <QrImage key={url} text={url} size={196} />
         <p className="text-center text-xs leading-relaxed text-ink-3">
-          用客户端扫码导入 · <span className="text-ink-2">{label}</span>
+          {format === 'shadowrocket' ? SHADOWROCKET_HINT : `用客户端扫码导入 · ${label}`}
         </p>
+        <CopyButton text={url} label="复制链接" showLabel />
         {format === 'clash' && (
           <a
             href={`clash://install-config?url=${encodeURIComponent(url)}&name=${encodeURIComponent(label)}`}

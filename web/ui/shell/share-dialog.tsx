@@ -3,10 +3,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import QRCode from 'qrcode';
 import { useTheme } from 'next-themes';
-import { ExternalLink, FileCode2, LayoutTemplate, MonitorSmartphone, QrCode, Share2, Smartphone } from 'lucide-react';
+import { CircleAlert, ExternalLink, FileCode2, LayoutTemplate, MonitorSmartphone, QrCode, RefreshCw, Share2, Smartphone } from 'lucide-react';
+import { errorMessage } from '@/ui/data/api';
 import { useDashboard, useDevices } from '@/ui/data/hooks';
 import { cn } from '@/ui/lib/cn';
-import { CopyButton, Dialog, SegmentedControl, Skeleton } from '@/ui/primitives';
+import { Button, CopyButton, Dialog, Skeleton } from '@/ui/primitives';
+import { deviceLink, type DeviceLinkVariant } from '@/ui/features/devices/model';
+import { SubscriptionPurpose, SHADOWROCKET_HINT } from '@/ui/features/devices/subscription-purpose';
 import { useActiveProfile } from './scope';
 import { setUi, useUi } from './state';
 import { profileTitle } from './profile-switcher';
@@ -40,9 +43,7 @@ export function QrImage({ text, size = 176, className }: { text: string; size?: 
   );
 }
 
-type Variant = 'clash' | 'base64';
-
-function withFormat(url: string, variant: Variant) {
+function withFormat(url: string, variant: 'clash' | 'base64') {
   return variant === 'base64' ? `${url}${url.includes('?') ? '&' : '?'}format=base64` : url;
 }
 
@@ -95,21 +96,21 @@ export function ShareDialog() {
   const open = useUi((s) => s.shareOpen);
   const profile = useActiveProfile();
   const pid = open ? (profile?.id ?? null) : null;
-  const { data: dashboard, isLoading } = useDashboard(pid);
-  const { data: devices } = useDevices(pid);
-  const [variant, setVariant] = useState<Variant>('clash');
+  const { data: dashboard, isLoading: dashboardLoading } = useDashboard(pid);
+  const { data: devices, isLoading: devicesLoading, error: devicesError, refetch: refetchDevices } = useDevices(pid);
+  const [variant, setVariant] = useState<DeviceLinkVariant>('clash');
   const [qrKey, setQrKey] = useState<string>('profile');
 
   const base = dashboard?.meta.subscriptionUrl ?? '';
   const links = useMemo(() => {
     if (!base) return [];
     return [
-      { key: 'profile', label: '共享配置', hint: '所有设备通用', url: withFormat(base, variant), icon: FileCode2 },
+      ...(variant === 'shadowrocket' ? [] : [{ key: 'profile', label: '共享配置', hint: '所有设备通用', url: withFormat(base, variant), icon: FileCode2 }]),
       ...(devices ?? []).map((device) => ({
         key: device.id,
         label: device.display_name || device.name,
         hint: `设备 · ${device.name}`,
-        url: withFormat(`${base}/${encodeURIComponent(device.name)}`, variant),
+        url: deviceLink(base, device.name, variant),
         icon: MonitorSmartphone,
       })),
     ];
@@ -142,16 +143,8 @@ export function ShareDialog() {
       ) : (
         <div className="grid gap-5 md:grid-cols-[1fr_auto]">
           <div className="flex min-w-0 flex-col gap-3">
-            <SegmentedControl
-              value={variant}
-              onChange={setVariant}
-              options={[
-                { value: 'clash', label: 'Clash / Mihomo 完整配置' },
-                { value: 'base64', label: '通用 Base64（仅节点）' },
-              ]}
-              size="sm"
-            />
-            {isLoading || !base ? (
+            <SubscriptionPurpose value={variant} onChange={setVariant} />
+            {dashboardLoading || !base ? (
               <div className="flex flex-col gap-2">
                 <Skeleton className="h-14" />
                 <Skeleton className="h-14" />
@@ -169,17 +162,35 @@ export function ShareDialog() {
                     onShowQr={() => setQrKey(link.key)}
                   />
                 ))}
+                {devicesLoading && (
+                  <div aria-label="设备链接加载中" className="flex flex-col gap-2">
+                    <Skeleton className="h-14" />
+                    <Skeleton className="h-14" />
+                  </div>
+                )}
+                {!devicesLoading && devicesError != null && (
+                  <div role="alert" className="flex items-center gap-3 rounded-lg border border-bad/20 bg-bad-soft px-3 py-2.5 text-xs text-bad">
+                    <CircleAlert size={15} className="shrink-0" />
+                    <span className="min-w-0 flex-1">设备链接加载失败：{errorMessage(devicesError)}</span>
+                    <Button size="sm" icon={RefreshCw} onClick={() => void refetchDevices()}>重试</Button>
+                  </div>
+                )}
+                {!devicesLoading && !devicesError && devices?.length === 0 && (
+                  <p className="text-sm text-ink-2">
+                    {variant === 'shadowrocket' ? '请先添加设备，再获取专用链接。' : '还没有设备，当前只有共享配置链接。'}
+                  </p>
+                )}
               </div>
             )}
             <p className="text-[11px] leading-relaxed text-ink-3">
               {variant === 'clash'
                 ? '完整配置包含策略组、规则与 DNS 等全部设置；设备链接会在共享配置之上叠加该设备的差异。'
-                : 'Base64 订阅只含节点（ss:// vless:// …），适合 Shadowrocket、v2rayN 等非 Clash 客户端，不含分流规则。'}
+                : variant === 'shadowrocket' ? SHADOWROCKET_HINT : 'Base64 订阅只含节点（ss:// vless:// …），适合 Shadowrocket、v2rayN 等非 Clash 客户端，不含分流规则。'}
             </p>
           </div>
           {qrLink && (
             <div className="flex flex-col items-center gap-3">
-              <QrImage text={qrLink.url} size={196} />
+              <QrImage key={qrLink.url} text={qrLink.url} size={196} />
               <div className="max-w-[196px] text-center text-xs text-ink-3">
                 扫码导入 · <span className="text-ink-2">{qrLink.label}</span>
               </div>

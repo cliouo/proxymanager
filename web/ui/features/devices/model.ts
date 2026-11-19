@@ -293,8 +293,11 @@ export function nameError(name: string, taken: Set<string>): string | null {
   return null;
 }
 
-export function deviceLink(subscriptionUrl: string, name: string, variant: 'clash' | 'base64' = 'clash'): string {
+export type DeviceLinkVariant = 'clash' | 'shadowrocket' | 'base64';
+
+export function deviceLink(subscriptionUrl: string, name: string, variant: DeviceLinkVariant = 'clash'): string {
   const url = `${subscriptionUrl}/${encodeURIComponent(name)}`;
+  if (variant === 'shadowrocket') return `${url}?client=shadowrocket`;
   return variant === 'base64' ? `${url}?format=base64` : url;
 }
 
