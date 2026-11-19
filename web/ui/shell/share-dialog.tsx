@@ -105,6 +105,7 @@ export function ShareDialog() {
     if (!base) return [];
     return [
       { key: 'profile', label: '共享配置', hint: '所有设备通用', url: withFormat(base, variant), icon: FileCode2 },
+      ...(variant === 'base64' ? [{ key: 'shadowrocket', label: 'Shadowrocket 分流配置', hint: '先将共享节点订阅备注设为 ProxyManager-Nodes，再从「配置」导入此链接', url: `${base}${base.includes('?') ? '&' : '?'}format=shadowrocket`, icon: FileCode2 }] : []),
       ...(devices ?? []).map((device) => ({
         key: device.id,
         label: device.display_name || device.name,
