@@ -236,3 +236,48 @@ CMFA 使用 YAML；v2rayNG、NekoBox 使用 Base64；Karing 优先使用导入�
 v2rayNG 使用 Global 并禁用实验目标被 `geoip:private` 直连的规则；NekoBox 关闭 FakeDNS，
 两项 LAN bypass 均为 false。选节点采用 UI / 客户端自身控制器或原生选择入口，未改导入字段。
 通用 UDP、WAN 性能和真实跳端口多样性仍未验证。
+
+## Windows 桌面客户端
+
+2026-11-19，Windows Server 2022 实机。客户端通过自身订阅功能导入本地产品实例的实际输出
+（默认 Clash YAML 或 `?format=base64`），实验服务端由 `web/scripts/core-compat/serve.ts`
+启动（40 个节点，Snell 经 WSL）。实验 CA 已加入 Windows 根证书库。Mihomo 系客户端逐个
+选节点并经客户端 mixed 端口取 nonce；其余客户端使用自身控制器或延迟/URL 测试，见下表“方法”。
+
+| 客户端 | 版本 / 核心 | 格式 | 导入 | 结果 | 方法 |
+| --- | --- | --- | --- | --- | --- |
+| Clash Verge Rev | 2.5.10 / Mihomo 1.19.33 | YAML | 40 | 39 PASS | GUI 内核控制器选点 + nonce |
+| Clash Party | 2.0.4 / Mihomo 1.19.32 | YAML | 40 | 39 PASS | 客户端生成的运行配置 + 自带内核 |
+| Sparkle | 1.26.10 / Mihomo 1.19.33 | YAML | 40 | 39 PASS | 同上 |
+| FlClash | 0.9.4 | YAML | 40 | 39 PASS | 客户端生成的运行配置 + Mihomo 1.19.34 |
+| v2rayN | 7.25.6 / Xray 26.10.10 | Base64 | 35 | 15 PASS | 自带真连接延迟测试 |
+| Hiddify | 5.5.5 / sing-box 1.15.0-alpha.13 | 两种 | 0 | 整份拒绝；删去 Snell 后 28/38 | clash API 选点 + nonce |
+| Karing | 1.2.26.2934 / sing-box 1.14.4 | YAML | 40 | 29 PASS | clash API 逐节点延迟（外网 URL） |
+| Throne | 1.4.2 / sing-box 1.15.0-alpha.13 + Xray 26.11.9 | Base64 | 37 | 33 PASS | 自带 URL 测试 |
+
+四个 Mihomo 客户端唯一失败均为 `vless-xhttp-reality`（Xray 26 服务端，需
+`support-x25519mlkem768`，见上文 Reality 一节，不改默认值）。
+
+失败原因（已测版本，不外推）：
+
+- **v2rayN**：未导入 Hysteria v1、Snell v4/v5、`http://`、`https://` 链接；所有自签 TLS 节点
+  报 `x509: certificate signed by unknown authority`——Xray 26 已移除 `allowInsecure`（写入即启动失败），
+  v2rayN 静默丢弃该字段；同一节点改用 `pinnedPeerCertSha256` 即通过，属客户端/内核限制。
+  h2 被映射为 raw+TLS（Xray 26 移除 H2 传输）；HTTPUpgrade 到 sing-box 服务端报
+  `real websocket request received`；Reality 到 Xray 25.3.6 报 `received real certificate`，
+  到 Xray 26 的 xhttp-reality 通过；ss obfs / shadow-tls 跳过测试（Xray 无对应插件）。
+- **Hiddify**：与 Android 相同，YAML 报 `不支持的类型 snell`、Base64 报
+  `snell: unsupported version: 5`，整份订阅不保存。删去 Snell 的副本（非产品输出）中失败：
+  v2ray-plugin、mKCP（按 TCP 拨号）、XHTTP、VLESS encryption、到 Xray 25.3.6 的 Reality
+  （`reality verification failed`）；WireGuard 因实验目标需经隧道 DNS，结论不确定。
+- **Karing**：Windows 版可正常启动（Android 为 SIGILL）。其 YAML 转换把 `network: h2` 写成
+  sing-box `httpupgrade`，并忽略 `ws-opts.v2ray-http-upgrade: true` 写成 `ws`（404），均为客户端
+  转换问题；另有 v2ray-plugin / shadow-tls EOF、mKCP 按 TCP 拨号、Snell v5 不支持、
+  xhttp-reality 到 Xray 26 失败。
+- **Throne**：未导入 shadow-tls（插件未知）、mKCP、Snell v5（仅支持 4 和 6）；失败为
+  vless-xhttp-tls、到 Xray 25.3.6 的 Reality、WireGuard（Windows 上 `wsasendmsg` 回环地址无效，
+  属实验环境）。
+
+结论：Windows 未发现产品丢字段或输出错误；失败均为客户端导入器或内核版本限制。
+主要用户可见风险：含 Snell（尤其 v5）的订阅会让 Hiddify 整份拒绝；v2rayN / Xray 26 系客户端
+无法连接依赖 `skip-cert-verify` 的自签证书节点。
