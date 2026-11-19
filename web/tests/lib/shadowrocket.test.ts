@@ -2,6 +2,35 @@ import { describe, expect, it } from 'vitest';
 import { renderShadowrocket } from '@/lib/proxies/shadowrocket';
 
 describe('Shadowrocket profile export', () => {
+  const node = { name: 'Exported', type: 'http', server: 'proxy.example', port: 8080 };
+
+  it('resolves exported nodes, groups and built-in policies', () => {
+    expect(renderShadowrocket({
+      proxies: [node],
+      'proxy-groups': [{ name: 'Exit', type: 'select', proxies: ['Exported', 'DIRECT', 'REJECT'] }],
+      rules: ['DOMAIN,example.com,Exported', 'MATCH,Exit'],
+    })).toContain('Exit = select, Exported, DIRECT, REJECT');
+  });
+
+  it.each([
+    { ...node, name: 'Skipped', type: 'wireguard' },
+    { ...node, name: 'Skipped', 'dialer-proxy': 'DIRECT' },
+  ])('rejects skipped companion nodes in rule targets and explicit members (%s)', (skipped) => {
+    for (const config of [
+      { rules: ['MATCH,Skipped'] },
+      { rules: ['DOMAIN,example.com,Skipped'] },
+      { 'proxy-groups': [{ name: 'Exit', type: 'select', proxies: ['Skipped'] }] },
+    ]) {
+      expect(() => renderShadowrocket({ proxies: [node, skipped], ...config })).toThrow(
+        '策略或节点「Skipped」不在导出的策略组或配套节点订阅中',
+      );
+    }
+  });
+
+  it('rejects unknown references even with an empty companion subscription', () => {
+    expect(() => renderShadowrocket({ rules: ['MATCH,Missing'] })).toThrow('「Missing」');
+  });
+
   it.each(['direct', 'global', null, 'unknown'])('rejects unsupported running mode %s', (mode) => {
     expect(() => renderShadowrocket({ mode, rules: ['MATCH,DIRECT'] })).toThrow(
       'Shadowrocket 配置无法转换：仅支持 rule 运行模式，其他运行模式的选路行为无法保留',

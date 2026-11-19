@@ -1,4 +1,5 @@
 import { ProblemDetailsError } from '@/lib/http/problem';
+import { buildBase64Subscription } from '@/lib/proxies/clashToUri';
 
 type Group = Record<string, unknown>;
 
@@ -29,13 +30,14 @@ const groupKeys = new Set([
   'empty-fallback',
 ]);
 
-function groupLine(group: Group): string {
+function groupLine(group: Group, validateReference: (value: string) => void): string {
   const name = token(group.name);
   if (name === SHADOWROCKET_SUBSCRIPTION || !['select', 'url-test'].includes(String(group.type))) {
     unsupported('策略组名称冲突或类型暂不支持');
   }
   if (Object.keys(group).some((key) => !groupKeys.has(key))) unsupported('策略组含有未支持的属性');
   const members = ((group.proxies ?? []) as string[]).map(token);
+  members.forEach(validateReference);
   if (group['include-all-proxies']) {
     if (members.length) unsupported('暂不支持混合手选成员与全部节点');
     members.push(SHADOWROCKET_SUBSCRIPTION, 'use=true');
@@ -61,7 +63,15 @@ export function renderShadowrocket(config: Record<string, unknown>): string {
   if (config.mode !== undefined && config.mode !== 'rule') {
     unsupported('仅支持 rule 运行模式，其他运行模式的选路行为无法保留');
   }
-  const groups = ((config['proxy-groups'] ?? []) as Group[]).map(groupLine);
+  const rawGroups = (config['proxy-groups'] ?? []) as Group[];
+  const { exportedNames } = buildBase64Subscription(
+    (config.proxies ?? []) as Record<string, unknown>[],
+  );
+  const targets = new Set(['DIRECT', 'REJECT', ...exportedNames, ...rawGroups.map((g) => token(g.name))]);
+  const validateReference = (name: string) => {
+    if (!targets.has(name)) unsupported(`策略或节点「${name}」不在导出的策略组或配套节点订阅中`);
+  };
+  const groups = rawGroups.map((group) => groupLine(group, validateReference));
   const rules: string[] = [];
   let skipped = 0;
   for (const line of (config.rules ?? []) as string[]) {
@@ -70,11 +80,15 @@ export function renderShadowrocket(config: Record<string, unknown>): string {
       skipped++;
       continue;
     }
-    if (type === 'MATCH' && args.length === 1) rules.push(`FINAL,${token(args[0])}`);
+    if (type === 'MATCH' && args.length === 1) {
+      validateReference(token(args[0]));
+      rules.push(`FINAL,${token(args[0])}`);
+    }
     else if (
       supportedRules.has(type) &&
       (args.length === 2 || (args.length === 3 && args[2] === 'no-resolve'))
     ) {
+      validateReference(token(args[1]));
       rules.push([type, ...args.map(token)].join(','));
     } else unsupported('包含暂不支持的分流规则');
   }
