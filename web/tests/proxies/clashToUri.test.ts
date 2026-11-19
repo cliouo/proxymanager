@@ -67,6 +67,11 @@ describe('proxiesToShareUris 往返', () => {
     expect(result.lines).toEqual([]);
     expect(result.skipped).toHaveLength(1);
   });
+  it('WireGuard 缺省 udp 按 Mihomo 语义导出为关闭', () => {
+    const node: Record<string, unknown> = { ...wg };
+    delete node.udp;
+    expect(roundTrip(node)).toEqual({ ...node, udp: false });
+  });
   it('WireGuard 空列表不产生订阅', () => {
     expect(buildBase64Subscription([]).content).toBe('');
   });

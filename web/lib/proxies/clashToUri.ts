@@ -700,10 +700,10 @@ function wireguardUri(p: Record<string, unknown>): string {
     }
     q.push(['reserved', p.reserved.join(',')]);
   }
-  if (p.udp !== undefined) {
-    if (typeof p.udp !== 'boolean') throw new UnsupportedNodeError('wireguard udp 字段不合法');
-    q.push(['udp', p.udp ? '1' : '0']);
-  }
+  if (p.udp !== undefined && typeof p.udp !== 'boolean')
+    throw new UnsupportedNodeError('wireguard udp 字段不合法');
+  // Mihomo YAML 缺省 udp=false,而链接解析缺省 udp=true,必须显式写出。
+  q.push(['udp', p.udp === true ? '1' : '0']);
   for (const key of ['mtu', 'persistent-keepalive', 'workers', 'refresh-server-ip-interval']) {
     const value = p[key];
     if (value !== undefined) {
@@ -750,6 +750,9 @@ function httpUri(p: Record<string, unknown>): string {
   const scheme = tls ? 'https' : 'http';
   return assemble(`${scheme}://${userinfo}${hostSegment(server)}:${port}`, q, nameOf(p));
 }
+
+/** 分享链接序列化规则版本:改变导出结果时递增,让 Base64 订阅的 ETag 失效。 */
+export const SHARE_URI_FORMAT_VERSION = 2;
 
 const SERIALIZERS: Record<string, (p: Record<string, unknown>) => string> = {
   ss: ssUri,
