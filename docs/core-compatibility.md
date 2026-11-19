@@ -135,6 +135,81 @@ VLESS `encryption=…` 不是 Reality 混合密钥交换开关；不能据此推
 不是一次同时运行；实验目录的 JSON 保留来源。未发现上述 fixture 的产品字段丢失，
 但不能外推为所有核心版本、客户端导入器或任意 YAML 字段都支持。
 
+## macOS 桌面客户端
+
+2026-11-19，macOS 26.6.2 / Apple Silicon。用应用自身的订阅导入功能测 [Android 同款 46 个变体](#android-客户端)，另测 SSR。Base64 由 ProxyManager 的实际序列化器生成，YAML 由同一批解析和校验后的节点组成最小完整配置；未跑生产订阅路由。
+
+| 客户端 · 官方版本 | 订阅 | 导入 | 已加载 | nonce 连通 |
+| --- | --- | ---: | ---: | ---: |
+| Hiddify 5.5.5 / 内嵌 Hiddify core | 完整 Base64（Snell v5 不支持） | 0/46 | 0 | 0 |
+| Hiddify 5.5.5 / 内嵌 Hiddify core | 完整 YAML（Clash 转换器不支持 Snell 类型） | 0/46 | 0 | 0 |
+| Clash Verge Rev 2.5.10 / Mihomo 1.19.33 | 完整 YAML | 46/46 | 46 | 41 |
+| Hiddify 5.5.5 / 内嵌 Hiddify core | 去 Snell 的 Base64（诊断） | 40/44 | 39 | 33 |
+| v2rayN 7.25.6 / 内置 Xray 26.10.10、sing-box 1.14.3 | 完整 Base64 | 41/46 | 41 | 20 |
+
+下表每格的 **通过** 同时表示导入、加载和连通。**阻断** 表示有实验前提未满足，而非断言协议不支持。Hiddify 列为去 Snell Base64；Snell 两行是各自单独订阅，不计入该行合计。
+
+| 节点 | Clash Verge Rev | Hiddify | v2rayN |
+| --- | --- | --- | --- |
+| `ss-aes-128-gcm` | 通过 | 通过 | 通过 |
+| `ss-2022-blake3-aes-128-gcm` | 通过 | 通过 | 通过 |
+| `ss-obfs-http` | 通过 | 通过 | 已加载、失败：Xray 生成 raw + HTTP header，未实现 SIP003 simple-obfs 握手 |
+| `ss-obfs-tls` | 通过 | 通过 | 已加载、失败：Xray 生成纯 raw 出站，未保留 TLS obfs 插件 |
+| `ss-v2ray-plugin-ws` | 通过 | 通过 | 通过 |
+| `ss-v2ray-plugin-ws-tls` | 已加载、阻断：WSS 校验不信任本地 CA | 已加载、阻断：WSS 校验不信任本地 CA | 已加载、阻断：有 WS + TLS 出站，服务端记录客户端拒绝本地证书 |
+| `ss-shadow-tls-v3` | 已加载、阻断：伪装 TLS 校验不信任本地 CA | 未加载、失败：出站报 `plugin not found: shadow-tls`，使用 hinvalid 占位 | 已加载、失败：Xray 生成纯 raw 出站，未保留 ShadowTLS 插件 |
+| `vmess-tcp` | 通过 | 通过 | 通过 |
+| `vmess-ws` | 通过 | 通过 | 通过 |
+| `vmess-ws-tls` | 通过 | 通过 | 已加载、阻断：导入时保留 AllowInsecure，但 Xray 配置未带该值，拒绝本地证书 |
+| `vmess-grpc` | 通过 | 通过 | 通过 |
+| `vmess-h2` | 通过 | 未导入：VMess 的 `h2` 传输未转换入库；VLESS H2 行是另一个映射 | 已加载、失败：导入后 v2rayN 把传输记为 raw，生成的 Xray 出站不是 H2，且未保留 TLS insecure |
+| `vmess-httpupgrade` | 通过 | 通过 | 已加载、失败：sing-box 服务端拒绝 Xray 握手：real websocket request received |
+| `vmess-mkcp` | 通过 | 未导入：VMess 的 `kcp` 传输未转换入库 | 通过 |
+| `vless-tcp-tls` | 通过 | 通过 | 已加载、阻断：Xray 出站未带证书信任或 insecure；服务端记录 bad certificate |
+| `vless-ws` | 通过 | 通过 | 通过 |
+| `vless-grpc` | 通过 | 通过 | 通过 |
+| `vless-httpupgrade` | 通过 | 通过 | 已加载、失败：sing-box 服务端拒绝 Xray 握手：real websocket request received |
+| `vless-h2` | 通过 | 通过 | 已加载、失败：v2rayN 生成的 Xray 出站是 raw 而不是 H2，且未保留 TLS insecure |
+| `vless-reality-vision-xray26` | 已加载、失败：Xray 26 的 Reality 拒绝认证，落入伪装 TLS；不改 ML-KEM 默认 | 通过 | 通过 |
+| `vless-reality-vision-sing-box` | 通过 | 通过 | 通过 |
+| `vless-reality-grpc-xray26` | 已加载、失败：Reality 对 Xray 26 进入伪装 TLS，客户端报未知证书颁发者 | 通过 | 通过 |
+| `vless-reality-grpc-sing-box` | 通过 | 通过 | 通过 |
+| `vless-xhttp-tls` | 通过 | 已加载、失败：Xray 服务端协商 HTTP/2 后收到 HTTP/1.1 请求，报 error reading preface / bogus greeting | 已加载、阻断：Xray 出站未带证书信任或 insecure；服务端记录 bad certificate |
+| `vless-xhttp-reality-xray26` | 已加载、失败：Reality 对 Xray 26 进入伪装 TLS，客户端报未知证书颁发者 | 通过 | 通过 |
+| `vless-encryption-x25519` | 通过 | 通过 | 通过 |
+| `vless-encryption-mlkem` | 通过 | 通过 | 通过 |
+| `trojan-tls` | 通过 | 通过 | 已加载、阻断：Xray 出站未带证书信任或 insecure；服务端记录 bad certificate |
+| `trojan-ws` | 通过 | 通过 | 已加载、阻断：Xray 的 WS 出站拒绝本地证书：x509: certificate signed by unknown authority |
+| `trojan-grpc` | 通过 | 通过 | 已加载、阻断：Xray 的 gRPC 出站写 preface 时拒绝本地证书：x509: certificate signed by unknown authority |
+| `hysteria-v1` | 通过 | 未导入：链接编解码器认得该 scheme，但客户端过滤掉此 v1 出站；未隔离过滤条件 | 未导入：分享导入器只有 Hysteria2 分支 |
+| `hysteria2-plain` | 通过 | 通过 | 已加载、阻断：Xray 的 QUIC/TLS 出站拒绝本地证书：x509: certificate signed by unknown authority |
+| `hysteria2-salamander` | 通过 | 通过 | 已加载、阻断：Xray 已生成 Salamander UDP mask；客户端调试日志为 x509: certificate signed by unknown authority |
+| `hysteria2-port-hopping` | 通过 | 通过 | 已加载、阻断：Xray 的 QUIC/TLS 出站拒绝本地证书：x509: certificate signed by unknown authority |
+| `tuic-v5` | 通过 | 通过 | 通过 |
+| `anytls` | 通过 | 通过 | 通过 |
+| `snell-v4` | 通过 | 通过 | 未导入：分享导入器未登记 Snell |
+| `snell-v5` | 通过 | 未导入：单节点 Base64 同样被拒：snell: unsupported version: 5 | 未导入：分享导入器未登记 Snell |
+| `wireguard` | 通过 | 通过 | 通过 |
+| `socks5-auth` | 通过 | 未导入：转换器只登记 `socks://`，省略 `socks5://` | 通过 |
+| `http-auth` | 通过 | 通过 | 未导入：分享导入器未登记 HTTP |
+| `https-auth` | 通过 | 通过 | 未导入：分享导入器未登记 HTTPS |
+| `vless-reality-vision-xray18` | 通过 | 已加载、失败：旧 Xray Reality 认证未成功，退回伪装 TLS | 已加载、失败：Xray 1.8.24 服务端记录 Reality processed invalid connection |
+| `vless-reality-vision-xray25` | 通过 | 已加载、失败：旧 Xray Reality 认证未成功，退回伪装 TLS | 已加载、失败：Xray 25.3.6 服务端记录 Reality processed invalid connection |
+| `vless-reality-grpc-xray18` | 通过 | 已加载、失败：连旧 Xray 的 Reality gRPC 超时；同服务端用 Mihomo 可通过 | 已加载、失败：Xray 1.8.24 服务端收到连接，但 Reality handshakeStatus=false |
+| `vless-reality-grpc-xray25` | 通过 | 已加载、失败：连旧 Xray 的 Reality gRPC 超时；同服务端用 Mihomo 可通过 | 已加载、失败：Xray 25.3.6 服务端收到连接，但 Reality handshakeStatus=false |
+| `ssr（补测）` | 通过 | 未导入：单节点 Base64 报无法识别配置格式，YAML 报不支持 ssr 类型 | 未导入：分享导入器未登记 SSR；单节点订阅下载后报 Failed to import subscription content |
+
+### macOS 诊断与导出结论
+
+- **Hiddify 的 SOCKS5**：原 `socks5://` 被忽略，只改为 `socks://` 后，Hiddify 和 v2rayN 均保留凭据并返回正确 nonce。Hiddify 的[分享转换表](https://github.com/hiddify/ray2sing/blob/ed1a4b1/ray2sing/convert.go#L19-L46)仅登记后者；[v2rayA 的解析器](https://github.com/v2rayA/v2rayA/blob/v2.2.7/service/core/serverObj/socks.go#L11-L16)仅登记前者，因此不改通用 Base64。单独导入 Snell v4 可连，v5 仍拒绝；不能用单节点通过代替整份订阅。
+- **v2rayN 的 HTTP(S)**：[分享 URI 导入器](https://github.com/2dust/v2rayN/blob/7.25.6/v2rayN/ServiceLib/Handler/Fmt/FmtHandler.cs#L35-L102)没有 HTTP(S) 分支；[手动添加 HTTP](https://github.com/2dust/v2rayN/blob/7.25.6/v2rayN/v2rayN.Desktop/Views/MainWindow.axaml#L59)是另一入口。Naive 不是同一协议，不转换或改写分享链接。
+- **TLS 阻断**：Clash Verge Rev 的 SS v2ray-plugin WS+TLS 和 ShadowTLS v3 在节点级加入实验用 SHA-256 证书指纹后均通过，未修改系统信任；这两项不混入基准。v2rayN 的内置 Xray 不使用 `allowInsecure`，十项止于本地证书校验，不能判作协议不支持。
+- **Reality**：Clash Verge Rev 对较新 Xray 的三个变体失败、对旧版通过；v2rayN 恰好相反。保留 `support-x25519mlkem768` 的原有默认行为。
+
+### macOS 验证边界
+
+导入以应用实际节点清单为准；加载要求选中真实出站（占位符不计），v2rayN 另核对生成配置和监听的核心进程。连通要求经应用自身的 SOCKS 端口取得该节点唯一的 HTTP nonce，直连目标和不可用代理的负对照均无 nonce。v2rayN 使用应用保存的实验路由，避免默认 `geoip:private` 将合成目标绕过代理。系统代理与 TUN 关闭；Snell 服务跑在本地 Linux 来宾中。未测 WAN、通用 UDP、实际跳端口频次或有预共享密钥的 WireGuard 节点。
+
 ## Android 客户端
 
 2026-11-19，Android 15 / API 35 Google APIs x86_64 模拟器；Karing 为 ARM64 转译。
