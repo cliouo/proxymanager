@@ -31,6 +31,27 @@ describe('Shadowrocket profile export', () => {
     expect(() => renderShadowrocket({ rules: ['MATCH,Missing'] })).toThrow('「Missing」');
   });
 
+  it('normalizes lowercase rule types and space-padded fields through the shared parser', () => {
+    const conf = renderShadowrocket({
+      rules: [
+        ' process-name , reader , DIRECT ',
+        ' domain-suffix , example.com , DIRECT ',
+        ' ip-cidr , 192.0.2.0/24 , REJECT , no-resolve ',
+        ' match , DIRECT ',
+      ],
+    });
+    expect(conf).toContain('Desktop process rules omitted: 1');
+    expect(conf).toContain(
+      'DOMAIN-SUFFIX,example.com,DIRECT\nIP-CIDR,192.0.2.0/24,REJECT,no-resolve\nFINAL,DIRECT',
+    );
+  });
+
+  it('still rejects invalid rule parameters after parsing', () => {
+    expect(() => renderShadowrocket({ rules: ['ip-cidr,192.0.2.0/24,DIRECT,bogus'] })).toThrow(
+      '包含无效的分流规则',
+    );
+  });
+
   it.each(['direct', 'global', null, 'unknown'])('rejects unsupported running mode %s', (mode) => {
     expect(() => renderShadowrocket({ mode, rules: ['MATCH,DIRECT'] })).toThrow(
       'Shadowrocket 配置无法转换：仅支持 rule 运行模式，其他运行模式的选路行为无法保留',

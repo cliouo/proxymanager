@@ -1,5 +1,6 @@
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { buildBase64Subscription } from '@/lib/proxies/clashToUri';
+import { parseAndValidateFinalRule } from '@/lib/engine/resolve';
 
 type Group = Record<string, unknown>;
 
@@ -75,21 +76,27 @@ export function renderShadowrocket(config: Record<string, unknown>): string {
   const rules: string[] = [];
   let skipped = 0;
   for (const line of (config.rules ?? []) as string[]) {
-    const [type, ...args] = line.split(',');
+    let parsed: ReturnType<typeof parseAndValidateFinalRule>;
+    try {
+      parsed = parseAndValidateFinalRule(line);
+    } catch {
+      unsupported('包含无效的分流规则');
+    }
+    const { type, payload, target, params } = parsed;
     if (type === 'PROCESS-NAME' || type === 'PROCESS-PATH') {
       skipped++;
       continue;
     }
-    if (type === 'MATCH' && args.length === 1) {
-      validateReference(token(args[0]));
-      rules.push(`FINAL,${token(args[0])}`);
+    if (type === 'MATCH') {
+      validateReference(token(target));
+      rules.push(`FINAL,${token(target)}`);
     }
     else if (
       supportedRules.has(type) &&
-      (args.length === 2 || (args.length === 3 && args[2] === 'no-resolve'))
+      (params.length === 0 || (params.length === 1 && params[0] === 'no-resolve'))
     ) {
-      validateReference(token(args[1]));
-      rules.push([type, ...args.map(token)].join(','));
+      validateReference(token(target));
+      rules.push([type, payload, target, ...params].map(token).join(','));
     } else unsupported('包含暂不支持的分流规则');
   }
   return [
