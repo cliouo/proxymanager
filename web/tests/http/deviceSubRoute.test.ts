@@ -6,6 +6,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { parse } from 'yaml';
 
 const renderDeviceConfig = vi.hoisted(() => vi.fn());
 const renderProfileConfig = vi.hoisted(() => vi.fn());
@@ -549,6 +550,38 @@ rules: []
     expect(decoded).toContain('ss://');
     // base64 与 yaml 必须是不同的 ETag，否则客户端换格式拿到 304 空响应。
     expect(res.headers.get('ETag')).toBe('"dev-build-b64"');
+  });
+
+  it('materializes dynamic proxy-group members when requested', async () => {
+    renderDeviceConfig.mockResolvedValue(
+      rendered({
+        resolved: {
+          content: `proxies:
+  - {name: HK-1, type: ss, server: hk.example.com, port: 8388, cipher: aes-128-gcm, password: p}
+proxy-groups:
+  - name: Auto
+    type: url-test
+    include-all-proxies: true
+    filter: HK
+rules: []\n`,
+          buildId: 'dynamic-build',
+          inlinedProxyCount: 1,
+        },
+      }),
+    );
+    const res = await GET(
+      new Request('https://pm.test/api/sub/tk/home/macbook?materialize=proxy-groups'),
+      ctx('tk', 'home', 'macbook'),
+    );
+    const document = parse(await res.text()) as { 'proxy-groups': Array<Record<string, unknown>> };
+    expect(document['proxy-groups'][0]).toMatchObject({
+      name: 'Auto',
+      type: 'url-test',
+      proxies: ['HK-1'],
+    });
+    expect(document['proxy-groups'][0]['include-all-proxies']).toBeUndefined();
+    expect(res.headers.get('X-Proxy-Groups-Materialized')).toBe('true');
+    expect(res.headers.get('ETag')).not.toBe('"dynamic-build"');
   });
 
   it('400s an unknown format instead of silently falling back', async () => {
