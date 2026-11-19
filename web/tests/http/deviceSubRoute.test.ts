@@ -584,6 +584,22 @@ describe('shared profile conditional requests', () => {
   });
 });
 
+it.each(['direct', 'global'])('422s shared Shadowrocket export in %s mode', async (mode) => {
+  getProfileByName.mockResolvedValue({ id: 'p-home', name: 'home', kind: 'normal' });
+  renderProfileConfig.mockResolvedValue(
+    rendered({ resolved: { content: `mode: ${mode}\n${CONFIG}`, buildId: 'mode-build' } }),
+  );
+  const { GET } = await import('@/app/api/sub/[token]/[profile]/route');
+  const response = await GET(
+    new Request('https://pm.test/api/sub/tk/home?format=shadowrocket', {
+      headers: { 'if-none-match': '"mode-build-sr1"' },
+    }),
+    ctx('tk', 'home', ''),
+  );
+  expect(response.status).toBe(422);
+  expect((await response.json()).detail).toContain('仅支持 rule 运行模式');
+});
+
 it('serves Shadowrocket only on the shared profile with its own validator', async () => {
   getProfileByName.mockResolvedValue({ id: 'p-home', name: 'home', kind: 'normal' });
   renderProfileConfig.mockResolvedValue(rendered());

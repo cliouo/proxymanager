@@ -2,6 +2,16 @@ import { describe, expect, it } from 'vitest';
 import { renderShadowrocket } from '@/lib/proxies/shadowrocket';
 
 describe('Shadowrocket profile export', () => {
+  it.each(['direct', 'global', null, 'unknown'])('rejects unsupported running mode %s', (mode) => {
+    expect(() => renderShadowrocket({ mode, rules: ['MATCH,DIRECT'] })).toThrow(
+      'Shadowrocket 配置无法转换：仅支持 rule 运行模式，其他运行模式的选路行为无法保留',
+    );
+  });
+
+  it.each([undefined, 'rule'])('accepts rule mode and its default (%s)', (mode) => {
+    expect(renderShadowrocket({ mode, rules: [] })).toContain('[Rule]');
+  });
+
   it('preserves nested selector order, subscription scope and rule precedence', () => {
     const conf = renderShadowrocket({
       'proxy-groups': [

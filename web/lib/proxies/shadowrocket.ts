@@ -58,6 +58,9 @@ const supportedRules = new Set([
 ]);
 
 export function renderShadowrocket(config: Record<string, unknown>): string {
+  if (config.mode !== undefined && config.mode !== 'rule') {
+    unsupported('仅支持 rule 运行模式，其他运行模式的选路行为无法保留');
+  }
   const groups = ((config['proxy-groups'] ?? []) as Group[]).map(groupLine);
   const rules: string[] = [];
   let skipped = 0;
