@@ -285,6 +285,7 @@ export function checkShadowrocketRules(content: string): ShadowrocketRuleIssue[]
   const checkTarget = targetChecker(config);
   const mode = modeOf(config);
   const issues: ShadowrocketRuleIssue[] = [];
+  const implicitIssues: ShadowrocketRuleIssue[] = [];
 
   if (mode === null) {
     const raw = config.mode;
@@ -331,9 +332,20 @@ export function checkShadowrocketRules(content: string): ShadowrocketRuleIssue[]
         const issue = checkRule(raw, index, table.context, config, checkTarget);
         if (issue) issues.push(issue);
       }
+      const lastRule = table.rules.at(-1);
+      if (!lastRule || parseAndValidateFinalRule(lastRule).type !== 'MATCH') {
+        implicitIssues.push({
+          status: 'unverified',
+          mode: 'rule',
+          reference: 'DIRECT',
+          ...table.context,
+          reason: '尚无导入此 YAML 后未命中域名走直连的出口对照（规则表缺少末尾 MATCH）。',
+        });
+      }
     }
   }
 
   issues.push(...tunIssues(config));
+  issues.push(...implicitIssues);
   return issues;
 }

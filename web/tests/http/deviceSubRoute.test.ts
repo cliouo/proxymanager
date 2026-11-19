@@ -45,6 +45,13 @@ rules:
   - DOMAIN,example.com,HK-1
 `;
 
+const IMPLICIT_ISSUE = {
+  status: 'unverified',
+  mode: 'rule',
+  reference: 'DIRECT',
+  reason: expect.stringContaining('规则表缺少末尾 MATCH'),
+};
+
 // A GLOBAL select holding one plain HTTP node passes the final validator, so
 // only the unverified running mode stands between this input and a 200.
 const GLOBAL_HTTP_CONFIG = (rules: string) => `mode: global
@@ -143,7 +150,7 @@ describe('/api/sub/{token}/{profile}/{device}', () => {
     expect(checkShadowrocketRules).not.toHaveBeenCalled();
   });
 
-  it('runs the real compatibility checker through 200 → 422 → 200 and a compatible 304', async () => {
+  it('runs the real checker on fresh bytes before a conditional response', async () => {
     const actual = await vi.importActual<typeof import('@/lib/engine/shadowrocketCompatibility')>(
       '@/lib/engine/shadowrocketCompatibility',
     );
@@ -161,41 +168,41 @@ describe('/api/sub/{token}/{profile}/{device}', () => {
         rendered({
           resolved: { content: BROKEN_CONFIG, buildId: 'compatible-1', inlinedProxyCount: 1 },
         }),
-      )
-      .mockResolvedValueOnce(
-        rendered({
-          resolved: { content: COMPATIBLE_CONFIG, buildId: 'compatible-2', inlinedProxyCount: 1 },
-        }),
-      )
-      .mockResolvedValueOnce(
-        rendered({
-          resolved: { content: COMPATIBLE_CONFIG, buildId: 'compatible-2', inlinedProxyCount: 1 },
-        }),
       );
 
     const first = await special();
-    expect(first.status).toBe(200);
-    const etag = first.headers.get('etag')!;
-    expect(etag).toBe('"compatible-1"');
+    expect(first.status).toBe(422);
+    expect((await first.json()).errors).toMatchObject([IMPLICIT_ISSUE]);
 
-    const blocked = await special(etag);
+    const blocked = await special('"compatible-1"');
     expect(blocked.status).toBe(422);
     const problem = await blocked.json();
     expect(problem.errors).toMatchObject([
       { status: 'unverified', ruleNumber: 1, ruleType: 'DOMAIN', target: 'HK-1' },
+      IMPLICIT_ISSUE,
     ]);
     expect(problem.detail).toContain('HK-1');
     expect(checkShadowrocketRules).toHaveBeenCalledTimes(2);
-
-    const recovered = await special(etag);
-    expect(recovered.status).toBe(200);
-    expect(await recovered.text()).toBe(COMPATIBLE_CONFIG);
-
-    const cached = await special('"compatible-2"');
-    expect(cached.status).toBe(304);
-    expect(await cached.text()).toBe('');
-    expect(checkShadowrocketRules).toHaveBeenCalledTimes(4);
   });
+
+  it.each(['rules: []', '', 'rules:\n  - DOMAIN,example.com,出口'])(
+    '422s implicit unmatched routing for %s, including conditional requests',
+    async (rules) => {
+      const content = COMPATIBLE_CONFIG.replace('rules:\n  - DOMAIN,example.com,出口', rules);
+      renderDeviceConfig.mockResolvedValue(
+        rendered({ resolved: { content, buildId: 'implicit', inlinedProxyCount: 1 } }),
+      );
+      for (const etag of [undefined, '"implicit"']) {
+        const response = await special(etag);
+        expect(response.status).toBe(422);
+        const problem = await response.json();
+        expect(problem.errors).toMatchObject([IMPLICIT_ISSUE]);
+        expect(problem.errors[0]).not.toHaveProperty('ruleNumber');
+        expect(problem.detail).toContain('待验证');
+        expect(problem.detail).toContain('未命中');
+      }
+    },
+  );
 
   it('locates listener and TUN diagnostics in the 422 detail without a fake rule number', async () => {
     const actual = await vi.importActual<typeof import('@/lib/engine/shadowrocketCompatibility')>(
@@ -227,6 +234,8 @@ sub-rules:
         ruleType: 'PROCESS-NAME',
         target: '出口',
       },
+      IMPLICIT_ISSUE,
+      { ...IMPLICIT_ISSUE, listener: 'mixed-in', table: 'office' },
     ]);
     expect(listenerProblem.detail).toContain('监听器 mixed-in');
     expect(listenerProblem.detail).toContain('子规则表 office');
@@ -249,6 +258,7 @@ rule-providers:
         field: 'route-exclude-address-set',
         setName: 'remote-ip',
       },
+      IMPLICIT_ISSUE,
     ]);
     expect(tunProblem.errors[0].ruleNumber).toBeUndefined();
     expect(tunProblem.detail).toContain('TUN 字段 route-exclude-address-set');
@@ -423,6 +433,7 @@ rules: []
     const problem = await response.json();
     expect(problem.errors).toMatchObject([
       { reference: 'remote', status: 'unverified', ruleNumber: 1 },
+      IMPLICIT_ISSUE,
     ]);
     expect(JSON.stringify(problem)).not.toContain('private-path');
   });

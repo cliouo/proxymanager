@@ -23,10 +23,36 @@ const nested = {
   rules: ['DOMAIN,example.com,固定', 'DOMAIN-SUFFIX,example.com,业务'],
 };
 const check = (over = {}) => checkShadowrocketRules(stringify({ ...nested, ...over }));
+const implicit = {
+  status: 'unverified',
+  mode: 'rule',
+  reference: 'DIRECT',
+  reason: '尚无导入此 YAML 后未命中域名走直连的出口对照（规则表缺少末尾 MATCH）。',
+};
 
 describe('Shadowrocket/3488 Clash YAML routing evidence', () => {
-  it('accepts exact and suffix rules through the observed three select levels', () => {
-    expect(check()).toEqual([]);
+  it('accepts observed select targets but diagnoses their implicit unmatched exit', () => {
+    expect(check()).toEqual([implicit]);
+  });
+
+  it.each([undefined, [], ['DOMAIN,example.com,固定']])(
+    'diagnoses absent, empty and unterminated rule tables (%s)',
+    (rules) => {
+      expect(check({ rules })).toEqual([implicit]);
+      expect(check({ rules })[0]).not.toHaveProperty('ruleNumber');
+    },
+  );
+
+  it('does not duplicate the unmatched diagnostic for a terminal MATCH', () => {
+    expect(check({ rules: ['MATCH,DIRECT'] })).toEqual([
+      {
+        status: 'unverified',
+        ruleNumber: 1,
+        ruleType: 'MATCH',
+        target: 'DIRECT',
+        reason: '尚无导入此 YAML 后未命中域名走直连的出口对照。',
+      },
+    ]);
   });
 
   it.each([
@@ -40,12 +66,13 @@ describe('Shadowrocket/3488 Clash YAML routing evidence', () => {
         rules: ['DOMAIN,example.com,地区'],
         'rule-providers': { unused: { type: 'http' } },
       }),
-    ).toEqual([]);
+    ).toEqual([implicit]);
   });
 
   it('keeps an empty raw dynamic group unverified', () => {
     expect(check({ 'proxy-groups': [dynamic], rules: ['DOMAIN,example.com,地区'] })).toMatchObject([
       { status: 'unverified', reference: '地区', reason: expect.stringContaining('零匹配') },
+      implicit,
     ]);
   });
 
@@ -67,6 +94,7 @@ describe('Shadowrocket/3488 Clash YAML routing evidence', () => {
         option: expect.stringContaining('type=socks5'),
         reason: expect.stringContaining('业务 → 出口 → 地区 → 成员 C（type=socks5'),
       },
+      implicit,
     ]);
     const leaked = JSON.stringify(
       check({
@@ -92,6 +120,7 @@ describe('Shadowrocket/3488 Clash YAML routing evidence', () => {
           target: '固定',
           reason: expect.stringContaining('进程'),
         },
+        implicit,
       ]);
     }
   });
@@ -110,6 +139,7 @@ describe('Shadowrocket/3488 Clash YAML routing evidence', () => {
       { ruleType: 'AND', target: '业务' },
       { ruleNumber: 2, reference: 'remote', reason: expect.stringContaining('远程正文') },
       { ruleNumber: 3, reference: 'remote', target: '业务' },
+      implicit,
     ]);
   });
 
@@ -130,12 +160,14 @@ describe('Shadowrocket/3488 Clash YAML routing evidence', () => {
     ).toMatchObject([
       { ruleNumber: 1, reference: '固定' },
       { ruleNumber: 2, reference: '出口' },
+      implicit,
     ]);
   });
 
   it.each(['DOMAIN', 'DOMAIN-SUFFIX'])('keeps IP literals outside %s hostname evidence', (type) => {
     expect(check({ rules: [type + ',192.0.2.1,固定'] })).toMatchObject([
       { ruleNumber: 1, status: 'unverified' },
+      implicit,
     ]);
   });
 
@@ -160,15 +192,16 @@ describe('Shadowrocket/3488 Clash YAML routing evidence', () => {
         setName: 'remote-ip',
         reason: expect.stringContaining('route-exclude-address-set'),
       },
+      implicit,
     ]);
     expect(issues[0]).not.toHaveProperty('ruleNumber');
     expect(issues[0]?.reason).toContain('remote-ip');
-    expect(check({ ...config, tun: { ...tun, enable: false } })).toEqual([]);
-    expect(check({ ...config, tun: { ...tun, 'auto-redirect': false } })).toEqual([]);
+    expect(check({ ...config, tun: { ...tun, enable: false } })).toEqual([implicit]);
+    expect(check({ ...config, tun: { ...tun, 'auto-redirect': false } })).toEqual([implicit]);
     expect(
       check({ ...config, tun: { ...tun, 'auto-route': false, 'auto-redirect': false } }),
-    ).toEqual([]);
-    expect(check({ ...config, tun: undefined })).toEqual([]);
+    ).toEqual([implicit]);
+    expect(check({ ...config, tun: undefined })).toEqual([implicit]);
   });
 
   it('checks applicable TUN listeners and both address-set fields', () => {
@@ -191,6 +224,7 @@ describe('Shadowrocket/3488 Clash YAML routing evidence', () => {
     ).toMatchObject([
       { field: 'route-address-set', setName: 'remote-ip' },
       { field: 'route-exclude-address-set', setName: 'remote-ip' },
+      implicit,
     ]);
     expect(
       check({
@@ -207,7 +241,7 @@ describe('Shadowrocket/3488 Clash YAML routing evidence', () => {
         ],
         'rule-providers': { 'remote-ip': { type: 'http' } },
       }),
-    ).toEqual([]);
+    ).toEqual([implicit]);
   });
 
   it('checks group options and HTTP transport options even when the rule is familiar', () => {
@@ -223,12 +257,14 @@ describe('Shadowrocket/3488 Clash YAML routing evidence', () => {
         option: 'disable-udp',
         reason: expect.stringContaining('disable-udp'),
       },
+      implicit,
     ]);
     expect(
       check({ proxies: [{ ...http('A'), 'dialer-proxy': 'B' }, http('B'), http('C')] }),
     ).toMatchObject([
       { ruleNumber: 1, reference: '固定' },
       { ruleNumber: 2, reference: '出口' },
+      implicit,
     ]);
   });
 
@@ -258,13 +294,19 @@ describe('Shadowrocket/3488 Clash YAML routing evidence', () => {
         ruleType: 'PROCESS-NAME',
         target: '出口',
       },
+      implicit,
+      { ...implicit, listener: 'mixed-in', table: 'office' },
     ]);
     expect(
       check({
         ...base,
         listeners: [{ name: 'mixed-in', type: 'mixed', port: 7890, rule: 'parked' }],
       }),
-    ).toMatchObject([{ listener: 'mixed-in', table: 'parked', ruleNumber: 1 }]);
+    ).toMatchObject([
+      { listener: 'mixed-in', table: 'parked', ruleNumber: 1 },
+      implicit,
+      { ...implicit, listener: 'mixed-in', table: 'parked' },
+    ]);
   });
 
   it('distinguishes the first rule of two listener-selected tables', () => {
@@ -296,6 +338,9 @@ describe('Shadowrocket/3488 Clash YAML routing evidence', () => {
         ruleType: 'PROCESS-PATH',
         target: '出口',
       },
+      implicit,
+      { ...implicit, listener: 'office-in', table: 'office' },
+      { ...implicit, listener: 'lab-in', table: 'lab' },
     ]);
   });
 
@@ -377,8 +422,8 @@ describe('Shadowrocket/3488 Clash YAML routing evidence', () => {
         },
       ],
     );
-    expect(check({ ...nested, mode: undefined })).toEqual([]);
-    expect(check({ ...nested, mode: 'rule' })).toEqual([]);
+    expect(check({ ...nested, mode: undefined })).toEqual([implicit]);
+    expect(check({ ...nested, mode: 'rule' })).toEqual([implicit]);
     expect(check({ ...nested, mode: 'GLOBAL', rules: ['PROCESS-NAME,reader,固定'] })).toMatchObject(
       [
         {

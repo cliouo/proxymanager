@@ -65,6 +65,12 @@ it('keeps listener, TUN and mode locations in a compatibility 422', async () => 
       option: 'type=socks5',
       reason: '全局选路待核验',
     },
+    {
+      status: 'unverified',
+      mode: 'rule',
+      reference: 'DIRECT',
+      reason: '尚无导入此 YAML 后未命中域名走直连的出口对照（规则表缺少末尾 MATCH）。',
+    },
   ];
   vi.stubGlobal(
     'fetch',
