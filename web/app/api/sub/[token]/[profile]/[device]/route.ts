@@ -78,6 +78,13 @@ export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
       'Shadowrocket 完整配置与 Base64 仅节点订阅是两种用途，请选择一项。',
     );
   }
+  // A strict request that would be served unchecked must not look like a pass.
+  const strict = url.searchParams.get('strict');
+  if (strict !== null && (strict !== '1' || !shadowrocket)) {
+    throw ProblemDetailsError.badRequest(
+      'strict 只支持 strict=1，且须与 client=shadowrocket 一起使用。',
+    );
+  }
 
   const { resolved, displayName, deviceDisplayName, cache } = await renderDeviceConfig(
     profile,
@@ -137,7 +144,11 @@ export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
 
   if (shadowrocket) {
     const issues = checkShadowrocketRules(content);
-    if (issues.length) return shadowrocketProblem(issues);
+    // Only known-incompatible routing refuses the download. `strict=1` (the
+    // device page's recheck) also refuses unverified routing, to list it.
+    const blocking =
+      strict === '1' ? issues : issues.filter((issue) => issue.status === 'incompatible');
+    if (blocking.length) return shadowrocketProblem(blocking);
   }
 
   const filename = custom || `${profilePart}-${device}.yaml`;
