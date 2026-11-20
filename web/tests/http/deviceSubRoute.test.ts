@@ -120,6 +120,8 @@ describe('/api/sub/{token}/{profile}/{device}', () => {
       }),
       ctx('tk', 'home', 'macbook'),
     );
+  // The device page's recheck: unverified routing refuses too.
+  const strict = (etag?: string, query = '') => special(etag, '&strict=1' + query);
 
   it('uses the link parameter and preserves the scoped render and bytes', async () => {
     const { checkShadowrocketRules } = await import('@/lib/engine/shadowrocketCompatibility');
@@ -153,7 +155,52 @@ describe('/api/sub/{token}/{profile}/{device}', () => {
     expect(checkShadowrocketRules).not.toHaveBeenCalled();
   });
 
-  it('runs the real checker on fresh bytes before a conditional response', async () => {
+  it('serves routing that is only unverified on the plain link, which strict=1 still reports', async () => {
+    // CONFIG ends in MATCH,DIRECT, which the real checker leaves unverified.
+    const served = await special();
+    expect(served.status).toBe(200);
+    expect(Buffer.from(await served.arrayBuffer())).toEqual(Buffer.from(CONFIG));
+    expect(served.headers.get('ETag')).toBe('"dev-build-sr"');
+    expect((await special('"dev-build-sr"')).status).toBe(304);
+
+    const report = await strict();
+    expect(report.status).toBe(422);
+    expect((await report.json()).errors).toMatchObject([
+      { status: 'unverified', ruleNumber: 1, ruleType: 'MATCH', target: 'DIRECT' },
+    ]);
+  });
+
+  it('refuses the plain link for the known-incompatible findings of a mixed report only', async () => {
+    const { checkShadowrocketRules } = await import('@/lib/engine/shadowrocketCompatibility');
+    const unverified = {
+      status: 'unverified' as const,
+      ruleNumber: 1,
+      ruleType: 'GEOIP',
+      target: 'DIRECT',
+      reason: '合成待验证',
+    };
+    const incompatible = {
+      status: 'incompatible' as const,
+      ruleNumber: 2,
+      ruleType: 'RULE-SET',
+      target: '出口',
+      reference: 'remote',
+      reason: '合成不兼容',
+    };
+    vi.mocked(checkShadowrocketRules).mockReturnValueOnce([unverified, incompatible]);
+    const blocked = await special();
+    expect(blocked.status).toBe(422);
+    const problem = await blocked.json();
+    expect(problem.errors).toEqual([incompatible]);
+    expect(problem.detail).toContain('已知不兼容');
+    expect(problem.detail).toContain('合成不兼容');
+    expect(problem.detail).not.toContain('合成待验证');
+
+    vi.mocked(checkShadowrocketRules).mockReturnValueOnce([unverified, incompatible]);
+    expect((await (await strict()).json()).errors).toEqual([unverified, incompatible]);
+  });
+
+  it('runs the real checker on fresh bytes before a conditional strict response', async () => {
     const actual = await vi.importActual<typeof import('@/lib/engine/shadowrocketCompatibility')>(
       '@/lib/engine/shadowrocketCompatibility',
     );
@@ -178,12 +225,12 @@ describe('/api/sub/{token}/{profile}/{device}', () => {
         }),
       );
 
-    const first = await special();
+    const first = await strict();
     expect(first.status).toBe(200);
     expect(Buffer.from(await first.arrayBuffer())).toEqual(Buffer.from(TERMINAL_CONFIG));
     expect(first.headers.get('ETag')).toBe('"compatible-1-sr"');
 
-    const blocked = await special('"compatible-1-sr"');
+    const blocked = await strict('"compatible-1-sr"');
     expect(blocked.status).toBe(422);
     const problem = await blocked.json();
     expect(problem.errors).toMatchObject([
@@ -192,19 +239,19 @@ describe('/api/sub/{token}/{profile}/{device}', () => {
     ]);
     expect(problem.detail).toContain('HK-1');
     expect(checkShadowrocketRules).toHaveBeenCalledTimes(2);
-    expect((await special('"compatible-1-sr"')).status).toBe(304);
+    expect((await strict('"compatible-1-sr"')).status).toBe(304);
     expect(checkShadowrocketRules).toHaveBeenCalledTimes(3);
   });
 
   it.each(['rules: []', '', 'rules:\n  - DOMAIN,example.com,出口'])(
-    '422s implicit unmatched routing for %s, including conditional requests',
+    '422s implicit unmatched routing under strict=1 for %s, including conditional requests',
     async (rules) => {
       const content = COMPATIBLE_CONFIG.replace('rules:\n  - DOMAIN,example.com,出口', rules);
       renderDeviceConfig.mockResolvedValue(
         rendered({ resolved: { content, buildId: 'implicit', inlinedProxyCount: 1 } }),
       );
       for (const etag of [undefined, '"implicit"']) {
-        const response = await special(etag);
+        const response = await strict(etag);
         expect(response.status).toBe(422);
         const problem = await response.json();
         expect(problem.errors).toMatchObject([IMPLICIT_ISSUE]);
@@ -215,7 +262,7 @@ describe('/api/sub/{token}/{profile}/{device}', () => {
     },
   );
 
-  it('locates listener and TUN diagnostics in the 422 detail without a fake rule number', async () => {
+  it('locates listener and TUN diagnostics in the strict 422 detail without a fake rule number', async () => {
     const actual = await vi.importActual<typeof import('@/lib/engine/shadowrocketCompatibility')>(
       '@/lib/engine/shadowrocketCompatibility',
     );
@@ -235,7 +282,7 @@ sub-rules:
         resolved: { content: listenerConfig, buildId: 'listener', inlinedProxyCount: 1 },
       }),
     );
-    const listenerProblem = await (await special()).json();
+    const listenerProblem = await (await strict()).json();
     expect(listenerProblem.errors).toMatchObject([
       {
         status: 'unverified',
@@ -262,7 +309,7 @@ rule-providers:
     renderDeviceConfig.mockResolvedValueOnce(
       rendered({ resolved: { content: tunConfig, buildId: 'tun', inlinedProxyCount: 1 } }),
     );
-    const tunProblem = await (await special()).json();
+    const tunProblem = await (await strict()).json();
     expect(tunProblem.errors).toMatchObject([
       {
         status: 'unverified',
@@ -286,7 +333,7 @@ rules: []
     renderDeviceConfig.mockResolvedValueOnce(
       rendered({ resolved: { content: globalConfig, buildId: 'global', inlinedProxyCount: 2 } }),
     );
-    const globalProblem = await (await special()).json();
+    const globalProblem = await (await strict()).json();
     expect(globalProblem.errors).toMatchObject([
       {
         status: 'unverified',
@@ -314,7 +361,7 @@ rules: []
   ] as const;
 
   it.each(GLOBAL_RULE_INPUTS)(
-    '422s the first mode:global request with %s and a plain HTTP GLOBAL',
+    '422s the first strict mode:global request with %s and a plain HTTP GLOBAL',
     async (_label, rules) => {
       const actual = await vi.importActual<typeof import('@/lib/engine/shadowrocketCompatibility')>(
         '@/lib/engine/shadowrocketCompatibility',
@@ -331,7 +378,7 @@ rules: []
         }),
       );
 
-      const response = await special();
+      const response = await strict();
       expect(response.status).toBe(422);
       expectModeGlobalProblem(await response.json());
       expect(checkShadowrocketRules).toHaveBeenCalledOnce();
@@ -339,7 +386,7 @@ rules: []
   );
 
   it.each(GLOBAL_RULE_INPUTS)(
-    '422s the conditional mode:global request with %s instead of 304',
+    '422s the conditional strict mode:global request with %s instead of 304',
     async (_label, rules) => {
       const actual = await vi.importActual<typeof import('@/lib/engine/shadowrocketCompatibility')>(
         '@/lib/engine/shadowrocketCompatibility',
@@ -356,16 +403,20 @@ rules: []
         }),
       );
 
-      const response = await special('"global-http"');
+      const response = await strict('"global-http"');
       expect(response.status).toBe(422);
       expectModeGlobalProblem(await response.json());
       expect(checkShadowrocketRules).toHaveBeenCalledOnce();
     },
   );
 
-  it.each(['incompatible', 'unverified'] as const)(
-    'rechecks synthetic cached bytes before 304 and recovers (%s)',
-    async (status) => {
+  // Known-incompatible routing refuses the plain link; unverified routing only the strict one.
+  it.each([
+    ['incompatible', ''],
+    ['unverified', '&strict=1'],
+  ] as const)(
+    'rechecks synthetic cached bytes before 304 and recovers (%s%s)',
+    async (status, query) => {
       const { checkShadowrocketRules } = await import('@/lib/engine/shadowrocketCompatibility');
       const issue = {
         status,
@@ -381,10 +432,10 @@ rules: []
         .mockReturnValueOnce([])
         .mockReturnValueOnce([])
         .mockReturnValueOnce([]);
-      const previous = await special();
+      const previous = await special(undefined, query);
       const etag = previous.headers.get('etag')!;
       renderDeviceConfig.mockResolvedValue(rendered({ cache: 'hit' }));
-      const blocked = await special(etag);
+      const blocked = await special(etag, query);
       expect(blocked.status).toBe(422);
       expect(blocked.headers.get('Content-Type')).toContain('application/problem+json');
       const problem = await blocked.json();
@@ -399,19 +450,19 @@ rules: []
       ]) {
         expect(problem.detail).toContain(part);
       }
-      expect((await special()).status).toBe(200);
-      expect((await special(etag)).status).toBe(304);
+      expect((await special(undefined, query)).status).toBe(200);
+      expect((await special(etag, query)).status).toBe(304);
       const fixed = COMPATIBLE_CONFIG;
       renderDeviceConfig.mockResolvedValue(
         rendered({ resolved: { content: fixed, buildId: 'fixed', inlinedProxyCount: 1 } }),
       );
-      const recovered = await special(etag);
+      const recovered = await special(etag, query);
       expect(recovered.status).toBe(200);
       expect(await recovered.text()).toBe(fixed);
     },
   );
 
-  it('streams large 422 reports with every diagnostic in final rule order', async () => {
+  it('streams large strict 422 reports with every diagnostic in final rule order', async () => {
     const { checkShadowrocketRules } = await import('@/lib/engine/shadowrocketCompatibility');
     const issues = Array.from({ length: 28000 }, (_, i) => ({
       status: 'unverified' as const,
@@ -421,7 +472,7 @@ rules: []
       reason: '该规则类型、匹配条件或参数缺少 Clash YAML 导入后的分流依据。',
     }));
     vi.mocked(checkShadowrocketRules).mockReturnValueOnce(issues);
-    const response = await special();
+    const response = await strict();
     expect(response.status).toBe(422);
     const reader = response.body!.getReader();
     const chunks: Uint8Array[] = [];
@@ -439,7 +490,7 @@ rules: []
       CONFIG.replace('MATCH,DIRECT', 'RULE-SET,remote,DIRECT') +
       'rule-providers: {remote: {type: http, behavior: domain, url: "https://example.org/private-path"}}';
     renderDeviceConfig.mockResolvedValue(rendered({ resolved: { content, buildId: 'remote' } }));
-    const response = await special('"dev-build"');
+    const response = await strict('"dev-build"');
     expect(response.status).toBe(422);
     const problem = await response.json();
     expect(problem.errors).toMatchObject([
@@ -630,7 +681,7 @@ rules: []\n`,
     vi.mocked(checkShadowrocketRules).mockReturnValueOnce([]);
     const first = await special(undefined, '&materialize=proxy-groups');
     expect(first.status).toBe(200);
-    vi.mocked(checkShadowrocketRules).mockReturnValueOnce([{status: 'unverified', ruleNumber: 1, ruleType: 'MATCH', target: 'DIRECT', reason: '待验证'}]);
+    vi.mocked(checkShadowrocketRules).mockReturnValueOnce([{status: 'incompatible', ruleNumber: 1, ruleType: 'MATCH', target: 'DIRECT', reason: '合成诊断'}]);
     const blocked = await special(first.headers.get('ETag')!, '&materialize=proxy-groups');
     expect(blocked.status).toBe(422);
   });
@@ -641,8 +692,8 @@ rules: []\n`,
     vi.mocked(checkShadowrocketRules).mockImplementation(actual.checkShadowrocketRules);
     const content = TERMINAL_CONFIG.replace('proxies: [A]', 'include-all-proxies: true, empty-fallback: REJECT');
     renderDeviceConfig.mockResolvedValue(rendered({resolved: {content, buildId: 'real-dynamic', inlinedProxyCount: 1}}));
-    expect((await special()).status).toBe(422);
-    const response = await special(undefined, '&materialize=proxy-groups');
+    expect((await strict()).status).toBe(422);
+    const response = await strict(undefined, '&materialize=proxy-groups');
     expect(response.status).toBe(200);
     const body = await response.text();
     expect(checkShadowrocketRules).toHaveBeenLastCalledWith(body);
@@ -655,7 +706,7 @@ rules: []\n`,
     vi.mocked(checkShadowrocketRules).mockImplementation(actual.checkShadowrocketRules);
     const content = TERMINAL_CONFIG.replace('proxies: [A]', 'include-all-proxies: true, filter: ^A$, exclude-filter: ^JP, empty-fallback: REJECT');
     renderDeviceConfig.mockResolvedValue(rendered({resolved: {content, buildId: 'filtered-dynamic', inlinedProxyCount: 1}}));
-    const response = await special(undefined, '&materialize=proxy-groups');
+    const response = await strict(undefined, '&materialize=proxy-groups');
     expect(response.status).toBe(200);
     const body = await response.text();
     expect(checkShadowrocketRules).toHaveBeenLastCalledWith(body);

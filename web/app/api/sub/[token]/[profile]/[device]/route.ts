@@ -137,7 +137,13 @@ export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
 
   if (shadowrocket) {
     const issues = checkShadowrocketRules(content);
-    if (issues.length) return shadowrocketProblem(issues);
+    // Only known-incompatible routing refuses the download. `strict=1` (the
+    // device page's recheck) also refuses unverified routing, to list it.
+    const blocking =
+      url.searchParams.get('strict') === '1'
+        ? issues
+        : issues.filter((issue) => issue.status === 'incompatible');
+    if (blocking.length) return shadowrocketProblem(blocking);
   }
 
   const filename = custom || `${profilePart}-${device}.yaml`;

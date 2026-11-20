@@ -13,7 +13,7 @@ it('builds all three device links from the saved resource', () => {
   expect(deviceLink(base, 'phone', 'base64')).toBe(base + '/phone?format=base64');
 });
 
-it('reads the token-scoped link without cookies, administrator headers or cached responses', async () => {
+it('asks the token-scoped link for its strict report without cookies, administrator headers or cached responses', async () => {
   const fetch = vi
     .fn()
     .mockResolvedValue(
@@ -21,7 +21,8 @@ it('reads the token-scoped link without cookies, administrator headers or cached
     );
   vi.stubGlobal('fetch', fetch);
   expect(await recheckShadowrocket(url, signal)).toEqual([]);
-  expect(fetch).toHaveBeenCalledExactlyOnceWith(url, {
+  // The saved link itself serves unverified routing, so only strict=1 lists it.
+  expect(fetch).toHaveBeenCalledExactlyOnceWith(url + '&strict=1', {
     credentials: 'omit',
     cache: 'no-store',
     signal,

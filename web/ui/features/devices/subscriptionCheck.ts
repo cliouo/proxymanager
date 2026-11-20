@@ -46,7 +46,8 @@ export async function recheckShadowrocket(
 ): Promise<ShadowrocketRuleIssue[]> {
   let response: Response;
   try {
-    response = await fetch(url, { credentials: 'omit', cache: 'no-store', signal });
+    // The saved link serves unverified routing; strict=1 makes it list every finding.
+    response = await fetch(`${url}&strict=1`, { credentials: 'omit', cache: 'no-store', signal });
   } catch (error) {
     if (signal.aborted) throw error;
     throw new Error('网络连接失败，请重试。');

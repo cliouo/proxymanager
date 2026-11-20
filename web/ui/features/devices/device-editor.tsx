@@ -519,10 +519,21 @@ function SubscriptionCheck({ url, revision }: { url: string; revision: string })
         setResult(errorMessage(error));
     }
   }
+  // Mirrors the link's own gate: only known-incompatible findings refuse the download.
+  const blocked = Array.isArray(result)
+    ? result.filter((issue) => issue.status === 'incompatible').length
+    : 0;
   return (
     <div className="space-y-2">
       <Button size="sm" icon={RefreshCw} onClick={() => void check()}>重新检查</Button>
       <div role="status" className="space-y-1 text-xs text-ink-2">
+        {Array.isArray(result) && (
+          <p className="font-medium text-ink">
+            {blocked
+              ? `Shadowrocket 无法下载此链接：${blocked} 项已知不兼容。`
+              : `Shadowrocket 可以下载此链接；${result.length} 项分流行为尚未验证，导入后可能与预期不同。`}
+          </p>
+        )}
         {typeof result === 'string' ? result : result.slice(0, visibleCount).map((issue, index) => (
           <p key={`${issue.listener ?? ''}:${issue.table ?? ''}:${issue.field ?? ''}:${issue.mode ?? ''}:${issue.ruleNumber ?? ''}:${index}`}>
             {issue.status === 'incompatible' ? '已知不兼容' : '待验证'} · {describeShadowrocketIssueLocation(issue)}

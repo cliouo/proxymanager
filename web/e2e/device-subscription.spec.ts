@@ -117,7 +117,8 @@ test('shows rule diagnostics and recovery on the saved link, with ordinary auth 
   await card.getByLabel('订阅用途').selectOption('shadowrocket');
   const url = base + '/phone?client=shadowrocket';
   let attempt = 0;
-  await page.route(url, async (route) => {
+  // The check asks for the strict report; the copied link stays the plain one.
+  await page.route(url + '&strict=1', async (route) => {
     expect(route.request().headers().authorization).toBeUndefined();
     attempt++;
     if (attempt === 1)
@@ -132,6 +133,7 @@ test('shows rule diagnostics and recovery on the saved link, with ordinary auth 
   const check = card.getByRole('button', { name: '重新检查' });
   await check.click();
   for (const part of [
+    '无法下载',
     '待验证',
     '已知不兼容',
     '第 3 条',
@@ -142,6 +144,10 @@ test('shows rule diagnostics and recovery on the saved link, with ordinary auth 
   ]) {
     await expect(card.getByRole('status')).toContainText(part);
   }
+  // The verdict line also says 已知不兼容, so pin the label to its own row.
+  await expect(card.getByRole('status').locator('p', { hasText: '第 4 条' })).toContainText(
+    '已知不兼容',
+  );
   await copiedAndScannable(page, card, card.getByRole('button', { name: '复制' }), url);
   await check.click();
   await expect(card.getByRole('status')).toContainText('检查通过');
@@ -167,7 +173,7 @@ test('discards a late check after navigating to another device', async ({ page }
   await page.addInitScript(() => {
     const fetch = window.fetch;
     window.fetch = (input, init) => {
-      if (String(input).endsWith('/phone?client=shadowrocket')) {
+      if (String(input).endsWith('/phone?client=shadowrocket&strict=1')) {
         return new Promise<Response>((resolve) => {
           window.addEventListener(
             'finish-old-check',
@@ -203,7 +209,7 @@ test('discards a late check after navigating to another device', async ({ page }
   await page.locator('a[href="/p/home/devices"]').first().click();
   await page.getByRole('link', { name: 'tablet', exact: true }).click();
   await card.getByLabel('订阅用途').selectOption('shadowrocket');
-  await page.route(base + '/tablet?client=shadowrocket', (route) =>
+  await page.route(base + '/tablet?client=shadowrocket&strict=1', (route) =>
     route.fulfill({ body: 'rules: []', contentType: 'text/yaml' }),
   );
   await card.getByRole('button', { name: '重新检查' }).click();
@@ -217,7 +223,7 @@ test('discards a late check after navigating to another device', async ({ page }
 
 test('reads all issues in a long report in batches', async ({ page }) => {
   await workspace(page);
-  const url = base + '/phone?client=shadowrocket';
+  const url = base + '/phone?client=shadowrocket&strict=1';
   const errors = Array.from({ length: 120 }, (_, i) => ({ ...issue, ruleNumber: i + 1 }));
   await page.route(url, (route) => route.fulfill({ status: 422, json: { errors } }));
   await page.goto('/p/home/devices/phone');
@@ -225,6 +231,9 @@ test('reads all issues in a long report in batches', async ({ page }) => {
   await card.getByLabel('订阅用途').selectOption('shadowrocket');
   await card.getByRole('button', { name: '重新检查' }).click();
   await expect(card.getByRole('status')).toContainText('第 1 条');
+  // Unverified findings alone no longer refuse the download.
+  await expect(card.getByRole('status')).toContainText('可以下载');
+  await expect(card.getByRole('status')).not.toContainText('无法下载');
   await expect(card.getByRole('status')).not.toContainText('第 120 条');
   while (await card.getByRole('button', { name: '显示更多诊断' }).isVisible()) {
     await card.getByRole('button', { name: '显示更多诊断' }).click();
@@ -240,7 +249,7 @@ test('invalidates a successful check after saving the same device URL', async ({
       Object.assign(device, route.request().postDataJSON(), { updated_at: 2 });
     return route.fulfill({ json: { data: device } });
   });
-  await page.route(base + '/phone?client=shadowrocket', (route) =>
+  await page.route(base + '/phone?client=shadowrocket&strict=1', (route) =>
     route.fulfill({ contentType: 'text/yaml', body: 'rules: []' }),
   );
   await page.goto('/p/home/devices/phone');
@@ -260,7 +269,7 @@ test('invalidates a successful check when only the shared config refreshes', asy
   await page.route('**/api/v1/profiles/p/devices/phone/preview', (route) =>
     route.fulfill({ json: { data: { shared, device: '{}', issues: [] } } }),
   );
-  const url = base + '/phone?client=shadowrocket';
+  const url = base + '/phone?client=shadowrocket&strict=1';
   let attempt = 0;
   let finishOld: (() => void) | undefined;
   let oldResponded: (() => void) | undefined;
