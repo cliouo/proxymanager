@@ -104,7 +104,8 @@ describe('/api/sub/{token}/{profile}/{device}', () => {
   let GET: (req: Request, ctx: never) => Promise<Response>;
 
   beforeEach(async () => {
-    vi.clearAllMocks();
+    // Reset, not clear: a fake checker result must not leak into the next test.
+    vi.resetAllMocks();
     getProfileByName.mockResolvedValue({ id: 'p-home', name: 'home', kind: 'normal' });
     renderDeviceConfig.mockResolvedValue(rendered());
     ({ GET } = await import('@/app/api/sub/[token]/[profile]/[device]/route'));
@@ -502,6 +503,17 @@ rules: []
 
   it.each(['base64', 'v2ray'])('rejects conflicting device link purposes (%s)', async (format) => {
     expect((await special(undefined, '&format=' + format)).status).toBe(400);
+    expect(renderDeviceConfig).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    '?client=shadowrocket&strict=true',
+    '?client=shadowrocket&strict=',
+    '?strict=1',
+    '?client=Shadowrocket&strict=1',
+  ])('400s a strict request that would be served unchecked (%s)', async (query) => {
+    const response = await GET(new Request(deviceUrl + query), ctx('tk', 'home', 'macbook'));
+    expect(response.status).toBe(400);
     expect(renderDeviceConfig).not.toHaveBeenCalled();
   });
 
