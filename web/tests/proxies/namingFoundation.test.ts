@@ -16,6 +16,39 @@ const node = (name: string, port = 443) => ({ name, type: 'ss', server: 'edge.ex
 const format = (name: string, template: string) =>
   formatNodeName({ name, index: 1, config: { template } });
 
+describe('info nodes and data-size units', () => {
+  const config = { template: '${emoji} ${region} ${index}${?note: · ${note}}' };
+
+  it.each([
+    '剩余流量：88 GB', '剩余流量：88GB', '到期时间：2027-01-01',
+    '套餐：500 MB', '官网：https://example.com', 'Remaining traffic: 1.5 TB',
+    'expire: 2027-01-01', '重置：30天',
+  ])('detects %s before region recognition and drops it from template naming', (name) => {
+    expect(recognizeName(name, [{ pattern: '.*', field: 'region', value: 'GB' }])).toMatchObject({
+      info: true, region: null, regionSignals: 0, base: name,
+    });
+    expect(formatNodeName({ name, config, index: 1 })).toBe(name);
+    expect(applyRenameTemplate([node(name)], config).proxies).toEqual([]);
+  });
+
+  it.each(['88 GB', '88GB', '88 MB', '88MB', '1.5 TB', '1.5TB', '88 gb'])('%s is not a region', (name) => {
+    expect(recognizeName(name)).toMatchObject({ region: null, regionSignals: 0, base: name });
+    expect(recognizeName(name).info).not.toBe(true);
+  });
+
+  it.each(['GB 01', 'UK 01', '88 GB | GB 01', '88GB | UK 01'])('keeps a real UK token in %s', (name) => {
+    expect(recognizeName(name)).toMatchObject({ region: 'GB', regionSignals: 1 });
+  });
+
+  it('does not add UK ambiguity or remove the size unit from a real node', () => {
+    expect(recognizeName('日本 88 GB')).toMatchObject({ region: 'JP', regionSignals: 1, base: '88 GB', ambiguousFields: [] });
+    expect(applyRenameTemplate([node('剩余流量：88 GB'), node('GB 01', 444)], config).proxies.map((p) => p.name)).toEqual(['🇬🇧 英国 01']);
+    expect(applyRenameTemplate([], config).proxies).toEqual([]);
+    expect(recognizeName('香港 https://example.com/traffic')).toMatchObject({ region: 'HK' });
+    expect(recognizeName('香港 https://example.com/traffic').info).not.toBe(true);
+  });
+});
+
 describe('line tags and compatible residuals', () => {
   it.each([
     ['🇭🇰 香港 IEPL 01', '🇭🇰 香港 01 · IEPL'],
@@ -214,7 +247,7 @@ describe('saved raw-fingerprint facts', () => {
     );
   });
 
-  it('drops info nodes only for explicit info=true facts, without a model call', () => {
+  it('drops info nodes locally while allowing explicit info facts to override detection', () => {
     const fetch = vi.fn(() => {
       throw new Error('render must not call model');
     });
@@ -232,7 +265,7 @@ describe('saved raw-fingerprint facts', () => {
       expect(result.steps[0].dropped).toBe(1);
       expect(fetch).not.toHaveBeenCalled();
       expect(applyRenameTemplate([], { template: '${tags}', nodeFacts }).proxies).toEqual([]);
-      expect(applyRenameTemplate(nodes, { template: '${note}' }).proxies).toHaveLength(3);
+      expect(applyRenameTemplate(nodes, { template: '${note}' }).proxies).toHaveLength(1);
     } finally {
       vi.unstubAllGlobals();
     }

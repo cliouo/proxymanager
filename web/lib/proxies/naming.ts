@@ -43,7 +43,15 @@
  * input order wins) with diagnostic provenance in `deduped`.
  */
 
-import { codeFromFlag, flagFromCode, REGIONS, regionByCode, stripFlags } from './regions';
+import {
+  codeFromFlag,
+  flagFromCode,
+  maskDataSizeUnits,
+  REGIONS,
+  regionByCode,
+  stripFlags,
+} from './regions';
+import { isInfoNodeName } from './infoNodes';
 import {
   envelopeOf,
   fingerprintOf,
@@ -567,6 +575,7 @@ export function withRawIdentity(
 /* ─── recognition ──────────────────────────────────────────────────── */
 
 export interface RecognizedName {
+  info?: boolean;
   tags: LineTag[];
   /** ISO-ish region code (alpha-2), or null when nothing reliable matched. */
   region: string | null;
@@ -653,6 +662,7 @@ function firstTokenHit(
 
 /** First region-table pattern hit — same iteration order as detectRegion. */
 function firstRegionHit(text: string): { code: string; start: number; end: number } | null {
+  text = maskDataSizeUnits(text);
   for (const region of REGIONS) {
     for (const pattern of region.patterns) {
       const m = pattern.exec(text);
@@ -664,6 +674,7 @@ function firstRegionHit(text: string): { code: string; start: number; end: numbe
 
 /** Count DISTINCT region codes hit (flag counts once) — ambiguity signal. */
 function countRegionSignals(text: string, flagCode: string | null): number {
+  text = maskDataSizeUnits(text);
   const codes = new Set<string>();
   if (flagCode) codes.add(flagCode);
   for (const region of REGIONS) {
@@ -779,6 +790,22 @@ function applyRecognitionRules(
  * saved, validated recognition overrides (see {@link RecognitionRule}).
  */
 export function recognizeName(name: string, rules?: RecognitionRule[]): RecognizedName {
+  if (isInfoNodeName(name)) {
+    return {
+      info: true,
+      tags: [],
+      region: null,
+      rate: null,
+      route: null,
+      entry: null,
+      vendor: null,
+      base: name,
+      regionSignals: 0,
+      routeSignals: 0,
+      confidence: name ? { note: 'high' } : {},
+      ambiguousFields: [],
+    };
+  }
   const { tags } = recognizeTags(name);
   const flagCode = codeFromFlag(name);
   let base = stripFlags(name);
@@ -988,6 +1015,7 @@ export function upstreamOrdinalOf(base: string): number | null {
  */
 export function formatNodeName(opts: FormatNodeOptions): string {
   const { name, config } = opts;
+  if (isInfoNodeName(name)) return name;
   let tokens: TemplateToken[];
   try {
     tokens = compileTemplate(config.template);
@@ -1312,7 +1340,11 @@ export function applyRenameTemplate(
     // boundary when present (fallback: compute from the current object — the
     // documented path for envelope-less test inputs).
     const fp = fingerprintOf(p) ?? nodeFingerprint(p);
-    if (fp && config.nodeFacts?.[fp]?.info === true) return;
+    const savedInfo = fp ? config.nodeFacts?.[fp]?.info : undefined;
+    if (
+      savedInfo === true ||
+      (savedInfo !== false && typeof p.name === 'string' && isInfoNodeName(p.name))
+    ) return;
     if (fp === null) {
       surviving.push({ proxy: p, index: i });
       return;

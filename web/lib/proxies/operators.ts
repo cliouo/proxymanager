@@ -11,6 +11,7 @@
 
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import type { Operator } from '@/schemas/operator';
+import { USELESS_PATTERNS } from './infoNodes';
 import { applyRenameTemplate, type OrdinalResolver } from './naming';
 import { redactSensitiveText } from './namingSanitize';
 import { sourceOf } from './provenance';
@@ -106,41 +107,6 @@ export interface ApplyResult {
 function nameOf(p: ClashProxy): string {
   return typeof p.name === 'string' ? p.name : '';
 }
-
-/** Built-in junk patterns for the 去除无用节点 operator. */
-const USELESS_PATTERNS = [
-  '剩余流量',
-  '剩余',
-  '到期',
-  '过期',
-  '重置',
-  '距离',
-  '官网',
-  '网址',
-  '续费',
-  '订阅',
-  '邀请',
-  '失联',
-  '客服',
-  '群组',
-  '频道',
-  '公告',
-  '更新于',
-  '套餐',
-  '维护',
-  '购买',
-  '充值',
-  '此处',
-  '请勿',
-  '禁止',
-  'expire',
-  'traffic',
-  'reset',
-  'remaining',
-  't\\.me',
-  'telegram',
-  'https?://',
-];
 
 function buildUselessRegexes(extra: string[]): RegExp[] {
   // The schema (uselessExtraPattern) already rejects fragments that don't
