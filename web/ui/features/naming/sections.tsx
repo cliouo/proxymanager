@@ -2,7 +2,7 @@
 
 import { useState, type ReactNode } from 'react';
 import { AlertTriangle, ChevronRight, Plus, Trash2 } from 'lucide-react';
-import type { NamingField } from '@/lib/proxies/naming';
+import { LINE_TAGS, type NamingField } from '@/lib/proxies/naming';
 import type { SourceHealthReport } from '@/lib/proxies/namingHealth';
 import { REGIONS } from '@/lib/proxies/regions';
 import { cn } from '@/ui/lib/cn';
@@ -144,14 +144,18 @@ export function RulesEditor({
               options={RULE_FIELDS}
             />
             <span>设为</span>
-            {rule.field === 'region' ? (
+            {rule.field === 'region' || rule.field === 'tag' ? (
               <Select<string>
                 size="sm"
                 className="w-[120px]"
                 value={rule.value || undefined}
-                placeholder="选择地区"
+                placeholder={rule.field === 'tag' ? '选择标签' : '选择地区'}
                 onValueChange={(value) => update(index, { value })}
-                options={REGION_OPTIONS}
+                options={
+                  rule.field === 'tag'
+                    ? LINE_TAGS.map((tag) => ({ value: tag, label: tag }))
+                    : REGION_OPTIONS
+                }
               />
             ) : (
               <Input

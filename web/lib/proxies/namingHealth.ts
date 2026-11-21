@@ -123,6 +123,7 @@ const FIELD_LABELS: Record<NamingField, string> = {
   rate: '倍率',
   index: '序号',
   note: '残余片段',
+  tags: '线路标签',
 };
 
 /** Intrinsic: the value is structured data, not inferred. */
@@ -193,12 +194,13 @@ function kindOf(field: NamingField): FieldKind {
  */
 function ruleHitsFor(
   name: string,
-  rules: { pattern: string; field: 'route' | 'vendor' | 'region' | 'entry' }[],
+  rules: { pattern: string; field: 'route' | 'vendor' | 'region' | 'entry' | 'tag' }[],
 ): Set<string> {
   const hits = new Set<string>();
   for (const rule of rules) {
     try {
-      if (new RegExp(rule.pattern, 'i').test(name)) hits.add(rule.field);
+      if (new RegExp(rule.pattern, 'i').test(name))
+        hits.add(rule.field === 'tag' ? 'tags' : rule.field);
     } catch {
       // schema-validated; never reachable at runtime
     }
@@ -212,7 +214,11 @@ function ruleHitsFor(
  */
 function factsOf(
   proxy: unknown,
-  rules: { pattern: string; field: 'route' | 'vendor' | 'region' | 'entry'; value: string }[],
+  rules: {
+    pattern: string;
+    field: 'route' | 'vendor' | 'region' | 'entry' | 'tag';
+    value: string;
+  }[],
 ): Array<{
   field: NamingField;
   value: string | null;
@@ -284,6 +290,12 @@ function factsOf(
     recognized.confidence.route ?? null,
     recognized.ambiguousFields.includes('route'),
   );
+  push(
+    'tags',
+    recognized.tags.length ? recognized.tags.join(' ') : null,
+    recognized.confidence.tags ?? 'medium',
+    false,
+  );
   push('entry', recognized.entry, recognized.confidence.entry ?? null, false);
   push('vendor', recognized.vendor, recognized.confidence.vendor ?? null, false);
   push(
@@ -325,7 +337,11 @@ export function analyzeSourceFacts(
   proxies: readonly unknown[],
   options: {
     sourceOfProxy?: (proxy: unknown) => SourceIdentity | undefined;
-    rules?: { pattern: string; field: 'route' | 'vendor' | 'region' | 'entry'; value: string }[];
+    rules?: {
+      pattern: string;
+      field: 'route' | 'vendor' | 'region' | 'entry' | 'tag';
+      value: string;
+    }[];
     sourceKey?: string;
     sourceLabel?: string;
   } = {},

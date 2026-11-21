@@ -2,6 +2,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installTestHandleSecret } from '../helpers/handleSecret';
 import { buildProfileScope, buildSourceAliasScope } from '@/lib/proxies/handleScopes';
 import { GLOBAL_NAMING_SCOPE_ID } from '@/lib/services/namingTargetScope';
+import { nodeFingerprint } from '@/lib/proxies/naming';
 
 /** Test-local handle helpers over complete one-identity domains. */
 const profileHandle = (profileId: string): string =>
@@ -529,6 +530,72 @@ describe('GET /api/v1/naming/[type]/[id]', () => {
 });
 
 describe('POST apply — policy preservation + persisted prior plan', () => {
+  it('previews, applies and rolls back raw-fingerprint facts through the existing save gate', async () => {
+    const fingerprint = nodeFingerprint({
+      name: 'old',
+      type: 'ss',
+      server: 'a.example.com',
+      port: 443,
+    })!;
+    const oldFacts = { [fingerprint]: { region: 'HK', tags: ['IPLC'] } };
+    const newFacts = { [fingerprint]: { region: 'SG', tags: ['IEPL'], rate: 3 } };
+    seedSub({
+      operators: [
+        { id: 'n', kind: 'rename-template', template: '${region} ${tags}', nodeFacts: oldFacts },
+      ],
+    });
+    const preview = await call(POST, 'subscription', SUB_ID, {
+      preview: { template: '${region} ${tags}', nodeFacts: newFacts },
+    });
+    expect(preview.status).toBe(200);
+    expect(JSON.stringify(await preview.json())).toContain('新加坡 IEPL');
+    expect(bucket(REDIS_KEYS.subscriptions).get(SUB_ID)).toMatchObject({
+      operators: [{ nodeFacts: oldFacts }],
+    });
+    const preflight = (await import('@/lib/services/configPreflight')).preflightProfileConfig;
+    vi.mocked(preflight).mockClear();
+    const applied = await call(POST, 'subscription', SUB_ID, {
+      apply: { template: '${region} ${tags}', nodeFacts: newFacts },
+    });
+    expect(applied.status).toBe(200);
+    expect(preflight).toHaveBeenCalled();
+    expect(bucket(REDIS_KEYS.subscriptions).get(SUB_ID)).toMatchObject({
+      operators: [{ nodeFacts: newFacts }],
+    });
+    expect(await applied.json()).toMatchObject({
+      data: { managed: { nodeFacts: newFacts }, priorPlan: { nodeFacts: oldFacts } },
+    });
+    expect(
+      (await call(POST, 'subscription', SUB_ID, { apply: { template: '${region_code}' } })).status,
+    ).toBe(200);
+    expect(bucket(REDIS_KEYS.subscriptions).get(SUB_ID)).toMatchObject({
+      operators: [{ nodeFacts: newFacts }],
+    });
+    expect(
+      (
+        await call(POST, 'subscription', SUB_ID, {
+          apply: { template: '${region_code}', nodeFacts: {} },
+        })
+      ).status,
+    ).toBe(200);
+    expect(bucket(REDIS_KEYS.subscriptions).get(SUB_ID)).toMatchObject({
+      operators: [{ nodeFacts: {} }],
+    });
+    expect((await call(POST, 'subscription', SUB_ID, { rollback: true })).status).toBe(200);
+    expect(bucket(REDIS_KEYS.subscriptions).get(SUB_ID)).toMatchObject({
+      operators: [{ nodeFacts: newFacts }],
+    });
+  });
+
+  it('rejects invalid node facts without writing', async () => {
+    const before = JSON.stringify(bucket(REDIS_KEYS.subscriptions).get(SUB_ID));
+    const res = await call(POST, 'subscription', SUB_ID, {
+      apply: { template: '${region}', nodeFacts: { aaaaaaaaaaaaaaaa: { tags: ['Unknown'] } } },
+    });
+    expect(res.status).toBe(422);
+    expect(JSON.stringify(bucket(REDIS_KEYS.subscriptions).get(SUB_ID))).toBe(before);
+  });
+
   it('applying ONLY a template preserves the op id, tw2cn, sourceAliases and recognitionRules', async () => {
     const currentOp = {
       id: 'rt-original',

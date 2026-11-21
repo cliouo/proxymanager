@@ -25,9 +25,11 @@
 
 import { buildOperatorSnapshot, type OperatorSnapshot } from '@/lib/repos/rawOperators';
 import type { Operator, StoredOperator } from '@/schemas';
+import type { NodeFacts } from '@/lib/proxies/naming';
 
 /** The complete policy a managed rename-template row carries. */
 export interface NamingManagedPlan {
+  nodeFacts?: NodeFacts;
   template: string;
   tw2cn?: boolean;
   sourceAliases?: Record<string, string>;
@@ -78,6 +80,7 @@ function managedRowOf(id: string, plan: NamingManagedPlan): Operator {
         ? plan.sourceAliases
         : undefined,
     recognitionRules: plan.recognitionRules ?? [],
+    ...(plan.nodeFacts !== undefined ? { nodeFacts: plan.nodeFacts } : {}),
     // apply ALWAYS activates: never carry a disabled flag on the candidate
   } as Operator;
 }
@@ -122,6 +125,7 @@ function deepEqualKeyOrderInsensitive(a: unknown, b: unknown): boolean {
  */
 /** The prior-policy shape completeNamingPlan merges from. */
 export type PriorNamingPolicy = {
+  nodeFacts?: NodeFacts;
   tw2cn?: boolean;
   sourceAliases?: Record<string, string>;
   recognitionRules?: Array<{ pattern: string; field: string; value: string }>;
@@ -139,6 +143,7 @@ export function priorPolicyOf(op: StoredOperator | undefined): PriorNamingPolicy
     tw2cn: op.tw2cn,
     sourceAliases: op.sourceAliases,
     recognitionRules: op.recognitionRules,
+    ...(op.nodeFacts !== undefined ? { nodeFacts: op.nodeFacts } : {}),
   };
 }
 
@@ -152,6 +157,9 @@ export function completeNamingPlan(
       : undefined;
   return {
     template: plan.template,
+    ...((plan.nodeFacts ?? prior?.nodeFacts) !== undefined
+      ? { nodeFacts: plan.nodeFacts ?? prior?.nodeFacts }
+      : {}),
     // explicit false/empty wins (full-plan replacement); only ABSENT fields
     // fall back to the current row's policy
     tw2cn: plan.tw2cn !== undefined ? plan.tw2cn : prior?.tw2cn,

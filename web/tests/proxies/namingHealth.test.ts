@@ -173,7 +173,7 @@ describe('analyzeSourceFacts', () => {
     expect(report.sourceLabel).toBe('(未命名)');
   });
 
-  it('pass-2 edge: 4 nodes → nodeFactsTotal describes FACT ROWS (44), truncated=false at the report level', () => {
+  it('pass-2 edge: 4 nodes → nodeFactsTotal describes FACT ROWS (48), truncated=false at the report level', () => {
     const proxies = [
       withSource(node('🇭🇰 香港 01'), { key: 'a', label: '机场A' }),
       withSource(node('🇯🇵 日本 02'), { key: 'a', label: '机场A' }),
@@ -181,9 +181,9 @@ describe('analyzeSourceFacts', () => {
       withSource(node('🇸🇬 新加坡 04'), { key: 'a', label: '机场A' }),
     ];
     const [report] = analyzeSourceFacts(proxies);
-    // 4 nodes × 11 fields = 44 FACT ROWS — the semantic unit is facts, not nodes
-    expect(report.nodeFactsTotal).toBe(44);
-    expect(report.nodeFacts).toHaveLength(44);
+    // 4 nodes × 12 fields = 48 FACT ROWS — the semantic unit is facts, not nodes
+    expect(report.nodeFactsTotal).toBe(48);
+    expect(report.nodeFacts).toHaveLength(48);
     expect(report.nodeFactsTruncated).toBe(false);
     // field samples: 3 distinct values for region → sampleTotal 3, and at the
     // report level (cap 3) nothing is truncated yet

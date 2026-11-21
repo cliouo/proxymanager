@@ -3,13 +3,19 @@
  * grammar and renderer come from the shared compiler in lib/proxies/naming
  * (no node APIs), so validation here is exactly the server's.
  */
-import { renderTemplate, validateTemplate, type NamingField } from '@/lib/proxies/naming';
+import {
+  renderTemplate,
+  validateTemplate,
+  LINE_TAGS,
+  type NamingField,
+  type NodeFacts,
+} from '@/lib/proxies/naming';
 import type { SourceHealthReport } from '@/lib/proxies/namingHealth';
 import { flagFromCode, regionByCode } from '@/lib/proxies/regions';
 import type { NamesPayload, PreviewIssue } from '@/ui/data/types';
 
 export type TargetType = 'subscription' | 'collection';
-export type RuleField = 'route' | 'vendor' | 'region' | 'entry';
+export type RuleField = 'route' | 'vendor' | 'region' | 'entry' | 'tag';
 
 export interface RecognitionRule {
   pattern: string;
@@ -18,6 +24,7 @@ export interface RecognitionRule {
 }
 
 export interface NamingPlan {
+  nodeFacts?: NodeFacts;
   template: string;
   tw2cn: boolean;
   /** Keys are the opaque `src-…` handles round-tripped from GET. */
@@ -26,6 +33,7 @@ export interface NamingPlan {
 }
 
 export interface PlanView {
+  nodeFacts?: NodeFacts;
   present: boolean;
   template?: string;
   tw2cn?: boolean;
@@ -86,6 +94,11 @@ export const FIELD_META: Record<NamingField, { label: string; hint: string; exam
   vendor: { label: '服务商', hint: '常见机场品牌，认不出就留空', example: 'TAG' },
   entry: { label: '入口', hint: '节点名写了「入口」时才有', example: '入口' },
   note: { label: '剩余文字', hint: '原名去掉已识别部分后剩下的文字', example: 'Premium' },
+  tags: {
+    label: '线路标签',
+    hint: '标准线路标签，按固定顺序以空格分隔',
+    example: 'IEPL 专线 原生',
+  },
 };
 
 export const FIELD_ORDER: NamingField[] = [
@@ -100,12 +113,14 @@ export const FIELD_ORDER: NamingField[] = [
   'vendor',
   'entry',
   'note',
+  'tags',
 ];
 
 /** Fields the system assigns itself — always available. */
 export const ASSIGNED_FIELDS: ReadonlySet<NamingField> = new Set(['source', 'index']);
 
 export const RULE_FIELDS: Array<{ value: RuleField; label: string }> = [
+  { value: 'tag', label: '标签' },
   { value: 'route', label: '线路' },
   { value: 'vendor', label: '服务商' },
   { value: 'region', label: '地区' },
@@ -223,6 +238,7 @@ export function storedPlan(data: NamingWorkspaceData): NamingPlan {
     tw2cn: m.tw2cn === true,
     sourceAliases: { ...(m.sourceAliases ?? {}) },
     recognitionRules: (m.recognitionRules ?? []).map((r) => ({ ...r })),
+    ...(m.nodeFacts !== undefined ? { nodeFacts: m.nodeFacts } : {}),
   };
 }
 
@@ -240,6 +256,7 @@ const isBlankRule = (r: RecognitionRule) => r.pattern === '' && r.value.trim() =
 /** The complete, explicit body sent to preview/apply (every policy field present). */
 export function planBody(plan: NamingPlan): NamingPlan {
   return {
+    ...(plan.nodeFacts !== undefined ? { nodeFacts: plan.nodeFacts } : {}),
     template: plan.template,
     tw2cn: plan.tw2cn,
     sourceAliases: cleanAliases(plan.sourceAliases),
@@ -261,6 +278,7 @@ function canonical(plan: NamingPlan) {
 }
 
 export function ruleError(rule: RecognitionRule): string | null {
+  if (rule.field === 'tag' && !LINE_TAGS.some((tag) => tag === rule.value)) return '请选择标准标签';
   if (isBlankRule(rule)) return null;
   if (!rule.pattern) return '填写要匹配的文字';
   if (rule.pattern.length > 100) return '匹配内容最多 100 个字符';
