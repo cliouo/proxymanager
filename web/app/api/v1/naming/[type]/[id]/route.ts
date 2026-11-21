@@ -324,7 +324,7 @@ async function loadWorkspace(
     // go through ONE collision-checked node scope over the COMPLETE snapshot
     // and ONE source scope over the complete key set (handle minting lives in
     // handleScopes/namingContextProjection, never in the analysis).
-    const reports = analyzeSourceFacts(withProvenance, { rules: previewOp?.recognitionRules });
+    const reports = analyzeSourceFacts(withProvenance, { rules: previewOp?.recognitionRules, nodeFacts: previewOp?.nodeFacts });
     const { scope: nodeScope } = buildNodeSnapshotScope(withProvenance);
     const sourceScope = buildSourceAliasScope(reports.map((r) => r.sourceKey));
     const health = reports.map((report) => ({
@@ -421,7 +421,7 @@ async function loadWorkspace(
   const { merged, ordinalPlanningSession, ordinalDomainRegistry } =
     await mergeCollectionMemberProxies(collection, subs, { writeCache: false });
   // round-1: same complete-domain projection as the subscription branch.
-  const reports = analyzeSourceFacts(merged, { rules: previewOp?.recognitionRules });
+  const reports = analyzeSourceFacts(merged, { rules: previewOp?.recognitionRules, nodeFacts: previewOp?.nodeFacts });
   const { scope: nodeScope } = buildNodeSnapshotScope(merged);
   const sourceScope = buildSourceAliasScope(reports.map((r) => r.sourceKey));
   const health = reports.map((report) => ({

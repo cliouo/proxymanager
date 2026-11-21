@@ -18,10 +18,13 @@
 
 import {
   NAMING_FIELDS,
+  applyNodeRecognitionFacts,
   nodeFingerprint,
   recognizeName,
   upstreamOrdinalOf,
   type NamingField,
+  type NodeFacts,
+  type NodeRecognitionFacts,
 } from './naming';
 import { sanitizeFragment } from './namingSanitize';
 import { envelopeOf, fingerprintOf, sourceOf, type SourceIdentity } from './provenance';
@@ -219,6 +222,7 @@ function factsOf(
     field: 'route' | 'vendor' | 'region' | 'entry' | 'tag';
     value: string;
   }[],
+  savedFacts?: NodeRecognitionFacts,
 ): Array<{
   field: NamingField;
   value: string | null;
@@ -244,7 +248,13 @@ function factsOf(
   // matched THIS node's name for that field; built-in recognition on the same
   // field stays derived (C7).
   const ruleHits = ruleHitsFor(name, rules);
-  const recognized = recognizeName(name, rules);
+  const recognized = applyNodeRecognitionFacts(recognizeName(name, rules), savedFacts);
+  const savedFields = new Set<string>(Object.keys(savedFacts ?? {}));
+  if (savedFields.has('region')) {
+    savedFields.add('region_code');
+    savedFields.add('emoji');
+  }
+  if (savedFields.has('route')) savedFields.add('entry');
   const push = (
     field: NamingField,
     value: string | null,
@@ -255,7 +265,7 @@ function factsOf(
       field,
       value: value === null ? null : sanitizeFragment(value),
       confidence,
-      kind: ruleHits.has(field) ? 'ai-rule' : kindOf(field),
+      kind: savedFields.has(field) || ruleHits.has(field) ? 'ai-rule' : kindOf(field),
       ambiguous,
     });
   };
@@ -336,6 +346,7 @@ function factsOf(
 export function analyzeSourceFacts(
   proxies: readonly unknown[],
   options: {
+    nodeFacts?: NodeFacts;
     sourceOfProxy?: (proxy: unknown) => SourceIdentity | undefined;
     rules?: {
       pattern: string;
@@ -408,7 +419,7 @@ export function analyzeSourceFacts(
       const occurrence = occurrenceByKey.get(key) ?? 0;
       occurrenceByKey.set(key, occurrence + 1);
       const handle = nodeIdentity(rawName, fp, occurrence);
-      const facts = factsOf(proxy, rules);
+      const facts = factsOf(proxy, rules, options.nodeFacts?.[fp ?? '']);
       factsTotal += facts.length;
       let nodeAmbiguous = false;
       for (const fact of facts) {

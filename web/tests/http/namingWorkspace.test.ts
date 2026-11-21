@@ -302,6 +302,19 @@ async function call(
 }
 
 describe('GET /api/v1/naming/[type]/[id]', () => {
+  it.each(['subscription', 'collection'] as const)('includes saved facts in %s health coverage', async (type) => {
+    const fingerprint = nodeFingerprint({ name: 'old', type: 'ss', server: 'a.example.com', port: 443 })!;
+    const operators = [{ id: 'n', kind: 'rename-template', template: '${vendor} ${tags}', nodeFacts: { [fingerprint]: { vendor: 'Custom', tags: ['IEPL'] } } }];
+    if (type === 'subscription') seedSub({ operators });
+    else bucket(REDIS_KEYS.collections).set(COL_ID, { id: COL_ID, name: 'Pool', subscription_ids: [SUB_ID], tags: [], operators });
+    const res = await call(GET, type, type === 'subscription' ? SUB_ID : COL_ID);
+    expect(res.status).toBe(200);
+    const body = await res.json() as { data: { health: Array<{ nodeFacts: Array<{ field: string; value: string | null; kind: string; confidence: string | null }> }> } };
+    const facts = body.data.health.flatMap((report) => report.nodeFacts);
+    expect(facts).toContainEqual(expect.objectContaining({ field: 'vendor', value: 'Custom', kind: 'ai-rule', confidence: 'high' }));
+    expect(facts).toContainEqual(expect.objectContaining({ field: 'tags', value: 'IEPL', kind: 'ai-rule', confidence: 'high' }));
+  });
+
   it('treats subscriptions and collections as global naming targets, independent of the active profile binding', async () => {
     bucket(REDIS_KEYS.profiles).set(PROFILE_ID, {
       id: PROFILE_ID,

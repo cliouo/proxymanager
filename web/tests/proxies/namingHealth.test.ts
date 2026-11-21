@@ -3,6 +3,7 @@ import { installTestHandleSecret } from '../helpers/handleSecret';
 import { analyzeSourceFacts } from '@/lib/proxies/namingHealth';
 import { withSource } from '@/lib/proxies/provenance';
 import { projectNodeSnapshot } from '@/lib/ai/namingContextProjection';
+import { nodeFingerprint, withRawIdentity } from '@/lib/proxies/naming';
 
 const node = (name: string, type = 'vless', server = 'edge.invalid') => ({
   name,
@@ -16,6 +17,22 @@ beforeAll(() => {
 });
 
 describe('analyzeSourceFacts', () => {
+  it('applies fingerprint facts after rules with authoritative confidence and provenance', () => {
+    const proxy = withRawIdentity(node('🇭🇰 日本 中转 直连 Custom'), { key: 'a', label: 'A' });
+    const fingerprint = nodeFingerprint(proxy)!;
+    const [report] = analyzeSourceFacts([{ ...proxy, name: 'renamed', udp: true }], {
+      rules: [{ pattern: 'renamed', field: 'region', value: 'JP' }],
+      nodeFacts: { [fingerprint]: { region: 'SG', tags: ['原生', 'IEPL'], rate: 2, route: '直连', vendor: 'Custom' } },
+    });
+    for (const [field, value] of Object.entries({ region: 'SG', region_code: 'SG', emoji: 'SG', tags: 'IEPL 原生', rate: '2', route: '直连', vendor: 'Custom' })) {
+      expect(report.nodeFacts.find((fact) => fact.field === field)).toMatchObject({ value, confidence: 'high', kind: 'ai-rule', ambiguous: false });
+    }
+    expect(report.ambiguousCount).toBe(0);
+    expect(report.fields.find((field) => field.field === 'vendor')).toMatchObject({ present: 1, percent: 100 });
+    expect(analyzeSourceFacts([proxy], { nodeFacts: {} })).toEqual(analyzeSourceFacts([proxy]));
+    expect(analyzeSourceFacts([], { nodeFacts: { [fingerprint]: { region: 'SG' } } })[0].nodeCount).toBe(0);
+  });
+
   it('reports exact coverage counts and percentages per placeholder', () => {
     const proxies = [
       withSource(node('🇭🇰 香港 01'), { key: 'a', label: '机场A' }),
