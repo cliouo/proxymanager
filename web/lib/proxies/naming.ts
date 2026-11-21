@@ -893,6 +893,7 @@ export function regionLabelFor(code: string, style: 'zh' | 'code'): string {
 export interface FormatNodeOptions {
   facts?: NodeRecognitionFacts;
   name: string;
+  rawName?: string;
   type?: string;
   source?: SourceIdentity | null;
   /** 1-based per-source ordinal (input order). */
@@ -1015,7 +1016,7 @@ export function upstreamOrdinalOf(base: string): number | null {
  */
 export function formatNodeName(opts: FormatNodeOptions): string {
   const { name, config } = opts;
-  if (isInfoNodeName(name)) return name;
+  if (isInfoNodeName(opts.rawName ?? name)) return name;
   let tokens: TemplateToken[];
   try {
     tokens = compileTemplate(config.template);
@@ -1341,9 +1342,10 @@ export function applyRenameTemplate(
     // documented path for envelope-less test inputs).
     const fp = fingerprintOf(p) ?? nodeFingerprint(p);
     const savedInfo = fp ? config.nodeFacts?.[fp]?.info : undefined;
+    const rawName = envelopeOf(p)?.rawName ?? (typeof p.name === 'string' ? p.name : '');
     if (
       savedInfo === true ||
-      (savedInfo !== false && typeof p.name === 'string' && isInfoNodeName(p.name))
+      (savedInfo !== false && isInfoNodeName(rawName))
     ) return;
     if (fp === null) {
       surviving.push({ proxy: p, index: i });
@@ -1431,6 +1433,7 @@ export function applyRenameTemplate(
         ? ''
         : formatNodeName({
             name,
+            rawName: envelopeOf(p)?.rawName,
             type: typeof p.type === 'string' ? p.type : undefined,
             source: source ?? null,
             index: ordinals.get(i),

@@ -19,6 +19,16 @@ const format = (name: string, template: string) =>
 describe('info nodes and data-size units', () => {
   const config = { template: '${emoji} ${region} ${index}${?note: · ${note}}' };
 
+  it.each(['我的订阅', '官网合集'])('does not classify a generated alias %s as upstream info', (label) => {
+    const original = withRawIdentity(node('香港 01'), { key: 'source:a', label });
+    const naming = { template: '${region} · ${source} · ${index}' };
+    const first = applyRenameTemplate([original], naming);
+    expect(first.proxies.map((p) => p.name)).toEqual([`香港 · ${label} · 01`]);
+    expect(applyRenameTemplate(first.proxies, naming).proxies.map((p) => p.name)).toEqual([`香港 · ${label} · 01`]);
+    const info = withRawIdentity(node('剩余流量：88 GB'), { key: 'source:a', label: '香港' });
+    expect(applyRenameTemplate([{ ...info, name: '香港 01' }], naming).proxies).toEqual([]);
+  });
+
   it.each([
     '剩余流量：88 GB', '剩余流量：88GB', '到期时间：2027-01-01',
     '套餐：500 MB', '官网：https://example.com', 'Remaining traffic: 1.5 TB',
