@@ -1,4 +1,4 @@
-import { FIXED_MIHOMO_PROXY_TYPES } from './mihomoProxyValidator';
+import { FIXED_MIHOMO_PROXY_TYPES } from './mihomoProxyTypes';
 
 /**
  * Credential-free AI payload construction for the naming-analysis feature.
