@@ -126,6 +126,26 @@ describe('naming engine regressions', () => {
 });
 
 describe('saved raw-fingerprint facts', () => {
+  it('strips case-insensitive literal vendor facts from notes and stays idempotent', () => {
+    const config = { template: '${vendor} · ${note}' };
+    let name = '香港 acme.* AcmeXYZ';
+    for (let i = 0; i < 3; i += 1) {
+      name = formatNodeName({ name, config, facts: { vendor: 'Acme.*' } });
+      expect(name).toBe('Acme.* · AcmeXYZ');
+    }
+    expect(formatNodeName({ name: '香港 foo', config, facts: {} })).toBe('foo');
+    expect(formatNodeName({ name: '香港', config, facts: { vendor: 'Acme' } })).toBe('Acme');
+  });
+
+  it('strips repeated region and route fact labels without eating Latin word-internal text', () => {
+    const config = { template: '${region} · ${route}${?note: · ${note}}' };
+    let name = '新加坡 新加坡 SG 直连 直连 Business';
+    for (let i = 0; i < 3; i += 1) {
+      name = formatNodeName({ name, config, facts: { region: 'SG', route: '直连' } });
+      expect(name).toBe('新加坡 · 直连 · Business');
+    }
+  });
+
   it('validates bounded strict facts and persists them through stored-operator decoding', () => {
     const nodeFacts = {
       [nodeFingerprint(node('old'))!]: {

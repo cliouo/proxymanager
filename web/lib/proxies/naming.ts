@@ -880,6 +880,51 @@ function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+export function applyNodeRecognitionFacts(
+  recognized: RecognizedName,
+  facts: NodeRecognitionFacts | undefined,
+): RecognizedName {
+  if (!facts) return recognized;
+  const result = { ...recognized, confidence: { ...recognized.confidence } };
+  const literals: string[] = [];
+  const fields: NamingField[] = [];
+  if (facts.region !== undefined) {
+    result.region = facts.region;
+    const region = regionByCode(facts.region);
+    literals.push(facts.region, ...(region ? [region.zh, region.alpha3] : []));
+    fields.push('region');
+  }
+  if (facts.tags !== undefined) {
+    result.tags = canonicalTags(facts.tags);
+    fields.push('tags');
+  }
+  if (facts.rate !== undefined) {
+    result.rate = facts.rate;
+    fields.push('rate');
+  }
+  if (facts.route !== undefined) {
+    result.route = facts.route;
+    result.entry = facts.route === '入口' ? '入口' : null;
+    literals.push(facts.route);
+    fields.push('route', 'entry');
+  }
+  if (facts.vendor !== undefined) {
+    result.vendor = facts.vendor;
+    literals.push(facts.vendor);
+    fields.push('vendor');
+  }
+  for (const literal of literals) {
+    if (!literal) continue;
+    const left = /^[A-Za-z0-9]/.test(literal) ? '(?<![A-Za-z0-9])' : '';
+    const right = /[A-Za-z0-9]$/.test(literal) ? '(?![A-Za-z0-9])' : '';
+    result.base = result.base.replace(new RegExp(`${left}${escapeRegExp(literal)}${right}`, 'gi'), ' ');
+  }
+  result.base = tidyFragment(result.base);
+  for (const field of fields) result.confidence[field] = 'high';
+  result.ambiguousFields = result.ambiguousFields.filter((field) => !fields.includes(field));
+  return result;
+}
+
 /** Remove every delimiter-bounded occurrence of `literal` from `text`. */
 function stripDelimited(text: string, literal: string): string {
   const escaped = escapeRegExp(literal);
@@ -992,18 +1037,10 @@ export function formatNodeName(opts: FormatNodeOptions): string {
   const recognizedRaw = alias
     ? recognizeName(recognitionName, config.recognitionRules)
     : recognizedBase;
-  const recognized = { ...recognizedBase, region: recognizedBase.region ?? recognizedRaw.region };
-  const facts = opts.facts;
-  if (facts) {
-    if (facts.region !== undefined) recognized.region = facts.region;
-    if (facts.tags !== undefined) recognized.tags = canonicalTags(facts.tags);
-    if (facts.rate !== undefined) recognized.rate = facts.rate;
-    if (facts.route !== undefined) {
-      recognized.route = facts.route;
-      recognized.entry = facts.route === '入口' ? '入口' : null;
-    }
-    if (facts.vendor !== undefined) recognized.vendor = facts.vendor;
-  }
+  const recognized = applyNodeRecognitionFacts(
+    { ...recognizedBase, region: recognizedBase.region ?? recognizedRaw.region },
+    opts.facts,
+  );
   if (templateUsesField(tokens, 'tags')) {
     recognized.base = recognizeTags(recognized.base).residual;
     for (const rule of config.recognitionRules ?? []) {
