@@ -563,6 +563,20 @@ describe('inspect_naming_collisions', () => {
 });
 
 describe('preview_naming_recognition', () => {
+  it('reports canonical joined tags rather than the vendor for tag rules', async () => {
+    const fetcher = await import('@/lib/services/subscriptionFetcher');
+    vi.mocked(fetcher.resolveSubscriptionProxiesRaw).mockResolvedValueOnce({
+      proxies: [{ name: '香港 Nexitally IPLC 高速', type: 'ss', server: 'a.example.com', port: 443 }], proxyCount: 1,
+    });
+    const env = await readAction('preview_naming_recognition').run(ctx, {
+      source_type: 'subscription', ref: subRef(), template: '${tags}', tw2cn: false, sourceAliases: {},
+      recognitionRules: [{ pattern: '高速', field: 'tag', value: 'IEPL' }, { pattern: 'absent', field: 'tag', value: 'BGP' }],
+    });
+    const data = env.data as { rules: Array<{ matches: number; values: Array<{ value: string }>; totalValues: number }> };
+    expect(data.rules[0]).toMatchObject({ matches: 1, values: [{ value: 'IEPL IPLC' }], totalValues: 1 });
+    expect(data.rules[1]).toMatchObject({ matches: 0, values: [], totalValues: 0 });
+  });
+
   it('counts rule matches and reports produced values — never saves', async () => {
     const env = await readAction('preview_naming_recognition').run(ctx, {
       source_type: 'subscription',

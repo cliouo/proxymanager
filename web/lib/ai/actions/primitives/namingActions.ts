@@ -779,7 +779,9 @@ const previewNamingRecognition = defineAction({
               ? (recognized.route ?? '')
               : rule.field === 'entry'
                 ? (recognized.entry ?? '')
-                : (recognized.vendor ?? '');
+                : rule.field === 'tag'
+                  ? recognized.tags.join(' ')
+                  : (recognized.vendor ?? '');
         if (value !== '') values.set(value, (values.get(value) ?? 0) + 1);
       }
       // Rule-authored text (pattern, configured value and the fact values
