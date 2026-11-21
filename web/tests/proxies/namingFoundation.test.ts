@@ -17,6 +17,20 @@ const format = (name: string, template: string) =>
   formatNodeName({ name, index: 1, config: { template } });
 
 describe('line tags and compatible residuals', () => {
+  it.each([
+    ['🇭🇰 香港 IEPL 01', '🇭🇰 香港 01 · IEPL'],
+    ['香港 IPLC 02 2倍', '🇭🇰 香港 02 · IPLC · 2x'],
+    ['日本 家庭宽带 03', '🇯🇵 日本 03 · 家庭宽带'],
+    ['香港 Tokyo 04', '🇭🇰 香港 04 · Tokyo'],
+    ['香港 05', '🇭🇰 香港 05'],
+  ])('keeps the note when extracting the ordinal from %s', (name, expected) => {
+    const config = {
+      template: '${emoji} ${region} ${index}${?note: · ${note}}${?rate: · ${rate}}',
+    };
+    expect(formatNodeName({ name, config, index: 1 })).toBe(expected);
+    expect(applyRenameTemplate([node(name)], config).proxies[0].name).toBe(expected);
+  });
+
   it('recognizes a closed, deduplicated vocabulary in canonical order', () => {
     expect(recognizeName('Native BGP 家庭宽带 IPLC专线 iepl IEPL 原生').tags).toEqual([
       'IEPL',

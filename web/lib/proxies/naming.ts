@@ -1091,7 +1091,7 @@ export function formatNodeName(opts: FormatNodeOptions): string {
   let upstreamOrdinal: number | null = null;
   if (usesIndex && opts.index !== undefined) {
     upstreamOrdinal = upstreamOrdinalOf(base);
-    if (upstreamOrdinal !== null) {
+    if (/^\d{1,6}$/.test(base)) {
       base = '';
     } else {
       base = base.replace(/[\s\-_·|:：]{1,4}\d{1,3}$/, '').trim();
