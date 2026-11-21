@@ -81,6 +81,13 @@ describe('line tags and compatible residuals', () => {
 });
 
 describe('naming engine regressions', () => {
+  it.each(['2倍', '倍率2', '倍率:2', '倍率：2', 'x2', '×2', '2x', '2×'])(
+    'preserves the boundary character before multiplier %s', (rate) => {
+      expect(recognizeName(`香港 专线${rate}`).base).toBe('专线');
+      expect(format(`香港 专线${rate}`, '${rate} · ${note}')).toBe('2x · 专线');
+    },
+  );
+
   it('populates source and emoji recursively inside optional blocks', () => {
     expect(
       formatNodeName({
