@@ -49,6 +49,8 @@ mihomo 写法。这些 load-bearing 部分由服务端强制。
 
 典型清洗管线顺序：`filter-useless` → `rename-regex`（去前缀）→ `filter-region` → `flag-emoji`（台湾加 `tw2cn`）→ `dedup` → `sort`。
 
+名称模板另支持 `${tags}` / `${?tags: · ${tags}}`：固定顺序 `IEPL IPLC 专线 BGP 家宽 原生`，只有使用它时才从备注去除标签。`recognitionRules` 的 `tag` 字段可添加一个规范标签；可选 `nodeFacts` 保存按原始指纹索引的部分识别事实（≤2000 条，优先于规则），仅显式 `info: true` 会额外移除信息节点。工作区的「AI 识别节点」提议仍须预览和保存校验，不在渲染时请求模型。
+
 ### rename-template（名称统一）语义
 
 `rename-template` 是**最终改名阶段**（启用后，其后的 rename-regex / flag-emoji 会被保存与预览拒绝；过滤 / 去重 / 排序等不受限）。它是**命名专用**算子：按**占位符模板 DSL**（`${emoji} ${region}${?route: · ${route}}${?source: · ${source}}${?index: · ${index}}${?rate: · ${rate}}` 这类写法）**确定性重组节点名**——同样的节点 + 同样模板恒得同样输出，保存后重跑幂等；执行从不调用模型，AI（一次性分析或「智能命名」的组合式命名循环）只是**可选的辅助建议**（显式触发、结果需应用并保存才生效，不是前置条件，也不替代任何算子）。**真去重按节点身份（连接配置指纹）而非名字**：同名不同配置两个节点都保留；同配置不同名只留第一个（来源优先级），preview 的 `deduped` 有诊断。序号优先复用上游编号、由服务端持久化（上游重排不翻动）。格式化重名用「来源-序号」有意义地消歧（`collisions` 报告），不再是无意义 ` #N` 优先。它不增删节点、不改顺序，filter / dedup / sort / filter-useless / set-prop 仍是通用管线算子。**每个管线最多一个**。它读当前名字，顺序影响规则照旧（前面的改名步骤改变它看到的名字）。详见 `references/operator-kinds.md` §10。

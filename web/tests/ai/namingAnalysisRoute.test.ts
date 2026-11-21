@@ -3,6 +3,7 @@ import { installTestHandleSecret } from '../helpers/handleSecret';
 import { DEFAULT_PROFILE_NAME } from '@/schemas';
 import { buildTargetRefScope } from '@/lib/proxies/handleScopes';
 import { GLOBAL_NAMING_SCOPE_ID } from '@/lib/services/namingTargetScope';
+import { nodeFingerprint } from '@/lib/proxies/naming';
 
 /** Test-local ref helper: a complete one-target domain. */
 const refOf = (type: 'subscription' | 'collection', id: string): string =>
@@ -134,6 +135,56 @@ beforeAll(() => {
 });
 
 describe('POST /api/v1/assistant/naming-analysis', () => {
+  it('offers node facts using the stored model endpoint, names only, without persisting proposals', async () => {
+    scalars.set(REDIS_KEYS.assistantConfig, {
+      baseUrl: 'https://api.deepseek.com',
+      model: 'deepseek-chat',
+      apiKey: 'cfg-key-123',
+    });
+    const fetcher = await import('@/lib/services/subscriptionFetcher');
+    const proxy = {
+      name: 'mystery transit',
+      type: 'ss',
+      server: 'private.invalid',
+      port: 443,
+      password: 'never-send-this',
+    };
+    vi.mocked(fetcher.resolveSubscriptionProxiesRaw).mockResolvedValueOnce({
+      proxies: [proxy],
+      proxyCount: 1,
+    });
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      text: async () => '',
+      json: async () => ({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                nodes: [{ i: 0, facts: { region: 'HK', tags: ['IEPL'] } }],
+              }),
+            },
+          },
+        ],
+      }),
+    });
+    const before = JSON.stringify(bucket(REDIS_KEYS.subscriptions).get(SUB_ID));
+    const res = await POST(request({ ref: SUB_REF(), mode: 'node-facts' }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      data: {
+        nodeFacts: { [nodeFingerprint(proxy)!]: { region: 'HK', tags: ['IEPL'] } },
+        proposed: 1,
+      },
+    });
+    expect(JSON.stringify(bucket(REDIS_KEYS.subscriptions).get(SUB_ID))).toBe(before);
+    const sent = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(JSON.parse(sent.messages[1].content)).toEqual([{ i: 0, name: 'mystery transit' }]);
+    expect(JSON.stringify(sent)).not.toContain('private.invalid');
+    expect(JSON.stringify(sent)).not.toContain('never-send-this');
+  });
+
   it('accepts a global workspace ref even when the active profile does not consume the target', async () => {
     scalars.set(REDIS_KEYS.assistantConfig, {
       baseUrl: 'https://api.deepseek.com',
