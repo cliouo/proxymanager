@@ -19,6 +19,25 @@ const format = (name: string, template: string) =>
 describe('info nodes and data-size units', () => {
   const config = { template: '${emoji} ${region} ${index}${?note: · ${note}}' };
 
+  it('applies saved field overrides when info=false keeps a heuristic info match', () => {
+    const original = withRawIdentity(node('套餐 GB 2倍'), { key: 'source:a', label: 'A' });
+    const facts = { info: false, region: 'JP', tags: ['IEPL' as const], rate: 3 };
+    const naming = {
+      template: '${region_code} ${tags} ${rate}',
+      nodeFacts: { [nodeFingerprint(original)!]: facts },
+    };
+    expect(formatNodeName({ name: '套餐 GB 2倍', config: naming, facts })).toBe('JP IEPL 3x');
+    expect(applyRenameTemplate([original], naming).proxies.map((p) => p.name)).toEqual(['JP IEPL 3x']);
+    expect(applyRenameTemplate([original], { template: naming.template }).proxies).toEqual([]);
+    expect(applyRenameTemplate([original], {
+      ...naming, nodeFacts: { [nodeFingerprint(original)!]: { ...facts, info: true } },
+    }).proxies).toEqual([]);
+    expect(applyRenameTemplate([original], {
+      template: '${region_code} ${rate}',
+      nodeFacts: { [nodeFingerprint(original)!]: { info: false } },
+    }).proxies.map((p) => p.name)).toEqual(['GB 2x']);
+  });
+
   it.each(['我的订阅', '官网合集'])('does not classify a generated alias %s as upstream info', (label) => {
     const original = withRawIdentity(node('香港 01'), { key: 'source:a', label });
     const naming = { template: '${region} · ${source} · ${index}' };

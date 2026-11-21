@@ -789,8 +789,12 @@ function applyRecognitionRules(
  * are extracted; everything else stays in `base` untouched. `rules` are the
  * saved, validated recognition overrides (see {@link RecognitionRule}).
  */
-export function recognizeName(name: string, rules?: RecognitionRule[]): RecognizedName {
-  if (isInfoNodeName(name)) {
+export function recognizeName(
+  name: string,
+  rules?: RecognitionRule[],
+  options?: { detectInfo?: boolean },
+): RecognizedName {
+  if (options?.detectInfo !== false && isInfoNodeName(name)) {
     return {
       info: true,
       tags: [],
@@ -1016,7 +1020,7 @@ export function upstreamOrdinalOf(base: string): number | null {
  */
 export function formatNodeName(opts: FormatNodeOptions): string {
   const { name, config } = opts;
-  if (isInfoNodeName(opts.rawName ?? name)) return name;
+  if (opts.facts?.info !== false && isInfoNodeName(opts.rawName ?? name)) return name;
   let tokens: TemplateToken[];
   try {
     tokens = compileTemplate(config.template);
@@ -1062,9 +1066,10 @@ export function formatNodeName(opts: FormatNodeOptions): string {
   const recognizedBase = recognizeName(
     alias ? stripDelimited(recognitionName, alias) : recognitionName,
     config.recognitionRules,
+    { detectInfo: false },
   );
   const recognizedRaw = alias
-    ? recognizeName(recognitionName, config.recognitionRules)
+    ? recognizeName(recognitionName, config.recognitionRules, { detectInfo: false })
     : recognizedBase;
   const recognized = applyNodeRecognitionFacts(
     { ...recognizedBase, region: recognizedBase.region ?? recognizedRaw.region },
