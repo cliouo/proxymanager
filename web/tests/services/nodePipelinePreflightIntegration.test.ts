@@ -456,6 +456,25 @@ describe('outer pipeline save integration', () => {
     expect(mocks.setFetchCache).not.toHaveBeenCalled();
   });
 
+  it.each([false, true])('never blocks on a parked rule and rewrites it only when unique (drop: %s)', async (drop) => {
+    const { subscription } = await aggregateFixture();
+    mocks.getBase.mockResolvedValue({ content: 'proxies: []\nrules: ["MATCH,DIRECT"]\n# === RULES ===\n', etag: 'base', updated_at: 1 });
+    mocks.listProfiles.mockResolvedValue([profile(DIRECT_PROFILE_ID, { type: 'subscription', id: SUB_ID })]);
+    mocks.listRules.mockResolvedValue([{ id: DIRECT_PROFILE_ID, type: 'DOMAIN', value: 'parked.example', anchor: 'RULES', policy: 'member 日本 01',
+      enabled: false, source: 'manual', rank: 0, added_at: 1, updated_at: 1, revision: 1 }]);
+    const next: Subscription = { ...subscription, operators: subscription.operators.map((row) => row.kind === 'rename-template' ? { ...row, template: '${region}' } : row) };
+    if (drop) next.operators.push({ id: 'drop', kind: 'filter-regex', mode: 'keep', pattern: '^never-match$' });
+    const context = await loadNamingCandidateContext('subscription', SUB_ID, 7);
+    const candidate = await context.analyze(next, { id: 'test', title: 'Test', template: '${region}' });
+    expect(candidate.blocked).toBe(false);
+    const changes = context.changesFor(candidate);
+    if (drop) expect(changes).toEqual([]);
+    else expect(changes[0].rules[0].after).toMatchObject({ enabled: false, policy: '日本', revision: 8 });
+    await expect(preflightProfileConfig(DIRECT_PROFILE_ID, (state) => ({ subscriptions: [next],
+      rules: state.rules.map((r) => changes[0]?.rules.find((patch) => patch.before.id === r.id)?.after ?? r),
+    }), context)).resolves.toMatchObject({ configVersion: 7 });
+  });
+
   it('recommends from all consumers with template inheritance and a single zero-write upstream snapshot', async () => {
     const { raw, subscription } = await aggregateFixture();
     const remote = { ...subscription, kind: 'remote', url: 'https://upstream.example/sub', content: undefined } as Subscription;

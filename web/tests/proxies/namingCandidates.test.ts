@@ -112,6 +112,22 @@ describe('policy-aware candidate inference and membership', () => {
     expect(rankNamingCandidates([changed, refs, stable]).map((c) => c.id)).toEqual(['stable', 'refs', 'changed']);
   });
 
+  it('rewrites parked rules when unique but never blocks on their missing or ambiguous mappings', () => {
+    const input = { ...profile([]), rules: [{ id: 'parked', policy: before[0].name, enabled: false }] };
+    const unique = analyzeNamingCandidate(template, [input], []);
+    expect(unique.references).toEqual([
+      { profileId: 'p', kind: 'rule', owner: 'parked', before: before[0].name, after: after[0].name, blocked: false },
+    ]);
+    for (const pool of [after.slice(1), [...after, node('hk', 'ambiguous')]]) {
+      const parked = analyzeNamingCandidate(template, [{ ...input, after: pool }], []);
+      expect(parked.references).toEqual([]);
+      expect(parked.blocked).toBe(false);
+      expect(parked.warnings).toEqual([]);
+      expect(analyzeNamingCandidate(template, [{ ...input, after: pool, rules: [{ ...input.rules[0], enabled: true }] }], []).blocked).toBe(true);
+      expect(analyzeNamingCandidate(template, [{ ...input, after: pool, rules: [{ id: 'legacy', policy: before[0].name }] }], []).blocked).toBe(true);
+    }
+  });
+
   it('tracks fallback references and blocks missing or ambiguous targets', () => {
     const input = profile([group({ 'empty-fallback': before[0].name })]);
     expect(analyzeNamingCandidate(template, [input], []).references).toEqual([

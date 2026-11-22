@@ -22,7 +22,7 @@ export interface CandidateProfile {
   id: string;
   name: string;
   groups: CandidateGroup[];
-  rules: { id: string; policy: string; disabled?: boolean }[];
+  rules: { id: string; policy: string; enabled?: boolean }[];
   before: CandidateNode[];
   after: CandidateNode[];
   extraRefs?: { owner: string; name: string }[];
@@ -189,7 +189,9 @@ export function analyzeNamingCandidate(
       }
       groups.push(impact);
     }
-    for (const rule of profile.rules) if (!rule.disabled) ref('rule', rule.id, rule.policy);
+    for (const rule of profile.rules) {
+      if (rule.enabled !== false || mapping.get(rule.policy) !== undefined) ref('rule', rule.id, rule.policy);
+    }
     for (const node of profile.before) if (node.dialer) {
       const after = afterNode(node.identity);
       ref('dialer', `node:${node.identity}`, node.dialer,
