@@ -184,4 +184,4 @@ npm run build   # 产物在 build/chrome-mv3/，Chrome 开发者模式 Load unpa
 Mihomo 的 lazy 与 empty-fallback 行为不随配置迁移。其他未支持的策略组属性或
 规则会返回 422。此入口只导出共享配置中的策略组和规则，不迁移 DNS 或设备覆盖。
 
-设备专用链接加 `?client=shadowrocket` 可下载含设备覆盖的 Clash YAML；未验证的选路行为会返回 422 兼容性诊断，而非原生 `.conf`。
+设备专用链接加 `?client=shadowrocket` 可下载含设备覆盖的 Clash YAML，而非原生 `.conf`。只有已知不兼容的选路行为会返回 422 兼容性诊断；尚未验证的照常下发，可在设备详情页点「重新检查」查看，或再加 `&strict=1` 让它们同样返回 422。
