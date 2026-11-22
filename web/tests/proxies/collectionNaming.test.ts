@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { collectionMemberExecution, collectionMemberNamingWarnings, hasPostTemplateRenameRows } from '@/lib/proxies/collectionNaming';
+import { collectionMemberExecution, collectionMemberNamingWarnings, hasPostTemplateNameDependentRows } from '@/lib/proxies/collectionNaming';
 import { applyRenameTemplate, nodeFingerprint, withRawIdentity, type NodeRecognitionFacts, type RecognitionRule } from '@/lib/proxies/naming';
 import { mergeEnvelope } from '@/lib/proxies/provenance';
 import type { StoredOperator } from '@/schemas/operator';
@@ -11,7 +11,7 @@ const rename: StoredOperator = { id: 'rename', kind: 'rename-regex', pattern: 'o
 
 describe('managed collection member execution', () => {
   it('removes only the active member template without changing stored rows', () => {
-    const rows = [rename, template, { id: 'filter', kind: 'filter-useless' as const, extra: [] }];
+    const rows = [rename, template, { id: 'filter', kind: 'filter-type' as const, mode: 'keep' as const, types: ['ss'] }];
     const snapshot = structuredClone(rows);
     expect(collectionMemberExecution(rows).operators).toEqual([rows[0], rows[2]]);
     expect(rows).toEqual(snapshot);
@@ -19,20 +19,39 @@ describe('managed collection member execution', () => {
     expect(collectionMemberNamingWarnings([{ id: 'empty', operators: [] }], true)).toEqual([]);
   });
 
-  it.each<StoredOperator>([rename, { id: 'flag', kind: 'flag-emoji', action: 'add' }])('keeps a template followed by $kind and warns only for managed collections', (row) => {
+  it.each<StoredOperator>([
+    rename,
+    { id: 'flag', kind: 'flag-emoji', action: 'add' },
+    { id: 'filter', kind: 'filter-regex', mode: 'keep', pattern: '^member ' },
+    { id: 'useless', kind: 'filter-useless', extra: [] },
+    { id: 'region', kind: 'filter-region', mode: 'keep', regions: ['HK'] },
+    { id: 'sort', kind: 'sort', by: 'name', order: 'asc' },
+    { id: 'sort', kind: 'sort', by: 'region', order: 'asc' },
+    { id: 'dedup', kind: 'dedup', by: 'name', action: 'drop' },
+    { id: 'dedup', kind: 'dedup', by: 'server-port', action: 'rename' },
+  ])('keeps a template followed by name-dependent $kind and warns only for managed collections', (row) => {
     const rows = [template, row];
-    expect(hasPostTemplateRenameRows(rows)).toBe(true);
+    expect(hasPostTemplateNameDependentRows(rows)).toBe(true);
     expect(collectionMemberExecution(rows).operators).toEqual(rows);
     expect(collectionMemberNamingWarnings([{ id: 'member-id', operators: rows }], true)).toEqual([
-      { code: 'member-post-template-rename', memberId: 'member-id', message: 'post-template rename rows; convert to facts/rules' },
+      { code: 'member-post-template-rename', memberId: 'member-id', message: 'post-template name-dependent rows; convert to facts/rules' },
     ]);
     expect(collectionMemberNamingWarnings([{ id: 'member-id', operators: rows }], false)).toEqual([]);
   });
 
   it('ignores disabled templates and disabled post-template edits', () => {
-    expect(hasPostTemplateRenameRows([{ ...template, disabled: true }, rename])).toBe(false);
-    expect(hasPostTemplateRenameRows([template, { ...rename, disabled: true }])).toBe(false);
-    expect(hasPostTemplateRenameRows([rename, template])).toBe(false);
+    expect(hasPostTemplateNameDependentRows([{ ...template, disabled: true }, rename])).toBe(false);
+    expect(hasPostTemplateNameDependentRows([template, { ...rename, disabled: true }])).toBe(false);
+    expect(hasPostTemplateNameDependentRows([rename, template])).toBe(false);
+  });
+
+  it.each<StoredOperator>([
+    { id: 'sort', kind: 'sort', by: 'server', order: 'asc' },
+    { id: 'sort', kind: 'sort', by: 'type', order: 'asc' },
+    { id: 'dedup', kind: 'dedup', by: 'server-port', action: 'drop' },
+    { id: 'props', kind: 'set-prop', udp: true },
+  ])('still skips before name-independent $kind', (row) => {
+    expect(collectionMemberExecution([template, row]).operators).toEqual([row]);
   });
 });
 

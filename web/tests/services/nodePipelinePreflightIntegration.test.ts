@@ -323,8 +323,19 @@ describe('outer pipeline save integration', () => {
     expect(preview.before.names).toEqual(['新加坡 01']);
     expect(preview.after.names).toEqual(['新加坡 · 家宽 · 01']);
     expect(preview.issues).toContainEqual({ code: 'member-post-template-rename', memberId: SUB_ID,
-      message: 'post-template rename rows; convert to facts/rules' });
+      message: 'post-template name-dependent rows; convert to facts/rules' });
     expect((await exportCollectionNodes(collection, [subscription], { writeCache: false })).proxies[0].name).toBe('新加坡 · 家宽 · 01');
+  });
+
+  it('keeps a template prefix visible to a downstream keep filter', async () => {
+    const { subscription, collection } = await aggregateFixture();
+    subscription.operators.push({ id: 'after', kind: 'filter-regex', mode: 'keep', pattern: '^member 日本 ' });
+    const preview = await previewNamingCollection(collection.id, collection.operators);
+    expect(preview.before.names).toEqual(['member 日本 01']);
+    expect(preview.after.names).toHaveLength(1);
+    expect(preview.issues).toContainEqual({ code: 'member-post-template-rename', memberId: SUB_ID,
+      message: 'post-template name-dependent rows; convert to facts/rules' });
+    expect((await exportCollectionNodes(collection, [subscription], { writeCache: false })).proxyCount).toBe(1);
   });
 
   it('separates direct and collection preflight outputs while sharing immutable raw bytes', async () => {
