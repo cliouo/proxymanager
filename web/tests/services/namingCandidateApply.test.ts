@@ -80,11 +80,11 @@ beforeEach(() => {
   db.history = null; db.version = 7; db.failedProfile = ''; db.blocked = false; db.casConflict = false; db.commits = 0;
   for (const profile of db.profiles) {
     const beforeGroup = ProxyGroupSchema.parse({ id: profile.id, kind: 'manual', name: 'Group', type: 'select', rank: 0, updated_at: 1,
-      'include-all-proxies': true, filter: '^old$', proxies: ['old'], 'dialer-proxy': 'old', notes: 'preserve me' });
+      'include-all-proxies': true, filter: '^old$', proxies: ['old'], 'dialer-proxy': 'old', 'empty-fallback': 'old', notes: 'preserve me' });
     const beforeRule = RuleSchema.parse({ id: profile.id, anchor: 'RULES', type: 'DOMAIN', value: 'example.com', policy: 'old', rank: 0, source: 'manual', added_at: 1, updated_at: 1, revision: 1 });
     db.groups.set(profile.id, [beforeGroup]); db.rules.set(profile.id, [beforeRule]);
     db.patches.push({ profileId: profile.id,
-      groups: [{ before: beforeGroup, after: { ...beforeGroup, filter: '^HK 01$', proxies: ['HK 01'], 'dialer-proxy': 'HK 01', updated_at: 2 } }],
+      groups: [{ before: beforeGroup, after: { ...beforeGroup, filter: '^HK 01$', proxies: ['HK 01'], 'dialer-proxy': 'HK 01', 'empty-fallback': 'HK 01', updated_at: 2 } }],
       rules: [{ before: beforeRule, after: { ...beforeRule, policy: 'HK 01', updated_at: 2, revision: 8 } }],
     });
   }
@@ -100,6 +100,7 @@ describe('atomic naming + profile migration orchestration', () => {
       expect(checked.proxyGroups[0].filter).toBe('^HK 01$');
       expect(checked.proxyGroups[0].proxies).toEqual(['HK 01']);
       expect(checked.proxyGroups[0]['dialer-proxy']).toBe('HK 01');
+      expect(checked.proxyGroups[0]['empty-fallback']).toBe('HK 01');
       expect(checked.rules[0].policy).toBe('HK 01');
       expect(checked.subscriptions[0].operators[0].kind).toBe('rename-template');
     }
@@ -111,7 +112,7 @@ describe('atomic naming + profile migration orchestration', () => {
     expect(db.entity.operators).toEqual([]);
     expect(db.checked).toHaveLength(2);
     for (const id of [P1, P2]) {
-      expect(db.groups.get(id)?.[0]).toMatchObject({ filter: '^old$', proxies: ['old'], 'dialer-proxy': 'old', notes: 'preserve me' });
+      expect(db.groups.get(id)?.[0]).toMatchObject({ filter: '^old$', proxies: ['old'], 'dialer-proxy': 'old', 'empty-fallback': 'old', notes: 'preserve me' });
       expect(db.rules.get(id)?.[0]).toMatchObject({ policy: 'old', revision: 9 });
     }
   });

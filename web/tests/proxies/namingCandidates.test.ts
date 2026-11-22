@@ -112,6 +112,18 @@ describe('policy-aware candidate inference and membership', () => {
     expect(rankNamingCandidates([changed, refs, stable]).map((c) => c.id)).toEqual(['stable', 'refs', 'changed']);
   });
 
+  it('tracks fallback references and blocks missing or ambiguous targets', () => {
+    const input = profile([group({ 'empty-fallback': before[0].name })]);
+    expect(analyzeNamingCandidate(template, [input], []).references).toEqual([
+      { profileId: 'p', kind: 'fallback', owner: 'g', before: before[0].name, after: after[0].name, blocked: false },
+    ]);
+    const missing = analyzeNamingCandidate(template, [{ ...input, after: after.slice(1) }], []);
+    expect(missing.references[0]).toMatchObject({ kind: 'fallback', blocked: true, after: undefined });
+    expect(missing.blocked).toBe(true);
+    expect(analyzeNamingCandidate(template, [{ ...input, after: [...after, node('hk', 'ambiguous')] }], []).blocked).toBe(true);
+    expect(analyzeNamingCandidate(template, [{ ...input, after: before }], []).references).toEqual([]);
+  });
+
   it('supports profiles without groups, empty pools, bounded samples and deterministic results', () => {
     expect(inferNamingTemplates([], [], false)).toHaveLength(3);
     const result = analyzeNamingCandidate(template, [{ ...profile([]), before: [], after: [] }], Array.from({ length: 25 }, (_, i) => `node ${i}`));

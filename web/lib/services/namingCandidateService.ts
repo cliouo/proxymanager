@@ -139,6 +139,7 @@ export async function loadNamingCandidateContext(type: 'subscription' | 'collect
         for (const ref of refs) {
           if (ref.kind === 'manual') after = { ...after, proxies: (after.proxies ?? []).map((n) => n === ref.before ? ref.after! : n) };
           if (ref.kind === 'dialer') after = { ...after, 'dialer-proxy': ref.after };
+          if (ref.kind === 'fallback') after = { ...after, 'empty-fallback': ref.after };
         }
         if (migration) after = { ...after, filter: migration.filter };
         return [{ before, after: { ...after, updated_at: Math.floor(Date.now() / 1000) } }];

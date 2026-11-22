@@ -42,7 +42,7 @@ export interface CandidateGroupImpact {
 
 export interface CandidateReference {
   profileId: string;
-  kind: 'manual' | 'rule' | 'dialer';
+  kind: 'manual' | 'rule' | 'dialer' | 'fallback';
   owner: string;
   before: string;
   after?: string;
@@ -163,6 +163,7 @@ export function analyzeNamingCandidate(
     };
     for (const group of profile.groups) {
       if (!group.boundSourceKeys) for (const name of strings(group.values.proxies)) ref('manual', group.id, name);
+      if (typeof group.values['empty-fallback'] === 'string') ref('fallback', group.id, group.values['empty-fallback']);
       if (typeof group.values['dialer-proxy'] === 'string') ref('dialer', group.id, group.values['dialer-proxy']);
       const before = groupNodeMembers(group, profile.before);
       const after = groupNodeMembers(group, profile.after);

@@ -434,6 +434,27 @@ describe('outer pipeline save integration', () => {
     expect(changes.rules[0].after.policy).toBe('日本 · Backup');
   });
 
+  it.each([false, true])('rewrites a renamed empty-fallback before final preflight (inherited: %s)', async (inherited) => {
+    const { subscription } = await aggregateFixture();
+    mocks.listProfiles.mockResolvedValue([profile(DIRECT_PROFILE_ID, { type: 'subscription', id: SUB_ID })]);
+    const oldName = 'member 日本 01';
+    mocks.listProxyGroups.mockResolvedValue([{ id: DIRECT_PROFILE_ID, name: 'Fallback', kind: 'raw', type: 'select', rank: 0, updated_at: 1,
+      'include-all-proxies': true, filter: '^日本$', ...(inherited ? { template_id: COLLECTION_ID } : { 'empty-fallback': oldName }) }]);
+    if (inherited) mocks.listProxyGroupTemplates.mockResolvedValue([{ id: COLLECTION_ID, name: 'Inherited', 'empty-fallback': oldName }]);
+    const next: Subscription = { ...subscription, operators: subscription.operators.map((row) => row.kind === 'rename-template' ? { ...row, template: '${region}' } : row) };
+    const context = await loadNamingCandidateContext('subscription', SUB_ID, 7);
+    await expect(preflightProfileConfig(DIRECT_PROFILE_ID, () => ({ subscriptions: [next] }), context)).rejects.toThrow();
+    const candidate = await context.analyze(next, { id: 'test', title: 'Test', template: '${region}' });
+    expect(candidate.references).toContainEqual({ profileId: DIRECT_PROFILE_ID, kind: 'fallback', owner: DIRECT_PROFILE_ID,
+      before: oldName, after: '日本', blocked: false });
+    const changes = context.changesFor(candidate)[0];
+    expect(changes.groups[0].after['empty-fallback']).toBe('日本');
+    await expect(preflightProfileConfig(DIRECT_PROFILE_ID, (state) => ({ subscriptions: [next],
+      proxyGroups: state.proxyGroups.map((g) => changes.groups.find((patch) => patch.before.id === g.id)?.after ?? g),
+    }), context)).resolves.toMatchObject({ configVersion: 7 });
+    expect(mocks.setFetchCache).not.toHaveBeenCalled();
+  });
+
   it('recommends from all consumers with template inheritance and a single zero-write upstream snapshot', async () => {
     const { raw, subscription } = await aggregateFixture();
     const remote = { ...subscription, kind: 'remote', url: 'https://upstream.example/sub', content: undefined } as Subscription;
