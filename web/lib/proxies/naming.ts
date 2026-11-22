@@ -622,7 +622,7 @@ export type FactConfidence = 'high' | 'medium' | 'low';
 /** Bounded rate pattern: 1–3 integer digits, ≤2 fraction digits, x/× suffix. */
 const RATE_RE = /(?<![0-9A-Za-z])(\d{1,3}(?:\.\d{1,2})?)\s*[x×](?![0-9A-Za-z])/;
 const EXTRA_RATE_RE =
-  /(?<![0-9A-Za-z.])(?:(\d{1,3}(?:\.\d{1,2})?)\s*倍|(?:倍率\s*[:：]?\s*|[x×]\s*)(\d{1,3}(?:\.\d{1,2})?))(?![0-9A-Za-z.])/;
+  /(?<![0-9A-Za-z.])(?:(\d{1,3}(?:\.\d{1,2})?)\s*倍(?!率)|(?:倍率\s*[:：]?\s*|[x×]\s*)(\d{1,3}(?:\.\d{1,2})?))(?![0-9A-Za-z.])/;
 
 /**
  * Conservative route tokens — entry/transit/exit semantics, bounded + word-

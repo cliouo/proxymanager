@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   applyRenameTemplate,
+  defaultTemplateFor,
   formatNodeName,
   nodeFingerprint,
   recognizeName,
@@ -15,6 +16,15 @@ import { OperatorSchema, StoredOperatorListSchema } from '@/schemas/operator';
 const node = (name: string, port = 443) => ({ name, type: 'ss', server: 'edge.example', port });
 const format = (name: string, template: string) =>
   formatNodeName({ name, index: 1, config: { template } });
+
+describe('rate tokens adjacent to ordinals', () => {
+  it.each([['倍率2', 2], ['倍率:2', 2], ['2倍', 2], ['x2', 2], ['×2', 2], ['0.5x', 0.5]])('recognizes %s without consuming the ordinal', (token, rate) => {
+    const name = `🇯🇵 Tokyo 04 ${token}`;
+    expect(recognizeName(name).rate).toBe(rate);
+    expect(format(name, '${region_code} ${index} ${rate}')).toBe(`JP 04 ${rate}x`);
+    expect(applyRenameTemplate([node(name)], { template: defaultTemplateFor(true) }).proxies[0].name).toContain(`${rate}x`);
+  });
+});
 
 describe('info nodes and data-size units', () => {
   const config = { template: '${emoji} ${region} ${index}${?note: · ${note}}' };
