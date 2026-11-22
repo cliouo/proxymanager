@@ -75,6 +75,7 @@ import { nodeFingerprint } from '@/lib/proxies/naming';
 import { analyzeSourceFacts } from '@/lib/proxies/namingHealth';
 import { exportCollectionNodes, exportSubscriptionNodes, mergeCollectionMemberProxies } from '@/lib/services/nodeExportService';
 import { previewNamingCollection } from '@/lib/services/namingPreviewService';
+import { resolveSubscriptionProxies } from '@/lib/services/subscriptionFetcher';
 import { resolveConfig } from '@/lib/engine/resolve';
 import {
   preflightProfileConfig,
@@ -349,6 +350,31 @@ describe('outer pipeline save integration', () => {
       const member = await resolveSubscriptionForPreflight(remote, { subscriptionSnapshot, managedCollection: true });
       expect(direct.proxies[0].name).toBe('member 日本 01');
       expect(member.proxies[0].name).toBe('日本 edge 01');
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      expect(mocks.setFetchCache).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it.each([false, true])('matches serving fallback for duplicate remote names with managed-first=%s', async (managedFirst) => {
+    const { subscription } = await aggregateFixture();
+    const remote = { ...subscription, operators: [], kind: 'remote', url: 'https://upstream.example/sub', content: undefined } as Subscription;
+    const fresh = [{ ...US_NODE, name: 'edge' }, { ...JP_NODE, name: 'edge' }];
+    const fetcher = vi.fn(async () => new Response(stringify({ proxies: fresh })));
+    vi.stubGlobal('fetch', fetcher);
+    try {
+      const serving = await resolveSubscriptionProxies(remote, { writeCache: false, recordHealth: false });
+      expect(serving.stale).toBe(true);
+      expect(serving.proxies.map((p) => p.name)).toEqual([US_NODE.name, JP_NODE.name]);
+      fetcher.mockClear();
+      const subscriptionSnapshot = new Map();
+      const managed = () => resolveSubscriptionForPreflight(remote, { subscriptionSnapshot, managedCollection: true });
+      if (managedFirst) expect((await managed()).proxies.map((p) => p.name)).toEqual(['edge', 'edge']);
+      const direct = await resolveSubscriptionForPreflight(remote, { subscriptionSnapshot });
+      expect(direct.stale).toBe(true);
+      expect(direct.proxies).toEqual(serving.proxies);
+      if (!managedFirst) expect((await managed()).proxies.map((p) => p.name)).toEqual(['edge', 'edge']);
       expect(fetcher).toHaveBeenCalledTimes(1);
       expect(mocks.setFetchCache).not.toHaveBeenCalled();
     } finally {

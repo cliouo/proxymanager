@@ -121,7 +121,7 @@ export interface SubscriptionResolveOptions {
   deferUniqueNames?: boolean;
   /** Collection owns naming; member corrections travel in the node envelope. */
   managedCollection?: boolean;
-  /** Share upstream bytes across contextual executions in one preflight. */
+  /** Share fresh attempts, not context-specific validation/fallback decisions. */
   rawSnapshot?: { key: string; entries: SubscriptionRawSnapshot };
   /** Config generation captured before the caller read render inputs. */
   ordinalConfigVersion?: number;
@@ -362,21 +362,11 @@ export async function resolveSubscriptionProxies(
 ): Promise<FetchSubscriptionProxiesResult> {
   const execution = options.managedCollection ? collectionMemberExecution(sub.operators ?? []) : undefined;
   const operators = execution?.operators ?? sub.operators;
-  const readRaw = () => resolveSubscriptionRaw(sub, {
+  const raw = await resolveSubscriptionRaw(sub, {
     ...options,
-    ...(options.managedCollection || options.rawSnapshot ? { deferUniqueNames: true } : {}),
+    ...(options.managedCollection ? { deferUniqueNames: true } : {}),
   });
-  let pending = options.rawSnapshot?.entries.get(options.rawSnapshot.key);
-  if (!pending) {
-    pending = readRaw();
-    options.rawSnapshot?.entries.set(options.rawSnapshot.key, pending);
-  }
-  const raw = await pending;
   const base = raw.getProxies();
-  if (options.rawSnapshot && !options.managedCollection &&
-      !(options.deferUniqueNames ?? hasActiveManagedNaming(sub.operators))) {
-    validateProviderProxyList(base);
-  }
   const identity = subscriptionIdentity(sub);
   (options.ordinalPlanningSession ?? options.ordinalDomainRegistry)?.registerSourceDomain(
     base,
@@ -643,12 +633,25 @@ async function resolveSubscriptionRaw(
   const recordHealth = options.recordHealth ?? options.writeCache !== false;
   const attemptedAt = Date.now();
   try {
-    const fresh = await fetchSubscriptionInternal(sub.url, {
+    const fetchFresh = () => fetchSubscriptionInternal(sub.url!, {
       userAgent: subscriptionUserAgent(sub),
       timeoutMs: options.timeoutMs ?? FETCH_TIMEOUT_MS,
       customHeaders,
-      deferUniqueNames,
+      deferUniqueNames: options.rawSnapshot ? true : deferUniqueNames,
     });
+    let pending = options.rawSnapshot?.entries.get(options.rawSnapshot.key);
+    if (!pending) {
+      pending = fetchFresh();
+      options.rawSnapshot?.entries.set(options.rawSnapshot.key, pending);
+    }
+    const fresh = await pending;
+    if (options.rawSnapshot && !deferUniqueNames) {
+      try {
+        validateProviderProxyList(fresh.getProxies());
+      } catch (error) {
+        throw classifyFreshContentError(error);
+      }
+    }
 
     const entry: FetchCacheEntry = {
       // The cache stores the provider-YAML string (entry format unchanged);
