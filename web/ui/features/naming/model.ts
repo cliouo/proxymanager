@@ -40,6 +40,10 @@ export function namingUndoFeedback(createdGroups: string[] = []) {
   } : { label: '撤销', description: undefined };
 }
 
+export function namingApplyFeedback(title: string, grouping: boolean): string {
+  return grouping ? '命名和策略组已生成' : `「${title.trim() || '命名方案'}」已应用`;
+}
+
 export function candidateRationale(candidate: NamingCandidate): string {
   const changed = candidate.groups.filter((g) => g.broken || g.error || g.before !== (g.migration?.after ?? g.after)).length;
   const migrated = candidate.groups.filter((g) => g.migration).length;

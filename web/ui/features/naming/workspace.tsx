@@ -29,6 +29,7 @@ import {
   activationOf,
   buildRows,
   fieldStats,
+  namingApplyFeedback,
   namingUndoFeedback,
   planBody,
   ruleError,
@@ -145,7 +146,7 @@ function Workspace({
     notify.warn('配置刚被其他操作修改', '已刷新到最新状态，你的改动还在。请再看一眼预览，然后重新应用。');
   };
 
-  const applyCandidate = async (template: string, groupingPurposes?: GroupingPurpose[]) => {
+  const applyCandidate = async (template: string, title: string, groupingPurposes?: GroupingPurpose[]) => {
     if (busy) return;
     setBusy('apply');
     try {
@@ -154,7 +155,7 @@ function Workspace({
       setPlan(storedPlan(next));
       refreshShared();
       const undo = namingUndoFeedback(next.priorPlan.createdGroups);
-      notify.success(groupingPurposes ? '命名与策略组已生成' : '推荐命名方案与引用迁移已应用', undo.description, {
+      notify.success(namingApplyFeedback(title, groupingPurposes !== undefined), undo.description, {
         label: undo.label, onClick: () => void restore(next.configVersion),
       });
     } catch (error) {

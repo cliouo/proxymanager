@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { NamingCandidate } from '@/lib/proxies/namingCandidates';
-import { candidateRationale, groupingPreviewMatches, groupingSelection, namingUndoFeedback, toggleGroupingPurpose } from '@/ui/features/naming/model';
+import { candidateRationale, groupingPreviewMatches, groupingSelection, namingApplyFeedback, namingUndoFeedback, toggleGroupingPurpose } from '@/ui/features/naming/model';
 import type { GroupingPreview } from '@/lib/proxies/namingGroupGeneration';
 import { fetchQuery, getQueryData } from '@/ui/data/query';
 
@@ -71,5 +71,18 @@ describe('generated-group Undo feedback', () => {
   it('does not claim to remove groups when none were created', () => {
     expect(namingUndoFeedback()).toEqual({ label: '撤销', description: undefined });
     expect(namingUndoFeedback([]).description).toBeUndefined();
+  });
+});
+
+describe('applied option feedback', () => {
+  it('uses the selected option title rather than calling every option recommended', () => {
+    expect(namingApplyFeedback('精简 · 代码优先', false)).toBe('「精简 · 代码优先」已应用');
+    expect(namingApplyFeedback('推荐命名 · 线路标签', false)).toBe('「推荐命名 · 线路标签」已应用');
+  });
+  it('distinguishes naming and group generation', () => {
+    expect(namingApplyFeedback('命名和策略组', true)).toBe('命名和策略组已生成');
+  });
+  it('falls back to a neutral title if the title is empty', () => {
+    expect(namingApplyFeedback('  ', false)).toBe('「命名方案」已应用');
   });
 });

@@ -11,7 +11,7 @@ import { candidateRationale, groupingPreviewMatches, groupingSelection, toggleGr
 
 export function NamingCandidates({ type, id, version, busy, onApply }: {
   type: TargetType; id: string; version: number; busy: boolean;
-  onApply: (template: string, groupingPurposes?: GroupingPurpose[]) => Promise<void>;
+  onApply: (template: string, title: string, groupingPurposes?: GroupingPurpose[]) => Promise<void>;
 }) {
   const query = useQuery<{ configVersion: number; candidates: NamingCandidate[]; groupingAvailable?: boolean }>(
     `naming:${type}:${id}:candidates:${version}`,
@@ -47,7 +47,7 @@ export function NamingCandidates({ type, id, version, busy, onApply }: {
           {candidate.references.map((ref, i) => <p key={i} className={ref.blocked ? 'text-bad' : 'text-ink-3'}>{ref.kind}: {ref.before} → {ref.after ?? '无法唯一映射'}{ref.blocked && ' · 需手动处理'}</p>)}
         </details>}
         {candidate.warnings.map((warning, i) => <p key={i} className="my-1 text-xs text-warn">{warning}</p>)}
-        <Button disabled={busy || candidate.blocked || query.data?.configVersion !== version} onClick={() => void onApply(candidate.template)}>应用</Button>
+        <Button disabled={busy || candidate.blocked || query.data?.configVersion !== version} onClick={() => void onApply(candidate.template, candidate.title)}>应用</Button>
       </div>)}
     </div>
   </Card>;
@@ -55,7 +55,7 @@ export function NamingCandidates({ type, id, version, busy, onApply }: {
 
 function GroupingPicker({ type, id, version, busy, onApply }: {
   type: TargetType; id: string; version: number; busy: boolean;
-  onApply: (template: string, purposes?: GroupingPurpose[]) => Promise<void>;
+  onApply: (template: string, title: string, purposes?: GroupingPurpose[]) => Promise<void>;
 }) {
   const [selection, setSelection] = useState<GroupingPurpose[] | null>(null);
   const query = useQuery<GroupingPreview>(`naming:${type}:${id}:grouping:${version}:${selection?.join(',') ?? 'default'}`,
@@ -85,7 +85,7 @@ function GroupingPicker({ type, id, version, busy, onApply }: {
     {!loading && preview?.warnings.map((warning, i) => <p key={i} className="text-xs text-bad">{warning}</p>)}
     </div>
     <Button disabled={busy || loading || !!query.error || !preview || preview.blocked || !selected.length || preview.configVersion !== version}
-      onClick={() => preview && void onApply(preview.template, selected)}>生成命名和策略组</Button>
+      onClick={() => preview && void onApply(preview.template, '命名和策略组', selected)}>生成命名和策略组</Button>
   </div>;
 }
 
