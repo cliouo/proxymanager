@@ -102,6 +102,10 @@ export async function loadNamingCandidateContext(type: 'subscription' | 'collect
     const profilePools: CandidateProfile[] = await Promise.all(inputs.map(async (input, index) => {
       const after = await pool(input, next);
       const actualAfter = new Map(after.map((node) => [node.identity, node]));
+      const affectedIdentities = new Set(before[index]
+        .filter((node) => actualAfter.get(node.identity)?.name !== node.name)
+        .map((node) => node.identity));
+      const affected = (node: CandidateNode) => ({ ...node, scoped: node.scoped || affectedIdentities.has(node.identity) });
       const groups = input.groups.map((group) => {
         let boundSourceKeys: string[] | undefined;
         if (group.kind === 'single-sub' && group.bound_subscription_id) {
@@ -115,10 +119,8 @@ export async function loadNamingCandidateContext(type: 'subscription' | 'collect
       });
       const baseNodes = input.baseNodes.map((node) => nodeOf(node, false));
       return { id: input.profile.id, name: input.profile.name, groups, rules: input.rules,
-        before: [...baseNodes, ...before[index]],
-        after: [...baseNodes, ...before[index].filter((n) => !n.scoped).map((node) => ({
-          ...node, dialer: actualAfter.get(node.identity)?.dialer,
-        })), ...after.filter((n) => n.scoped)],
+        before: [...baseNodes, ...before[index].map(affected)],
+        after: [...baseNodes, ...after.map(affected)],
         extraRefs: input.baseRefs };
     }));
     const sample = await targetSample(next);

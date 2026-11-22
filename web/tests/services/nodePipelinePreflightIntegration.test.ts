@@ -404,6 +404,36 @@ describe('outer pipeline save integration', () => {
     expect(context.changesFor(candidate)[0].groups[0].after.filter).toBe(`^(?:${finalName})$`);
   });
 
+  it('tracks cross-source collision suffixes in counts, filters and exact references', async () => {
+    const { subscription, collection } = await aggregateFixture();
+    const backup: Subscription = { ...subscription, id: COLLECTION_PROFILE_ID, name: '机场B', display_name: 'Backup',
+      content: stringify({ proxies: [{ ...JP_NODE, name: '日本', server: 'backup.example' }] }), operators: [] };
+    const col = { ...collection, subscription_ids: [SUB_ID, backup.id], operators: [] };
+    mocks.listSubscriptions.mockResolvedValue([subscription, backup]);
+    mocks.listCollections.mockResolvedValue([col]);
+    mocks.listProfiles.mockResolvedValue([profile(COLLECTION_PROFILE_ID, { type: 'collection', id: col.id })]);
+    mocks.listProxyGroups.mockResolvedValue([
+      { id: DIRECT_PROFILE_ID, name: 'Dynamic', kind: 'raw', type: 'select', rank: 0, updated_at: 1, 'include-all-proxies': true, filter: '^日本$' },
+      { id: COLLECTION_PROFILE_ID, name: 'Manual', kind: 'manual', type: 'select', rank: 1, updated_at: 1, proxies: ['日本'] },
+    ]);
+    mocks.listRules.mockResolvedValue([{ id: DIRECT_PROFILE_ID, policy: '日本' }]);
+    const next: Subscription = { ...subscription, operators: subscription.operators.map((row) => row.kind === 'rename-template' ? { ...row, template: '${region}' } : row) };
+    const context = await loadNamingCandidateContext('subscription', SUB_ID, 7);
+    const candidate = await context.analyze(next, { id: 'test', title: 'Test', template: '${region}' });
+    const served = await resolveConfig(BASE, [], [next, backup], [], [], {
+      collections: [col], boundSource: { type: 'collection', id: col.id }, persistSnapshot: false, persistOrdinals: false,
+    });
+    expect(served.nodeNames).toContain('日本 · Backup');
+    expect(candidate.groups[0].migration).toEqual({ filter: '^(?:日本 · Backup)$', after: 1 });
+    expect(candidate.references).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'manual', before: '日本', after: '日本 · Backup', blocked: false }),
+      expect.objectContaining({ kind: 'rule', before: '日本', after: '日本 · Backup', blocked: false }),
+    ]));
+    const changes = context.changesFor(candidate)[0];
+    expect(changes.groups.find((g) => g.before.id === COLLECTION_PROFILE_ID)?.after.proxies).toEqual(['日本 · Backup']);
+    expect(changes.rules[0].after.policy).toBe('日本 · Backup');
+  });
+
   it('recommends from all consumers with template inheritance and a single zero-write upstream snapshot', async () => {
     const { raw, subscription } = await aggregateFixture();
     const remote = { ...subscription, kind: 'remote', url: 'https://upstream.example/sub', content: undefined } as Subscription;
