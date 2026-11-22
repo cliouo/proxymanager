@@ -10,7 +10,8 @@ export interface CandidateNode {
   sourceKey?: string;
   sourceLabel?: string;
   sourceId?: string;
-  namingTemplate?: string;
+  namingTemplate?: string | null;
+  namingTw2cn?: boolean;
   facts?: NodeRecognitionFacts;
   dialer?: string;
 }
@@ -164,8 +165,8 @@ export function fieldValueSelector(values: readonly string[]) {
 }
 
 function probeState(node: CandidateNode) {
-  const recognized = recognizeName(node.name);
-  return { facts: { region: recognized.region, tags: recognized.tags, rate: recognized.rate, vendor: recognized.vendor },
+  const recognized = node.facts ?? recognizeName(node.name, undefined, { detectInfo: false });
+  return { facts: { region: recognized.region ?? null, tags: recognized.tags ?? [], rate: recognized.rate ?? null, vendor: recognized.vendor ?? null },
     sourceLabel: node.sourceLabel ?? node.sourceKey ?? '' };
 }
 
@@ -179,7 +180,7 @@ function renderProbe(node: CandidateNode, state: ProbeState, template: string) {
     config: { template } });
 }
 
-function rawProbe(node: CandidateNode, field: SelectorField, state: ProbeState) {
+export function renderRawNamingProbe(node: CandidateNode, field: SelectorField, state: ProbeState) {
   const original = probeState(node);
   const facts = state.facts;
   if (field === 'region') {
@@ -234,7 +235,7 @@ function selectorProbes(before: CandidateNode[], recovered: CandidateNode[], tem
     for (const change of changes) {
       const oldVariant = { facts: { ...oldState.facts, ...change.facts }, sourceLabel: change.sourceLabel ?? oldState.sourceLabel };
       const newVariant = { facts: { ...newState.facts, ...change.facts }, sourceLabel: change.sourceLabel ?? newState.sourceLabel };
-      pairs.push({ before: original.namingTemplate ? renderProbe(original, oldVariant, original.namingTemplate) : rawProbe(original, change.field, oldVariant),
+      pairs.push({ before: original.namingTemplate ? renderProbe(original, oldVariant, original.namingTemplate) : renderRawNamingProbe(original, change.field, oldVariant),
         after: renderProbe(node, newVariant, template) });
     }
   }

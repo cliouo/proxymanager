@@ -353,6 +353,26 @@ describe('outer pipeline save integration', () => {
     expect(preview.purposes.find((p) => p.id === 'region')?.count).toBe(1);
   });
 
+  it.each([false, true])('probes untouched members with their own policy in an unmanaged collection (managed=%s)', async (managed) => {
+    const { subscription, collection } = await aggregateFixture();
+    const edited: Subscription = { ...subscription, content: stringify({ proxies: [{ ...US_NODE, name: 'HK 01' }] }), operators: [] };
+    const untouched: Subscription = { ...subscription, id: '33333333-3333-4333-8333-333333333333', name: 'raw-member', display_name: 'Raw',
+      content: stringify({ proxies: [{ ...JP_NODE, name: 'JP 01' }] }),
+      operators: managed ? [{ id: 'member-template', kind: 'rename-template', template: '${region_code} ${index}', recognitionRules: [] }] : [] };
+    mocks.listSubscriptions.mockResolvedValue([edited, untouched]);
+    mocks.listCollections.mockResolvedValue([{ ...collection, subscription_ids: [SUB_ID, untouched.id], operators: [] }]);
+    mocks.listProfiles.mockResolvedValue([profile(COLLECTION_PROFILE_ID, { type: 'collection', id: COLLECTION_ID })]);
+    mocks.getBase.mockResolvedValue({ content: '# === PROXY-GROUPS ===\nrules: ["MATCH,DIRECT"]\n', etag: 'base', updated_at: 1 });
+    const context = await loadNamingCandidateContext('subscription', SUB_ID, 7);
+    const preview = await context.grouping(['region']);
+    expect(preview.blocked).toBe(false);
+    const japan = preview.profiles[0].groups.find((g) => g.name === '🇯🇵 日本')!;
+    expect(japan.count).toBe(1);
+    expect(preview.profiles[0].groups.find((g) => g.name === '🇭🇰 香港')?.count).toBe(1);
+    expect(japan.sample).toContain('JP 01');
+    expect(japan.filter).toContain('JP');
+  });
+
   it('renders members once using manual edits and identity facts, with export/preview/serve/preflight parity', async () => {
     const { subscription, collection } = await aggregateFixture();
     const stored = structuredClone(subscription.operators);

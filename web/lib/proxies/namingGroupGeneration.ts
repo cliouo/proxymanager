@@ -1,5 +1,5 @@
 import { compileTemplate, formatNodeName, LINE_TAGS, recognizeName, type NodeRecognitionFacts } from './naming';
-import { fieldValueSelector, type CandidateNode } from './namingCandidates';
+import { fieldValueSelector, renderRawNamingProbe, type CandidateNode } from './namingCandidates';
 import { matchFilter } from './filterMatch';
 import { REGIONS } from './regions';
 
@@ -62,8 +62,18 @@ export function groupingCounts(nodes: CandidateNode[]) {
 
 function freshName(node: CandidateNode, template: string, changes: Partial<NodeRecognitionFacts> = {}, source = node.sourceLabel ?? node.sourceKey ?? '') {
   const facts = factsOf(node);
+  if (node.namingTemplate === null) {
+    const raw = { ...node, name: `${node.name} · fresh-node`, facts };
+    const varied = { ...facts, ...changes };
+    const state = { facts: { region: varied.region ?? null, tags: varied.tags ?? [], rate: varied.rate ?? null, vendor: varied.vendor ?? null }, sourceLabel: source };
+    if (changes.region !== undefined) return renderRawNamingProbe(raw, 'region', state);
+    if (changes.tags !== undefined) return renderRawNamingProbe(raw, 'tags', state);
+    if (changes.rate !== undefined) return renderRawNamingProbe(raw, 'rate', state);
+    if (source !== (node.sourceLabel ?? node.sourceKey ?? '')) return renderRawNamingProbe(raw, 'source', state);
+    return raw.name;
+  }
   return formatNodeName({ name: 'fresh-node', index: 999, type: node.type,
-    source: { key: node.sourceKey ?? '', label: source }, config: { template: node.namingTemplate ?? template },
+    source: { key: node.sourceKey ?? '', label: source }, config: { template: node.namingTemplate ?? template, tw2cn: node.namingTw2cn },
     facts: { ...facts, ...changes } });
 }
 

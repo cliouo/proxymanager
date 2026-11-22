@@ -69,17 +69,19 @@ export async function loadNamingCandidateContext(type: 'subscription' | 'collect
   const scope = (node: Record<string, unknown>) => type === 'collection' || sourceOf(node)?.key === (entity as Subscription).name;
   const nodeOf = (node: Record<string, unknown>, scoped: boolean, namingEntity = entity): CandidateNode => {
     const managed = buildOperatorSnapshot(namingEntity).managed?.decoded;
+    const rendered = envelopeOf(node)?.renderedNaming;
     return {
       identity: fingerprintOf(node) ?? nodeFingerprint(node) ?? `name:${String(node.name)}`,
       name: String(node.name ?? ''), type: String(node.type ?? ''), scoped,
-      facts: envelopeOf(node)?.renderedNaming?.facts ?? (() => {
+      facts: rendered?.facts ?? (() => {
         const facts = recognizeName(String(node.name ?? ''), undefined, { detectInfo: false });
         return { region: facts.region ?? undefined, tags: facts.tags, rate: facts.rate ?? undefined, vendor: facts.vendor ?? undefined };
       })(),
       sourceKey: sourceOf(node)?.key,
       sourceId: subscriptions.find((s) => s.name === sourceOf(node)?.key)?.id,
-      namingTemplate: managed?.kind === 'rename-template' && !managed.disabled ? managed.template : undefined,
-      sourceLabel: (managed?.kind === 'rename-template' ? managed.sourceAliases?.[sourceOf(node)?.key ?? ''] : undefined)
+      namingTemplate: rendered?.template ?? null,
+      namingTw2cn: rendered?.tw2cn,
+      sourceLabel: rendered?.sourceLabel ?? (managed?.kind === 'rename-template' ? managed.sourceAliases?.[sourceOf(node)?.key ?? ''] : undefined)
         ?? envelopeOf(node)?.memberNaming?.sourceAlias ?? sourceOf(node)?.label,
       ...(typeof node['dialer-proxy'] === 'string' ? { dialer: node['dialer-proxy'] } : {}),
     };

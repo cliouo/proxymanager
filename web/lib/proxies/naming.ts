@@ -1589,7 +1589,9 @@ export function applyRenameTemplate(
 
   const out: Record<string, unknown>[] = candidates.map((c, i) => {
     const proxy = c.name === '' || firstUnchanged.has(i) ? c.proxy : { ...c.proxy, name: finals.get(i)! };
-    return c.facts ? mergeEnvelope(proxy, { renderedNaming: { facts: c.facts } }) : proxy;
+    const source = effectiveSourceOf(c.proxy);
+    return c.facts ? mergeEnvelope(proxy, { renderedNaming: { facts: c.facts, template: config.template, tw2cn: config.tw2cn,
+      sourceLabel: (config.sourceAliases?.[source?.key ?? ''] ?? source?.label)?.trim() } }) : proxy;
   });
   const finalByIdentity = new Map<string | null, unknown>();
   const identityCounts = new Map<string | null, number>();
