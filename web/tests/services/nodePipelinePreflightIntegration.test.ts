@@ -400,8 +400,8 @@ describe('outer pipeline save integration', () => {
     });
     const finalName = `日本 · ${subscription.display_name?.trim() || subscription.name}`;
     expect(served.nodeNames).toContain(finalName);
-    expect(candidate.groups[0].migration).toEqual({ filter: `^(?:${finalName})$`, after: 1 });
-    expect(context.changesFor(candidate)[0].groups[0].after.filter).toBe(`^(?:${finalName})$`);
+    expect(candidate.groups[0].migration).toBeUndefined();
+    expect(candidate.groups[0].broken).toBe(true);
   });
 
   it('tracks cross-source collision suffixes in counts, filters and exact references', async () => {
@@ -424,7 +424,8 @@ describe('outer pipeline save integration', () => {
       collections: [col], boundSource: { type: 'collection', id: col.id }, persistSnapshot: false, persistOrdinals: false,
     });
     expect(served.nodeNames).toContain('日本 · Backup');
-    expect(candidate.groups[0].migration).toEqual({ filter: '^(?:日本 · Backup)$', after: 1 });
+    expect(candidate.groups[0].migration).toBeUndefined();
+    expect(candidate.groups[0].broken).toBe(true);
     expect(candidate.references).toEqual(expect.arrayContaining([
       expect.objectContaining({ kind: 'manual', before: '日本', after: '日本 · Backup', blocked: false }),
       expect.objectContaining({ kind: 'rule', before: '日本', after: '日本 · Backup', blocked: false }),
