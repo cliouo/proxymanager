@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { api, ApiError } from '@/ui/data/api';
 import { useQuery } from '@/ui/data/query';
 import type { NamesPayload } from '@/ui/data/types';
+import { NodeFactsSchema } from '@/schemas/nodeFacts';
 import type { NamingPlan, NamingPreviewData, NamingWorkspaceData, TargetType } from './model';
 
 const path = (type: TargetType, id: string) => `/naming/${type}/${id}`;
@@ -71,6 +72,16 @@ export function applyPlan(type: TargetType, id: string, plan: NamingPlan, expect
 
 export function rollbackPlan(type: TargetType, id: string, expectedVersion: number) {
   return api.post<NamingWorkspaceData>(path(type, id), { rollback: true, expectedVersion });
+}
+
+export async function recognizeNodeFacts(ref: string) {
+  const result = await api.post<{
+    nodeFacts: unknown;
+    proposed: number;
+    considered: number;
+    truncated: boolean;
+  }>('/assistant/naming-analysis', { ref, mode: 'node-facts' });
+  return { ...result, nodeFacts: NodeFactsSchema.parse(result.nodeFacts) };
 }
 
 export const isVersionConflict = (error: unknown) =>

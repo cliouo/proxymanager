@@ -1,6 +1,8 @@
 import { z } from '@/lib/openapi/zod';
+import { NodeFactsSchema } from './nodeFacts';
 import {
   LEGACY_DEFAULT_COMPONENTS,
+  LINE_TAGS,
   MAX_RECOGNITION_RULES,
   MAX_RECOGNITION_RULE_PATTERN_LENGTH,
   MAX_RECOGNITION_RULE_VALUE_LENGTH,
@@ -243,13 +245,16 @@ export const RecognitionRuleSchema = z
         },
         { message: '不是合法的正则表达式' },
       ),
-    field: z.enum(['route', 'vendor', 'region', 'entry']),
+    field: z.enum(['route', 'vendor', 'region', 'entry', 'tag']),
     value: z
       .string()
       .min(1, '规则值不能为空')
       .max(MAX_RECOGNITION_RULE_VALUE_LENGTH, '规则值过长（最多 24 字符）'),
   })
   .superRefine((rule, ctx) => {
+    if (rule.field === 'tag' && !LINE_TAGS.some((tag) => tag === rule.value)) {
+      ctx.addIssue({ code: 'custom', path: ['value'], message: '标签必须使用标准名称' });
+    }
     if (!isSafeRuntimeRegex(rule.pattern, 'i')) {
       ctx.addIssue({
         code: 'custom',
@@ -322,6 +327,7 @@ export const RenameTemplateOpFieldsSchema = z.object({
   sourceAliases: SourceAliasesSchema,
   /** 保存并经校验的识别规则（AI-rule 事实；见 RecognitionRuleSchema）。 */
   recognitionRules: RecognitionRulesSchema,
+  nodeFacts: NodeFactsSchema.optional(),
 });
 
 /**
@@ -577,6 +583,7 @@ const HistoricalOperatorSchema = z.discriminatedUnion('kind', [
     // New-shape rows (post-DSL): template + recognitionRules.
     template: z.string().optional(),
     recognitionRules: z.array(z.unknown()).optional(),
+    nodeFacts: z.unknown().optional(),
     // STRUCTURAL historical decode: no current limits (an oversized alias
     // table stays a KNOWN step — the runtime schema below parks it with
     // fields preserved instead of degrading it to a generic malformed blob).
@@ -631,6 +638,7 @@ function parkedOperator(_item: unknown, index: number, issue: string): ParkedOpe
 }
 
 interface StoredRenameTemplateRow {
+  nodeFacts?: unknown;
   id: string;
   kind: 'rename-template';
   disabled?: boolean;
@@ -666,6 +674,7 @@ interface LegacyComponentsShape {
  *     keeps the legacy row byte-for-byte until the user explicitly saves.
  */
 function migrateStoredRenameTemplate(row: StoredRenameTemplateRow): {
+  nodeFacts?: unknown;
   id: string;
   kind: 'rename-template';
   template: string;
@@ -674,9 +683,18 @@ function migrateStoredRenameTemplate(row: StoredRenameTemplateRow): {
   sourceAliases?: Record<string, string>;
   recognitionRules?: unknown;
 } {
-  const { id, kind, disabled, template, tw2cn, sourceAliases, recognitionRules } = row;
+  const { id, kind, disabled, template, tw2cn, sourceAliases, recognitionRules, nodeFacts } = row;
   if (typeof template === 'string' && template.trim() !== '') {
-    return { id, kind, template, disabled, tw2cn, sourceAliases, recognitionRules };
+    return {
+      id,
+      kind,
+      template,
+      disabled,
+      tw2cn,
+      sourceAliases,
+      recognitionRules,
+      ...(nodeFacts !== undefined ? { nodeFacts } : {}),
+    };
   }
   const projected = templateFromLegacyConfig({
     preset: row.preset ?? 'balanced',
@@ -694,7 +712,16 @@ function migrateStoredRenameTemplate(row: StoredRenameTemplateRow): {
     rateDisplay: row.rateDisplay ?? 'omit-1x',
     separator: row.separator ?? ' · ',
   });
-  return { id, kind, template: projected, disabled, tw2cn, sourceAliases, recognitionRules };
+  return {
+    id,
+    kind,
+    template: projected,
+    disabled,
+    tw2cn,
+    sourceAliases,
+    recognitionRules,
+    ...(nodeFacts !== undefined ? { nodeFacts } : {}),
+  };
 }
 
 /** Decode ONE persisted item; structurally-known + runtime-valid → live operator. */

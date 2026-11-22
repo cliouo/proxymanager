@@ -31,6 +31,8 @@
  */
 
 import { withProblemDetails } from '@/lib/http/handler';
+import { NodeFactsSchema } from '@/schemas/nodeFacts';
+import type { NodeFacts } from '@/lib/proxies/naming';
 import { enabledCollectionMemberSubs } from '@/lib/engine/resolve';
 import {
   projectAliasKeysToHandles,
@@ -116,6 +118,7 @@ const PlanBody = z
     // stable keys fail at parse with the bounded order-independent error.
     sourceAliases: ExternalSourceAliasesSchema,
     recognitionRules: z.array(RecognitionRuleSchema).max(32, '识别规则最多 32 条').optional(),
+    nodeFacts: NodeFactsSchema.optional(),
   })
   .strict();
 
@@ -156,6 +159,7 @@ function projectHistoryPlan(
   template?: string;
   tw2cn?: boolean;
   sourceAliases?: Record<string, string>;
+  nodeFacts?: NodeFacts;
   disabled?: boolean;
 } {
   if (!prior) return { present: false };
@@ -168,6 +172,7 @@ function projectHistoryPlan(
       ? { template: redactSensitiveText(prior.template).slice(0, 512) }
       : {}),
     ...(prior.tw2cn !== undefined ? { tw2cn: prior.tw2cn } : {}),
+    ...(prior.nodeFacts !== undefined ? { nodeFacts: prior.nodeFacts } : {}),
     ...(prior.sourceAliases !== undefined
       ? {
           // pass-6 blocker 2: alias KEYS project to opaque src-* handles;
@@ -205,6 +210,7 @@ function planOf(
         tw2cn?: boolean;
         sourceAliases?: Record<string, string>;
         recognitionRules?: unknown[];
+        nodeFacts?: NodeFacts;
         disabled?: boolean;
       }
     | undefined,
@@ -215,6 +221,7 @@ function planOf(
   tw2cn?: boolean;
   sourceAliases?: Record<string, string>;
   recognitionRules?: Operator['kind'] extends never ? never : unknown[];
+  nodeFacts?: NodeFacts;
   disabled?: boolean;
 } {
   if (!op) return { present: false };
@@ -224,6 +231,7 @@ function planOf(
     tw2cn: op.tw2cn === true,
     sourceAliases: projectAliases(op.sourceAliases ?? {}),
     recognitionRules: op.recognitionRules ?? [],
+    ...(op.nodeFacts !== undefined ? { nodeFacts: op.nodeFacts } : {}),
     // activation state: a persisted (aligned) rename-template row that is
     // disabled is still managed history — the workspace shows its stored
     // policy and can apply (re-enable) it without any other edit
@@ -316,7 +324,7 @@ async function loadWorkspace(
     // go through ONE collision-checked node scope over the COMPLETE snapshot
     // and ONE source scope over the complete key set (handle minting lives in
     // handleScopes/namingContextProjection, never in the analysis).
-    const reports = analyzeSourceFacts(withProvenance, { rules: previewOp?.recognitionRules });
+    const reports = analyzeSourceFacts(withProvenance, { rules: previewOp?.recognitionRules, nodeFacts: previewOp?.nodeFacts });
     const { scope: nodeScope } = buildNodeSnapshotScope(withProvenance);
     const sourceScope = buildSourceAliasScope(reports.map((r) => r.sourceKey));
     const health = reports.map((report) => ({
@@ -336,6 +344,7 @@ async function loadWorkspace(
         tw2cn: previewOp?.tw2cn,
         sourceAliases: previewOp?.sourceAliases ?? {},
         recognitionRules: previewOp?.recognitionRules ?? [],
+        nodeFacts: previewOp?.nodeFacts,
       },
       sourceOf,
       ordinals,
@@ -412,7 +421,7 @@ async function loadWorkspace(
   const { merged, ordinalPlanningSession, ordinalDomainRegistry } =
     await mergeCollectionMemberProxies(collection, subs, { writeCache: false });
   // round-1: same complete-domain projection as the subscription branch.
-  const reports = analyzeSourceFacts(merged, { rules: previewOp?.recognitionRules });
+  const reports = analyzeSourceFacts(merged, { rules: previewOp?.recognitionRules, nodeFacts: previewOp?.nodeFacts });
   const { scope: nodeScope } = buildNodeSnapshotScope(merged);
   const sourceScope = buildSourceAliasScope(reports.map((r) => r.sourceKey));
   const health = reports.map((report) => ({
@@ -434,6 +443,7 @@ async function loadWorkspace(
       tw2cn: previewOp?.tw2cn,
       sourceAliases: previewOp?.sourceAliases ?? {},
       recognitionRules: previewOp?.recognitionRules ?? [],
+      nodeFacts: previewOp?.nodeFacts,
     },
     sourceOf,
     ordinals,
@@ -538,6 +548,7 @@ export const POST = withProblemDetails(async (request: Request, ctx: Ctx) => {
           tw2cn: body.preview.tw2cn,
           sourceAliases: stableAliases,
           recognitionRules: body.preview.recognitionRules,
+          nodeFacts: body.preview.nodeFacts,
         },
         priorPolicyOf(managedOp),
       ),

@@ -563,6 +563,20 @@ describe('inspect_naming_collisions', () => {
 });
 
 describe('preview_naming_recognition', () => {
+  it('reports canonical joined tags rather than the vendor for tag rules', async () => {
+    const fetcher = await import('@/lib/services/subscriptionFetcher');
+    vi.mocked(fetcher.resolveSubscriptionProxiesRaw).mockResolvedValueOnce({
+      proxies: [{ name: '香港 Nexitally IPLC 高速', type: 'ss', server: 'a.example.com', port: 443 }], proxyCount: 1,
+    });
+    const env = await readAction('preview_naming_recognition').run(ctx, {
+      source_type: 'subscription', ref: subRef(), template: '${tags}', tw2cn: false, sourceAliases: {},
+      recognitionRules: [{ pattern: '高速', field: 'tag', value: 'IEPL' }, { pattern: 'absent', field: 'tag', value: 'BGP' }],
+    });
+    const data = env.data as { rules: Array<{ matches: number; values: Array<{ value: string }>; totalValues: number }> };
+    expect(data.rules[0]).toMatchObject({ matches: 1, values: [{ value: 'IEPL IPLC' }], totalValues: 1 });
+    expect(data.rules[1]).toMatchObject({ matches: 0, values: [], totalValues: 0 });
+  });
+
   it('counts rule matches and reports produced values — never saves', async () => {
     const env = await readAction('preview_naming_recognition').run(ctx, {
       source_type: 'subscription',
@@ -1716,8 +1730,8 @@ describe('50000-node / 50000-source matrix across EVERY read action (pass-1 find
       expect(data.sources).toHaveLength(1);
       const source = data.sources[0];
       // semantic totals are NEVER the sample cap AND describe the FACT-ROW
-      // unit (pass-2 finding): 50000 nodes × 11 facts = 550000 rows
-      expect(source.nodeFactsTotal).toBe(50000 * 11);
+      // unit (pass-2 finding): 50000 nodes × 12 facts = 600000 rows
+      expect(source.nodeFactsTotal).toBe(50000 * 12);
       expect(source.nodeFactsTruncated).toBe(true);
       expect(source.nodeFacts.length).toBeLessThanOrEqual(40);
       // per-field: bounded stored samples + true distinct-value totals
@@ -1885,12 +1899,10 @@ describe('50000-node / 50000-source matrix across EVERY read action (pass-1 find
     }
   });
 
-  it('preview_naming_recognition: rule value maps are capped with TRUE distinct totals', async () => {
+  it('preview_naming_recognition: first matching rule determines the distinct value total', async () => {
     const fetcher = await import('@/lib/services/subscriptionFetcher');
     const raw = fetcher.resolveSubscriptionProxiesRaw as unknown as ReturnType<typeof vi.fn>;
-    // 6 overlapping region rules: the FIRST rule matches every node, but
-    // later rules override its field for their own subsets — so its value
-    // map holds 6 TRUE distinct values while only 4 are serialized
+    // The first rule matches every node; later rules cannot overwrite it.
     const NAMES = ['香港 01', '日本 01', '美国 01', '新加坡 01', '台湾 01', '韩国 01'];
     const nodes = Array.from({ length: 50000 }, (_, i) => manyNode(i, NAMES[i % NAMES.length]));
     raw.mockResolvedValue({ proxies: nodes, proxyCount: 50000 });
@@ -1921,8 +1933,8 @@ describe('50000-node / 50000-source matrix across EVERY read action (pass-1 find
       const rule = data.rules[0];
       expect(rule.matches).toBe(50000);
       expect(rule.values.length).toBeLessThanOrEqual(4);
-      expect(rule.totalValues).toBe(6);
-      expect(rule.truncatedValues).toBe(true);
+      expect(rule.totalValues).toBe(1);
+      expect(rule.truncatedValues).toBe(false);
       expect(JSON.stringify(env).length).toBeLessThan(200_000);
     } finally {
       raw.mockReset();
@@ -1953,8 +1965,8 @@ describe('50000-node / 50000-source matrix across EVERY read action (pass-1 find
           }>;
         }
       ).sources[0];
-      // 4 nodes × 11 facts = 44 rows; the projection keeps ≤ 40 and says so
-      expect(source.nodeFactsTotal).toBe(44);
+      // 4 nodes × 12 facts = 48 rows; the projection keeps ≤ 40 and says so
+      expect(source.nodeFactsTotal).toBe(48);
       expect(source.nodeFacts.length).toBeLessThanOrEqual(40);
       expect(source.nodeFactsTruncated).toBe(true);
     } finally {

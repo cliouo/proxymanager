@@ -2,36 +2,8 @@ import { createPrivateKey, createPublicKey } from 'node:crypto';
 import { isIP } from 'node:net';
 import { PROBLEM_BASE_URL, ProblemDetailsError } from '@/lib/http/problem';
 import { isCanonicalUuid, normalizeMihomoUserId } from '@/lib/proxies/mihomoUserId';
-
-// MetaCubeX/mihomo v1.19.28, adapter/parser.go at
-// cbd11db1e13a75d8e680e0fe7742c95be4cba2be.
-export const FIXED_MIHOMO_PROXY_TYPES = new Set([
-  'ss',
-  'ssr',
-  'socks5',
-  'http',
-  'vmess',
-  'vless',
-  'snell',
-  'trojan',
-  'hysteria',
-  'hysteria2',
-  'wireguard',
-  'tuic',
-  'gost-relay',
-  'direct',
-  'dns',
-  'reject',
-  'rematch',
-  'ssh',
-  'mieru',
-  'anytls',
-  'sudoku',
-  'masque',
-  'trusttunnel',
-  'openvpn',
-  'tailscale',
-]);
+import { FIXED_MIHOMO_PROXY_TYPES } from './mihomoProxyTypes';
+export { FIXED_MIHOMO_PROXY_TYPES } from './mihomoProxyTypes';
 
 const ENDPOINT_FREE_PROXY_TYPES = new Set(['direct', 'dns', 'reject', 'rematch', 'tailscale']);
 

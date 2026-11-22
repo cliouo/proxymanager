@@ -2,6 +2,17 @@ import { describe, expect, it } from 'vitest';
 import { codeFromFlag, detectRegion, flagFromCode, regionByCode, stripFlags } from '@/lib/proxies/regions';
 
 describe('flagFromCode', () => {
+  it('ignores info nodes and data units while preserving real GB and UK tokens', () => {
+    for (const name of ['剩余流量：88 GB', '到期 UK', '套餐 GB', '官网 GB', '88 GB', '88GB', '88 MB', '88MB', '1.5 TB', '1.5TB']) {
+      expect(detectRegion(name)).toBeNull();
+    }
+    for (const name of ['GB 01', 'UK 01', '88 GB | GB 01', '88GB | UK 01']) {
+      expect(detectRegion(name)).toBe('GB');
+    }
+    expect(detectRegion('日本 88 GB')).toBe('JP');
+    expect(detectRegion('')).toBeNull();
+  });
+
   it('builds regional-indicator emoji', () => {
     expect(flagFromCode('HK')).toBe('🇭🇰');
     expect(flagFromCode('us')).toBe('🇺🇸');

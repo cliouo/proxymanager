@@ -18,6 +18,8 @@
  * correct flag — `HKG`, `SGP`, `JPN`… all resolve, not just the alpha-2 forms.
  */
 
+import { isInfoNodeName } from './infoNodes';
+
 export interface Region {
   /** Stable code (ISO-3166 alpha-2 where sensible). */
   code: string;
@@ -321,12 +323,17 @@ export function regionByCode(code: string): Region | undefined {
   return REGION_BY_CODE.get(cc) ?? REGION_BY_ALPHA3.get(cc);
 }
 
+export function maskDataSizeUnits(name: string): string {
+  return name.replace(/\d+(?:\.\d+)?\s*[MGT]B\b/gi, (size) => ' '.repeat(size.length));
+}
+
 /**
  * Detect the region of a node name. Prefers an explicit flag emoji, then
  * keyword/code patterns. Returns the region code (e.g. `HK`) or null.
  */
 export function detectRegion(name: string): string | null {
-  if (!name) return null;
+  if (!name || isInfoNodeName(name)) return null;
+  name = maskDataSizeUnits(name);
   const fromFlag = codeFromFlag(name);
   if (fromFlag && REGION_BY_CODE.has(fromFlag)) return fromFlag;
   for (const region of REGIONS) {

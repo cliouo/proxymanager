@@ -71,6 +71,7 @@ import {
 } from '@/schemas';
 
 export interface NamingApplyPlan {
+  nodeFacts?: import('@/lib/proxies/naming').NodeFacts;
   /** Required on the apply path; a legacy prior row restores via rawOp. */
   template?: string;
   tw2cn?: boolean;
@@ -216,6 +217,7 @@ function applyPlanFromHistory(prior: NamingHistoryPlan): NamingApplyPlan {
     tw2cn: prior.tw2cn,
     sourceAliases: prior.sourceAliases,
     recognitionRules: prior.recognitionRules,
+    ...(prior.nodeFacts !== undefined ? { nodeFacts: prior.nodeFacts } : {}),
     opId: prior.opId,
     position: prior.position,
     disabled: prior.disabled,
@@ -336,6 +338,7 @@ function replaceRenameOp(
               ? plan.sourceAliases
               : undefined,
           recognitionRules: plan.recognitionRules ?? [],
+          ...(plan.nodeFacts !== undefined ? { nodeFacts: plan.nodeFacts } : {}),
           disabled: plan.disabled === true ? true : undefined,
         } as Operator);
   const managed = snapshot.managed;
@@ -560,6 +563,7 @@ export async function applyNamingPlan(
           tw2cn?: boolean;
           sourceAliases?: Record<string, string>;
           recognitionRules?: Array<{ pattern: string; field: string; value: string }>;
+          nodeFacts?: import('@/lib/proxies/naming').NodeFacts;
           disabled?: boolean;
         })
       : undefined;
@@ -587,6 +591,7 @@ export async function applyNamingPlan(
         tw2cn: plan.tw2cn,
         sourceAliases: resolvedAliases,
         recognitionRules: plan.recognitionRules,
+        nodeFacts: plan.nodeFacts,
       },
       priorOp,
     ),
@@ -606,6 +611,7 @@ export async function applyNamingPlan(
         tw2cn: priorOp.tw2cn,
         sourceAliases: priorOp.sourceAliases,
         recognitionRules: priorOp.recognitionRules,
+        ...(priorOp.nodeFacts !== undefined ? { nodeFacts: priorOp.nodeFacts } : {}),
         opId: priorOp.id,
         position: priorIdx,
         disabled: priorOp.disabled === true,

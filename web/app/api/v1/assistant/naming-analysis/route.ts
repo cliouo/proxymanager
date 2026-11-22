@@ -22,7 +22,11 @@ import { resolveScopeProfile } from '@/lib/profileScope';
 import { NAMING_SCOPE_ERROR, resolveNamingAnalysisRef } from '@/lib/services/namingTargetScope';
 import { withProblemDetails } from '@/lib/http/handler';
 import { ProblemDetailsError } from '@/lib/http/problem';
-import { NamingAnalysisRefSchema, runNamingAnalysis } from '@/lib/ai/namingAnalysis';
+import {
+  NamingAnalysisRefSchema,
+  runNamingAnalysis,
+  runNodeFactAnalysis,
+} from '@/lib/ai/namingAnalysis';
 import { HandleSecretError } from '@/lib/proxies/handles';
 import { withSource, type SourceIdentity } from '@/lib/proxies/provenance';
 import { getCollection } from '@/lib/services/collectionService';
@@ -39,7 +43,7 @@ export const maxDuration = 60;
 /** Opaque target ref — the ONE shared strict schema; raw type/UUID (and any
  * extra key) never crosses this surface. Refs may come from either the global
  * administrator workspace or profile-scoped assistant tools. */
-const SourceRef = NamingAnalysisRefSchema;
+const SourceRef = NamingAnalysisRefSchema.extend({ mode: z.literal('node-facts').optional() });
 
 /**
  * Resolve a source's raw (pre-operator) nodes with provenance attached, so
@@ -94,7 +98,7 @@ export const POST = withProblemDetails(async (request: Request) => {
 
   // The model call is driven by the user's stored assistant config — custom
   // base URL / model / key included — never by a server-side env fallback.
-  const result = await runNamingAnalysis({
+  const result = await (ref.mode === 'node-facts' ? runNodeFactAnalysis : runNamingAnalysis)({
     proxies,
     config: {
       apiKey: config.apiKey,
@@ -120,10 +124,14 @@ export const POST = withProblemDetails(async (request: Request) => {
 
   return Response.json({
     data: {
-      suggestion: result.suggestion,
-      // The exact scrubbed payload — shown in the workbench's privacy
-      // disclosure. Credential-free by construction.
-      payload: result.payload,
+      ...('nodeFacts' in result
+        ? result
+        : {
+            suggestion: result.suggestion,
+            // The exact scrubbed payload — shown in the workbench's privacy
+            // disclosure. Credential-free by construction.
+            payload: result.payload,
+          }),
     },
   });
 });

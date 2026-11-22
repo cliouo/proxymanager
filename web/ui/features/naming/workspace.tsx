@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { AlertTriangle, Layers, SearchX, Undo2, Wand2 } from 'lucide-react';
 import { validateTemplate } from '@/lib/proxies/naming';
+import { NodeFactsSchema } from '@/schemas/nodeFacts';
 import { ApiError, errorMessage } from '@/ui/data/api';
 import { refreshShared } from '@/ui/data/hooks';
 import { useHotkey } from '@/ui/shell/hotkeys';
@@ -16,6 +17,7 @@ import {
   applyPlan,
   isVersionConflict,
   rollbackPlan,
+  recognizeNodeFacts,
   useCurrentNames,
   useDebounced,
   useNamingPreview,
@@ -93,8 +95,10 @@ function Workspace({
   ws: ReturnType<typeof useNamingWorkspace>;
 }) {
   const [plan, setPlan] = useState<NamingPlan>(() => storedPlan(data));
-  const [busy, setBusy] = useState<'apply' | 'rollback' | null>(null);
-  const [rulesOpen, setRulesOpen] = useState(() => (data.managed.recognitionRules?.length ?? 0) > 0);
+  const [busy, setBusy] = useState<'apply' | 'rollback' | 'recognize' | null>(null);
+  const [rulesOpen, setRulesOpen] = useState(
+    () => (data.managed.recognitionRules?.length ?? 0) > 0,
+  );
   const [aliasesOpen, setAliasesOpen] = useState(false);
 
   const stored = useMemo(() => storedPlan(data), [data]);
@@ -206,6 +210,28 @@ function Workspace({
 
   useHotkey('mod+s', () => void apply(), { enabled: applyable });
 
+  const recognize = async () => {
+    setBusy('recognize');
+    try {
+      const result = await recognizeNodeFacts(data.entity.ref);
+      const nodeFacts = NodeFactsSchema.parse({
+        ...plan.nodeFacts,
+        ...Object.fromEntries(
+          Object.entries(result.nodeFacts).map(([fingerprint, facts]) => [
+            fingerprint,
+            { ...plan.nodeFacts?.[fingerprint], ...facts },
+          ]),
+        ),
+      });
+      setPlan((current) => ({ ...current, nodeFacts }));
+      notify.success(`已识别 ${result.proposed} 个节点`, '请核对改名预览，再应用改动。');
+    } catch (error) {
+      notify.error(error, '节点识别失败');
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const addRule = (rule: RecognitionRule) => {
     setPlan((p) => ({ ...p, recognitionRules: [...p.recognitionRules, rule] }));
     setRulesOpen(true);
@@ -245,6 +271,13 @@ function Workspace({
         description="把杂乱的节点名统一成同一种格式，例如「🇭🇰 香港 01 · IPLC」；订阅更新后的新节点也会自动套用。"
         actions={
           <>
+            <Button
+              loading={busy === 'recognize'}
+              disabled={!!busy}
+              onClick={() => void recognize()}
+            >
+              AI 识别节点
+            </Button>
             {data.priorPlan.present && (
               <Button icon={Undo2} loading={busy === 'rollback'} disabled={!!busy} onClick={() => void rollback()}>
                 撤销上次应用

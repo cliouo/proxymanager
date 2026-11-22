@@ -26,6 +26,7 @@
 import { getRedis } from '@/lib/redis/client';
 import { REDIS_KEYS } from '@/lib/redis/keys';
 import { z } from '@/lib/openapi/zod';
+import { NodeFactsSchema } from '@/schemas/nodeFacts';
 
 /**
  * The complete prior naming state. `hadManaged` distinguishes "no managed
@@ -36,6 +37,7 @@ export const NamingHistoryPlanSchema = z.object({
   hadManaged: z.boolean(),
   template: z.string().min(1).max(512).optional(),
   tw2cn: z.boolean().optional(),
+  nodeFacts: NodeFactsSchema.optional(),
   sourceAliases: z.record(z.string(), z.string()).optional(),
   recognitionRules: z
     .array(z.object({ pattern: z.string(), field: z.string(), value: z.string() }))

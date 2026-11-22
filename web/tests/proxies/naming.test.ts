@@ -54,7 +54,7 @@ describe('recognizeName', () => {
     expect(recognizeName('香港 2x 01').rate).toBe(2);
     expect(recognizeName('香港 1.5× 01').rate).toBe(1.5);
     expect(recognizeName('香港 01').rate).toBeNull();
-    expect(recognizeName('香港 01 x2').rate).toBeNull();
+    expect(recognizeName('香港 01 x2').rate).toBe(2);
   });
 
   it('route tokens (conservative table); entry only for the entry token', () => {

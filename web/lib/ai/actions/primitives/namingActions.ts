@@ -47,6 +47,7 @@ import {
   resolveRefInVisibleSet,
 } from '@/lib/services/namingTargetScope';
 import { ProblemDetailsError } from '@/lib/http/problem';
+import { NodeFactsSchema } from '@/schemas/nodeFacts';
 import {
   applyRenameTemplate,
   defaultTemplateFor,
@@ -450,7 +451,7 @@ const listNamingTargets = defineAction({
 const inspectNamingFields = defineAction({
   name: 'inspect_naming_fields',
   description:
-    '检查一个命名目标的字段目录与逐来源覆盖率：每个占位符(emoji/region/region_code/entry/route/vendor/source/protocol/rate/index/note)的命中数、百分比、字段类型(intrinsic 结构化 / derived 识别 / ai-rule 规则 / assigned 指派)、代表性脱敏样本；以及 unavailable(0%)、partial(部分)、ambiguous(信号冲突)与 drift(漂移)统计。聚合订阅返回每个成员来源一行(矩阵)。只读。',
+    '检查一个命名目标的字段目录与逐来源覆盖率：每个占位符(emoji/region/region_code/entry/route/vendor/source/protocol/rate/index/note/tags)的命中数、百分比、字段类型(intrinsic 结构化 / derived 识别 / ai-rule 规则 / assigned 指派)、代表性脱敏样本；以及 unavailable(0%)、partial(部分)、ambiguous(信号冲突)与 drift(漂移)统计。聚合订阅返回每个成员来源一行(矩阵)。只读。',
   input: SourceRef,
   risk: 'read',
   async run(ctx, input) {
@@ -706,6 +707,7 @@ const inspectNodeParse = defineAction({
 
 /** The complete UNSAVED candidate: template + every policy field. */
 const NamingCandidateSchema = z.object({
+  nodeFacts: NodeFactsSchema.optional(),
   ...SourceRef.shape,
   template: TemplateSchema,
   tw2cn: z.boolean().optional(),
@@ -751,6 +753,7 @@ const previewNamingRecognition = defineAction({
         tw2cn: input.tw2cn,
         sourceAliases,
         recognitionRules: rules,
+        nodeFacts: input.nodeFacts ?? source.renameOp?.nodeFacts,
       },
       sourceOf,
       ordinals,
@@ -776,7 +779,9 @@ const previewNamingRecognition = defineAction({
               ? (recognized.route ?? '')
               : rule.field === 'entry'
                 ? (recognized.entry ?? '')
-                : (recognized.vendor ?? '');
+                : rule.field === 'tag'
+                  ? recognized.tags.join(' ')
+                  : (recognized.vendor ?? '');
         if (value !== '') values.set(value, (values.get(value) ?? 0) + 1);
       }
       // Rule-authored text (pattern, configured value and the fact values
@@ -885,6 +890,7 @@ const inspectNamingDrift = defineAction({
  * wins, so the assistant can inspect a candidate before saving it (C6).
  */
 const CollisionInput = z.object({
+  nodeFacts: NodeFactsSchema.optional(),
   ...SourceRef.shape,
   template: TemplateSchema.optional().describe('省略=用当前已保存模板(无则用推荐模板)'),
   tw2cn: z.boolean().optional().describe('候选简繁转换；省略=沿用已保存设置'),
@@ -919,6 +925,7 @@ const inspectNamingCollisions = defineAction({
         source.renameOp?.sourceAliases ??
         {},
       recognitionRules,
+      nodeFacts: input.nodeFacts ?? source.renameOp?.nodeFacts,
     };
     const ordinals = await readOnlyOrdinals(source, template, recognitionRules);
     const result = applyRenameTemplate(source.proxies, config, sourceOf, ordinals);
@@ -1038,6 +1045,7 @@ const previewNamingTarget = defineAction({
       tw2cn: input.tw2cn,
       sourceAliases: resolveSourceAliasKeys(input.sourceAliases, source.keys),
       recognitionRules: input.recognitionRules,
+      nodeFacts: input.nodeFacts ?? source.renameOp?.nodeFacts,
     };
     // Candidate template + candidate rules drive ordinal semantics.
     const ordinals = await readOnlyOrdinals(source, input.template, input.recognitionRules);
@@ -1189,6 +1197,7 @@ const saveNamingPlan = defineWriteAction({
             tw2cn: input.tw2cn,
             sourceAliases: stableAliases,
             recognitionRules: input.recognitionRules,
+            nodeFacts: input.nodeFacts,
           },
           priorPolicyOf(managedOp),
         ),
@@ -1265,6 +1274,7 @@ const saveNamingPlan = defineWriteAction({
         sourceAliases:
           Object.keys(input.sourceAliases).length > 0 ? input.sourceAliases : undefined,
         recognitionRules: input.recognitionRules,
+        nodeFacts: input.nodeFacts,
       },
       {
         position: input.position,
