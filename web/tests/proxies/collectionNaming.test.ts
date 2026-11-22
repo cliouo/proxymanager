@@ -11,7 +11,7 @@ const rename: StoredOperator = { id: 'rename', kind: 'rename-regex', pattern: 'o
 
 describe('managed collection member execution', () => {
   it('removes only the active member template without changing stored rows', () => {
-    const rows = [rename, template, { id: 'filter', kind: 'filter-type' as const, mode: 'keep' as const, types: ['ss'] }];
+    const rows: StoredOperator[] = [rename, template, { id: 'filter', kind: 'filter-type', mode: 'keep', types: ['ss'] }];
     const snapshot = structuredClone(rows);
     expect(collectionMemberExecution(rows).operators).toEqual([rows[0], rows[2]]);
     expect(rows).toEqual(snapshot);

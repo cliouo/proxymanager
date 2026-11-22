@@ -159,6 +159,22 @@ interface RawResolved {
 }
 
 export type SubscriptionRawSnapshot = Map<string, Promise<RawResolved>>;
+const retainedSnapshots = new WeakMap<SubscriptionRawSnapshot, Map<string, Promise<FetchCacheEntry | null>>>();
+
+function readRetainedCache(cacheKey: string, snapshot?: SubscriptionResolveOptions['rawSnapshot']) {
+  if (!snapshot) return getFetchCache(cacheKey);
+  let retained = retainedSnapshots.get(snapshot.entries);
+  if (!retained) {
+    retained = new Map();
+    retainedSnapshots.set(snapshot.entries, retained);
+  }
+  let pending = retained.get(cacheKey);
+  if (!pending) {
+    pending = getFetchCache(cacheKey);
+    retained.set(cacheKey, pending);
+  }
+  return pending;
+}
 
 interface RawMeta {
   traffic?: SubscriptionTraffic;
@@ -595,7 +611,7 @@ async function resolveSubscriptionRaw(
   // Read once up front — we may use it as fresh, or as the stale fallback.
   // Validate the payload before either decision: cache age/envelope validity
   // alone does not make the embedded provider YAML trustworthy.
-  const cached = options.noCache ? null : await getFetchCache(cacheKey);
+  const cached = options.noCache ? null : await readRetainedCache(cacheKey, options.rawSnapshot);
   let cachedRaw: RawResolved | null = null;
   if (cached) {
     try {
