@@ -68,12 +68,13 @@ export async function loadNamingCandidateContext(type: 'subscription' | 'collect
   const nodeOf = (node: Record<string, unknown>, scoped: boolean, namingEntity = entity): CandidateNode => {
     const managed = buildOperatorSnapshot(namingEntity).managed?.decoded;
     return {
-    identity: fingerprintOf(node) ?? nodeFingerprint(node) ?? `name:${String(node.name)}`,
-    name: String(node.name ?? ''), type: String(node.type ?? ''), scoped,
-    sourceKey: sourceOf(node)?.key,
-    sourceLabel: (managed?.kind === 'rename-template' ? managed.sourceAliases?.[sourceOf(node)?.key ?? ''] : undefined)
-      ?? envelopeOf(node)?.memberNaming?.sourceAlias ?? sourceOf(node)?.label,
-    ...(typeof node['dialer-proxy'] === 'string' ? { dialer: node['dialer-proxy'] } : {}),
+      identity: fingerprintOf(node) ?? nodeFingerprint(node) ?? `name:${String(node.name)}`,
+      name: String(node.name ?? ''), type: String(node.type ?? ''), scoped,
+      sourceKey: sourceOf(node)?.key,
+      namingTemplate: managed?.kind === 'rename-template' && !managed.disabled ? managed.template : undefined,
+      sourceLabel: (managed?.kind === 'rename-template' ? managed.sourceAliases?.[sourceOf(node)?.key ?? ''] : undefined)
+        ?? envelopeOf(node)?.memberNaming?.sourceAlias ?? sourceOf(node)?.label,
+      ...(typeof node['dialer-proxy'] === 'string' ? { dialer: node['dialer-proxy'] } : {}),
     };
   };
   const pool = async (input: ProfileInput, next?: Subscription | Collection) => {

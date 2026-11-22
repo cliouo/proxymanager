@@ -13,6 +13,34 @@ const profile = (groups = [group()]): CandidateProfile => ({ id: 'p', name: 'Pro
 const template = { id: 'test', title: 'Test', template: '${region}' };
 
 describe('policy-aware candidate inference and membership', () => {
+  it.each([undefined, '${region_code} ${tags} ${index}'])('preserves region and tag constraints when all current HK nodes have IEPL (old template: %s)', (namingTemplate) => {
+    const before = [node('a', 'HK IEPL BGP 01'), node('b', 'HK IEPL 02')].map((n) => ({ ...n, namingTemplate }));
+    const naming = '${region} ${tags} ${index}';
+    const after = before.map((n, index) => ({ ...n, name: formatNodeName({ name: n.name, index: index + 1, config: { template: naming } }) }));
+    const input = group({ filter: 'HK.*IEPL' });
+    const result = analyzeNamingCandidate({ ...template, template: naming }, [{ ...profile([input]), before, after }], []);
+    const migration = result.groups[0].migration!;
+    expect(migration).toBeDefined();
+    expect(migration.filter).toContain('IEPL');
+    const refreshed = [node('fresh-hk', '香港 BGP 03'), node('fresh-jp', '日本 IEPL 04'), node('fresh-iepl', '香港 IEPL 05')];
+    expect(groupNodeMembers(input, [...after, ...refreshed], migration.filter).nodes.map((n) => n.identity)).toEqual(['a', 'b', 'fresh-iepl']);
+    const dropped = analyzeNamingCandidate(template, [{ ...profile([input]), before, after: after.map((n) => ({ ...n, name: '香港 01' })) }], []);
+    expect(dropped.groups[0].broken).toBe(true);
+    expect(dropped.groups[0].migration).toBeUndefined();
+  });
+
+  it.each([
+    ['HK.*×0\\.5', 'HK ×0.5 01', '${region} ${rate:include1x} ${index}', '香港 0.5x 02', '香港 2x 03', '日本 0.5x 04', undefined],
+    ['HK.*Acme', 'HK Acme 01', '${region} ${source} ${index}', '香港 Acme 02', '香港 Elsewhere 03', '日本 Acme 04', 'Acme'],
+  ])('preserves every constraint in %s on refreshed variants', (filter, name, naming, good, wrongField, wrongRegion, sourceLabel) => {
+    const before = [{ ...node('a', name), sourceLabel }];
+    const after = [{ ...before[0], name: formatNodeName({ name, source: { key: 'airport', label: sourceLabel ?? 'airport' }, config: { template: naming } }) }];
+    const input = group({ filter });
+    const result = analyzeNamingCandidate({ ...template, template: naming }, [{ ...profile([input]), before, after }], []);
+    expect(result.groups[0].migration).toBeDefined();
+    const refreshed = [node('good', good), node('wrong-field', wrongField), node('wrong-region', wrongRegion)];
+    expect(groupNodeMembers(input, [...after, ...refreshed], result.groups[0].migration!.filter).nodes.map((n) => n.identity)).toEqual(['a', 'good']);
+  });
   it('infers region, tags, rate, source and vendor from selectors and real nodes', () => {
     const nodes = [node('a', 'HK IEPL 2x Nexitally 01')];
     const inferred = inferNamingTemplates(nodes, [group({ filter: 'HK|🇭🇰|IEPL|x\\d|airport|Nexitally' })], true);

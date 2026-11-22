@@ -1,5 +1,5 @@
 import { matchFilter } from './filterMatch';
-import { defaultTemplateFor, formatNodeName, formatRate, recognizeName, type NodeRecognitionFacts } from './naming';
+import { defaultTemplateFor, formatNodeName, formatRate, LINE_TAGS, recognizeName, type NodeRecognitionFacts } from './naming';
 import { REGIONS, regionByCode } from './regions';
 
 export interface CandidateNode {
@@ -9,6 +9,7 @@ export interface CandidateNode {
   scoped: boolean;
   sourceKey?: string;
   sourceLabel?: string;
+  namingTemplate?: string;
   dialer?: string;
 }
 
@@ -156,27 +157,98 @@ function tokenSelector(token: string) {
   return `${/^[A-Za-z0-9.]/.test(token) ? '(?<![A-Za-z0-9.])' : ''}${escapeRegex(token)}${/[A-Za-z0-9.]$/.test(token) ? '(?![A-Za-z0-9.])' : ''}`;
 }
 
-function freshFieldProbe(node: CandidateNode, fields: SelectorField[], template: string) {
+function probeState(node: CandidateNode) {
   const recognized = recognizeName(node.name);
-  const facts: NodeRecognitionFacts = {};
-  if (fields.includes('region') && recognized.region) facts.region = recognized.region;
-  if (fields.includes('tags')) facts.tags = recognized.tags;
-  if (fields.includes('rate') && recognized.rate !== null) facts.rate = recognized.rate;
-  if (fields.includes('vendor') && recognized.vendor) facts.vendor = recognized.vendor;
+  return { facts: { region: recognized.region, tags: recognized.tags, rate: recognized.rate, vendor: recognized.vendor },
+    sourceLabel: node.sourceLabel ?? node.sourceKey ?? '' };
+}
+
+type ProbeState = ReturnType<typeof probeState>;
+
+function renderProbe(node: CandidateNode, state: ProbeState, template: string) {
+  const facts: NodeRecognitionFacts = { ...state.facts, region: state.facts.region ?? undefined,
+    rate: state.facts.rate ?? undefined, vendor: state.facts.vendor ?? undefined };
   return formatNodeName({ name: 'fresh-node', index: 999, type: node.type, facts,
-    source: fields.includes('source') ? { key: 'fresh-source', label: node.sourceLabel ?? node.sourceKey ?? '' } : undefined,
+    source: { key: 'fresh-source', label: state.sourceLabel },
     config: { template } });
+}
+
+function rawProbe(node: CandidateNode, field: SelectorField, state: ProbeState) {
+  const original = probeState(node);
+  const facts = state.facts;
+  if (field === 'region') {
+    if (facts.region === original.facts.region) return node.name;
+    const region = original.facts.region && regionByCode(original.facts.region);
+    const next = facts.region && regionByCode(facts.region);
+    if (!region) return node.name;
+    let name = node.name.replaceAll(region.emoji, next ? next.emoji : '');
+    for (const pattern of region.patterns) name = name.replace(new RegExp(pattern.source, `${pattern.flags}g`), next ? next.code : '');
+    return name;
+  }
+  if (field === 'tags') {
+    if (facts.tags.join('|') === original.facts.tags.join('|')) return node.name;
+    let replaced = false;
+    return node.name.replace(/IEPL|IPLC|专线|專線|家庭宽带|家庭寬帶|家宽|家寬|BGP|原生|native/gi, () => {
+      const value = replaced ? '' : facts.tags.join(' ');
+      replaced = true;
+      return value;
+    }) + (!original.facts.tags.length ? ` ${facts.tags.join(' ')}` : '');
+  }
+  if (field === 'rate') {
+    if (facts.rate === original.facts.rate) return node.name;
+    return node.name.replace(/(?<![A-Za-z0-9.])(?:(倍率\s*[:：]?\s*|[x×]\s*)\d{1,3}(?:\.\d{1,2})?|(\d{1,3}(?:\.\d{1,2})?)\s*([x×]|倍(?!率)))(?![A-Za-z0-9.])/g,
+      (_match, prefix: string | undefined, _number: string | undefined, suffix: string | undefined) => facts.rate === null ? '' : prefix ? `${prefix}${facts.rate}` : `${facts.rate}${suffix}`);
+  }
+  const before = field === 'source' ? original.sourceLabel : original.facts.vendor;
+  const after = field === 'source' ? state.sourceLabel : facts.vendor;
+  return before ? node.name.replaceAll(before, after ?? '') : node.name;
+}
+
+function selectorProbes(before: CandidateNode[], recovered: CandidateNode[], template: string) {
+  const pairs: Array<{ before: string; after: string }> = [];
+  for (const node of recovered.filter((n) => n.scoped)) {
+    const original = before.find((n) => n.identity === node.identity)!;
+    const oldState = probeState(original);
+    const newState = probeState(node);
+    pairs.push({ before: original.namingTemplate ? renderProbe(original, oldState, original.namingTemplate) : original.name,
+      after: renderProbe(node, newState, template) });
+    const changes: Array<{ field: SelectorField; facts?: Partial<ProbeState['facts']>; sourceLabel?: string }> = [
+      ...REGIONS.map((region) => ({ field: 'region' as const, facts: { region: region.code } })),
+      { field: 'region', facts: { region: null } },
+      { field: 'tags', facts: { tags: [] } },
+      ...oldState.facts.tags.map((tag) => ({ field: 'tags' as const, facts: { tags: oldState.facts.tags.filter((t) => t !== tag) } })),
+      ...LINE_TAGS.map((tag) => ({ field: 'tags' as const, facts: { tags: [tag] } })),
+      ...[null, 0.5, 1, 2].map((rate) => ({ field: 'rate' as const, facts: { rate } })),
+      { field: 'source', sourceLabel: 'probe-other-provider' },
+      { field: 'vendor', facts: { vendor: 'probe-other-vendor' } },
+    ];
+    for (const change of changes) {
+      const oldVariant = { facts: { ...oldState.facts, ...change.facts }, sourceLabel: change.sourceLabel ?? oldState.sourceLabel };
+      const newVariant = { facts: { ...newState.facts, ...change.facts }, sourceLabel: change.sourceLabel ?? newState.sourceLabel };
+      pairs.push({ before: original.namingTemplate ? renderProbe(original, oldVariant, original.namingTemplate) : rawProbe(original, change.field, oldVariant),
+        after: renderProbe(node, newVariant, template) });
+    }
+  }
+  return pairs;
 }
 
 function migratedSelector(group: CandidateGroup, before: CandidateNode[], after: CandidateNode[], recovered: CandidateNode[], template: string) {
   const dependencies = selectorDependencies(before, [group]);
   const fields = (Object.keys(dependencies) as SelectorField[]).filter((field) => dependencies[field]);
   const selectors = fields.flatMap((field) => {
-    const values = [...new Set(recovered.flatMap((node) => fieldValues(node)[field]
+    let values = [...new Set(recovered.flatMap((node) => fieldValues(node)[field]
       .filter((value) => matchFilter([node.name], tokenSelector(value)).matched.length > 0)))];
+    if (field === 'tags') {
+      const constrained = recognizeName(String(group.values.filter), undefined, { detectInfo: false }).tags;
+      const retained = values.filter((value) => constrained.some((tag) => tag === value));
+      if (retained.length) values = retained;
+    }
     return values.length ? [{ field, selector: `(?:${values.map(tokenSelector).join('|')})` }] : [];
   });
-  for (let size = 1; size <= selectors.length; size += 1) {
+  const probes = selectorProbes(before, recovered, template);
+  const exclude = typeof group.values['exclude-filter'] === 'string' ? group.values['exclude-filter'] : undefined;
+  const oldMatches = new Set(matchFilter(probes.map((p) => p.before), String(group.values.filter), exclude).matched);
+  for (let size = selectors.length; size >= 1; size -= 1) {
     for (let mask = 1; mask < 2 ** selectors.length; mask += 1) {
       const selected = selectors.filter((_, i) => mask & (1 << i));
       if (selected.length !== size) continue;
@@ -184,9 +256,8 @@ function migratedSelector(group: CandidateGroup, before: CandidateNode[], after:
       if (filter.length > 4096 || filter.includes('`')) continue;
       const migrated = groupNodeMembers(group, after, filter);
       if (migrated.error || !sameSet(recovered, migrated.selectedNodes)) continue;
-      const probes = recovered.filter((n) => n.scoped).map((n) => freshFieldProbe(n, selected.map((s) => s.field), template));
-      if (probes.every((name) => matchFilter([name], filter,
-        typeof group.values['exclude-filter'] === 'string' ? group.values['exclude-filter'] : undefined).matched.length === 1)) {
+      const newMatches = new Set(matchFilter(probes.map((p) => p.after), filter, exclude).matched);
+      if (probes.every((p) => oldMatches.has(p.before) === newMatches.has(p.after))) {
         return { filter, after: migrated.nodes.length };
       }
     }
