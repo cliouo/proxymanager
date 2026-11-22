@@ -13,6 +13,7 @@ import { Block, Page, PageHeader, SaveBar } from '@/ui/shell/page';
 import { profilePath } from '@/ui/shell/scope';
 import { Badge, Button, Card, Code, confirmAction, EmptyState, Monogram, notify, Skeleton } from '@/ui/primitives';
 import { TemplateComposer } from './composer';
+import { NamingCandidates, applyNamingCandidate } from './candidates';
 import {
   applyPlan,
   isVersionConflict,
@@ -142,6 +143,25 @@ function Workspace({
     notify.warn('配置刚被其他操作修改', '已刷新到最新状态，你的改动还在。请再看一眼预览，然后重新应用。');
   };
 
+  const applyCandidate = async (template: string) => {
+    if (busy) return;
+    if (!await confirmAction({ title: '应用推荐方案并迁移引用？', confirmText: '应用',
+      description: '将使用已保存的识别规则和事实，原子更新所有消费配置的可恢复筛选与一对一精确引用；编辑器内未保存的修改不会包含在内。' })) return;
+    setBusy('apply');
+    try {
+      const next = await applyNamingCandidate(type, id, template, data.configVersion);
+      ws.mutate(next);
+      setPlan(storedPlan(next));
+      refreshShared();
+      notify.success('推荐命名方案与引用迁移已应用');
+    } catch (error) {
+      if (isVersionConflict(error)) await onConflict();
+      else notify.error(error, '应用失败');
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const apply = async () => {
     if (!applyable) return;
     const orphans = summary?.orphans ?? [];
@@ -192,9 +212,10 @@ function Workspace({
         <span className="flex flex-col gap-2">
           <span>命名会恢复为上一次的方案：</span>
           <Code className="break-all">{prior.template}</Code>
+          <span>如该方案迁移过策略组筛选或精确引用，也会一并恢复；已被后续编辑的项不会被覆盖。</span>
         </span>
       ) : (
-        '上次应用之前没有启用智能命名，撤销后节点会恢复原来的名字。'
+        '上次应用之前没有启用智能命名，撤销后节点会恢复原来的名字。如有策略组筛选或引用迁移，也会一并恢复。'
       ),
     });
     if (!ok) return;
@@ -316,6 +337,7 @@ function Workspace({
         </div>
       </PageHeader>
 
+      <NamingCandidates type={type} id={id} version={data.configVersion} busy={!!busy} onApply={applyCandidate} />
       <div className="grid gap-6 @3xl/main:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)] @3xl/main:grid-rows-[auto_1fr]">
         <div className="min-w-0 animate-rise @3xl/main:col-start-1 @3xl/main:row-start-1">
           <TemplateComposer

@@ -54,6 +54,8 @@ export interface NodeExportResult {
 }
 
 interface ExportOptions {
+  resolveSubscription?: typeof resolveSubscriptionProxies;
+  preserveEnvelope?: boolean;
   managedCollection?: boolean;
   noCache?: boolean;
   /**
@@ -162,7 +164,7 @@ export async function exportSubscriptionNodes(
   sub: Subscription,
   options: ExportOptions = {},
 ): Promise<NodeExportResult> {
-  const result = await resolveSubscriptionProxies(sub, {
+  const result = await (options.resolveSubscription ?? resolveSubscriptionProxies)(sub, {
     noCache: options.noCache,
     writeCache: options.writeCache,
     ordinalConfigVersion: options.ordinalConfigVersion,
@@ -234,7 +236,7 @@ export async function mergeCollectionMemberProxies(
     members,
     MEMBER_FETCH_CONCURRENCY,
     (sub) =>
-      resolveSubscriptionProxies(sub, {
+      (options.resolveSubscription ?? resolveSubscriptionProxies)(sub, {
         managedCollection: options.managedCollection ?? (collection.operators ?? []).some(isActiveCurrentRenameTemplateOperator),
         noCache: options.noCache,
         writeCache: options.writeCache,
@@ -348,7 +350,7 @@ export async function exportCollectionNodes(
     return key !== undefined && memberManagedByKey.get(key) === true;
   });
   // Provenance must never reach the serialised provider YAML / public API.
-  const stripped = deduped.map((p) => stripSource(p));
+  const stripped = options.preserveEnvelope ? deduped : deduped.map((p) => stripSource(p));
   const proxies = validateMihomoProxyList(stripped, {
     allowExternalDialerProxy: true,
   });

@@ -121,6 +121,7 @@ export const NamingAuditEventSchema = z
           })
           .strict(),
         mode: z.enum(['added', 'replaced', 'removed']),
+        migration: z.object({ profiles: z.number().int().nonnegative(), groups: z.number().int().nonnegative(), rules: z.number().int().nonnegative() }).strict().optional(),
       })
       .strict(),
     /** Naming writes have no registered inverse — never true. */
