@@ -34,6 +34,7 @@ import { withProblemDetails } from '@/lib/http/handler';
 import { NodeFactsSchema } from '@/schemas/nodeFacts';
 import type { NodeFacts } from '@/lib/proxies/naming';
 import { enabledCollectionMemberSubs } from '@/lib/engine/resolve';
+import { collectionMemberNamingWarnings, type MemberNamingWarning } from '@/lib/proxies/collectionNaming';
 import {
   projectAliasKeysToHandles,
   resolveSourceAliasKeys,
@@ -250,6 +251,7 @@ interface WorkspacePayload {
   recommended: string;
   health: ReturnType<typeof analyzeSourceFacts>;
   diagnostics: {
+    memberWarnings?: MemberNamingWarning[];
     nodeCount: number;
     changed: number;
     collisions: string[];
@@ -419,7 +421,7 @@ async function loadWorkspace(
   const effectiveTemplate = previewOp?.template ?? recommended;
   const subs = await listSubscriptions();
   const { merged, ordinalPlanningSession, ordinalDomainRegistry } =
-    await mergeCollectionMemberProxies(collection, subs, { writeCache: false });
+    await mergeCollectionMemberProxies(collection, subs, { writeCache: false, managedCollection: true });
   // round-1: same complete-domain projection as the subscription branch.
   const reports = analyzeSourceFacts(merged, { rules: previewOp?.recognitionRules, nodeFacts: previewOp?.nodeFacts });
   const { scope: nodeScope } = buildNodeSnapshotScope(merged);
@@ -470,6 +472,7 @@ async function loadWorkspace(
     health,
     diagnostics: {
       nodeCount: merged.length,
+      memberWarnings: collectionMemberNamingWarnings(enabledCollectionMemberSubs(collection, subs), true),
       changed: result.changed,
       collisions: result.collisions.map(safeIssueText),
       deduped: result.deduped.map((d) => ({

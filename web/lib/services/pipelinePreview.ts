@@ -20,6 +20,7 @@ import { redactSensitiveText } from '@/lib/proxies/namingSanitize';
 import { listProfiles } from '@/lib/repos/profilesRepo';
 import type { OperatorStep } from '@/lib/proxies/operators';
 import { buildSourceAliasScope } from '@/lib/proxies/handleScopes';
+import type { MemberNamingWarning } from '@/lib/proxies/collectionNaming';
 
 /** Cap the node-name lists in preview responses so a huge sub stays light. */
 export const NAME_CAP = 300;
@@ -61,6 +62,7 @@ export function namesPayload(proxies: unknown[]): NamesPayload {
 }
 
 export type PreviewIssue =
+  | MemberNamingWarning
   | {
       code: 'duplicate-final-name';
       name: string;

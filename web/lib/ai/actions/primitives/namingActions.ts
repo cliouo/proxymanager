@@ -214,6 +214,7 @@ async function loadRawSource(
   const subs = await listSubscriptions();
   const { merged, ordinalPlanningSession } = await mergeCollectionMemberProxies(col, subs, {
     writeCache: false,
+    managedCollection: true,
   });
   const planningSession =
     ordinalPlanningSession ??

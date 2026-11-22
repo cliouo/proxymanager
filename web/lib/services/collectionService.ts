@@ -1,4 +1,6 @@
 import { ProblemDetailsError } from '@/lib/http/problem';
+import { defaultTemplateFor } from '@/lib/proxies/naming';
+import { buildManagedCandidate } from '@/lib/services/namingManagedCandidate';
 import {
   applyOperatorMutation,
   buildOperatorSnapshot,
@@ -57,15 +59,17 @@ function invalidateSnapshot(): void {
 
 export async function createCollection(input: CollectionCreate): Promise<Collection> {
   const parsed = CollectionCreateSchema.parse(input);
-  // pass-8 blocker 2: creating a rename-template row through a GENERIC
-  // create is naming-row creation — the mutation policy's dedicated gate.
-  let operators: unknown[] | undefined;
+  let operators: unknown[];
   if (parsed.operators !== undefined) {
     operators = applyOperatorMutation(
       buildOperatorSnapshot({ operators: [] }),
       parsed.operators,
       'generic',
     ).storage;
+  } else {
+    const snapshot = buildOperatorSnapshot({ operators: [] });
+    const candidate = buildManagedCandidate(snapshot, { template: defaultTemplateFor(true) });
+    operators = applyOperatorMutation(snapshot, candidate.storage, 'naming').storage;
   }
   // Version bracket FIRST — dup checks + commit share one generation.
   const planningVersion = await getConfigVersion();
@@ -81,7 +85,7 @@ export async function createCollection(input: CollectionCreate): Promise<Collect
   const col: Collection = {
     id: crypto.randomUUID(),
     ...parsed,
-    ...(operators !== undefined ? { operators: operators as Collection['operators'] } : {}),
+    operators: operators as Collection['operators'],
     created_at: now,
     updated_at: now,
   };

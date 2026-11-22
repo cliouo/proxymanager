@@ -54,6 +54,7 @@ export interface NodeExportResult {
 }
 
 interface ExportOptions {
+  managedCollection?: boolean;
   noCache?: boolean;
   /**
    * Persist fresh upstream fetches into the fetch cache. Preview / dry-run
@@ -234,6 +235,7 @@ export async function mergeCollectionMemberProxies(
     MEMBER_FETCH_CONCURRENCY,
     (sub) =>
       resolveSubscriptionProxies(sub, {
+        managedCollection: options.managedCollection ?? (collection.operators ?? []).some(isActiveCurrentRenameTemplateOperator),
         noCache: options.noCache,
         writeCache: options.writeCache,
         ordinalConfigVersion: options.ordinalConfigVersion,

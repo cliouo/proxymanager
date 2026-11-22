@@ -17,6 +17,7 @@ import {
   type OrdinalPlanningSession,
 } from '@/lib/services/nodeOrdinalService';
 import { sourceOf } from '@/lib/proxies/provenance';
+import { collectionMemberNamingWarnings } from '@/lib/proxies/collectionNaming';
 import { buildOperatorSnapshot } from '@/lib/repos/rawOperators';
 import {
   isActiveCurrentRenameTemplateOperator,
@@ -116,11 +117,11 @@ export async function previewNamingCollection(
   if (!collection) throw ProblemDetailsError.notFound('目标不存在或不在当前配置文件的来源范围内。');
   const subs = await listSubscriptions();
   const planningSession = await createOrdinalPlanningSession(subs.map((sub) => sub.name));
-  const { merged } = await mergeCollectionMemberProxies(collection, subs, {
+  const decoded = decodeCandidate(candidateOperators);
+  const { merged } = await mergeCollectionMemberProxies({ ...collection, operators: decoded }, subs, {
     writeCache: false,
     ordinalPlanningSession: planningSession,
   });
-  const decoded = decodeCandidate(candidateOperators);
   // the SAME per-item dedup predicate the generic collection preview route
   // uses: a candidate active collection-level rename-template manages every
   // node; otherwise each member's own saved managed op decides its nodes
@@ -132,7 +133,7 @@ export async function previewNamingCollection(
     ]),
   );
   const before = merged as ClashProxy[];
-  return runCandidatePreview(
+  const result = await runCandidatePreview(
     before,
     decoded,
     (item) => {
@@ -143,6 +144,10 @@ export async function previewNamingCollection(
     (proxy) => sourceOf(proxy),
     planningSession,
   );
+  result.issues.push(...collectionMemberNamingWarnings(
+    enabledCollectionMemberSubs(collection, subs), collectionManagedOp,
+  ));
+  return result;
 }
 
 async function runCandidatePreview(

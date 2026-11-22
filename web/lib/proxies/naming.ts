@@ -119,6 +119,19 @@ export interface NodeRecognitionFacts {
 }
 export type NodeFacts = Record<string, NodeRecognitionFacts>;
 
+export function effectiveNodeRecognition(
+  proxy: unknown,
+  rules: RecognitionRule[] = [],
+  nodeFacts?: NodeFacts,
+): { rules: RecognitionRule[]; facts: NodeRecognitionFacts | undefined } {
+  const member = envelopeOf(proxy)?.memberNaming;
+  const facts = nodeFacts?.[fingerprintOf(proxy) ?? nodeFingerprint(proxy) ?? ''];
+  return {
+    rules: member?.recognitionRules?.length ? [...rules, ...member.recognitionRules] : rules,
+    facts: member?.facts ? { ...member.facts, ...facts } : facts,
+  };
+}
+
 const TAG_PATTERNS: ReadonlyArray<readonly [LineTag, RegExp]> = [
   ['IEPL', /\biepl\b/gi],
   ['IPLC', /\biplc\b/gi],
@@ -1346,7 +1359,7 @@ export function applyRenameTemplate(
     // boundary when present (fallback: compute from the current object — the
     // documented path for envelope-less test inputs).
     const fp = fingerprintOf(p) ?? nodeFingerprint(p);
-    const savedInfo = fp ? config.nodeFacts?.[fp]?.info : undefined;
+    const savedInfo = effectiveNodeRecognition(p, config.recognitionRules, config.nodeFacts).facts?.info;
     const rawName = envelopeOf(p)?.rawName ?? (typeof p.name === 'string' ? p.name : '');
     if (
       savedInfo === true ||
@@ -1405,7 +1418,8 @@ export function applyRenameTemplate(
     if (usesIndex) {
       const name = typeof p.name === 'string' ? p.name : '';
       if (name !== '') {
-        const upstream = upstreamOrdinalOf(recognizeName(name, config.recognitionRules).base);
+        const rules = effectiveNodeRecognition(p, config.recognitionRules).rules;
+        const upstream = upstreamOrdinalOf(recognizeName(name, rules).base);
         if (upstream !== null && upstream > 0) ordinal = upstream;
       }
     }
@@ -1433,6 +1447,9 @@ export function applyRenameTemplate(
     const source = sourceOfProxy(p);
     const key = source?.key ?? '';
 
+    const recognition = effectiveNodeRecognition(p, config.recognitionRules, config.nodeFacts);
+    const memberAlias = envelopeOf(p)?.memberNaming?.sourceAlias;
+
     const formatted =
       name === ''
         ? ''
@@ -1440,11 +1457,11 @@ export function applyRenameTemplate(
             name,
             rawName: envelopeOf(p)?.rawName,
             type: typeof p.type === 'string' ? p.type : undefined,
-            source: source ?? null,
+            source: source && memberAlias !== undefined ? { ...source, label: memberAlias } : source ?? null,
             index: ordinals.get(i),
             indexWidth: Math.max(2, widthBySource.get(key) ?? 2),
-            config,
-            facts: config.nodeFacts?.[fingerprintOf(p) ?? nodeFingerprint(p) ?? ''],
+            config: { ...config, recognitionRules: recognition.rules },
+            facts: recognition.facts,
           });
     candidates.push({ proxy: p, name, formatted, changed: name !== '' && formatted !== name });
   }

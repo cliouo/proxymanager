@@ -4,7 +4,8 @@ import { readCapped } from '@/lib/net/safeFetch';
 import { applyOperators, type ClashProxy } from '@/lib/proxies/operators';
 import { withRawIdentity, type OrdinalResolver, type RecognitionRule } from '@/lib/proxies/naming';
 import { isActiveCurrentRenameTemplateOperator, isExecutableOperator } from '@/schemas/operator';
-import { stripSource } from '@/lib/proxies/provenance';
+import { fingerprintOf, mergeEnvelope, stripSource } from '@/lib/proxies/provenance';
+import { collectionMemberExecution } from '@/lib/proxies/collectionNaming';
 import {
   resolveOrdinalsFor,
   type OrdinalDomainRegistry,
@@ -118,6 +119,10 @@ export interface SubscriptionResolveOptions {
    * duplicated name) always stay fail-closed.
    */
   deferUniqueNames?: boolean;
+  /** Collection owns naming; member corrections travel in the node envelope. */
+  managedCollection?: boolean;
+  /** Share upstream bytes across contextual executions in one preflight. */
+  rawSnapshot?: { key: string; entries: SubscriptionRawSnapshot };
   /** Config generation captured before the caller read render inputs. */
   ordinalConfigVersion?: number;
   /** Operation-local read-only ordinal plan shared across every pipeline stage. */
@@ -152,6 +157,8 @@ interface RawResolved {
   stale?: boolean;
   staleReason?: string;
 }
+
+export type SubscriptionRawSnapshot = Map<string, Promise<RawResolved>>;
 
 interface RawMeta {
   traffic?: SubscriptionTraffic;
@@ -237,7 +244,7 @@ function applySubscriptionOperators(
   input: Record<string, unknown>[],
   operators: Subscription['operators'],
   identity?: { key: string; label: string },
-  options: { ordinals?: OrdinalResolver; keepEnvelope?: boolean } = {},
+  options: { ordinals?: OrdinalResolver; keepEnvelope?: boolean; deferUniqueNames?: boolean } = {},
 ): Record<string, unknown>[] {
   try {
     const executable = (operators ?? []).filter(isExecutableOperator);
@@ -266,7 +273,7 @@ function applySubscriptionOperators(
       options.ordinals,
     );
     const processed = options.keepEnvelope ? operated : operated.map((p) => stripSource(p));
-    return validateProviderProxyList(processed);
+    return validateProviderProxyList(processed, options.deferUniqueNames);
   } catch (error) {
     throw asSubscriptionValidationError(
       error,
@@ -353,8 +360,23 @@ export async function resolveSubscriptionProxies(
   sub: Subscription,
   options: SubscriptionResolveOptions = {},
 ): Promise<FetchSubscriptionProxiesResult> {
-  const raw = await resolveSubscriptionRaw(sub, options);
+  const execution = options.managedCollection ? collectionMemberExecution(sub.operators ?? []) : undefined;
+  const operators = execution?.operators ?? sub.operators;
+  const readRaw = () => resolveSubscriptionRaw(sub, {
+    ...options,
+    ...(options.managedCollection || options.rawSnapshot ? { deferUniqueNames: true } : {}),
+  });
+  let pending = options.rawSnapshot?.entries.get(options.rawSnapshot.key);
+  if (!pending) {
+    pending = readRaw();
+    options.rawSnapshot?.entries.set(options.rawSnapshot.key, pending);
+  }
+  const raw = await pending;
   const base = raw.getProxies();
+  if (options.rawSnapshot && !options.managedCollection &&
+      !(options.deferUniqueNames ?? hasActiveManagedNaming(sub.operators))) {
+    validateProviderProxyList(base);
+  }
   const identity = subscriptionIdentity(sub);
   (options.ordinalPlanningSession ?? options.ordinalDomainRegistry)?.registerSourceDomain(
     base,
@@ -374,20 +396,29 @@ export async function resolveSubscriptionProxies(
       staleReason: raw.staleReason,
     };
   }
-  const ordinals = hasActiveManagedNaming(sub.operators)
+  const ordinals = hasActiveManagedNaming(operators)
     ? await resolveOrdinalsFor(base, () => subscriptionIdentity(sub), {
         persist: options.writeCache !== false,
-        template: activeManagedTemplate(sub.operators) ?? undefined,
-        recognitionRules: activeManagedRules(sub.operators),
+        template: activeManagedTemplate(operators) ?? undefined,
+        recognitionRules: activeManagedRules(operators),
         configVersion: options.ordinalConfigVersion,
         planningSession: options.ordinalPlanningSession,
         domainRegistry: options.ordinalPlanningSession ?? options.ordinalDomainRegistry,
       })
     : undefined;
-  const proxies = applySubscriptionOperators(base, sub.operators, subscriptionIdentity(sub), {
+  const operated = applySubscriptionOperators(base, operators, subscriptionIdentity(sub), {
     ordinals,
     keepEnvelope: true,
+    deferUniqueNames: options.managedCollection,
   });
+  const managed = execution?.managed;
+  const proxies = managed ? operated.map((proxy) => mergeEnvelope(proxy, {
+    memberNaming: {
+      facts: managed.nodeFacts?.[fingerprintOf(proxy) ?? ''],
+      recognitionRules: managed.recognitionRules,
+      sourceAlias: managed.sourceAliases?.[identity.key],
+    },
+  })) : operated;
   return {
     proxies: proxies as Record<string, unknown>[],
     traffic: raw.traffic,

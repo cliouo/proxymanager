@@ -60,7 +60,7 @@ export const CollectionCreateSchema = z.object({
   type: CollectionGroupTypeSchema.default('select'),
   subscription_ids: z.array(z.uuid()).default([]),
   subscription_tags: z.array(z.string()).default([]),
-  operators: MutableOperatorListSchema.default([]),
+  operators: MutableOperatorListSchema.optional(),
   notes: z.string().optional(),
 });
 

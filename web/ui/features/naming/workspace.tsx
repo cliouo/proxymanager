@@ -117,6 +117,11 @@ function Workspace({
   const preview = useNamingPreview(type, id, version, debouncedJson ?? planJson);
   const current = useCurrentNames(type, id, version);
   const stats = useMemo(() => fieldStats(data.health), [data.health]);
+  const memberWarnings = preview.data ? preview.data.issues.flatMap((issue) =>
+    issue.code === 'member-post-template-rename' && 'memberId' in issue && 'message' in issue
+      ? [{ memberId: String(issue.memberId), message: String(issue.message) }]
+      : [],
+  ) : data.diagnostics.memberWarnings ?? [];
 
   const summary = useMemo(() => (preview.data ? summarizeIssues(preview.data.issues) : null), [preview.data]);
   const table = useMemo(() => {
@@ -365,6 +370,11 @@ function Workspace({
               </Section>
             </div>
           </Block>
+          {memberWarnings.map((warning) => (
+            <div key={warning.memberId} role="status" className="rounded-lg border border-line p-3 text-sm text-warn">
+              {warning.memberId}: {warning.message}
+            </div>
+          ))}
           <CoverageCard health={data.health} rulesDiffer={rulesDiffer} onSuggestRule={addRule} />
         </div>
       </div>
