@@ -100,4 +100,19 @@ describe('member corrections scoped by node envelope', () => {
     }).proxies).toEqual([]);
     expect(applyRenameTemplate([], { template: '${region}' }).proxies).toEqual([]);
   });
+
+  it('uses effective member aliases in collision suffixes, with collection precedence', () => {
+    const first = node();
+    const second = mergeEnvelope(withRawIdentity(
+      { name: '香港 01', type: 'ss', server: 'other.example', port: 443 },
+      { key: 'other', label: 'Original' },
+    ), { memberNaming: { sourceAlias: 'Member' } });
+    const config = { template: '${region}' };
+    const result = applyRenameTemplate([first, second], config);
+    expect(result.proxies.map((p) => p.name)).toEqual(['香港', '香港 · Member-01']);
+    expect(applyRenameTemplate(result.proxies, config).proxies.map((p) => p.name)).toEqual(result.proxies.map((p) => p.name));
+    const overridden = applyRenameTemplate([first, second], { ...config, sourceAliases: { other: 'Collection' } });
+    expect(overridden.proxies.map((p) => p.name)).toEqual(['香港', '香港 · Collection-01']);
+    expect(JSON.stringify(result.proxies)).not.toContain('memberNaming');
+  });
 });

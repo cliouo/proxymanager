@@ -1323,6 +1323,11 @@ export function applyRenameTemplate(
   sourceOfProxy: (proxy: unknown) => SourceIdentity | undefined = sourceOf,
   ordinalResolver?: OrdinalResolver,
 ): RenameTemplateApplyResult {
+  const effectiveSourceOf = (proxy: unknown) => {
+    const source = sourceOfProxy(proxy);
+    const memberAlias = envelopeOf(proxy)?.memberNaming?.sourceAlias;
+    return source && memberAlias !== undefined ? { ...source, label: memberAlias } : source;
+  };
   // Identity + occurrence for EVERY raw node, computed ONCE (O(n)): both
   // the dedup and collision diagnostics below emit the exact raw-name
   // occurrence at the moment identity is known (C9). The occurrence counts
@@ -1444,11 +1449,10 @@ export function applyRenameTemplate(
   for (let i = 0; i < list.length; i += 1) {
     const p = list[i];
     const name = typeof p.name === 'string' ? p.name : '';
-    const source = sourceOfProxy(p);
+    const source = effectiveSourceOf(p);
     const key = source?.key ?? '';
 
     const recognition = effectiveNodeRecognition(p, config.recognitionRules, config.nodeFacts);
-    const memberAlias = envelopeOf(p)?.memberNaming?.sourceAlias;
 
     const formatted =
       name === ''
@@ -1457,7 +1461,7 @@ export function applyRenameTemplate(
             name,
             rawName: envelopeOf(p)?.rawName,
             type: typeof p.type === 'string' ? p.type : undefined,
-            source: source && memberAlias !== undefined ? { ...source, label: memberAlias } : source ?? null,
+            source: source ?? null,
             index: ordinals.get(i),
             indexWidth: Math.max(2, widthBySource.get(key) ?? 2),
             config: { ...config, recognitionRules: recognition.rules },
@@ -1503,7 +1507,7 @@ export function applyRenameTemplate(
   for (let i = 0; i < candidates.length; i += 1) {
     const c = candidates[i];
     if (c.name === '' || firstUnchanged.has(i)) continue;
-    const source = sourceOfProxy(c.proxy);
+    const source = effectiveSourceOf(c.proxy);
     const sourceKey = source?.key;
     const sourceLabel = sourceKey
       ? (config.sourceAliases?.[sourceKey] ?? source?.label ?? null)
