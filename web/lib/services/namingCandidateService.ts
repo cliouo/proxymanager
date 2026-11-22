@@ -65,14 +65,17 @@ export async function loadNamingCandidateContext(type: 'subscription' | 'collect
     resolveSubscriptionForPreflight(sub, { subscriptionSnapshot, ordinalPlanningSession, managedCollection: options?.managedCollection });
   const exportOptions = { writeCache: false, preserveEnvelope: true, ordinalPlanningSession, resolveSubscription: resolver };
   const scope = (node: Record<string, unknown>) => type === 'collection' || sourceOf(node)?.key === (entity as Subscription).name;
-  const nodeOf = (node: Record<string, unknown>, scoped: boolean, namingEntity = entity): CandidateNode => ({
+  const nodeOf = (node: Record<string, unknown>, scoped: boolean, namingEntity = entity): CandidateNode => {
+    const managed = buildOperatorSnapshot(namingEntity).managed?.decoded;
+    return {
     identity: fingerprintOf(node) ?? nodeFingerprint(node) ?? `name:${String(node.name)}`,
     name: String(node.name ?? ''), type: String(node.type ?? ''), scoped,
     sourceKey: sourceOf(node)?.key,
-    sourceLabel: buildOperatorSnapshot(namingEntity).managed?.decoded?.sourceAliases?.[sourceOf(node)?.key ?? '']
+    sourceLabel: (managed?.kind === 'rename-template' ? managed.sourceAliases?.[sourceOf(node)?.key ?? ''] : undefined)
       ?? envelopeOf(node)?.memberNaming?.sourceAlias ?? sourceOf(node)?.label,
     ...(typeof node['dialer-proxy'] === 'string' ? { dialer: node['dialer-proxy'] } : {}),
-  });
+    };
+  };
   const pool = async (input: ProfileInput, next?: Subscription | Collection) => {
     const { profile } = input;
     const profileOptions = { ...exportOptions, baseProxyNames: new Set(input.baseNodes.map((node) => String(node.name))) };
