@@ -13,6 +13,16 @@ const profile = (groups = [group()]): CandidateProfile => ({ id: 'p', name: 'Pro
 const template = { id: 'test', title: 'Test', template: '${region}' };
 
 describe('policy-aware candidate inference and membership', () => {
+  it('refuses region-only recovery when the old filter also requires residual Premium text', () => {
+    const before = [node('a', 'HK Premium 01')];
+    const after = [node('a', '香港 01')];
+    const input = group({ filter: 'HK.*Premium' });
+    const result = analyzeNamingCandidate({ ...template, template: '${region} ${index}' }, [{ ...profile([input]), before, after }], []);
+    expect(result.groups[0].migration).toBeUndefined();
+    expect(result.groups[0].broken).toBe(true);
+    expect(groupNodeMembers(input, [node('basic', 'HK Basic 02')]).nodes).toEqual([]);
+  });
+
   it.each([undefined, '${region_code} ${tags} ${index}'])('preserves region and tag constraints when all current HK nodes have IEPL (old template: %s)', (namingTemplate) => {
     const before = [node('a', 'HK IEPL BGP 01'), node('b', 'HK IEPL 02')].map((n) => ({ ...n, namingTemplate }));
     const naming = '${region} ${tags} ${index}';
