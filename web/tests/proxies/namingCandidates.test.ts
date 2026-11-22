@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { parse, stringify } from 'yaml';
+import { materializeDynamicProxyGroups } from '@/lib/engine/materializeProxyGroups';
 import { analyzeNamingCandidate, groupNodeMembers, inferNamingTemplates, rankNamingCandidates,
   type CandidateGroup, type CandidateNode, type CandidateProfile } from '@/lib/proxies/namingCandidates';
 import { applyRenameTemplate, withRawIdentity } from '@/lib/proxies/naming';
@@ -26,7 +28,7 @@ describe('policy-aware candidate inference and membership', () => {
 
   it('combines explicit members, dynamic filters, exclusions and Mihomo adapter types', () => {
     const nodes = [...before, node('vmess', 'HK IEPL vmess', true, 'vmess')];
-    expect(groupNodeMembers(group({ proxies: ['JP IPLC 02', 'DIRECT'], 'exclude-filter': 'existing', 'exclude-type': 'Shadowsocks' }), nodes).nodes.map((n) => n.identity)).toEqual(['jp', 'vmess']);
+    expect(groupNodeMembers(group({ proxies: ['JP IPLC 02', 'DIRECT'], 'exclude-filter': 'existing', 'exclude-type': 'Shadowsocks' }), nodes).nodes.map((n) => n.identity)).toEqual(['vmess']);
     const bound = { ...group({ filter: 'HK', 'include-all-proxies': false }), boundSourceKeys: ['airport'] };
     expect(groupNodeMembers(bound, nodes).nodes.map((n) => n.identity)).toEqual(['hk', 'jp', 'vmess']);
     expect(groupNodeMembers(group({ filter: '[' }), nodes).error).toBeTruthy();
@@ -42,6 +44,31 @@ describe('policy-aware candidate inference and membership', () => {
     expect(recovered.nodes.map((n) => n.identity)).toEqual(['hk', 'other']);
     expect(result.sample).toEqual(after.map((n) => n.name));
     expect(result.blocked).toBe(false);
+  });
+
+  it.each(['explicit', 'subscription', 'collection'])('excludes filtered names and types from %s members like materialization', (kind) => {
+    const nodes = [node('http', 'HK HTTP', true, 'http'), node('excluded', 'JP IPLC', true, 'socks5'),
+      node('keep', 'HK SOCKS', true, 'socks5'), node('other', 'Other HTTP', false, 'http')];
+    const boundSourceKeys = kind === 'explicit' ? undefined : kind === 'subscription' ? ['airport'] : ['airport', 'other'];
+    const proxies = nodes.filter((n) => !boundSourceKeys || boundSourceKeys.includes(n.sourceKey!)).map((n) => n.name);
+    const input = { ...group({ proxies, filter: '^no-match$', 'exclude-filter': 'IPLC', 'exclude-type': 'http' }), boundSourceKeys };
+    const members = groupNodeMembers(input, nodes);
+    expect(members.nodes.map((n) => n.identity)).toEqual(['keep']);
+    expect(members.error).toBeNull();
+    const rendered = parse(materializeDynamicProxyGroups(stringify({
+      proxies: nodes.map((n) => ({ name: n.name, type: n.type, server: `${n.identity}.example`, port: 8080 })),
+      'proxy-groups': [{ ...input.values, name: 'Members', type: 'select', proxies }],
+    })));
+    expect(members.nodes.map((n) => n.name)).toEqual(rendered['proxy-groups'][0].proxies);
+  });
+
+  it('uses the fallback only after all explicit and dynamic members are excluded', () => {
+    const fallback = group({ filter: '^no-match$', 'empty-fallback': before[0].name, 'exclude-type': 'shadowsocks' });
+    expect(groupNodeMembers(fallback, before).nodes).toEqual([before[0]]);
+    expect(groupNodeMembers({ ...fallback, values: { ...fallback.values, proxies: ['DIRECT'] } }, before).nodes).toEqual([]);
+    expect(groupNodeMembers({ ...fallback, values: { ...fallback.values, proxies: ['DIRECT'], 'exclude-filter': 'DIRECT' } }, before).nodes).toEqual([before[0]]);
+    expect(groupNodeMembers(fallback, []).nodes).toEqual([]);
+    expect(groupNodeMembers(group({ proxies: [before[0].name], filter: '', 'exclude-filter': '[' }), before).error).toBeTruthy();
   });
 
   it('does not propose recovery when nodes vanished, exclusions prevent recovery, or providers are unknown', () => {

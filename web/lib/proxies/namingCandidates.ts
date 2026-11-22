@@ -71,19 +71,26 @@ function adapterType(type: string): string {
 
 export function groupNodeMembers(group: CandidateGroup, nodes: CandidateNode[], filter?: string) {
   const v = group.values;
-  const explicit = new Set(strings(v.proxies));
   const dynamic = v['include-all'] === true || v['include-all-proxies'] === true;
   const bound = group.boundSourceKeys && new Set(group.boundSourceKeys);
   const eligible = dynamic ? nodes : [];
+  const excludeFilter = typeof v['exclude-filter'] === 'string' ? v['exclude-filter'] : undefined;
   const matched = matchFilter(eligible.map((n) => n.name),
     filter ?? (typeof v.filter === 'string' ? v.filter : undefined),
-    typeof v['exclude-filter'] === 'string' ? v['exclude-filter'] : undefined);
-  const names = new Set(matched.matched);
+    excludeFilter);
+  const explicit = matchFilter(bound ? nodes.filter((n) => bound.has(n.sourceKey ?? '')).map((n) => n.name) : strings(v.proxies),
+    undefined, excludeFilter);
   const excluded = new Set((typeof v['exclude-type'] === 'string' ? v['exclude-type'].split('|') : strings(v['exclude-type'])).map((t) => t.toLowerCase()));
+  const memberTypes = new Map([
+    ['DIRECT', 'direct'], ['REJECT', 'reject'], ['REJECT-DROP', 'rejectdrop'], ['COMPATIBLE', 'compatible'],
+    ['PASS', 'pass'], ['PASS-RULE', 'passrule'],
+    ...nodes.map((n): [string, string] => [n.name, adapterType(n.type)]),
+  ]);
+  const members = new Set([...explicit.matched, ...matched.matched].filter((name) => !excluded.has(memberTypes.get(name) ?? '')));
+  if (!members.size && typeof v['empty-fallback'] === 'string') members.add(v['empty-fallback']);
   return {
-    nodes: nodes.filter((node) => (bound ? bound.has(node.sourceKey ?? '') : explicit.has(node.name)) ||
-      (names.has(node.name) && !excluded.has(adapterType(node.type)))),
-    error: matched.error,
+    nodes: nodes.filter((node) => members.has(node.name)),
+    error: matched.error ?? explicit.error,
   };
 }
 
