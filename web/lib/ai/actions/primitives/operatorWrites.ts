@@ -300,6 +300,7 @@ async function sourceRawProxies(
     {
       noCache,
       writeCache: false,
+      managedCollection: deferUniqueNames,
     },
   );
   return { proxies: merged as ClashProxy[], memberErrors, ordinalPlanningSession };

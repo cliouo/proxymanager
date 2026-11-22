@@ -19,6 +19,7 @@
 import {
   NAMING_FIELDS,
   applyNodeRecognitionFacts,
+  effectiveNodeRecognition,
   nodeFingerprint,
   recognizeName,
   upstreamOrdinalOf,
@@ -419,7 +420,8 @@ export function analyzeSourceFacts(
       const occurrence = occurrenceByKey.get(key) ?? 0;
       occurrenceByKey.set(key, occurrence + 1);
       const handle = nodeIdentity(rawName, fp, occurrence);
-      const facts = factsOf(proxy, rules, options.nodeFacts?.[fp ?? '']);
+      const effective = effectiveNodeRecognition(proxy, rules, options.nodeFacts);
+      const facts = factsOf(proxy, effective.rules, effective.facts);
       factsTotal += facts.length;
       let nodeAmbiguous = false;
       for (const fact of facts) {

@@ -2,6 +2,7 @@ import { withProblemDetails } from '@/lib/http/handler';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { applyOperators, type ClashProxy } from '@/lib/proxies/operators';
 import { sourceOf } from '@/lib/proxies/provenance';
+import { collectionMemberNamingWarnings } from '@/lib/proxies/collectionNaming';
 import { enabledCollectionMemberSubs } from '@/lib/engine/resolve';
 import { dedupExportProxies, mergeCollectionMemberProxies } from '@/lib/services/nodeExportService';
 import { resolveOrdinalsFor } from '@/lib/services/nodeOrdinalService';
@@ -48,7 +49,7 @@ export const POST = withProblemDetails(async (request: Request, ctx: Ctx) => {
 
   const subs = await listSubscriptions();
   const { merged, memberErrors, ordinalPlanningSession, ordinalDomainRegistry } =
-    await mergeCollectionMemberProxies(collection, subs, {
+    await mergeCollectionMemberProxies({ ...collection, operators }, subs, {
       noCache,
       writeCache: false,
     });
@@ -91,7 +92,8 @@ export const POST = withProblemDetails(async (request: Request, ctx: Ctx) => {
       before: namesPayload(before),
       after: namesPayload(final.proxies),
       steps: projectStepsSourceKeys(steps),
-      issues: [...(await buildPreviewIssues(before, final.proxies, steps)), ...dedupIssues],
+      issues: [...(await buildPreviewIssues(before, final.proxies, steps)), ...dedupIssues,
+        ...collectionMemberNamingWarnings(enabledCollectionMemberSubs(collection, subs), collectionManagedOp)],
       memberErrors: safeMemberErrors(memberErrors),
     },
   });

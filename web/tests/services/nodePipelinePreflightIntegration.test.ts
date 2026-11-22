@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   getConfigVersion: vi.fn(),
   getOrdinalGeneration: vi.fn(),
   getProfile: vi.fn(),
+  getCollection: vi.fn(),
   listCollections: vi.fn(),
   listDevices: vi.fn(),
   listProxyGroups: vi.fn(),
@@ -22,8 +23,9 @@ vi.mock('@/lib/repos/baseRepo', () => ({ getBase: mocks.getBase }));
 vi.mock('@/lib/repos/configVersionRepo', () => ({
   getConfigVersion: mocks.getConfigVersion,
 }));
-vi.mock('@/lib/repos/profilesRepo', () => ({ getProfile: mocks.getProfile }));
+vi.mock('@/lib/repos/profilesRepo', () => ({ getProfile: mocks.getProfile, listProfiles: async () => [] }));
 vi.mock('@/lib/repos/collectionsRepo', () => ({
+  getCollection: mocks.getCollection,
   listCollections: mocks.listCollections,
 }));
 vi.mock('@/lib/repos/devicesRepo', () => ({ listDevices: mocks.listDevices }));
@@ -70,6 +72,10 @@ vi.mock('@/lib/repos/nodeOrdinalRepo', async (importOriginal) => {
 });
 
 import { nodeFingerprint } from '@/lib/proxies/naming';
+import { analyzeSourceFacts } from '@/lib/proxies/namingHealth';
+import { exportCollectionNodes, exportSubscriptionNodes, mergeCollectionMemberProxies } from '@/lib/services/nodeExportService';
+import { previewNamingCollection } from '@/lib/services/namingPreviewService';
+import { resolveSubscriptionProxies } from '@/lib/services/subscriptionFetcher';
 import { resolveConfig } from '@/lib/engine/resolve';
 import {
   preflightProfileConfig,
@@ -250,5 +256,129 @@ describe('outer pipeline save integration', () => {
 
     expect(expected.nodeNames).toContain('日本 02');
     expect(checked.buildId).toBe(expected.buildId);
+  });
+
+  async function aggregateFixture() {
+    const raw = { ...US_NODE, name: '美国 edge 01' };
+    const subscription: Subscription = {
+      ...(await mocks.listSubscriptions())[0], kind: 'local', url: undefined,
+      content: stringify({ proxies: [raw, { ...JP_NODE, name: '香港 02' }] }),
+      operators: [
+        { id: 'local-edit', kind: 'rename-regex', pattern: '美国', replacement: '日本' },
+        { id: 'local-filter', kind: 'filter-regex', mode: 'keep', pattern: '日本' },
+        { id: 'member-naming', kind: 'rename-template', template: 'member ${region} ${index}', recognitionRules: [],
+          nodeFacts: { [nodeFingerprint(raw)!]: { tags: ['家宽'] } } },
+      ],
+    };
+    const collection: Collection = {
+      ...(await mocks.listCollections())[0],
+      operators: [{ id: 'collection-naming', kind: 'rename-template',
+        template: '${region}${?tags: · ${tags}}${?note: · ${note}} · ${index}', recognitionRules: [] }],
+    };
+    mocks.listSubscriptions.mockResolvedValue([subscription]);
+    mocks.listCollections.mockResolvedValue([collection]);
+    mocks.getCollection.mockResolvedValue(collection);
+    return { raw, subscription, collection };
+  }
+
+  it('renders members once using manual edits and identity facts, with export/preview/serve/preflight parity', async () => {
+    const { subscription, collection } = await aggregateFixture();
+    const stored = structuredClone(subscription.operators);
+    const exported = await exportCollectionNodes(collection, [subscription], { writeCache: false });
+    expect(exported.proxies.map((node) => node.name)).toEqual(['日本 · 家宽 · edge · 01']);
+    const preview = await previewNamingCollection(collection.id, collection.operators);
+    expect(preview.before.names).toEqual(['日本 edge 01']);
+    expect(preview.after.names).toEqual(exported.proxies.map((node) => node.name));
+    const served = await resolveConfig(BASE, [], [subscription], [], [], {
+      collections: [collection], boundSource: { type: 'collection', id: collection.id },
+      persistSnapshot: false, persistOrdinals: false,
+    });
+    expect(served.nodeNames).toContain('日本 · 家宽 · edge · 01');
+    const checked = await preflightProfileConfig(COLLECTION_PROFILE_ID, () => ({}));
+    expect(checked.buildId).toBe(served.buildId);
+    expect((await exportCollectionNodes(collection, [subscription], { writeCache: false })).yaml).toBe(exported.yaml);
+    expect((await exportSubscriptionNodes(subscription, { writeCache: false })).proxies[0].name).toBe('member 日本 01');
+    expect((await exportCollectionNodes({ ...collection, operators: [] }, [subscription], { writeCache: false })).proxies[0].name).toBe('member 日本 01');
+    expect(subscription.operators).toEqual(stored);
+    expect(mocks.setFetchCache).not.toHaveBeenCalled();
+  });
+
+  it('collection facts override inherited member facts in rendering and health', async () => {
+    const { raw, subscription, collection } = await aggregateFixture();
+    const naming = collection.operators[0];
+    if (naming.kind !== 'rename-template') throw new Error('expected template');
+    naming.nodeFacts = { [nodeFingerprint(raw)!]: { tags: ['IEPL'] } };
+    const exported = await exportCollectionNodes(collection, [subscription], { writeCache: false });
+    expect(exported.proxies[0].name).toBe('日本 · IEPL · edge · 01');
+    const { merged } = await mergeCollectionMemberProxies(collection, [subscription], { writeCache: false });
+    const inherited = analyzeSourceFacts(merged);
+    expect(inherited[0].fields.find((field) => field.field === 'tags')?.samples[0].value).toBe('家宽');
+    const overridden = analyzeSourceFacts(merged, { nodeFacts: naming.nodeFacts });
+    expect(overridden[0].fields.find((field) => field.field === 'tags')?.samples[0].value).toBe('IEPL');
+  });
+
+  it('keeps post-template edits chained and surfaces the member warning', async () => {
+    const { subscription, collection } = await aggregateFixture();
+    subscription.operators.push({ id: 'after', kind: 'rename-regex', pattern: 'member 日本', replacement: '新加坡' });
+    const preview = await previewNamingCollection(collection.id, collection.operators);
+    expect(preview.before.names).toEqual(['新加坡 01']);
+    expect(preview.after.names).toEqual(['新加坡 · 家宽 · 01']);
+    expect(preview.issues).toContainEqual({ code: 'member-post-template-rename', memberId: SUB_ID,
+      message: 'post-template name-dependent rows; convert to facts/rules' });
+    expect((await exportCollectionNodes(collection, [subscription], { writeCache: false })).proxies[0].name).toBe('新加坡 · 家宽 · 01');
+  });
+
+  it('keeps a template prefix visible to a downstream keep filter', async () => {
+    const { subscription, collection } = await aggregateFixture();
+    subscription.operators.push({ id: 'after', kind: 'filter-regex', mode: 'keep', pattern: '^member 日本 ' });
+    const preview = await previewNamingCollection(collection.id, collection.operators);
+    expect(preview.before.names).toEqual(['member 日本 01']);
+    expect(preview.after.names).toHaveLength(1);
+    expect(preview.issues).toContainEqual({ code: 'member-post-template-rename', memberId: SUB_ID,
+      message: 'post-template name-dependent rows; convert to facts/rules' });
+    expect((await exportCollectionNodes(collection, [subscription], { writeCache: false })).proxyCount).toBe(1);
+  });
+
+  it('separates direct and collection preflight outputs while sharing immutable raw bytes', async () => {
+    const { raw, subscription } = await aggregateFixture();
+    const remote = { ...subscription, kind: 'remote', url: 'https://upstream.example/sub', content: undefined } as Subscription;
+    const fetcher = vi.fn(async () => new Response(stringify({ proxies: [raw] })));
+    vi.stubGlobal('fetch', fetcher);
+    try {
+      const subscriptionSnapshot = new Map();
+      const direct = await resolveSubscriptionForPreflight(remote, { subscriptionSnapshot });
+      const member = await resolveSubscriptionForPreflight(remote, { subscriptionSnapshot, managedCollection: true });
+      expect(direct.proxies[0].name).toBe('member 日本 01');
+      expect(member.proxies[0].name).toBe('日本 edge 01');
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      expect(mocks.setFetchCache).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it.each([false, true])('matches serving fallback for duplicate remote names with managed-first=%s', async (managedFirst) => {
+    const { subscription } = await aggregateFixture();
+    const remote = { ...subscription, operators: [], kind: 'remote', url: 'https://upstream.example/sub', content: undefined } as Subscription;
+    const fresh = [{ ...US_NODE, name: 'edge' }, { ...JP_NODE, name: 'edge' }];
+    const fetcher = vi.fn(async () => new Response(stringify({ proxies: fresh })));
+    vi.stubGlobal('fetch', fetcher);
+    try {
+      const serving = await resolveSubscriptionProxies(remote, { writeCache: false, recordHealth: false });
+      expect(serving.stale).toBe(true);
+      expect(serving.proxies.map((p) => p.name)).toEqual([US_NODE.name, JP_NODE.name]);
+      fetcher.mockClear();
+      const subscriptionSnapshot = new Map();
+      const managed = () => resolveSubscriptionForPreflight(remote, { subscriptionSnapshot, managedCollection: true });
+      if (managedFirst) expect((await managed()).proxies.map((p) => p.name)).toEqual(['edge', 'edge']);
+      const direct = await resolveSubscriptionForPreflight(remote, { subscriptionSnapshot });
+      expect(direct.stale).toBe(true);
+      expect(direct.proxies).toEqual(serving.proxies);
+      if (!managedFirst) expect((await managed()).proxies.map((p) => p.name)).toEqual(['edge', 'edge']);
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      expect(mocks.setFetchCache).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

@@ -58,6 +58,7 @@ export interface NamingWorkspaceData {
   recommended: string;
   health: SourceHealthReport[];
   diagnostics: {
+    memberWarnings?: Array<{ memberId: string; message: string }>;
     nodeCount: number;
     changed: number;
     collisions: string[];

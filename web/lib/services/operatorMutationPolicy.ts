@@ -24,7 +24,7 @@
  *     deliberate kind change replaces the row. A current ID with multiplicity
  *     > 1 that the candidate retains is ambiguous (an ID-only handle cannot
  *     identify two rows) and fails with one bounded ambiguity error.
- *   - `naming` — the profile-bound naming apply/rollback service ONLY. May
+ *   - `naming` — naming apply/rollback and internal collection defaults. May
  *     replace/add/remove the logical managed row, must strip ONLY that row
  *     from both sides and require every remaining raw row structurally equal
  *     in IDENTICAL order, must keep an existing managed row at the same

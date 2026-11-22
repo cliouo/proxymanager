@@ -555,6 +555,10 @@ async function resolveConfigInternal(
     SUB_FETCH_CONCURRENCY,
     (sub) =>
       subscriptionResolver(sub, {
+        managedCollection: boundSource?.type === 'collection' && (opts.collections ?? []).some(
+          (collection) => collection.id === boundSource.id &&
+            (collection.operators ?? []).some(isActiveCurrentRenameTemplateOperator),
+        ),
         noCache: opts.noCache,
         recordHealth: opts.recordFetchHealth !== false,
         ordinalConfigVersion,

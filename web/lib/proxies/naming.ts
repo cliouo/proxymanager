@@ -119,6 +119,19 @@ export interface NodeRecognitionFacts {
 }
 export type NodeFacts = Record<string, NodeRecognitionFacts>;
 
+export function effectiveNodeRecognition(
+  proxy: unknown,
+  rules: RecognitionRule[] = [],
+  nodeFacts?: NodeFacts,
+): { rules: RecognitionRule[]; facts: NodeRecognitionFacts | undefined } {
+  const member = envelopeOf(proxy)?.memberNaming;
+  const facts = nodeFacts?.[fingerprintOf(proxy) ?? nodeFingerprint(proxy) ?? ''];
+  return {
+    rules: member?.recognitionRules?.length ? [...rules, ...member.recognitionRules] : rules,
+    facts: member?.facts ? { ...member.facts, ...facts } : facts,
+  };
+}
+
 const TAG_PATTERNS: ReadonlyArray<readonly [LineTag, RegExp]> = [
   ['IEPL', /\biepl\b/gi],
   ['IPLC', /\biplc\b/gi],
@@ -1310,6 +1323,11 @@ export function applyRenameTemplate(
   sourceOfProxy: (proxy: unknown) => SourceIdentity | undefined = sourceOf,
   ordinalResolver?: OrdinalResolver,
 ): RenameTemplateApplyResult {
+  const effectiveSourceOf = (proxy: unknown) => {
+    const source = sourceOfProxy(proxy);
+    const memberAlias = envelopeOf(proxy)?.memberNaming?.sourceAlias;
+    return source && memberAlias !== undefined ? { ...source, label: memberAlias } : source;
+  };
   // Identity + occurrence for EVERY raw node, computed ONCE (O(n)): both
   // the dedup and collision diagnostics below emit the exact raw-name
   // occurrence at the moment identity is known (C9). The occurrence counts
@@ -1346,7 +1364,7 @@ export function applyRenameTemplate(
     // boundary when present (fallback: compute from the current object — the
     // documented path for envelope-less test inputs).
     const fp = fingerprintOf(p) ?? nodeFingerprint(p);
-    const savedInfo = fp ? config.nodeFacts?.[fp]?.info : undefined;
+    const savedInfo = effectiveNodeRecognition(p, config.recognitionRules, config.nodeFacts).facts?.info;
     const rawName = envelopeOf(p)?.rawName ?? (typeof p.name === 'string' ? p.name : '');
     if (
       savedInfo === true ||
@@ -1405,7 +1423,8 @@ export function applyRenameTemplate(
     if (usesIndex) {
       const name = typeof p.name === 'string' ? p.name : '';
       if (name !== '') {
-        const upstream = upstreamOrdinalOf(recognizeName(name, config.recognitionRules).base);
+        const rules = effectiveNodeRecognition(p, config.recognitionRules).rules;
+        const upstream = upstreamOrdinalOf(recognizeName(name, rules).base);
         if (upstream !== null && upstream > 0) ordinal = upstream;
       }
     }
@@ -1430,8 +1449,10 @@ export function applyRenameTemplate(
   for (let i = 0; i < list.length; i += 1) {
     const p = list[i];
     const name = typeof p.name === 'string' ? p.name : '';
-    const source = sourceOfProxy(p);
+    const source = effectiveSourceOf(p);
     const key = source?.key ?? '';
+
+    const recognition = effectiveNodeRecognition(p, config.recognitionRules, config.nodeFacts);
 
     const formatted =
       name === ''
@@ -1443,8 +1464,8 @@ export function applyRenameTemplate(
             source: source ?? null,
             index: ordinals.get(i),
             indexWidth: Math.max(2, widthBySource.get(key) ?? 2),
-            config,
-            facts: config.nodeFacts?.[fingerprintOf(p) ?? nodeFingerprint(p) ?? ''],
+            config: { ...config, recognitionRules: recognition.rules },
+            facts: recognition.facts,
           });
     candidates.push({ proxy: p, name, formatted, changed: name !== '' && formatted !== name });
   }
@@ -1486,7 +1507,7 @@ export function applyRenameTemplate(
   for (let i = 0; i < candidates.length; i += 1) {
     const c = candidates[i];
     if (c.name === '' || firstUnchanged.has(i)) continue;
-    const source = sourceOfProxy(c.proxy);
+    const source = effectiveSourceOf(c.proxy);
     const sourceKey = source?.key;
     const sourceLabel = sourceKey
       ? (config.sourceAliases?.[sourceKey] ?? source?.label ?? null)

@@ -4,7 +4,8 @@ import { readCapped } from '@/lib/net/safeFetch';
 import { applyOperators, type ClashProxy } from '@/lib/proxies/operators';
 import { withRawIdentity, type OrdinalResolver, type RecognitionRule } from '@/lib/proxies/naming';
 import { isActiveCurrentRenameTemplateOperator, isExecutableOperator } from '@/schemas/operator';
-import { stripSource } from '@/lib/proxies/provenance';
+import { fingerprintOf, mergeEnvelope, stripSource } from '@/lib/proxies/provenance';
+import { collectionMemberExecution } from '@/lib/proxies/collectionNaming';
 import {
   resolveOrdinalsFor,
   type OrdinalDomainRegistry,
@@ -118,6 +119,10 @@ export interface SubscriptionResolveOptions {
    * duplicated name) always stay fail-closed.
    */
   deferUniqueNames?: boolean;
+  /** Collection owns naming; member corrections travel in the node envelope. */
+  managedCollection?: boolean;
+  /** Share fresh attempts, not context-specific validation/fallback decisions. */
+  rawSnapshot?: { key: string; entries: SubscriptionRawSnapshot };
   /** Config generation captured before the caller read render inputs. */
   ordinalConfigVersion?: number;
   /** Operation-local read-only ordinal plan shared across every pipeline stage. */
@@ -151,6 +156,24 @@ interface RawResolved {
   proxyCount: number;
   stale?: boolean;
   staleReason?: string;
+}
+
+export type SubscriptionRawSnapshot = Map<string, Promise<RawResolved>>;
+const retainedSnapshots = new WeakMap<SubscriptionRawSnapshot, Map<string, Promise<FetchCacheEntry | null>>>();
+
+function readRetainedCache(cacheKey: string, snapshot?: SubscriptionResolveOptions['rawSnapshot']) {
+  if (!snapshot) return getFetchCache(cacheKey);
+  let retained = retainedSnapshots.get(snapshot.entries);
+  if (!retained) {
+    retained = new Map();
+    retainedSnapshots.set(snapshot.entries, retained);
+  }
+  let pending = retained.get(cacheKey);
+  if (!pending) {
+    pending = getFetchCache(cacheKey);
+    retained.set(cacheKey, pending);
+  }
+  return pending;
 }
 
 interface RawMeta {
@@ -237,7 +260,7 @@ function applySubscriptionOperators(
   input: Record<string, unknown>[],
   operators: Subscription['operators'],
   identity?: { key: string; label: string },
-  options: { ordinals?: OrdinalResolver; keepEnvelope?: boolean } = {},
+  options: { ordinals?: OrdinalResolver; keepEnvelope?: boolean; deferUniqueNames?: boolean } = {},
 ): Record<string, unknown>[] {
   try {
     const executable = (operators ?? []).filter(isExecutableOperator);
@@ -266,7 +289,7 @@ function applySubscriptionOperators(
       options.ordinals,
     );
     const processed = options.keepEnvelope ? operated : operated.map((p) => stripSource(p));
-    return validateProviderProxyList(processed);
+    return validateProviderProxyList(processed, options.deferUniqueNames);
   } catch (error) {
     throw asSubscriptionValidationError(
       error,
@@ -353,7 +376,12 @@ export async function resolveSubscriptionProxies(
   sub: Subscription,
   options: SubscriptionResolveOptions = {},
 ): Promise<FetchSubscriptionProxiesResult> {
-  const raw = await resolveSubscriptionRaw(sub, options);
+  const execution = options.managedCollection ? collectionMemberExecution(sub.operators ?? []) : undefined;
+  const operators = execution?.operators ?? sub.operators;
+  const raw = await resolveSubscriptionRaw(sub, {
+    ...options,
+    ...(options.managedCollection ? { deferUniqueNames: true } : {}),
+  });
   const base = raw.getProxies();
   const identity = subscriptionIdentity(sub);
   (options.ordinalPlanningSession ?? options.ordinalDomainRegistry)?.registerSourceDomain(
@@ -374,20 +402,29 @@ export async function resolveSubscriptionProxies(
       staleReason: raw.staleReason,
     };
   }
-  const ordinals = hasActiveManagedNaming(sub.operators)
+  const ordinals = hasActiveManagedNaming(operators)
     ? await resolveOrdinalsFor(base, () => subscriptionIdentity(sub), {
         persist: options.writeCache !== false,
-        template: activeManagedTemplate(sub.operators) ?? undefined,
-        recognitionRules: activeManagedRules(sub.operators),
+        template: activeManagedTemplate(operators) ?? undefined,
+        recognitionRules: activeManagedRules(operators),
         configVersion: options.ordinalConfigVersion,
         planningSession: options.ordinalPlanningSession,
         domainRegistry: options.ordinalPlanningSession ?? options.ordinalDomainRegistry,
       })
     : undefined;
-  const proxies = applySubscriptionOperators(base, sub.operators, subscriptionIdentity(sub), {
+  const operated = applySubscriptionOperators(base, operators, subscriptionIdentity(sub), {
     ordinals,
     keepEnvelope: true,
+    deferUniqueNames: options.managedCollection,
   });
+  const managed = execution?.managed;
+  const proxies = managed ? operated.map((proxy) => mergeEnvelope(proxy, {
+    memberNaming: {
+      facts: managed.nodeFacts?.[fingerprintOf(proxy) ?? ''],
+      recognitionRules: managed.recognitionRules,
+      sourceAlias: managed.sourceAliases?.[identity.key],
+    },
+  })) : operated;
   return {
     proxies: proxies as Record<string, unknown>[],
     traffic: raw.traffic,
@@ -574,7 +611,7 @@ async function resolveSubscriptionRaw(
   // Read once up front — we may use it as fresh, or as the stale fallback.
   // Validate the payload before either decision: cache age/envelope validity
   // alone does not make the embedded provider YAML trustworthy.
-  const cached = options.noCache ? null : await getFetchCache(cacheKey);
+  const cached = options.noCache ? null : await readRetainedCache(cacheKey, options.rawSnapshot);
   let cachedRaw: RawResolved | null = null;
   if (cached) {
     try {
@@ -612,12 +649,25 @@ async function resolveSubscriptionRaw(
   const recordHealth = options.recordHealth ?? options.writeCache !== false;
   const attemptedAt = Date.now();
   try {
-    const fresh = await fetchSubscriptionInternal(sub.url, {
+    const fetchFresh = () => fetchSubscriptionInternal(sub.url!, {
       userAgent: subscriptionUserAgent(sub),
       timeoutMs: options.timeoutMs ?? FETCH_TIMEOUT_MS,
       customHeaders,
-      deferUniqueNames,
+      deferUniqueNames: options.rawSnapshot ? true : deferUniqueNames,
     });
+    let pending = options.rawSnapshot?.entries.get(options.rawSnapshot.key);
+    if (!pending) {
+      pending = fetchFresh();
+      options.rawSnapshot?.entries.set(options.rawSnapshot.key, pending);
+    }
+    const fresh = await pending;
+    if (options.rawSnapshot && !deferUniqueNames) {
+      try {
+        validateProviderProxyList(fresh.getProxies());
+      } catch (error) {
+        throw classifyFreshContentError(error);
+      }
+    }
 
     const entry: FetchCacheEntry = {
       // The cache stores the provider-YAML string (entry format unchanged);
