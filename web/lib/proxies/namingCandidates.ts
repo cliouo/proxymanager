@@ -173,7 +173,7 @@ function probeState(node: CandidateNode) {
 type ProbeState = ReturnType<typeof probeState>;
 
 function renderProbe(node: CandidateNode, state: ProbeState, template: string, name = 'fresh-node') {
-  const facts: NodeRecognitionFacts = { ...state.facts, region: state.facts.region ?? undefined,
+  const facts: NodeRecognitionFacts = { ...state.facts, info: false, region: state.facts.region ?? undefined,
     rate: state.facts.rate ?? undefined, vendor: state.facts.vendor ?? undefined };
   return formatNodeName({ name, index: 999, type: node.type, facts,
     source: { key: 'fresh-source', label: state.sourceLabel },

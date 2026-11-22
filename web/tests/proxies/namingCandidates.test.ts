@@ -13,6 +13,17 @@ const profile = (groups = [group()]): CandidateProfile => ({ id: 'p', name: 'Pro
 const template = { id: 'test', title: 'Test', template: '${region}' };
 
 describe('policy-aware candidate inference and membership', () => {
+  it('renders alias-bearing residual probes as real proxies, not subscription info nodes', () => {
+    const before = [{ ...node('a', 'HK 01 · 我的订阅'), sourceLabel: '我的订阅',
+      namingTemplate: '${region_code} ${index} · ${source}' }];
+    const naming = '${region} ${index} · ${source}';
+    const after = [{ ...before[0], name: '香港 01 · 我的订阅', namingTemplate: naming }];
+    const result = analyzeNamingCandidate({ ...template, template: naming }, [{ ...profile([group({ filter: 'HK' })]), before, after }], []);
+    expect(result.groups[0].migration?.filter).toContain('香港');
+    expect(result.groups[0].migration?.after).toBe(1);
+    expect(result.groups[0].broken).toBeFalsy();
+  });
+
   it.each([
     ['HK', 'HK IEPL 0.5x 01', '香港'],
     ['家庭宽带', 'HK 家庭宽带 0.5x 01', '家宽'],
