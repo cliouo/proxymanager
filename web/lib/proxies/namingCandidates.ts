@@ -9,6 +9,7 @@ export interface CandidateNode {
   scoped: boolean;
   sourceKey?: string;
   sourceLabel?: string;
+  sourceId?: string;
   namingTemplate?: string;
   dialer?: string;
 }
@@ -157,6 +158,10 @@ function tokenSelector(token: string) {
   return `${/^[A-Za-z0-9.]/.test(token) ? '(?<![A-Za-z0-9.])' : ''}${escapeRegex(token)}${/[A-Za-z0-9.]$/.test(token) ? '(?![A-Za-z0-9.])' : ''}`;
 }
 
+export function fieldValueSelector(values: readonly string[]) {
+  return `(?:${[...new Set(values)].map(tokenSelector).join('|')})`;
+}
+
 function probeState(node: CandidateNode) {
   const recognized = recognizeName(node.name);
   return { facts: { region: recognized.region, tags: recognized.tags, rate: recognized.rate, vendor: recognized.vendor },
@@ -246,7 +251,7 @@ function migratedSelector(group: CandidateGroup, before: CandidateNode[], after:
       const retained = values.filter((value) => constrained.some((tag) => tag === value));
       if (retained.length) values = retained;
     }
-    return values.length ? [{ field, selector: `(?:${values.map(tokenSelector).join('|')})` }] : [];
+    return values.length ? [{ field, selector: fieldValueSelector(values) }] : [];
   });
   const probes = selectorProbes(before, recovered, template);
   const exclude = typeof group.values['exclude-filter'] === 'string' ? group.values['exclude-filter'] : undefined;

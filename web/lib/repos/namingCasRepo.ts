@@ -428,7 +428,11 @@ end
 redis.call('HSET', KEYS[2], ARGV[2], ARGV[3])
 local profileWriteIndex = 1
 while profileWriteIndex <= profileWriteCount do
-  redis.call('HSET', profileWriteKeys[profileWriteIndex], profileWriteFields[profileWriteIndex], profileWriteValues[profileWriteIndex])
+  if profileWriteValues[profileWriteIndex] == '__naming_delete__' then
+    redis.call('HDEL', profileWriteKeys[profileWriteIndex], profileWriteFields[profileWriteIndex])
+  else
+    redis.call('HSET', profileWriteKeys[profileWriteIndex], profileWriteFields[profileWriteIndex], profileWriteValues[profileWriteIndex])
+  end
   profileWriteIndex = profileWriteIndex + 1
 end
 if ARGV[4] == 'set' then
@@ -733,11 +737,13 @@ export async function commitEntityWithNamingHistory(options: {
   const profileChanges = NamingProfileChangesSchema.parse(options.profileChanges ?? []);
   const profileArgs = [String(profileChanges.length)];
   for (const profile of profileChanges) {
-    profileArgs.push(profile.profileId, String(profile.groups.length));
+    profileArgs.push(profile.profileId, String(profile.groups.length + (profile.createdGroups?.length ?? 0) + (profile.removedGroups?.length ?? 0)));
     for (const pair of profile.groups) {
       if (pair.before.id !== pair.after.id) throw new Error('naming profile patch cannot change record identity');
       profileArgs.push(pair.after.id, JSON.stringify(pair.after));
     }
+    for (const group of profile.createdGroups ?? []) profileArgs.push(group.id, JSON.stringify(group));
+    for (const group of profile.removedGroups ?? []) profileArgs.push(group.id, '__naming_delete__');
     profileArgs.push(String(profile.rules.length));
     for (const pair of profile.rules) {
       if (pair.before.id !== pair.after.id) throw new Error('naming profile patch cannot change record identity');

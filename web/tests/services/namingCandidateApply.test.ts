@@ -30,6 +30,8 @@ vi.mock('@/lib/services/namingCandidateService', () => ({
       return db.patches;
     },
     subscriptionSnapshot: new Map(), ordinalPlanningSession: session,
+    grouping: async () => ({ template: '${region_code} ${index}', blocked: false, profiles: [{}] }),
+    groupChanges: async () => db.patches.filter((p) => p.createdGroups?.length),
   }),
 }));
 vi.mock('@/lib/services/configPreflight', () => ({
@@ -54,7 +56,8 @@ vi.mock('@/lib/repos/namingCasRepo', () => ({
     db.entity = JSON.parse(options.recordJson);
     db.history = options.history.op === 'set' ? JSON.parse(options.history.value) : null;
     for (const patch of options.profileChanges) {
-      db.groups.set(patch.profileId, (db.groups.get(patch.profileId) ?? []).map((g) => patch.groups.find((p) => p.before.id === g.id)?.after ?? g));
+      db.groups.set(patch.profileId, [...(db.groups.get(patch.profileId) ?? []).map((g) => patch.groups.find((p) => p.before.id === g.id)?.after ?? g)
+        .filter((g) => !patch.removedGroups?.some((removed) => removed.id === g.id)), ...(patch.createdGroups ?? [])]);
       db.rules.set(patch.profileId, (db.rules.get(patch.profileId) ?? []).map((r) => patch.rules.find((p) => p.before.id === r.id)?.after ?? r));
     }
     const audit = JSON.parse(options.audit.payloadJson);
@@ -91,6 +94,60 @@ beforeEach(() => {
 });
 
 describe('atomic naming + profile migration orchestration', () => {
+  const generate = () => applyNamingPlan('subscription', ID, { template: '${region_code} ${index}', groupingPurposes: ['region'] }, { audit, expectedVersion: 7 });
+  const prepareGeneration = () => {
+    db.groups.set(P2, []);
+    const generated = ProxyGroupSchema.parse({ id: P2, kind: 'filter', name: '🇭🇰 香港', type: 'select', rank: 0, updated_at: 1, 'include-all-proxies': true, filter: '香港' });
+    db.patches[1] = { profileId: P2, groups: [], rules: [], createdGroups: [generated] };
+  };
+
+  it('atomically generates groups only for the empty shared consumer, preflights both, and removes exactly those groups on undo', async () => {
+    prepareGeneration();
+    await generate();
+    expect(db.version).toBe(8);
+    expect(db.checked.map((s) => s.profile.id)).toEqual([P1, P2]);
+    expect(db.groups.get(P1)).toHaveLength(1);
+    expect(db.groups.get(P1)?.[0].name).toBe('Group');
+    expect(db.groups.get(P2)?.[0].name).toBe('🇭🇰 香港');
+    expect(db.history?.profileChanges?.[1].createdGroups).toHaveLength(1);
+    const addedLater = ProxyGroupSchema.parse({ id: ID, kind: 'manual', name: 'Later', type: 'select', rank: 1, updated_at: 2, proxies: ['DIRECT'] });
+    db.groups.set(P2, [...db.groups.get(P2)!, addedLater]);
+    await rollbackNamingPlan('subscription', ID, { audit, expectedVersion: 8 });
+    expect(db.groups.get(P2)).toEqual([addedLater]);
+    expect(db.entity.operators).toEqual([]);
+    expect(db.history).toBeNull();
+    expect(db.version).toBe(9);
+  });
+
+  it('aborts group creation and naming when any shared consumer fails preflight', async () => {
+    prepareGeneration(); db.failedProfile = P2;
+    const before = snapshot();
+    await expect(generate()).rejects.toThrow('render rejected candidate');
+    expect(snapshot()).toBe(before);
+    expect(db.commits).toBe(0);
+  });
+
+  it('refuses to remove edited generated groups', async () => {
+    prepareGeneration();
+    await generate();
+    db.groups.set(P2, [{ ...db.groups.get(P2)![0], filter: 'changed' }]);
+    const before = snapshot();
+    await expect(rollbackNamingPlan('subscription', ID, { audit, expectedVersion: 8 })).rejects.toThrow('已被编辑');
+    expect(snapshot()).toBe(before);
+  });
+
+  it('refuses group creation into a nonempty consumer and rejects invalid purpose selections', async () => {
+    prepareGeneration();
+    db.groups.set(P2, db.groups.get(P1)!);
+    const before = snapshot();
+    await expect(generate()).rejects.toThrow('已有策略组');
+    expect(snapshot()).toBe(before);
+    for (const groupingPurposes of [[], ['region', 'region']] as ('region')[][]) {
+      await expect(applyNamingPlan('subscription', ID, { template: '${region}', groupingPurposes }, { audit, expectedVersion: 7 })).rejects.toMatchObject({ problem: { status: 400 } });
+    }
+    expect(db.commits).toBe(0);
+  });
+
   it('preflights all consumers with template, filters, manual, rule and dialer rewrites, then rolls everything back', async () => {
     await apply();
     expect(db.version).toBe(8);

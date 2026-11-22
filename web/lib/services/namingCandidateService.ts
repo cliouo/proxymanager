@@ -2,6 +2,7 @@ import { parse } from 'yaml';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { enabledCollectionMemberSubs } from '@/lib/engine/resolve';
 import { nodeFingerprint } from '@/lib/proxies/naming';
+import { generateNamingGroups, groupingCounts, templateForGrouping, type GroupingPurpose, type GroupingPreview } from '@/lib/proxies/namingGroupGeneration';
 import { envelopeOf, fingerprintOf, sourceOf } from '@/lib/proxies/provenance';
 import { safeIssueText as safeSampleName } from './pipelinePreview';
 import { redactSensitiveText } from '@/lib/proxies/namingSanitize';
@@ -18,7 +19,7 @@ import { listProxyGroups } from '@/lib/repos/proxyGroupsRepo';
 import { listProxyGroupTemplates } from '@/lib/repos/proxyGroupTemplatesRepo';
 import { listRules } from '@/lib/repos/rulesRepo';
 import { buildOperatorSnapshot } from '@/lib/repos/rawOperators';
-import { mergeWithTemplate } from '@/schemas/proxyGroup';
+import { mergeWithTemplate, ProxyGroupSchema } from '@/schemas/proxyGroup';
 import type { Collection, Profile, ProxyGroup, Rule, Subscription } from '@/schemas';
 import type { NamingProfileChange } from '@/schemas/namingProfileChanges';
 import { consumingProfilesOfCollection, consumingProfilesOfSubscription } from './nodePipelineSaveGate';
@@ -30,6 +31,7 @@ import { buildManagedCandidate, completeNamingPlan, priorPolicyOf } from './nami
 interface ProfileInput {
   profile: Profile;
   groups: ProxyGroup[];
+  hasBaseGroups: boolean;
   rules: Rule[];
   baseNodes: Record<string, unknown>[];
   baseRefs: { owner: string; name: string }[];
@@ -56,7 +58,7 @@ export async function loadNamingCandidateContext(type: 'subscription' | 'collect
         if (name) baseRefs.push({ owner: 'base:rule', name });
       }
     }
-    return { profile, groups, rules, baseNodes, baseRefs };
+    return { profile, groups, rules, baseNodes, baseRefs, hasBaseGroups: Array.isArray(document?.['proxy-groups']) && document['proxy-groups'].length > 0 };
   }));
   if (await getConfigVersion() !== version) throw ProblemDetailsError.preconditionFailed('配置已修改，请刷新推荐方案。');
   const subscriptionSnapshot: SubscriptionPreflightSnapshot = new Map();
@@ -71,6 +73,7 @@ export async function loadNamingCandidateContext(type: 'subscription' | 'collect
       identity: fingerprintOf(node) ?? nodeFingerprint(node) ?? `name:${String(node.name)}`,
       name: String(node.name ?? ''), type: String(node.type ?? ''), scoped,
       sourceKey: sourceOf(node)?.key,
+      sourceId: subscriptions.find((s) => s.name === sourceOf(node)?.key)?.id,
       namingTemplate: managed?.kind === 'rename-template' && !managed.disabled ? managed.template : undefined,
       sourceLabel: (managed?.kind === 'rename-template' ? managed.sourceAliases?.[sourceOf(node)?.key ?? ''] : undefined)
         ?? envelopeOf(node)?.memberNaming?.sourceAlias ?? sourceOf(node)?.label,
@@ -173,7 +176,41 @@ export async function loadNamingCandidateContext(type: 'subscription' | 'collect
     }
     return rankNamingCandidates(candidates);
   };
-  return { analyze, changesFor, recommend, subscriptionSnapshot, ordinalPlanningSession };
+  const eligible = inputs.filter((input) => !input.groups.length && !input.hasBaseGroups);
+  const generatedFor = async (next: Subscription | Collection, template: string, purposes: GroupingPurpose[]) => Promise.all(eligible.map(async (input) => {
+    const nodes = [...input.baseNodes.map((node) => nodeOf(node, false)), ...await pool(input, next)];
+    return { input, nodes, ...generateNamingGroups(nodes, template, purposes) };
+  }));
+  const grouping = async (purposes?: GroupingPurpose[]): Promise<GroupingPreview> => {
+    const recommended = (await recommend()).find((candidate) => candidate.id === 'recommended');
+    if (!recommended) throw ProblemDetailsError.unprocessable('无法生成推荐命名模板。');
+    const initial = candidateEntity(recommended.template);
+    const pools = await Promise.all(eligible.map(async (input) => [...input.baseNodes.map((node) => nodeOf(node, false)), ...await pool(input, initial)]));
+    const counts = groupingCounts(pools.flat());
+    const selected = purposes ?? counts.filter((p) => p.id === 'region' || p.count >= 2).map((p) => p.id);
+    const template = templateForGrouping(recommended.template, selected);
+    const generated = await generatedFor(candidateEntity(template), template, selected);
+    if (await getConfigVersion() !== version) throw ProblemDetailsError.preconditionFailed('配置已修改，请刷新推荐方案。');
+    return { configVersion: version, template, purposes: groupingCounts(generated.flatMap((g) => g.nodes)).map((p) => ({ ...p, selected: selected.includes(p.id) })),
+      profiles: generated.map((g) => ({ name: g.input.profile.name, groups: g.groups })),
+      warnings: generated.flatMap((g) => g.warnings), blocked: !generated.length || generated.some((g) => g.blocked) };
+  };
+  const groupChanges = async (next: Subscription | Collection, template: string, purposes: GroupingPurpose[]): Promise<NamingProfileChange[]> => {
+    const generated = await generatedFor(next, template, purposes);
+    if (!generated.length || generated.some((g) => g.blocked)) throw ProblemDetailsError.unprocessable('无法安全生成策略组，请刷新分组预览。');
+    return generated.map((g) => ({ profileId: g.input.profile.id, groups: [], rules: [], createdGroups: g.groups.map((group, rank) =>
+      ProxyGroupSchema.parse({ id: crypto.randomUUID(), name: group.name, kind: group.kind, type: group.type, rank, updated_at: Math.floor(Date.now() / 1000),
+        filter: group.filter, 'include-all-proxies': group['include-all-proxies'], proxies: group.proxies, bound_subscription_id: group.bound_subscription_id })) }));
+  };
+  return { analyze, changesFor, recommend, grouping, groupChanges, hasGrouplessProfiles: eligible.length > 0, subscriptionSnapshot, ordinalPlanningSession };
+}
+
+export function publicGroupingPreview(preview: GroupingPreview): GroupingPreview {
+  return { ...preview, profiles: preview.profiles.map((p) => ({ name: safeSampleName(p.name), groups: p.groups.map((g) => ({
+    name: safeSampleName(g.name), kind: g.kind, type: g.type, count: g.count, sample: g.sample.map(safeSampleName),
+    ...(g.filter ? { filter: redactSensitiveText(g.filter).slice(0, 4096), 'include-all-proxies': true } : {}),
+    ...(g.proxies ? { proxies: g.proxies.map(safeSampleName) } : {}),
+  })) })), warnings: preview.warnings.map((w) => redactSensitiveText(w).slice(0, 256)) };
 }
 
 export function publicNamingCandidate(candidate: NamingCandidate): NamingCandidate {

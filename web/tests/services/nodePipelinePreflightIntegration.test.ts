@@ -76,7 +76,7 @@ import { nodeFingerprint } from '@/lib/proxies/naming';
 import { analyzeSourceFacts } from '@/lib/proxies/namingHealth';
 import { exportCollectionNodes, exportSubscriptionNodes, mergeCollectionMemberProxies } from '@/lib/services/nodeExportService';
 import { previewNamingCollection } from '@/lib/services/namingPreviewService';
-import { loadNamingCandidateContext } from '@/lib/services/namingCandidateService';
+import { loadNamingCandidateContext, publicGroupingPreview } from '@/lib/services/namingCandidateService';
 import { resolveSubscriptionProxies } from '@/lib/services/subscriptionFetcher';
 import { resolveConfig } from '@/lib/engine/resolve';
 import {
@@ -283,6 +283,58 @@ describe('outer pipeline save integration', () => {
     mocks.getCollection.mockResolvedValue(collection);
     return { raw, subscription, collection };
   }
+
+  it('generates from the real after-pool only for the group-less shared consumer and preflights its final config', async () => {
+    const { subscription } = await aggregateFixture();
+    mocks.getBase.mockResolvedValue({ content: 'mixed-port: 7890\n# === PROXY-GROUPS ===\nrules:\n  - MATCH,DIRECT\n', etag: 'base', updated_at: 1 });
+    mocks.listProxyGroups.mockImplementation(async (id: string) => id === DIRECT_PROFILE_ID ? [{ id: DIRECT_PROFILE_ID, name: 'Existing', kind: 'filter', type: 'select',
+      rank: 0, updated_at: 1, 'include-all-proxies': true }] : []);
+    const context = await loadNamingCandidateContext('subscription', SUB_ID, 7);
+    expect(context.hasGrouplessProfiles).toBe(true);
+    const preview = await context.grouping();
+    expect(preview.blocked).toBe(false);
+    expect(preview.profiles).toHaveLength(1);
+    expect(preview.purposes.find((p) => p.id === 'region')).toMatchObject({ count: 1, selected: true });
+    expect(preview.purposes.find((p) => p.id === 'residential')).toMatchObject({ count: 1, selected: false });
+    expect(preview.purposes.find((p) => p.id === 'dedicated')).toMatchObject({ count: 0, selected: false });
+    const next: Subscription = { ...subscription, operators: subscription.operators.map((row) => row.kind === 'rename-template' ? { ...row, template: preview.template } : row) };
+    const changes = await context.groupChanges(next, preview.template, ['region']);
+    expect(changes.map((c) => c.profileId)).toEqual([COLLECTION_PROFILE_ID]);
+    expect(changes[0].createdGroups?.map((g) => g.name)).toEqual(['节点选择', '🇯🇵 日本']);
+    const checked = await preflightProfileConfig(COLLECTION_PROFILE_ID, () => ({ proxyGroups: changes[0].createdGroups!, subscriptions: [next] }), {
+      subscriptionSnapshot: context.subscriptionSnapshot, ordinalPlanningSession: context.ordinalPlanningSession,
+    });
+    expect(checked.configVersion).toBe(7);
+    const sources = await context.grouping(['source']);
+    expect(sources.blocked).toBe(false);
+    expect(sources.profiles[0].groups[1].kind).toBe('single-sub');
+    expect(JSON.stringify(publicGroupingPreview(sources))).not.toContain('bound_subscription_id');
+    expect(mocks.setFetchCache).not.toHaveBeenCalled();
+  });
+
+  it('does not offer generation to profiles whose base already supplies groups', async () => {
+    await aggregateFixture();
+    const context = await loadNamingCandidateContext('subscription', SUB_ID, 7);
+    expect(context.hasGrouplessProfiles).toBe(false);
+    expect(await context.grouping(['region'])).toMatchObject({ profiles: [], blocked: true });
+  });
+
+  it('preselects non-region purposes at two real rendered nodes and derives source/tag/rate fields', async () => {
+    const subscription: Subscription = { ...(await mocks.listSubscriptions())[0], kind: 'local', url: undefined,
+      content: stringify({ proxies: [{ ...US_NODE, name: 'HK 家宽 0.5x 01' }, { ...JP_NODE, name: 'JP 家宽 0.5x 02' }] }), operators: [] };
+    mocks.listSubscriptions.mockResolvedValue([subscription]);
+    mocks.listProfiles.mockResolvedValue([profile(DIRECT_PROFILE_ID, { type: 'subscription', id: SUB_ID })]);
+    mocks.getBase.mockResolvedValue({ content: 'proxies: []\n# === PROXY-GROUPS ===\nrules: ["MATCH,DIRECT"]\n', etag: 'base', updated_at: 1 });
+    const context = await loadNamingCandidateContext('subscription', SUB_ID, 7);
+    const preview = await context.grouping();
+    expect(preview.blocked).toBe(false);
+    expect(preview.purposes.filter((p) => p.selected).map((p) => p.id)).toEqual(['region', 'source', 'low-rate', 'residential']);
+    expect(preview.purposes.filter((p) => p.id !== 'dedicated').every((p) => p.count === 2)).toBe(true);
+    expect(preview.template).toContain('${source}');
+    expect(preview.template).toContain('${tags}');
+    expect(preview.template).toContain('${rate}');
+    expect(preview.profiles[0].groups.slice(1).every((g) => g.kind === 'filter')).toBe(true);
+  });
 
   it('renders members once using manual edits and identity facts, with export/preview/serve/preflight parity', async () => {
     const { subscription, collection } = await aggregateFixture();

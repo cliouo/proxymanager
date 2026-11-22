@@ -706,6 +706,29 @@ describe('naming CAS executes entity + history + audit + ordinal reservation ato
     expect(values.get('ordinal-generation')).toBe('1');
   });
 
+  it('atomically inserts and deletes generated groups without touching unrelated records', () => {
+    hash('profile-groups').set('generated', '{"name":"Generated"}');
+    hash('profile-groups').set('keep', '{"name":"Keep"}');
+    expect(runNaming(plan(), (keys, args) => {
+      keys.push('profile-groups', 'profile-rules');
+      args.push('1', PROFILE_ID, '2', 'generated', '__naming_delete__', 'new', '{"name":"New"}', '0');
+    })).toEqual([1, '8']);
+    expect(hash('profile-groups').has('generated')).toBe(false);
+    expect(hash('profile-groups').get('new')).toBe('{"name":"New"}');
+    expect(hash('profile-groups').get('keep')).toBe('{"name":"Keep"}');
+  });
+
+  it('prevalidates all keys before deleting any generated group', () => {
+    hash('profile-groups').set('generated', '{"name":"Generated"}');
+    types.set('profile-rules', 'string');
+    const before = snapshot();
+    expect(runNaming(plan(), (keys, args) => {
+      keys.push('profile-groups', 'profile-rules');
+      args.push('1', PROFILE_ID, '1', 'generated', '__naming_delete__', '0');
+    })[0]).toBe(2);
+    expect(snapshot()).toBe(before);
+  });
+
   it.each(['wrongtype', 'missing-profile', 'malformed-value'])('prevalidates %s profile patches before any naming/ordinal/audit write', (failure) => {
     hash('profile-groups').set('g', '{"filter":"old"}');
     if (failure === 'wrongtype') types.set('profile-rules', 'string');
