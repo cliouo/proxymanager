@@ -34,6 +34,7 @@ export interface SourceIdentity {
  */
 export interface NodeEnvelope {
   renderedNaming?: {
+    name: string;
     facts: NodeRecognitionFacts;
     template: string;
     tw2cn?: boolean;

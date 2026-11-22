@@ -392,6 +392,28 @@ describe('outer pipeline save integration', () => {
     expect(china.sample[0]).toMatch(/^🇨🇳 中国/);
   });
 
+  it('re-recognizes final member names when a trailing rename changes template facts', async () => {
+    const { subscription, collection } = await aggregateFixture();
+    const member: Subscription = { ...subscription, id: '33333333-3333-4333-8333-333333333333', name: 'post-template-member',
+      content: stringify({ proxies: [{ ...JP_NODE, name: 'HK IEPL 01' }] }), operators: [
+        { id: 'member-naming', kind: 'rename-template', template: '${emoji} ${region} ${tags} ${index}', recognitionRules: [] },
+        { id: 'trailing-edit', kind: 'rename-regex', pattern: 'IEPL', replacement: '家宽' },
+      ] };
+    mocks.listSubscriptions.mockResolvedValue([subscription, member]);
+    mocks.listCollections.mockResolvedValue([{ ...collection, subscription_ids: [SUB_ID, member.id], operators: [] }]);
+    mocks.listProfiles.mockResolvedValue([profile(COLLECTION_PROFILE_ID, { type: 'collection', id: COLLECTION_ID })]);
+    mocks.getBase.mockResolvedValue({ content: '# === PROXY-GROUPS ===\nrules: ["MATCH,DIRECT"]\n', etag: 'base', updated_at: 1 });
+    const context = await loadNamingCandidateContext('subscription', SUB_ID, 7);
+    const preview = await context.grouping(['residential', 'dedicated']);
+    expect(preview.purposes.find((p) => p.id === 'residential')?.count).toBe(2);
+    expect(preview.purposes.find((p) => p.id === 'dedicated')?.count).toBe(0);
+    expect(preview.blocked).toBe(false);
+    const residential = preview.profiles[0].groups.find((g) => g.name === '家宽')!;
+    expect(residential.count).toBe(2);
+    expect(residential.sample).toContain('🇭🇰 香港 家宽 01');
+    expect(preview.profiles[0].groups.some((g) => g.name === '专线')).toBe(false);
+  });
+
   it('renders members once using manual edits and identity facts, with export/preview/serve/preflight parity', async () => {
     const { subscription, collection } = await aggregateFixture();
     const stored = structuredClone(subscription.operators);
