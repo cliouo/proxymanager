@@ -252,6 +252,7 @@ export function analyzeNamingCandidate(
         }
         impact.broken = !impact.migration;
       }
+      impact.emptied = impact.before > 0 && (impact.migration?.after ?? impact.after) === 0;
       groups.push(impact);
     }
     for (const rule of profile.rules) {
@@ -271,7 +272,7 @@ export function analyzeNamingCandidate(
 }
 
 export function rankNamingCandidates(candidates: NamingCandidate[]): NamingCandidate[] {
-  const score = (c: NamingCandidate) => [c.groups.filter((g) => g.before !== g.after || g.emptied).length,
-    c.emptiedGroups.length, c.references.length];
-  return [...candidates].sort((a, b) => score(a)[0] - score(b)[0] || score(a)[1] - score(b)[1] || score(a)[2] - score(b)[2]);
+  const score = (c: NamingCandidate) => [c.groups.filter((g) => g.broken || g.before !== (g.migration?.after ?? g.after)).length,
+    c.emptiedGroups.length, c.groups.filter((g) => g.migration).length, c.references.length];
+  return [...candidates].sort((a, b) => score(a)[0] - score(b)[0] || score(a)[1] - score(b)[1] || score(a)[2] - score(b)[2] || score(a)[3] - score(b)[3]);
 }

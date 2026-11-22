@@ -22,7 +22,7 @@ export function NamingCandidates({ type, id, version, busy, onApply }: {
     <div className="grid gap-4 @3xl/main:grid-cols-3">
       {query.data?.candidates.map((candidate) => <div key={candidate.id} className="min-w-0 rounded-lg border border-line p-3">
         <h3 className="font-medium">{candidate.title}</h3>
-        {candidate.emptiedGroups.length > 0 && <p className="my-2 text-xs text-bad">命名后 {candidate.emptiedGroups.length} 个策略组将变空；可恢复的筛选会随应用一并迁移。</p>}
+        {candidate.emptiedGroups.length > 0 && <p className="my-2 text-xs text-bad">应用后 {candidate.emptiedGroups.length} 个策略组将变空，无法自动恢复筛选。</p>}
         <div className="my-2 max-h-40 overflow-auto break-words text-xs text-ink-2">
           {candidate.sample.map((name, i) => <div key={i}>{name}</div>)}
           {candidate.sample.length === 0 && <div>无可预览节点</div>}
@@ -30,11 +30,12 @@ export function NamingCandidates({ type, id, version, busy, onApply }: {
         <details className="my-3 text-xs">
           <summary>策略组影响（{candidate.groups.length} 组）</summary>
           {!candidate.groups.length && <p className="text-ink-3">没有策略组，无需生成或迁移。</p>}
-          {candidate.groups.map((group) => <div key={`${group.profileId}:${group.groupId}`} className={group.emptied ? 'text-bad' : 'text-ink-2'}>
-            {group.profileName} / {group.groupName}: {group.before} → {group.after}
+          {candidate.groups.map((group) => <div key={`${group.profileId}:${group.groupId}`} className={group.emptied || group.broken ? 'text-bad' : 'text-ink-2'}>
+            {group.profileName} / {group.groupName}: {group.before} → {group.migration?.after ?? group.after}
             {group.emptied && ' · 将变空'}
+            {group.broken && !group.emptied && ' · 筛选无法恢复原节点集合'}
             {group.error && <p className="text-bad">{group.error}</p>}
-            {group.migration && <div className="break-all text-ink-3">迁移后 {group.migration.after}：<code>{group.migration.filter}</code></div>}
+            {group.migration && <div className="break-all text-ink-3">筛选将迁移：<code>{group.migration.filter}</code></div>}
           </div>)}
         </details>
         {candidate.references.length > 0 && <details className="my-2 text-xs"><summary>精确引用（{candidate.references.length}）</summary>

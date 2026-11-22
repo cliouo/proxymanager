@@ -38,8 +38,8 @@ describe('policy-aware candidate inference and membership', () => {
     const result = analyzeNamingCandidate(template, [profile([group({ filter: 'HK' })]), { ...profile([group({ filter: 'JP' })]), id: 'p2' }], after.map((n) => n.name));
     expect(result.groups.map((g) => [g.before, g.after])).toEqual([[2, 1], [1, 0]]);
     expect(result.groups[0].migration?.after).toBe(2);
-    expect(result.groups[1].emptied).toBe(true);
-    expect(result.emptiedGroups).toHaveLength(1);
+    expect(result.groups[1].emptied).toBe(false);
+    expect(result.emptiedGroups).toHaveLength(0);
     const recovered = groupNodeMembers(group({ filter: 'HK' }), after, result.groups[0].migration!.filter);
     expect(recovered.nodes.map((n) => n.identity)).toEqual(['hk', 'other']);
     expect(result.sample).toEqual(after.map((n) => n.name));
@@ -180,7 +180,15 @@ describe('policy-aware candidate inference and membership', () => {
     const dropped = '${region_code} ${index}${?tags: · ${tags}}';
     const broken = analyzeNamingCandidate({ ...template, template: dropped }, [{ ...profile([input]), before: original, after: original.map((n) => render(n, dropped)) }], []);
     expect(broken.groups[0]).toMatchObject({ broken: true });
+    expect(broken.emptiedGroups).toHaveLength(1);
     expect(broken.groups[0].migration).toBeUndefined();
+  });
+
+  it('ranks unchanged selectors ahead of recovered groups, and recovery ahead of broken selectors', () => {
+    const migrated = analyzeNamingCandidate(template, [profile([group({ filter: 'HK' })])], []);
+    const stable = { ...migrated, id: 'stable', groups: migrated.groups.map((g) => ({ ...g, after: g.before, migration: undefined })) };
+    const broken = { ...migrated, id: 'broken', groups: migrated.groups.map((g) => ({ ...g, migration: undefined, broken: true })) };
+    expect(rankNamingCandidates([broken, migrated, stable]).map((c) => c.id)).toEqual(['stable', 'test', 'broken']);
   });
 
   it.each([
