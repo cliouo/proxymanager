@@ -12,11 +12,26 @@ import {
 } from '@/lib/proxies/naming';
 import type { SourceHealthReport } from '@/lib/proxies/namingHealth';
 import type { NamingCandidate } from '@/lib/proxies/namingCandidates';
+import type { GroupingPreview, GroupingPurpose } from '@/lib/proxies/namingGroupGeneration';
 import { flagFromCode, regionByCode } from '@/lib/proxies/regions';
 import type { NamesPayload, PreviewIssue } from '@/ui/data/types';
 
 export type TargetType = 'subscription' | 'collection';
 export type RuleField = 'route' | 'vendor' | 'region' | 'entry' | 'tag';
+
+export function groupingSelection(selection: GroupingPurpose[] | null, preview?: GroupingPreview): GroupingPurpose[] {
+  return selection ?? preview?.purposes.filter((p) => p.selected).map((p) => p.id) ?? [];
+}
+
+export function toggleGroupingPurpose(selection: GroupingPurpose[], purpose: GroupingPurpose, checked: boolean): GroupingPurpose[] {
+  return checked ? [...new Set([...selection, purpose])] : selection.filter((id) => id !== purpose);
+}
+
+export function groupingPreviewMatches(preview: GroupingPreview | undefined, selected: GroupingPurpose[]): boolean {
+  if (!preview) return false;
+  const purposes = groupingSelection(null, preview);
+  return purposes.length === selected.length && purposes.every((id) => selected.includes(id));
+}
 
 export function candidateRationale(candidate: NamingCandidate): string {
   const changed = candidate.groups.filter((g) => g.broken || g.error || g.before !== (g.migration?.after ?? g.after)).length;
