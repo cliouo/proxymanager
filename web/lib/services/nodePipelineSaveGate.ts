@@ -19,9 +19,11 @@ import {
   preflightProfileConfig,
   type SubscriptionPreflightSnapshot,
   type SharedLibrarySnapshot,
+  type ProfileConfigState,
 } from '@/lib/services/configPreflight';
 import {
   createOrdinalPlanningSession,
+  type OrdinalPlanningSession,
   type OrdinalReservationPlan,
 } from '@/lib/services/nodeOrdinalService';
 import type { Collection, Profile, Subscription } from '@/schemas';
@@ -72,6 +74,9 @@ export function consumingProfilesOfCollection(
 }
 
 export interface PipelineSavePlan {
+  candidateProfile?: (state: ProfileConfigState) => Partial<Pick<ProfileConfigState, 'rules' | 'proxyGroups'>>;
+  subscriptionSnapshot?: SubscriptionPreflightSnapshot;
+  ordinalPlanningSession?: OrdinalPlanningSession;
   /**
    * The config version the caller captured BEFORE its initial entity read and
    * candidate construction. Every read (entity, consumers) and every preflight
@@ -117,14 +122,14 @@ export async function preflightPipelineSave(plan: PipelineSavePlan): Promise<Pip
   const candidateSubscriptions = plan.candidateSubscriptions
     ? plan.candidateSubscriptions(currentSubscriptions)
     : currentSubscriptions;
-  const ordinalPlanningSession = await createOrdinalPlanningSession(
+  const ordinalPlanningSession = plan.ordinalPlanningSession ?? await createOrdinalPlanningSession(
     candidateSubscriptions.map((subscription) => subscription.name),
   );
   // A single upstream snapshot brackets the WHOLE save, not one profile.
   // Candidate definitions are memoized by a hashed render-affecting identity
   // inside configPreflight, so source and collection consumers cannot observe
   // different reorderings of the same expired remote subscription.
-  const subscriptionSnapshot: SubscriptionPreflightSnapshot = new Map();
+  const subscriptionSnapshot: SubscriptionPreflightSnapshot = plan.subscriptionSnapshot ?? new Map();
   if (plan.affected.length === 0) {
     // No consumers → the edit changes no rendered output, but the discovery
     // (empty) is only valid at the captured generation: an empty-to-nonempty
@@ -151,6 +156,7 @@ export async function preflightPipelineSave(plan: PipelineSavePlan): Promise<Pip
     const checked = await preflightProfileConfig(
       profile.id,
       (state) => ({
+        ...plan.candidateProfile?.(state),
         ...(plan.candidateSubscriptions
           ? { subscriptions: plan.candidateSubscriptions(state.subscriptions) }
           : {}),
@@ -212,6 +218,9 @@ export async function preflightPipelineSave(plan: PipelineSavePlan): Promise<Pip
  * observed. Losing the race is a 412 + retry, never a stale commit.
  */
 export async function commitUnderPipelineGate(options: {
+  candidateProfile?: PipelineSavePlan['candidateProfile'];
+  subscriptionSnapshot?: SubscriptionPreflightSnapshot;
+  ordinalPlanningSession?: OrdinalPlanningSession;
   /** Config version captured before the first read of the edited entity. */
   planningVersion: number;
   affected: readonly Profile[];
@@ -221,6 +230,9 @@ export async function commitUnderPipelineGate(options: {
   commit: (version: number, ordinalPlan: OrdinalReservationPlan) => Promise<{ ok: boolean }>;
 }): Promise<void> {
   const bracket = await preflightPipelineSave({
+    candidateProfile: options.candidateProfile,
+    subscriptionSnapshot: options.subscriptionSnapshot,
+    ordinalPlanningSession: options.ordinalPlanningSession,
     expectedVersion: options.planningVersion,
     affected: options.affected,
     candidateSubscriptions: options.candidateSubscriptions,

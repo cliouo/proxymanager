@@ -1579,7 +1579,31 @@ export function applyRenameTemplate(
     if (c.name === '' || firstUnchanged.has(i)) return c.proxy;
     return { ...c.proxy, name: finals.get(i)! };
   });
-  return { proxies: out, changed, collisions, collisionNodes, deduped };
+  const finalByIdentity = new Map<string | null, unknown>();
+  const identityCounts = new Map<string | null, number>();
+  for (const proxy of proxies) {
+    const identity = fingerprintOf(proxy) ?? nodeFingerprint(proxy);
+    identityCounts.set(identity, (identityCounts.get(identity) ?? 0) + 1);
+  }
+  for (const proxy of out) {
+    const identity = fingerprintOf(proxy) ?? nodeFingerprint(proxy);
+    if (identity !== null && identityCounts.get(identity) === 1) finalByIdentity.set(identity, proxy.name);
+  }
+  const targetsByName = new Map<string, Set<unknown>>();
+  for (const proxy of proxies) {
+    if (typeof proxy.name !== 'string') continue;
+    const targets = targetsByName.get(proxy.name) ?? new Set();
+    targets.add(finalByIdentity.get(fingerprintOf(proxy) ?? nodeFingerprint(proxy)));
+    targetsByName.set(proxy.name, targets);
+  }
+  const referenced = out.map((proxy) => {
+    const target = proxy['dialer-proxy'];
+    if (typeof target !== 'string') return proxy;
+    const names = targetsByName.get(target);
+    const next = names?.size === 1 ? [...names][0] : undefined;
+    return typeof next === 'string' && next !== target ? { ...proxy, 'dialer-proxy': next } : proxy;
+  });
+  return { proxies: referenced, changed, collisions, collisionNodes, deduped };
 }
 
 function compileTemplateSafe(template: string): TemplateToken[] {

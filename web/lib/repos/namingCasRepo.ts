@@ -24,6 +24,7 @@ import { NamingHistoryPlanSchema } from '@/lib/repos/namingHistoryRepo';
 import { containsSensitivePattern, redactSensitiveText } from '@/lib/proxies/namingSanitize';
 import type { OrdinalReservationPlan } from '@/lib/services/nodeOrdinalService';
 import { NamingAuditEventSchema } from '@/schemas/audit';
+import { NamingProfileChangesSchema, type NamingProfileChange } from '@/schemas/namingProfileChanges';
 
 export interface NamingHistoryCommit {
   op: 'set' | 'del';
@@ -367,6 +368,50 @@ if not expected or current ~= expected then
   return {0, string.format('%.0f', current)}
 end
 local nextVersion = current + 1
+local profileCountRaw = ARGV[planCursor] or '0'
+if not isCanonicalUnsigned(profileCountRaw) then return {2, 'profile-patch-count'} end
+local profileCount = tonumber(profileCountRaw)
+if not profileCount or profileCount > 1000 then
+  return {2, 'profile-patch-count'}
+end
+if ARGV[planCursor] then planCursor = planCursor + 1 end
+local profileWriteKeys = {}
+local profileWriteFields = {}
+local profileWriteValues = {}
+local profileWriteCount = 0
+local profileIndex = 1
+local profileKeyCursor = 9 + sourceCount
+while profileIndex <= profileCount do
+  if not isHashKey(KEYS[6]) then return {2, 'profile-missing'} end
+  local profileId = ARGV[planCursor]
+  if not profileId or not redis.call('HGET', KEYS[6], profileId) then return {2, 'profile-missing'} end
+  planCursor = planCursor + 1
+  local part = 1
+  while part <= 2 do
+    profileKeyCursor = profileKeyCursor + 1
+    local keyIndex = profileKeyCursor
+    if not KEYS[keyIndex] or not isHashKey(KEYS[keyIndex]) then return {2, 'profile-patch-wrongtype'} end
+    if not isCanonicalUnsigned(ARGV[planCursor]) then return {2, 'profile-patch-count'} end
+    local count = tonumber(ARGV[planCursor])
+    if not count or count > 10000 then return {2, 'profile-patch-count'} end
+    planCursor = planCursor + 1
+    local recordIndex = 1
+    while recordIndex <= count do
+      local field = ARGV[planCursor]
+      local value = ARGV[planCursor + 1]
+      if not field or field == '' or not value or value == '' then return {2, 'profile-patch-value'} end
+      profileWriteCount = profileWriteCount + 1
+      profileWriteKeys[profileWriteCount] = KEYS[keyIndex]
+      profileWriteFields[profileWriteCount] = field
+      profileWriteValues[profileWriteCount] = value
+      planCursor = planCursor + 2
+      recordIndex = recordIndex + 1
+    end
+    part = part + 1
+  end
+  profileIndex = profileIndex + 1
+end
+if #ARGV ~= planCursor - 1 or #KEYS ~= profileKeyCursor then return {2, 'profile-patch-shape'} end
 assignmentIndex = 1
 while assignmentIndex <= assignmentCount do
   redis.call('HSET', KEYS[9], fields[assignmentIndex], ordinals[assignmentIndex])
@@ -381,6 +426,11 @@ if assignmentCount > 0 then
   redis.call('SET', KEYS[8], string.format('%.0f', generation + 1))
 end
 redis.call('HSET', KEYS[2], ARGV[2], ARGV[3])
+local profileWriteIndex = 1
+while profileWriteIndex <= profileWriteCount do
+  redis.call('HSET', profileWriteKeys[profileWriteIndex], profileWriteFields[profileWriteIndex], profileWriteValues[profileWriteIndex])
+  profileWriteIndex = profileWriteIndex + 1
+end
 if ARGV[4] == 'set' then
   redis.call('HSET', KEYS[3], ARGV[5], ARGV[6])
 elseif ARGV[4] == 'del' then
@@ -487,7 +537,7 @@ function entityTypeOf(entityKey: string): 'subscription' | 'collection' {
   throw new Error('namingCasRepo: unsupported entity key for a naming transition');
 }
 
-const MAX_NAMING_HISTORY_BYTES = 64 * 1024;
+export const MAX_NAMING_HISTORY_BYTES = 64 * 1024;
 
 /** Bind the undo receipt to this exact entity before any Redis call. */
 function validateNamingHistory(
@@ -622,6 +672,7 @@ async function validateNamingAudit(
 }
 
 export async function commitEntityWithNamingHistory(options: {
+  profileChanges?: NamingProfileChange[];
   /** REDIS_KEYS.subscriptions or REDIS_KEYS.collections. */
   entityKey: string;
   recordId: string;
@@ -679,6 +730,20 @@ export async function commitEntityWithNamingHistory(options: {
   const auditTs = options.audit ? String(options.audit.ts) : '';
   const auditPayload = options.audit?.payloadJson ?? '';
   const encodedOrdinals = encodeOrdinalReservationPlan(options.ordinalPlan);
+  const profileChanges = NamingProfileChangesSchema.parse(options.profileChanges ?? []);
+  const profileArgs = [String(profileChanges.length)];
+  for (const profile of profileChanges) {
+    profileArgs.push(profile.profileId, String(profile.groups.length));
+    for (const pair of profile.groups) {
+      if (pair.before.id !== pair.after.id) throw new Error('naming profile patch cannot change record identity');
+      profileArgs.push(pair.after.id, JSON.stringify(pair.after));
+    }
+    profileArgs.push(String(profile.rules.length));
+    for (const pair of profile.rules) {
+      if (pair.before.id !== pair.after.id) throw new Error('naming profile patch cannot change record identity');
+      profileArgs.push(pair.after.id, JSON.stringify(pair.after));
+    }
+  }
   const result = (await getRedis().eval(
     CAS_ENTITY_WITH_HISTORY,
     [
@@ -692,6 +757,7 @@ export async function commitEntityWithNamingHistory(options: {
       REDIS_KEYS.nodeOrdinalGeneration,
       REDIS_KEYS.nodeOrdinals,
       ...encodedOrdinals.counterKeys,
+      ...profileChanges.flatMap((p) => [REDIS_KEYS.proxyGroups(p.profileId), REDIS_KEYS.rules(p.profileId)]),
     ],
     [
       String(options.expectedVersion),
@@ -712,6 +778,7 @@ export async function commitEntityWithNamingHistory(options: {
       '1000',
       ...(options.profileBinding.memberIds ?? []),
       ...encodedOrdinals.args,
+      ...profileArgs,
     ],
   )) as [number, string];
   if (!Array.isArray(result)) {
