@@ -221,7 +221,9 @@ describe('policy-aware candidate inference and membership', () => {
 
   it.each([
     ['家庭宽带', 'HK 家庭宽带 01', 'HK 家宽 01', '${region_code} ${tags} ${index}', undefined, '家宽'],
+    ['家庭宽带', 'HK 家庭宽带 BGP 01', 'HK BGP 家宽 01', '${region_code} ${tags} ${index}', undefined, '家宽'],
     ['^Acme', 'Acme HK 01', 'HK 01 · Acme', '${region_code} ${index} · ${source}', 'Acme', 'Acme'],
+    ['(?i)^acme', 'ACME HK 01', 'HK 01 · Acme', '${region_code} ${index} · ${source}', 'Acme', 'Acme'],
   ])('migrates %s through rendered fields rather than ordinals', (filter, original, renamed, naming, sourceLabel, token) => {
     const before = [{ ...node('hk', original), sourceLabel }];
     const after = [{ ...before[0], name: renamed }];

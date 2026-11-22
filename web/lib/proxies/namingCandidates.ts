@@ -187,12 +187,15 @@ function rawProbe(node: CandidateNode, field: SelectorField, state: ProbeState) 
   }
   if (field === 'tags') {
     if (facts.tags.join('|') === original.facts.tags.join('|')) return node.name;
-    let replaced = false;
-    return node.name.replace(/IEPL|IPLC|专线|專線|家庭宽带|家庭寬帶|家宽|家寬|BGP|原生|native/gi, () => {
-      const value = replaced ? '' : facts.tags.join(' ');
-      replaced = true;
+    const added = facts.tags.filter((tag) => !original.facts.tags.includes(tag));
+    const name = node.name.replace(/IEPL|IPLC|专线|專線|家庭宽带|家庭寬帶|家宽|家寬|BGP|原生|native/gi, (raw) => {
+      const tags = recognizeName(raw, undefined, { detectInfo: false }).tags;
+      if (tags.some((tag) => facts.tags.includes(tag))) return raw;
+      const value = added.join(' ');
+      added.length = 0;
       return value;
-    }) + (!original.facts.tags.length ? ` ${facts.tags.join(' ')}` : '');
+    });
+    return name + (added.length ? ` ${added.join(' ')}` : '');
   }
   if (field === 'rate') {
     if (facts.rate === original.facts.rate) return node.name;
@@ -201,7 +204,7 @@ function rawProbe(node: CandidateNode, field: SelectorField, state: ProbeState) 
   }
   const before = field === 'source' ? original.sourceLabel : original.facts.vendor;
   const after = field === 'source' ? state.sourceLabel : facts.vendor;
-  return before ? node.name.replaceAll(before, after ?? '') : node.name;
+  return before ? node.name.replace(new RegExp(escapeRegex(before), 'gi'), () => after ?? '') : node.name;
 }
 
 function selectorProbes(before: CandidateNode[], recovered: CandidateNode[], template: string) {
