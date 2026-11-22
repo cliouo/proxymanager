@@ -385,6 +385,25 @@ describe('outer pipeline save integration', () => {
     }
   });
 
+  it('plans filter recovery against the serving base-proxy suffix', async () => {
+    const { subscription } = await aggregateFixture();
+    const base = BASE.replace('proxies:', 'proxies:\n  - name: 日本\n    type: direct');
+    mocks.getBase.mockResolvedValue({ content: base, etag: 'base', updated_at: 1 });
+    mocks.listProfiles.mockResolvedValue([profile(DIRECT_PROFILE_ID, { type: 'subscription', id: SUB_ID })]);
+    mocks.listProxyGroups.mockResolvedValue([{ id: DIRECT_PROFILE_ID, name: 'Members', kind: 'raw', type: 'select', rank: 0, updated_at: 1,
+      'include-all-proxies': true, filter: '^member 日本 ' }]);
+    const next: Subscription = { ...subscription, operators: subscription.operators.map((row) => row.kind === 'rename-template' ? { ...row, template: '${region}' } : row) };
+    const context = await loadNamingCandidateContext('subscription', SUB_ID, 7);
+    const candidate = await context.analyze(next, { id: 'test', title: 'Test', template: '${region}' });
+    const served = await resolveConfig(base, [], [next], [], [], {
+      boundSource: { type: 'subscription', id: SUB_ID }, persistSnapshot: false, persistOrdinals: false,
+    });
+    const finalName = `日本 · ${subscription.display_name?.trim() || subscription.name}`;
+    expect(served.nodeNames).toContain(finalName);
+    expect(candidate.groups[0].migration).toEqual({ filter: `^(?:${finalName})$`, after: 1 });
+    expect(context.changesFor(candidate)[0].groups[0].after.filter).toBe(`^(?:${finalName})$`);
+  });
+
   it('recommends from all consumers with template inheritance and a single zero-write upstream snapshot', async () => {
     const { raw, subscription } = await aggregateFixture();
     const remote = { ...subscription, kind: 'remote', url: 'https://upstream.example/sub', content: undefined } as Subscription;

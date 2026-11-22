@@ -71,23 +71,25 @@ export async function loadNamingCandidateContext(type: 'subscription' | 'collect
     sourceKey: sourceOf(node)?.key,
     ...(typeof node['dialer-proxy'] === 'string' ? { dialer: node['dialer-proxy'] } : {}),
   });
-  const pool = async (profile: Profile, next?: Subscription | Collection) => {
+  const pool = async (input: ProfileInput, next?: Subscription | Collection) => {
+    const { profile } = input;
+    const profileOptions = { ...exportOptions, baseProxyNames: new Set(input.baseNodes.map((node) => String(node.name))) };
     const subs = type === 'subscription' && next ? subscriptions.map((s) => s.id === id ? next as Subscription : s) : subscriptions;
     const cols = type === 'collection' && next ? collections.map((c) => c.id === id ? next as Collection : c) : collections;
     const source = profile.source;
     if (source.type === 'subscription') {
       const sub = subs.find((s) => s.id === source.id);
       if (!sub) throw ProblemDetailsError.preconditionFailed('配置文件的订阅源不存在。');
-      return (await exportSubscriptionNodes(sub, exportOptions)).proxies.map((n) => nodeOf(n, scope(n)));
+      return (await exportSubscriptionNodes(sub, profileOptions)).proxies.map((n) => nodeOf(n, scope(n)));
     }
     if (source.type === 'collection') {
       const col = cols.find((c) => c.id === source.id);
       if (!col) throw ProblemDetailsError.preconditionFailed('配置文件的聚合订阅不存在。');
-      return (await exportCollectionNodes(col, subs, exportOptions)).proxies.map((n) => nodeOf(n, scope(n)));
+      return (await exportCollectionNodes(col, subs, profileOptions)).proxies.map((n) => nodeOf(n, scope(n)));
     }
     return [];
   };
-  const before = await Promise.all(inputs.map((input) => pool(input.profile)));
+  const before = await Promise.all(inputs.map((input) => pool(input)));
   const targetSample = async (next: Subscription | Collection) => type === 'subscription'
     ? (await exportSubscriptionNodes(next as Subscription, exportOptions)).proxies
     : (await exportCollectionNodes(next as Collection, subscriptions, exportOptions)).proxies;
@@ -98,7 +100,7 @@ export async function loadNamingCandidateContext(type: 'subscription' | 'collect
   };
   const analyze = async (next: Subscription | Collection, description: { id: string; title: string; template: string }) => {
     const profilePools: CandidateProfile[] = await Promise.all(inputs.map(async (input, index) => {
-      const after = await pool(input.profile, next);
+      const after = await pool(input, next);
       const actualAfter = new Map(after.map((node) => [node.identity, node]));
       const groups = input.groups.map((group) => {
         let boundSourceKeys: string[] | undefined;

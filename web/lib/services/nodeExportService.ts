@@ -54,6 +54,7 @@ export interface NodeExportResult {
 }
 
 interface ExportOptions {
+  baseProxyNames?: ReadonlySet<string>;
   resolveSubscription?: typeof resolveSubscriptionProxies;
   preserveEnvelope?: boolean;
   managedCollection?: boolean;
@@ -125,6 +126,7 @@ export interface ExportDedupDiagnostics {
 export function dedupExportProxies(
   proxies: Record<string, unknown>[],
   isManaged: (item: Record<string, unknown>) => boolean,
+  baseProxyNames?: ReadonlySet<string>,
 ): {
   proxies: Record<string, unknown>[];
   deduped: ExportDedupDiagnostics['deduped'];
@@ -141,7 +143,7 @@ export function dedupExportProxies(
       original: item,
     };
   });
-  const result = dedupByNameAndIdentity(nodes);
+  const result = dedupByNameAndIdentity(nodes, baseProxyNames);
   const out: Record<string, unknown>[] = [];
   result.kept.forEach(({ node, finalName }) => {
     const original = node.original as Record<string, unknown> | undefined;
@@ -176,7 +178,7 @@ export async function exportSubscriptionNodes(
     proxies: deduped,
     deduped: dropped,
     resolved: renamed,
-  } = dedupExportProxies(result.proxies, () => managed);
+  } = dedupExportProxies(result.proxies, () => managed, options.baseProxyNames);
   const proxies = validateMihomoProxyList(deduped, { allowExternalDialerProxy: true });
   return {
     yaml: stringify({ proxies }, { lineWidth: 0 }),
@@ -348,7 +350,7 @@ export async function exportCollectionNodes(
     if (managedOp !== undefined) return true;
     const key = sourceOf(item)?.key;
     return key !== undefined && memberManagedByKey.get(key) === true;
-  });
+  }, options.baseProxyNames);
   // Provenance must never reach the serialised provider YAML / public API.
   const stripped = options.preserveEnvelope ? deduped : deduped.map((p) => stripSource(p));
   const proxies = validateMihomoProxyList(stripped, {
