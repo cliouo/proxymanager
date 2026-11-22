@@ -436,6 +436,7 @@ describe('outer pipeline save integration', () => {
 
   it.each([false, true])('rewrites a renamed empty-fallback before final preflight (inherited: %s)', async (inherited) => {
     const { subscription } = await aggregateFixture();
+    mocks.getBase.mockResolvedValue({ content: 'proxies: []\n# === PROXY-GROUPS ===\nrules: ["MATCH,DIRECT"]\n', etag: 'base', updated_at: 1 });
     mocks.listProfiles.mockResolvedValue([profile(DIRECT_PROFILE_ID, { type: 'subscription', id: SUB_ID })]);
     const oldName = 'member 日本 01';
     mocks.listProxyGroups.mockResolvedValue([{ id: DIRECT_PROFILE_ID, name: 'Fallback', kind: 'raw', type: 'select', rank: 0, updated_at: 1,
@@ -443,7 +444,7 @@ describe('outer pipeline save integration', () => {
     if (inherited) mocks.listProxyGroupTemplates.mockResolvedValue([{ id: COLLECTION_ID, name: 'Inherited', 'empty-fallback': oldName }]);
     const next: Subscription = { ...subscription, operators: subscription.operators.map((row) => row.kind === 'rename-template' ? { ...row, template: '${region}' } : row) };
     const context = await loadNamingCandidateContext('subscription', SUB_ID, 7);
-    await expect(preflightProfileConfig(DIRECT_PROFILE_ID, () => ({ subscriptions: [next] }), context)).rejects.toThrow();
+    await expect(preflightProfileConfig(DIRECT_PROFILE_ID, () => ({ subscriptions: [next] }), context)).rejects.toThrow('empty-fallback is invalid');
     const candidate = await context.analyze(next, { id: 'test', title: 'Test', template: '${region}' });
     expect(candidate.references).toContainEqual({ profileId: DIRECT_PROFILE_ID, kind: 'fallback', owner: DIRECT_PROFILE_ID,
       before: oldName, after: '日本', blocked: false });
