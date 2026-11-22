@@ -40,8 +40,8 @@ export function showIssues(state: IssuesState) {
 }
 
 export const notify = {
-  success(message: ReactNode, description?: ReactNode) {
-    toast.success(message, { description });
+  success(message: ReactNode, description?: ReactNode, action?: { label: string; onClick: () => void }) {
+    toast.success(message, { description, action });
   },
   info(message: ReactNode, description?: ReactNode) {
     toast(message, { description });

@@ -16,7 +16,7 @@ export function NamingCandidates({ type, id, version, busy, onApply }: {
   );
   return <Card className="mb-6">
     <h2 className="mb-2 font-semibold">推荐方案</h2>
-    <p className="mb-4 text-sm text-ink-3">根据真实节点和所有消费此来源的配置文件生成。应用时一并迁移可恢复原节点集合的筛选与一对一引用；不会创建策略组。</p>
+    <p className="mb-4 text-sm text-ink-3">根据真实节点和所有消费此来源的配置文件生成。应用时使用已保存的识别规则与事实，一并迁移可恢复原节点集合的筛选与一对一引用；不会包含编辑器内未保存的修改，也不会创建策略组。</p>
     {!!query.error && <p role="alert" className="text-bad">推荐方案加载失败，请刷新页面重试。</p>}
     {!query.data && !query.error && <p className="text-ink-3">正在分析策略组与节点命名…</p>}
     <div className="grid gap-4 @3xl/main:grid-cols-3">

@@ -145,15 +145,15 @@ function Workspace({
 
   const applyCandidate = async (template: string) => {
     if (busy) return;
-    if (!await confirmAction({ title: '应用推荐方案并迁移引用？', confirmText: '应用',
-      description: '将使用已保存的识别规则和事实，原子更新所有消费配置的可恢复筛选与一对一精确引用；编辑器内未保存的修改不会包含在内。' })) return;
     setBusy('apply');
     try {
       const next = await applyNamingCandidate(type, id, template, data.configVersion);
       ws.mutate(next);
       setPlan(storedPlan(next));
       refreshShared();
-      notify.success('推荐命名方案与引用迁移已应用');
+      notify.success('推荐命名方案与引用迁移已应用', undefined, {
+        label: '撤销', onClick: () => void restore(next.configVersion),
+      });
     } catch (error) {
       if (isVersionConflict(error)) await onConflict();
       else notify.error(error, '应用失败');
@@ -219,9 +219,13 @@ function Workspace({
       ),
     });
     if (!ok) return;
+    await restore(data.configVersion);
+  };
+
+  const restore = async (expectedVersion: number) => {
     setBusy('rollback');
     try {
-      const next = await rollbackPlan(type, id, data.configVersion);
+      const next = await rollbackPlan(type, id, expectedVersion);
       ws.mutate(next);
       setPlan(storedPlan(next));
       refreshShared();
