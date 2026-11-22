@@ -33,6 +33,7 @@ import {
   ancestorsOf,
   BUILTIN_OPTIONS,
   memberKind,
+  manualMembersEmptyHint,
   memberSummary,
   REGION_PRESETS,
   sourceLabel,
@@ -555,6 +556,11 @@ export function MembersComposer({
   brokenReason: string | undefined;
 }) {
   const { options, kindOf } = useMemberOptions(group.name);
+  const { catalog } = useWorkspace();
+  const dynamic = draft.mode === 'auto' || (draft.mode === 'raw' && (draft.includeAll || !!group['include-all']));
+  const emptyHint = !dynamic && draft.mode === 'raw' && (group.use?.length || group['include-all-providers'])
+    ? '手动成员为空；成员由外部 provider 动态提供。'
+    : manualMembersEmptyHint(dynamic, catalog.names && !auto.error && !auto.excludeError ? auto.matched.length : null);
   const typeHint =
     draft.type === 'select'
       ? '第一个成员是默认选中的出口。'
@@ -590,7 +596,7 @@ export function MembersComposer({
             options={options}
             kindOf={kindOf}
             error={errors.members}
-            emptyHint="还没有成员。点「添加成员」挑选节点、其他策略组，或直连 DIRECT。"
+            emptyHint={emptyHint}
           />
         </div>
       )}
@@ -618,6 +624,7 @@ export function MembersComposer({
             options={options}
             kindOf={kindOf}
             addLabel="添加固定成员"
+            emptyHint={emptyHint}
           />
         </div>
       )}
