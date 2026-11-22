@@ -73,7 +73,7 @@ export async function loadNamingCandidateContext(type: 'subscription' | 'collect
     return {
       identity: fingerprintOf(node) ?? nodeFingerprint(node) ?? `name:${String(node.name)}`,
       name: String(node.name ?? ''), type: String(node.type ?? ''), scoped,
-      facts: (rendered?.name === String(node.name ?? '') ? rendered.facts : undefined) ?? (() => {
+      facts: (rendered && !rendered.stale ? rendered.facts : undefined) ?? (() => {
         const facts = recognizeName(String(node.name ?? ''), undefined, { detectInfo: false });
         return { region: facts.region ?? undefined, tags: facts.tags, rate: facts.rate ?? undefined, vendor: facts.vendor ?? undefined };
       })(),

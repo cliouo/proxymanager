@@ -1590,7 +1590,7 @@ export function applyRenameTemplate(
   const out: Record<string, unknown>[] = candidates.map((c, i) => {
     const proxy = c.name === '' || firstUnchanged.has(i) ? c.proxy : { ...c.proxy, name: finals.get(i)! };
     const source = effectiveSourceOf(c.proxy);
-    return c.facts ? mergeEnvelope(proxy, { renderedNaming: { name: String(proxy.name ?? ''), facts: c.facts, template: config.template, tw2cn: config.tw2cn,
+    return c.facts ? mergeEnvelope(proxy, { renderedNaming: { facts: c.facts, template: config.template, tw2cn: config.tw2cn,
       sourceLabel: (config.sourceAliases?.[source?.key ?? ''] ?? source?.label)?.trim() } }) : proxy;
   });
   const finalByIdentity = new Map<string | null, unknown>();

@@ -414,6 +414,25 @@ describe('outer pipeline save integration', () => {
     expect(preview.profiles[0].groups.some((g) => g.name === '专线')).toBe(false);
   });
 
+  it('keeps Japan renderer facts when export collision suffixing adds a Hong Kong source label', async () => {
+    const { subscription, collection } = await aggregateFixture();
+    const member: Subscription = { ...subscription, id: '33333333-3333-4333-8333-333333333333', name: 'collision-member', display_name: '香港',
+      content: stringify({ proxies: [{ ...JP_NODE, name: 'JP 01' }] }),
+      operators: [{ id: 'member-template', kind: 'rename-template', template: '${region}', recognitionRules: [] }] };
+    mocks.listSubscriptions.mockResolvedValue([subscription, member]);
+    mocks.listCollections.mockResolvedValue([{ ...collection, subscription_ids: [SUB_ID, member.id], operators: [] }]);
+    mocks.listProfiles.mockResolvedValue([profile(COLLECTION_PROFILE_ID, { type: 'collection', id: COLLECTION_ID })]);
+    mocks.getBase.mockResolvedValue({ content: stringify({ proxies: [{ name: '日本', type: 'direct' }] })
+      + '# === PROXY-GROUPS ===\nrules: ["MATCH,DIRECT"]\n', etag: 'base', updated_at: 1 });
+    const context = await loadNamingCandidateContext('subscription', SUB_ID, 7);
+    const preview = await context.grouping(['region']);
+    expect(preview.blocked).toBe(false);
+    const japan = preview.profiles[0].groups.find((g) => g.name === '🇯🇵 日本')!;
+    expect(japan.count).toBe(3);
+    expect(japan.sample).toContain('日本 · 香港');
+    expect(preview.profiles[0].groups.some((g) => g.name === '🇭🇰 香港')).toBe(false);
+  });
+
   it('renders members once using manual edits and identity facts, with export/preview/serve/preflight parity', async () => {
     const { subscription, collection } = await aggregateFixture();
     const stored = structuredClone(subscription.operators);
