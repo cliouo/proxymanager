@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   getConfigVersion: vi.fn(),
   getOrdinalGeneration: vi.fn(),
   getProfile: vi.fn(),
+  listProfiles: vi.fn(),
   getCollection: vi.fn(),
   listCollections: vi.fn(),
   listDevices: vi.fn(),
@@ -23,7 +24,7 @@ vi.mock('@/lib/repos/baseRepo', () => ({ getBase: mocks.getBase }));
 vi.mock('@/lib/repos/configVersionRepo', () => ({
   getConfigVersion: mocks.getConfigVersion,
 }));
-vi.mock('@/lib/repos/profilesRepo', () => ({ getProfile: mocks.getProfile, listProfiles: async () => [] }));
+vi.mock('@/lib/repos/profilesRepo', () => ({ getProfile: mocks.getProfile, listProfiles: mocks.listProfiles }));
 vi.mock('@/lib/repos/collectionsRepo', () => ({
   getCollection: mocks.getCollection,
   listCollections: mocks.listCollections,
@@ -75,6 +76,7 @@ import { nodeFingerprint } from '@/lib/proxies/naming';
 import { analyzeSourceFacts } from '@/lib/proxies/namingHealth';
 import { exportCollectionNodes, exportSubscriptionNodes, mergeCollectionMemberProxies } from '@/lib/services/nodeExportService';
 import { previewNamingCollection } from '@/lib/services/namingPreviewService';
+import { loadNamingCandidateContext } from '@/lib/services/namingCandidateService';
 import { resolveSubscriptionProxies } from '@/lib/services/subscriptionFetcher';
 import { resolveConfig } from '@/lib/engine/resolve';
 import {
@@ -164,6 +166,7 @@ describe('outer pipeline save integration', () => {
     mocks.getConfigVersion.mockResolvedValue(7);
     mocks.getOrdinalGeneration.mockResolvedValue(0);
     mocks.getProfile.mockImplementation(async (id: string) => profiles.get(id) ?? null);
+    mocks.listProfiles.mockResolvedValue([...profiles.values()]);
     mocks.getBase.mockResolvedValue({
       content: BASE,
       etag: 'base-etag',
@@ -376,6 +379,40 @@ describe('outer pipeline save integration', () => {
       expect(direct.proxies).toEqual(serving.proxies);
       if (!managedFirst) expect((await managed()).proxies.map((p) => p.name)).toEqual(['edge', 'edge']);
       expect(fetcher).toHaveBeenCalledTimes(1);
+      expect(mocks.setFetchCache).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('recommends from all consumers with template inheritance and a single zero-write upstream snapshot', async () => {
+    const { raw, subscription } = await aggregateFixture();
+    const remote = { ...subscription, kind: 'remote', url: 'https://upstream.example/sub', content: undefined } as Subscription;
+    mocks.listSubscriptions.mockResolvedValue([remote]);
+    mocks.listProxyGroups.mockImplementation(async (profileId: string) => [{
+      id: profileId, name: '地区线路', kind: 'raw', type: 'select', rank: 0, updated_at: 1,
+      template_id: COLLECTION_ID, filter: profileId === DIRECT_PROFILE_ID ? '^member 日本 ' : '家宽',
+    }]);
+    mocks.listProxyGroupTemplates.mockResolvedValue([{ id: COLLECTION_ID, name: 'inherited', updated_at: 1,
+      'include-all-proxies': true, 'exclude-type': 'Direct', 'exclude-filter': 'do-not-match' }]);
+    const fetcher = vi.fn(async () => new Response(stringify({ proxies: [raw] })));
+    vi.stubGlobal('fetch', fetcher);
+    try {
+      const context = await loadNamingCandidateContext('subscription', SUB_ID, 7);
+      const candidates = await context.recommend();
+      expect(candidates).toHaveLength(3);
+      for (const candidate of candidates) {
+        expect(candidate.blocked).toBe(false);
+        expect(candidate.sample[0]).toContain('家宽');
+        expect(candidate.groups).toHaveLength(2);
+        const direct = candidate.groups.find((g) => g.profileId === DIRECT_PROFILE_ID)!;
+        expect([direct.before, direct.after, direct.migration?.after]).toEqual([1, 0, 1]);
+        const collection = candidate.groups.find((g) => g.profileId === COLLECTION_PROFILE_ID)!;
+        expect([collection.before, collection.after]).toEqual([1, 1]);
+        expect(context.changesFor(candidate).map((p) => p.profileId)).toEqual([DIRECT_PROFILE_ID]);
+      }
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      expect(mocks.getFetchCache).toHaveBeenCalledTimes(1);
       expect(mocks.setFetchCache).not.toHaveBeenCalled();
     } finally {
       vi.unstubAllGlobals();

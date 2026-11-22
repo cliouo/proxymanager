@@ -35,6 +35,7 @@ import { NodeFactsSchema } from '@/schemas/nodeFacts';
 import type { NodeFacts } from '@/lib/proxies/naming';
 import { enabledCollectionMemberSubs } from '@/lib/engine/resolve';
 import { collectionMemberNamingWarnings, type MemberNamingWarning } from '@/lib/proxies/collectionNaming';
+import { loadNamingCandidateContext, publicNamingCandidate } from '@/lib/services/namingCandidateService';
 import {
   projectAliasKeysToHandles,
   resolveSourceAliasKeys,
@@ -129,7 +130,8 @@ const ExpectedVersion = z
   .min(0)
   .max(Number.MAX_SAFE_INTEGER, '配置版本超出安全范围');
 
-const ApplyBody = z.object({ apply: PlanBody, expectedVersion: ExpectedVersion }).strict();
+const ApplyBody = z.object({ apply: PlanBody, expectedVersion: ExpectedVersion, migrateGroups: z.boolean().optional() }).strict();
+const CandidatesBody = z.object({ candidates: z.literal(true), expectedVersion: ExpectedVersion }).strict();
 
 /**
  * Read-only workspace preview variant: build the SAME managed candidate the
@@ -146,7 +148,7 @@ const RollbackBody = z
   })
   .strict();
 
-const PostBody = z.union([ApplyBody, PreviewBody, RollbackBody]);
+const PostBody = z.union([ApplyBody, PreviewBody, RollbackBody, CandidatesBody]);
 
 /** Project a PERSISTED history plan for the workspace response — explicit
  * fields only (template/tw2cn/sourceAliases/disabled). rawOp, opId, position
@@ -521,6 +523,12 @@ export const POST = withProblemDetails(async (request: Request, ctx: Ctx) => {
     throw ProblemDetailsError.badRequest('Request body must be valid JSON.');
   });
   const body = PostBody.parse(raw);
+  if ('candidates' in body) {
+    await requireGlobalNamingTarget(type, id);
+    if (await getConfigVersion() !== body.expectedVersion) throw ProblemDetailsError.preconditionFailed('配置已修改，请刷新推荐方案。');
+    const context = await loadNamingCandidateContext(type, id, body.expectedVersion);
+    return Response.json({ data: { configVersion: body.expectedVersion, candidates: (await context.recommend()).map(publicNamingCandidate) } });
+  }
 
   // READ-ONLY workspace preview variant: same shared candidate builder as
   // apply, same zero-write pipeline preview functions as the generic
@@ -591,6 +599,7 @@ export const POST = withProblemDetails(async (request: Request, ctx: Ctx) => {
   // commits config + version + history HSET + durable audit in ONE atomic
   // transition.
   await applyNamingPlan(type, id, body.apply, {
+    migrateGroups: body.migrateGroups,
     audit,
     expectedVersion: body.expectedVersion,
   });

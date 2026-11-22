@@ -25,12 +25,17 @@
  */
 
 import { ProblemDetailsError } from '@/lib/http/problem';
+import { isDeepStrictEqual } from 'node:util';
+import type { NamingProfileChange } from '@/schemas/namingProfileChanges';
+import { loadNamingCandidateContext } from './namingCandidateService';
+import type { SubscriptionPreflightSnapshot } from './configPreflight';
+import type { OrdinalPlanningSession } from './nodeOrdinalService';
 import { enabledCollectionMemberSubs } from '@/lib/engine/resolve';
 import { summarizeTemplate, validateTemplate } from '@/lib/proxies/naming';
 import { redactSensitiveText } from '@/lib/proxies/namingSanitize';
 import { NamingAuditEventSchema } from '@/schemas/audit';
 import { getNamingHistory, type NamingHistoryPlan } from '@/lib/repos/namingHistoryRepo';
-import { commitEntityWithNamingHistory } from '@/lib/repos/namingCasRepo';
+import { commitEntityWithNamingHistory, MAX_NAMING_HISTORY_BYTES } from '@/lib/repos/namingCasRepo';
 import { resolveSourceAliasKeys } from '@/lib/services/sourceAliasResolver';
 import {
   assertNamingMembershipUnchanged,
@@ -144,6 +149,7 @@ export function buildNamingAudit(
     hadManaged: boolean;
     template?: string;
     mode: 'added' | 'replaced' | 'removed';
+    profileChanges?: NamingProfileChange[];
   } & ({ scope: 'global'; profileId?: never } | { scope?: 'profile'; profileId: string }),
 ): {
   id: string;
@@ -175,6 +181,11 @@ export function buildNamingAudit(
         length: templateSummary.length,
       },
       mode: options.mode,
+      ...(options.profileChanges?.length ? { migration: {
+        profiles: options.profileChanges.length,
+        groups: options.profileChanges.reduce((n, p) => n + p.groups.length, 0),
+        rules: options.profileChanges.reduce((n, p) => n + p.rules.length, 0),
+      } } : {}),
     },
     undoable: false,
     ...(options.scope === 'global'
@@ -407,6 +418,9 @@ function splitProfileBinding(binding: string): { type: string; id: string } {
 
 /** Preflight + atomic commit for one candidate, under the exact bracket. */
 async function commitUnderBracket(options: {
+  profileChanges?: NamingProfileChange[];
+  subscriptionSnapshot?: SubscriptionPreflightSnapshot;
+  ordinalPlanningSession?: OrdinalPlanningSession;
   planningVersion: number;
   type: 'subscription' | 'collection';
   id: string;
@@ -452,11 +466,32 @@ async function commitUnderBracket(options: {
       cols.map((c) => (c.id === options.id ? (options.nextEntity as Collection) : c));
   }
 
+  const changes = options.profileChanges ?? [];
+  for (const change of changes) {
+    const profile = profiles.find((p) => p.id === change.profileId);
+    if (!profile) throw ProblemDetailsError.preconditionFailed('命名迁移关联的配置文件已删除，无法安全恢复。');
+    if (!affected.some((p) => p.id === profile.id)) affected.push(profile);
+  }
   await commitUnderPipelineGate({
     planningVersion: options.planningVersion,
     affected,
     candidateSubscriptions,
     candidateCollections,
+    subscriptionSnapshot: options.subscriptionSnapshot,
+    ordinalPlanningSession: options.ordinalPlanningSession,
+    candidateProfile: (state) => {
+      const change = changes.find((p) => p.profileId === state.profile.id);
+      if (!change) return {};
+      const replace = <T extends { id: string }>(current: T[], pairs: { before: T; after: T }[]): T[] => {
+        for (const pair of pairs) {
+          if (!isDeepStrictEqual(current.find((v) => v.id === pair.before.id), pair.before)) {
+            throw ProblemDetailsError.preconditionFailed('命名迁移后的策略组或规则已被编辑，请先处理这些修改再撤销。');
+          }
+        }
+        return current.map((v) => pairs.find((p) => p.before.id === v.id)?.after ?? v);
+      };
+      return { proxyGroups: replace(state.proxyGroups, change.groups), rules: replace(state.rules, change.rules) };
+    },
     commit: (version, ordinalPlan) =>
       commitEntityWithNamingHistory({
         entityKey:
@@ -468,6 +503,7 @@ async function commitUnderBracket(options: {
         ),
         expectedVersion: version,
         ordinalPlan,
+        profileChanges: changes,
         history: options.history,
         audit: options.audit,
         expectedProfileId:
@@ -503,6 +539,7 @@ export async function applyNamingPlan(
      * when the current version no longer matches it.
      */
     expectedVersion?: number;
+    migrateGroups?: boolean;
     /** pass-7 blocker 4: gate-captured membership bracket (confirmation
      * path). When absent the bracket is captured HERE at the entry gate —
      * before the first version/entity/history read — and re-checked from
@@ -515,6 +552,9 @@ export async function applyNamingPlan(
 ): Promise<NamingApplyResult> {
   if (!options?.audit) {
     throw ProblemDetailsError.preconditionFailed('命名写入必须携带审计信息。');
+  }
+  if (options.migrateGroups && options.audit.scope !== 'global') {
+    throw ProblemDetailsError.forbidden('跨配置文件的命名迁移只能从管理员命名工作区应用。');
   }
   // Profile-scoped assistant writes capture their membership bracket first.
   // The administrator workspace is target-global; config-version CAS plus
@@ -642,6 +682,14 @@ export async function applyNamingPlan(
     operators: namingResult.storage as Subscription['operators'],
     updated_at: nowSeconds(),
   };
+  const migrationContext = options.migrateGroups ? await loadNamingCandidateContext(type, id, planningVersion) : undefined;
+  const impact = migrationContext ? await migrationContext.analyze(nextEntity, { id: 'apply', title: '应用方案', template: plan.template! }) : undefined;
+  const profileChanges = migrationContext && impact ? migrationContext.changesFor(impact) : [];
+  if (profileChanges.length) priorState.profileChanges = profileChanges;
+  const historyValue = safeJsonStringify(priorState);
+  if (options.migrateGroups && historyValue.length > MAX_NAMING_HISTORY_BYTES) {
+    throw ProblemDetailsError.unprocessable('命名与引用迁移快照过大，无法安全保留撤销记录，请先缩小迁移范围。');
+  }
   const mode = priorOp ? 'replaced' : 'added';
   const audit = buildNamingAudit({
     op: 'naming.apply',
@@ -658,13 +706,17 @@ export async function applyNamingPlan(
     hadManaged: priorOp !== undefined,
     template: plan.template,
     mode,
+    profileChanges,
   });
   await commitUnderBracket({
     planningVersion,
     type,
     id,
     nextEntity,
-    history: { op: 'set', field: historyField, value: safeJsonStringify(priorState) },
+    profileChanges,
+    subscriptionSnapshot: migrationContext?.subscriptionSnapshot,
+    ordinalPlanningSession: migrationContext?.ordinalPlanningSession,
+    history: { op: 'set', field: historyField, value: historyValue },
     audit,
     authority,
   });
@@ -721,6 +773,9 @@ export async function rollbackNamingPlan(
       : await getConfigVersion();
   const historyField = `${type}:${id}`;
   const prior = await getNamingHistory(type, id);
+  if (prior?.profileChanges?.length && options.audit.scope !== 'global') {
+    throw ProblemDetailsError.forbidden('此方案包含跨配置文件的引用迁移，请从管理员命名工作区撤销。');
+  }
   if (!prior) {
     throw ProblemDetailsError.unprocessable('没有可回滚的上一方案（尚未应用过新模板）。');
   }
@@ -777,6 +832,10 @@ export async function rollbackNamingPlan(
     operators: namingResult.storage as Subscription['operators'],
     updated_at: nowSeconds(),
   };
+  const profileChanges = prior.profileChanges?.map((p) => ({ profileId: p.profileId,
+    groups: p.groups.map(({ before, after }) => ({ before: after, after: { ...before, updated_at: nowSeconds() } })),
+    rules: p.rules.map(({ before, after }) => ({ before: after, after: { ...before, revision: planningVersion + 1, updated_at: nowSeconds() } })),
+  }));
   const mode = prior.hadManaged ? 'replaced' : 'removed';
   const audit = buildNamingAudit({
     op: 'naming.rollback',
@@ -793,12 +852,14 @@ export async function rollbackNamingPlan(
     hadManaged: prior.hadManaged,
     template: prior.template,
     mode,
+    profileChanges,
   });
   await commitUnderBracket({
     planningVersion,
     type,
     id,
     nextEntity,
+    profileChanges,
     history: { op: 'del', field: historyField },
     audit,
     authority,

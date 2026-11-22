@@ -692,6 +692,34 @@ describe('naming CAS executes entity + history + audit + ordinal reservation ato
     ]);
   });
 
+  it('commits profile filter and exact-reference rewrites with naming history and one version', () => {
+    hash('profile-groups').set('g', '{"filter":"old"}');
+    hash('profile-rules').set('r', '{"policy":"old"}');
+    expect(runNaming(plan(), (keys, args) => {
+      keys.push('profile-groups', 'profile-rules');
+      args.push('1', PROFILE_ID, '1', 'g', '{"filter":"new"}', '1', 'r', '{"policy":"new"}');
+    })).toEqual([1, '8']);
+    expect(hash('profile-groups').get('g')).toBe('{"filter":"new"}');
+    expect(hash('profile-rules').get('r')).toBe('{"policy":"new"}');
+    expect(hash('history').has(`subscription:${RECORD_ID}`)).toBe(true);
+    expect(hash('audit-by-id').has(AUDIT_ID)).toBe(true);
+    expect(values.get('ordinal-generation')).toBe('1');
+  });
+
+  it.each(['wrongtype', 'missing-profile', 'malformed-value'])('prevalidates %s profile patches before any naming/ordinal/audit write', (failure) => {
+    hash('profile-groups').set('g', '{"filter":"old"}');
+    if (failure === 'wrongtype') types.set('profile-rules', 'string');
+    if (failure === 'missing-profile') hash('profiles').delete(PROFILE_ID);
+    const before = snapshot();
+    const result = runNaming(plan(), (keys, args) => {
+      args[11] = 'global';
+      keys.push('profile-groups', 'profile-rules');
+      args.push('1', PROFILE_ID, '1', 'g', '{"filter":"new"}', '1', 'r', failure === 'malformed-value' ? '' : '{"policy":"new"}');
+    });
+    expect(result[0]).toBe(2);
+    expect(snapshot()).toBe(before);
+  });
+
   it('global workspace authority commits without a profile row while keeping the version CAS', () => {
     hash('profiles').delete(PROFILE_ID);
     expect(
