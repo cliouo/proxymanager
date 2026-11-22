@@ -9,6 +9,17 @@ const LABELS: Record<GroupingPurpose, string> = { region: '地区', source: '机
 const BUILTINS = ['DIRECT', 'REJECT', 'REJECT-DROP', 'PASS', 'PASS-RULE', 'COMPATIBLE', 'GLOBAL'];
 const DEDICATED = ['IEPL', 'IPLC', '专线'];
 const identityOf = (node: CandidateNode) => JSON.stringify([node.sourceKey, node.identity]);
+const recognizedFacts = new WeakMap<CandidateNode, { name: string; facts: NodeRecognitionFacts }>();
+function factsOf(node: CandidateNode): NodeRecognitionFacts {
+  if (node.facts) return node.facts;
+  let cached = recognizedFacts.get(node);
+  if (!cached || cached.name !== node.name) {
+    const recognized = recognizeName(node.name, undefined, { detectInfo: false });
+    cached = { name: node.name, facts: { region: recognized.region ?? undefined, tags: recognized.tags, rate: recognized.rate ?? undefined, vendor: recognized.vendor ?? undefined } };
+    recognizedFacts.set(node, cached);
+  }
+  return cached.facts;
+}
 
 export interface GeneratedGroup {
   name: string;
@@ -43,17 +54,17 @@ export function templateForGrouping(template: string, purposes: readonly Groupin
 
 export function groupingCounts(nodes: CandidateNode[]) {
   return GROUPING_PURPOSES.map((id) => ({ id, label: LABELS[id], count: new Set(nodes.filter((node) => {
-    const facts = recognizeName(node.name, undefined, { detectInfo: false });
-    return id === 'region' ? !!facts.region : id === 'source' ? !!node.sourceKey : id === 'low-rate' ? facts.rate !== null && facts.rate < 1
-      : facts.tags.some((t) => (id === 'dedicated' ? DEDICATED : ['家宽']).includes(t));
+    const facts = factsOf(node);
+    return id === 'region' ? !!facts.region : id === 'source' ? !!node.sourceKey : id === 'low-rate' ? facts.rate != null && facts.rate < 1
+      : (facts.tags ?? []).some((t) => (id === 'dedicated' ? DEDICATED : ['家宽']).includes(t));
   }).map(identityOf)).size }));
 }
 
 function freshName(node: CandidateNode, template: string, changes: Partial<NodeRecognitionFacts> = {}, source = node.sourceLabel ?? node.sourceKey ?? '') {
-  const recognized = recognizeName(node.name, undefined, { detectInfo: false });
+  const facts = factsOf(node);
   return formatNodeName({ name: 'fresh-node', index: 999, type: node.type,
     source: { key: node.sourceKey ?? '', label: source }, config: { template: node.namingTemplate ?? template },
-    facts: { region: recognized.region ?? undefined, tags: recognized.tags, rate: recognized.rate ?? undefined, vendor: recognized.vendor ?? undefined, ...changes } });
+    facts: { ...facts, ...changes } });
 }
 
 export function generateNamingGroups(nodes: CandidateNode[], template: string, purposes: readonly GroupingPurpose[], reservedNames: string[] = []) {
@@ -89,7 +100,7 @@ export function generateNamingGroups(nodes: CandidateNode[], template: string, p
   };
   for (const purpose of GROUPING_PURPOSES.filter((p) => purposes.includes(p))) {
     if (purpose === 'region') for (const region of REGIONS) {
-      const intended = nodes.filter((n) => recognizeName(n.name).region === region.code);
+      const intended = nodes.filter((n) => factsOf(n).region === region.code);
       const tokens = [region.zh, region.code, region.emoji].filter((token) => intended.some((n) => matchFilter([n.name], fieldValueSelector([token])).matched.length));
       add(`${region.emoji} ${region.zh}`, intended, fieldValueSelector(tokens), (n) => REGIONS.map((other) => ({ name: freshName(n, template, { region: other.code }), expected: other.code === region.code })));
     } else if (purpose === 'source') for (const key of [...new Set(nodes.flatMap((n) => n.sourceKey ? [n.sourceKey] : []))]) {
@@ -97,12 +108,12 @@ export function generateNamingGroups(nodes: CandidateNode[], template: string, p
       const tokens = intended.map((n) => n.sourceLabel ?? key);
       add(tokens[0], intended, fieldValueSelector(tokens), (n) => [{ name: freshName(n, template, {}, 'probe-other-provider'), expected: false }], intended[0].sourceId);
     } else if (purpose === 'low-rate') {
-      add('低倍率', nodes.filter((n) => { const rate = recognizeName(n.name).rate; return rate !== null && rate < 1; }),
+      add('低倍率', nodes.filter((n) => { const rate = factsOf(n).rate; return rate != null && rate < 1; }),
         '(?<![A-Za-z0-9.])0(?:\\.[0-9]+)?x(?![A-Za-z0-9.])',
         (n) => [0.25, 0.5, 1, 2].map((rate) => ({ name: freshName(n, template, { rate }), expected: rate < 1 })));
     } else {
       const tags = purpose === 'dedicated' ? DEDICATED : ['家宽'];
-      add(LABELS[purpose], nodes.filter((n) => recognizeName(n.name).tags.some((t) => tags.includes(t))), fieldValueSelector(tags),
+      add(LABELS[purpose], nodes.filter((n) => (factsOf(n).tags ?? []).some((t) => tags.includes(t))), fieldValueSelector(tags),
         (n) => [[], ...LINE_TAGS.map((tag) => [tag])].map((value) => ({ name: freshName(n, template, { tags: value }), expected: value.some((tag) => tags.includes(tag)) })));
     }
   }

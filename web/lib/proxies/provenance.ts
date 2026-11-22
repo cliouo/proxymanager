@@ -33,6 +33,9 @@ export interface SourceIdentity {
  * ever enter management responses, assistant payloads or serialised configs.
  */
 export interface NodeEnvelope {
+  renderedNaming?: {
+    facts: NodeRecognitionFacts;
+  };
   memberNaming?: {
     facts?: NodeRecognitionFacts;
     recognitionRules?: RecognitionRule[];

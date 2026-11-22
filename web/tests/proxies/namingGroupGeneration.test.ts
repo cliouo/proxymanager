@@ -11,6 +11,14 @@ const nodes: CandidateNode[] = raw.map((name, i) => ({ identity: `node-${i}`, na
 const members = (filter: string, pool = nodes) => groupNodeMembers({ id: 'g', name: 'g', values: { 'include-all-proxies': true, filter } }, pool).nodes;
 
 describe('purpose-based naming and group generation', () => {
+  it('uses the same non-info facts for counts and membership when a rendered source alias contains 订阅', () => {
+    const name = formatNodeName({ name: 'HK 家宽 IEPL 0.5x 01', index: 1, source: { key: 'a', label: '我的订阅' }, config: { template } });
+    const pool = [{ ...nodes[0], name, sourceLabel: '我的订阅' }];
+    expect(groupingCounts(pool).filter((p) => p.id !== 'source').every((p) => p.count === 1)).toBe(true);
+    const generated = generateNamingGroups(pool, template, ['region', 'low-rate', 'dedicated', 'residential']);
+    expect(generated.blocked).toBe(false);
+    expect(generated.groups.map((g) => g.name)).toEqual(['节点选择', '🇭🇰 香港', '低倍率', '专线', '家宽']);
+  });
   it('retains required fields and generates every present region including singletons and the top selector', () => {
     const derived = templateForGrouping('${region_code} ${index}', GROUPING_PURPOSES);
     expect(derived).toContain('${rate}');

@@ -1,7 +1,7 @@
 import { parse } from 'yaml';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { enabledCollectionMemberSubs } from '@/lib/engine/resolve';
-import { nodeFingerprint } from '@/lib/proxies/naming';
+import { nodeFingerprint, recognizeName } from '@/lib/proxies/naming';
 import { generateNamingGroups, groupingCounts, templateForGrouping, type GroupingPurpose, type GroupingPreview } from '@/lib/proxies/namingGroupGeneration';
 import { envelopeOf, fingerprintOf, sourceOf } from '@/lib/proxies/provenance';
 import { safeIssueText as safeSampleName } from './pipelinePreview';
@@ -72,6 +72,10 @@ export async function loadNamingCandidateContext(type: 'subscription' | 'collect
     return {
       identity: fingerprintOf(node) ?? nodeFingerprint(node) ?? `name:${String(node.name)}`,
       name: String(node.name ?? ''), type: String(node.type ?? ''), scoped,
+      facts: envelopeOf(node)?.renderedNaming?.facts ?? (() => {
+        const facts = recognizeName(String(node.name ?? ''), undefined, { detectInfo: false });
+        return { region: facts.region ?? undefined, tags: facts.tags, rate: facts.rate ?? undefined, vendor: facts.vendor ?? undefined };
+      })(),
       sourceKey: sourceOf(node)?.key,
       sourceId: subscriptions.find((s) => s.name === sourceOf(node)?.key)?.id,
       namingTemplate: managed?.kind === 'rename-template' && !managed.disabled ? managed.template : undefined,

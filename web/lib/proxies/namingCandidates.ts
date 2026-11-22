@@ -11,6 +11,7 @@ export interface CandidateNode {
   sourceLabel?: string;
   sourceId?: string;
   namingTemplate?: string;
+  facts?: NodeRecognitionFacts;
   dialer?: string;
 }
 

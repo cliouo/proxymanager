@@ -336,6 +336,23 @@ describe('outer pipeline save integration', () => {
     expect(preview.profiles[0].groups.slice(1).every((g) => g.kind === 'filter')).toBe(true);
   });
 
+  it('groups using renderer facts including saved member facts and rules rather than region-like source aliases', async () => {
+    const { collection, subscription, raw } = await aggregateFixture();
+    mocks.listSubscriptions.mockResolvedValue([{ ...subscription, operators: subscription.operators.map((row) => row.kind === 'rename-template'
+      ? { ...row, nodeFacts: { [nodeFingerprint(raw)!]: { tags: ['家宽'], rate: 0.5 } } } : row) }]);
+    const next = { ...collection, operators: [{ id: 'managed', kind: 'rename-template' as const,
+      template: '${emoji} ${region} ${source} ${tags} ${rate} ${index}', sourceAliases: { [subscription.name]: '香港' },
+      recognitionRules: [{ pattern: '日本', field: 'region' as const, value: 'SG' }] }] };
+    mocks.listCollections.mockResolvedValue([next]);
+    mocks.listProfiles.mockResolvedValue([profile(COLLECTION_PROFILE_ID, { type: 'collection', id: COLLECTION_ID })]);
+    mocks.getBase.mockResolvedValue({ content: '# === PROXY-GROUPS ===\nrules: ["MATCH,DIRECT"]\n', etag: 'base', updated_at: 1 });
+    const context = await loadNamingCandidateContext('collection', COLLECTION_ID, 7);
+    const preview = await context.grouping(['region', 'low-rate', 'residential']);
+    expect(preview.blocked).toBe(false);
+    expect(preview.profiles[0].groups.map((g) => g.name)).toEqual(['节点选择', '🇸🇬 新加坡', '低倍率', '家宽']);
+    expect(preview.purposes.find((p) => p.id === 'region')?.count).toBe(1);
+  });
+
   it('renders members once using manual edits and identity facts, with export/preview/serve/preflight parity', async () => {
     const { subscription, collection } = await aggregateFixture();
     const stored = structuredClone(subscription.operators);
