@@ -140,6 +140,25 @@ describe('policy-aware candidate inference and membership', () => {
     expect(analyzeNamingCandidate(template, [{ ...input, after: before }], []).references).toEqual([]);
   });
 
+  it('never migrates an unrelated selector to recover a renamed fallback-only member', () => {
+    const input = profile([group({ filter: '^Singapore$', 'empty-fallback': before[1].name })]);
+    expect(groupNodeMembers(input.groups[0], before).nodes).toEqual([before[1]]);
+    const result = analyzeNamingCandidate(template, [input], []);
+    expect(result.groups[0]).toMatchObject({ before: 1, after: 0 });
+    expect(result.groups[0].migration).toBeUndefined();
+    expect(result.references).toContainEqual({ profileId: 'p', kind: 'fallback', owner: 'g',
+      before: before[1].name, after: after[1].name, blocked: false });
+    const rewritten = { ...input.groups[0], values: { ...input.groups[0].values, 'empty-fallback': after[1].name } };
+    expect(groupNodeMembers(rewritten, after).nodes).toEqual([after[1]]);
+    expect(groupNodeMembers(rewritten, [...after, node('sg', 'Singapore')]).nodes.map((n) => n.identity)).toEqual(['sg']);
+  });
+
+  it('still migrates lost selector matches when the group also has a fallback', () => {
+    const input = profile([group({ 'empty-fallback': before[1].name })]);
+    const result = analyzeNamingCandidate(template, [input], []);
+    expect(result.groups[0].migration).toEqual({ filter: '^(?:香港 家宽 01|HK IEPL existing)$', after: 2 });
+  });
+
   it('supports profiles without groups, empty pools, bounded samples and deterministic results', () => {
     expect(inferNamingTemplates([], [], false)).toHaveLength(3);
     const result = analyzeNamingCandidate(template, [{ ...profile([]), before: [], after: [] }], Array.from({ length: 25 }, (_, i) => `node ${i}`));

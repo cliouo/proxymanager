@@ -87,9 +87,11 @@ export function groupNodeMembers(group: CandidateGroup, nodes: CandidateNode[], 
     ...nodes.map((n): [string, string] => [n.name, adapterType(n.type)]),
   ]);
   const members = new Set([...explicit.matched, ...matched.matched].filter((name) => !excluded.has(memberTypes.get(name) ?? '')));
+  const selectedNodes = nodes.filter((node) => members.has(node.name));
   if (!members.size && typeof v['empty-fallback'] === 'string') members.add(v['empty-fallback']);
   return {
     nodes: nodes.filter((node) => members.has(node.name)),
+    selectedNodes,
     error: matched.error ?? explicit.error,
   };
 }
@@ -174,16 +176,16 @@ export function analyzeNamingCandidate(
       const providerBacked = group.values['include-all'] === true || group.values['include-all-providers'] === true || strings(group.values.use).length > 0;
       if (providerBacked) warnings.push(`${profile.name} / ${group.name}: 外部 provider 成员不可观测，仅统计配置内节点，不自动迁移筛选。`);
       if (impact.error) warnings.push(`${profile.name} / ${group.name}: ${impact.error}`);
-      const beforeScoped = before.nodes.filter((n) => n.scoped);
-      const afterScoped = after.nodes.filter((n) => n.scoped);
+      const beforeScoped = before.selectedNodes.filter((n) => n.scoped);
+      const afterScoped = after.selectedNodes.filter((n) => n.scoped);
       const afterIdentities = new Set(afterScoped.map((n) => n.identity));
       if (beforeScoped.some((n) => !afterIdentities.has(n.identity)) && !providerBacked && !impact.error && typeof group.values.filter === 'string') {
-        const recovered = before.nodes.map((n) => afterNode(n.identity));
+        const recovered = before.selectedNodes.map((n) => afterNode(n.identity));
         if (recovered.every((n): n is CandidateNode => n !== undefined)) {
           const filter = `^(?:${[...new Set(recovered.map((n) => n.name))].map(escapeRegex).join('|')})$`;
           if (filter.length <= 4096 && !filter.includes('`')) {
             const migrated = groupNodeMembers(group, profile.after, filter);
-            if (!migrated.error && sameSet(before.nodes, migrated.nodes)) impact.migration = { filter, after: migrated.nodes.length };
+            if (!migrated.error && sameSet(before.selectedNodes, migrated.selectedNodes)) impact.migration = { filter, after: migrated.nodes.length };
           }
         }
       }

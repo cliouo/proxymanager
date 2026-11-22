@@ -440,7 +440,7 @@ describe('outer pipeline save integration', () => {
     mocks.listProfiles.mockResolvedValue([profile(DIRECT_PROFILE_ID, { type: 'subscription', id: SUB_ID })]);
     const oldName = 'member 日本 01';
     mocks.listProxyGroups.mockResolvedValue([{ id: DIRECT_PROFILE_ID, name: 'Fallback', kind: 'raw', type: 'select', rank: 0, updated_at: 1,
-      'include-all-proxies': true, filter: '^日本$', ...(inherited ? { template_id: COLLECTION_ID } : { 'empty-fallback': oldName }) }]);
+      'include-all-proxies': true, filter: '^新加坡$', ...(inherited ? { template_id: COLLECTION_ID } : { 'empty-fallback': oldName }) }]);
     if (inherited) mocks.listProxyGroupTemplates.mockResolvedValue([{ id: COLLECTION_ID, name: 'Inherited', 'empty-fallback': oldName }]);
     const next: Subscription = { ...subscription, operators: subscription.operators.map((row) => row.kind === 'rename-template' ? { ...row, template: '${region}' } : row) };
     const context = await loadNamingCandidateContext('subscription', SUB_ID, 7);
@@ -448,8 +448,10 @@ describe('outer pipeline save integration', () => {
     const candidate = await context.analyze(next, { id: 'test', title: 'Test', template: '${region}' });
     expect(candidate.references).toContainEqual({ profileId: DIRECT_PROFILE_ID, kind: 'fallback', owner: DIRECT_PROFILE_ID,
       before: oldName, after: '日本', blocked: false });
+    expect(candidate.groups[0].migration).toBeUndefined();
     const changes = context.changesFor(candidate)[0];
     expect(changes.groups[0].after['empty-fallback']).toBe('日本');
+    expect(changes.groups[0].after.filter).toBe('^新加坡$');
     await expect(preflightProfileConfig(DIRECT_PROFILE_ID, (state) => ({ subscriptions: [next],
       proxyGroups: state.proxyGroups.map((g) => changes.groups.find((patch) => patch.before.id === g.id)?.after ?? g),
     }), context)).resolves.toMatchObject({ configVersion: 7 });
