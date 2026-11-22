@@ -89,18 +89,21 @@ export function generateNamingGroups(nodes: CandidateNode[], template: string, p
     used.add(name);
     return name;
   };
-  const add = (label: string, intended: CandidateNode[], filter: string, variants: (node: CandidateNode) => { name: string; expected: boolean }[], sourceId?: string) => {
+  const add = (label: string, intended: CandidateNode[], filters: string | string[], variants: (node: CandidateNode) => { name: string; expected: boolean }[], sourceId?: string) => {
     if (!intended.length) return;
     const ids = new Set(intended.map(identityOf));
-    const matched = matchFilter(nodes.map((n) => n.name), filter);
-    const actual = new Set(matched.matched);
-    const valid = filter.length <= 4096 && !matched.error && nodes.every((n) => actual.has(n.name) === ids.has(identityOf(n))) && intended.every((n) => {
-      const probes = [{ name: freshName(n, template), expected: true }, ...variants(n)];
+    let probes: { name: string; expected: boolean }[] | undefined;
+    const filter = (Array.isArray(filters) ? filters : [filters]).find((candidate) => {
+      const matched = matchFilter(nodes.map((n) => n.name), candidate);
+      const actual = new Set(matched.matched);
+      if (candidate.length > 4096 || matched.error || !nodes.every((n) => actual.has(n.name) === ids.has(identityOf(n)))) return false;
+      probes ??= intended.flatMap((n) => [{ name: freshName(n, template), expected: true }, ...variants(n)]);
       return probes.every((p) => {
-        const result = matchFilter([p.name], filter);
+        const result = matchFilter([p.name], candidate);
         return !result.error && !!result.matched.length === p.expected;
       });
     });
+    const valid = filter !== undefined;
     if (!valid && !sourceId) { warnings.push(`「${label}」无法验证字段筛选，未生成。`); return; }
     for (const id of ids) captured.add(id);
     groups.push({ name: nameOf(label), type: 'select', ...(valid
@@ -112,7 +115,9 @@ export function generateNamingGroups(nodes: CandidateNode[], template: string, p
     if (purpose === 'region') for (const region of REGIONS) {
       const intended = nodes.filter((n) => factsOf(n).region === region.code);
       const tokens = [region.zh, region.code, region.emoji].filter((token) => intended.some((n) => matchFilter([n.name], fieldValueSelector([token])).matched.length));
-      add(`${region.emoji} ${region.zh}`, intended, fieldValueSelector(tokens), (n) => REGIONS.map((other) => ({ name: freshName(n, template, { region: other.code }), expected: other.code === region.code })));
+      const selectors = [tokens.filter((t) => t !== region.emoji), ...tokens.map((t) => [t]),
+        ...tokens.map((_, i) => tokens.filter((_, j) => i !== j)), tokens].filter((values) => values.length).map(fieldValueSelector);
+      add(`${region.emoji} ${region.zh}`, intended, [...new Set(selectors)], (n) => REGIONS.map((other) => ({ name: freshName(n, template, { region: other.code }), expected: other.code === region.code })));
     } else if (purpose === 'source') for (const key of [...new Set(nodes.flatMap((n) => n.sourceKey ? [n.sourceKey] : []))]) {
       const intended = nodes.filter((n) => n.sourceKey === key);
       const tokens = intended.map((n) => n.sourceLabel ?? key);

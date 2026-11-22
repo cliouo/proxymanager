@@ -19,6 +19,20 @@ describe('purpose-based naming and group generation', () => {
     expect(generated.blocked).toBe(false);
     expect(generated.groups.map((g) => g.name)).toEqual(['节点选择', '🇭🇰 香港', '低倍率', '专线', '家宽']);
   });
+  it('keeps Taiwan and China distinct when tw2cn renders the same flag for both', () => {
+    const pool: CandidateNode[] = ['TW', 'CN'].map((region) => ({ ...nodes[0], identity: region,
+      name: formatNodeName({ name: `${region} 01`, index: 1, config: { template, tw2cn: true } }),
+      facts: { region, tags: [] }, namingTemplate: template, namingTw2cn: true }));
+    const generated = generateNamingGroups(pool, template, ['region']);
+    expect(generated.blocked).toBe(false);
+    const taiwan = generated.groups.find((g) => g.name === '🇹🇼 台湾')!;
+    const china = generated.groups.find((g) => g.name === '🇨🇳 中国')!;
+    expect(members(taiwan.filter!, pool).map((n) => n.identity)).toEqual(['TW']);
+    expect(members(china.filter!, pool).map((n) => n.identity)).toEqual(['CN']);
+    const fresh = { ...pool[0], name: formatNodeName({ name: 'TW fresh 99', index: 99, config: { template, tw2cn: true } }) };
+    expect(members(taiwan.filter!, [fresh])).toHaveLength(1);
+    expect(members(china.filter!, [fresh])).toHaveLength(0);
+  });
   it('retains required fields and generates every present region including singletons and the top selector', () => {
     const derived = templateForGrouping('${region_code} ${index}', GROUPING_PURPOSES);
     expect(derived).toContain('${rate}');

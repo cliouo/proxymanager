@@ -373,6 +373,25 @@ describe('outer pipeline save integration', () => {
     expect(japan.filter).toContain('JP');
   });
 
+  it('preserves Taiwan renderer facts and validates separate region selectors with tw2cn enabled', async () => {
+    const { subscription, collection } = await aggregateFixture();
+    mocks.listSubscriptions.mockResolvedValue([{ ...subscription, operators: [],
+      content: stringify({ proxies: [{ ...JP_NODE, name: 'TW 01' }, { ...US_NODE, name: 'CN 02' }] }) }]);
+    mocks.listCollections.mockResolvedValue([{ ...collection, operators: [{ id: 'managed', kind: 'rename-template',
+      template: '${emoji} ${region} ${index}', tw2cn: true, recognitionRules: [] }] }]);
+    mocks.listProfiles.mockResolvedValue([profile(COLLECTION_PROFILE_ID, { type: 'collection', id: COLLECTION_ID })]);
+    mocks.getBase.mockResolvedValue({ content: '# === PROXY-GROUPS ===\nrules: ["MATCH,DIRECT"]\n', etag: 'base', updated_at: 1 });
+    const context = await loadNamingCandidateContext('collection', COLLECTION_ID, 7);
+    const preview = await context.grouping(['region']);
+    expect(preview.blocked).toBe(false);
+    const taiwan = preview.profiles[0].groups.find((g) => g.name === '🇹🇼 台湾')!;
+    const china = preview.profiles[0].groups.find((g) => g.name === '🇨🇳 中国')!;
+    expect(taiwan.count).toBe(1);
+    expect(taiwan.sample[0]).toMatch(/^🇨🇳 台湾/);
+    expect(china.count).toBe(1);
+    expect(china.sample[0]).toMatch(/^🇨🇳 中国/);
+  });
+
   it('renders members once using manual edits and identity facts, with export/preview/serve/preflight parity', async () => {
     const { subscription, collection } = await aggregateFixture();
     const stored = structuredClone(subscription.operators);
