@@ -302,9 +302,10 @@ describe('saved raw-fingerprint facts', () => {
       ]);
       expect(result.proxies.map((p) => p.name)).toEqual(['到期时间', '香港']);
       expect(result.steps[0].dropped).toBe(1);
+      expect(result.steps[0].infoFiltered).toBe(1);
       expect(fetch).not.toHaveBeenCalled();
-      expect(applyRenameTemplate([], { template: '${tags}', nodeFacts }).proxies).toEqual([]);
-      expect(applyRenameTemplate(nodes, { template: '${note}' }).proxies).toHaveLength(1);
+      expect(applyRenameTemplate([], { template: '${tags}', nodeFacts }).infoFiltered).toBe(0);
+      expect(applyRenameTemplate(nodes, { template: '${note}' }).infoFiltered).toBe(2);
     } finally {
       vi.unstubAllGlobals();
     }

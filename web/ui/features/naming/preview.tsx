@@ -40,6 +40,7 @@ export function PreviewPanel({
   paired,
   summary,
   total,
+  infoFiltered,
   truncated,
   loading,
   validating,
@@ -51,6 +52,7 @@ export function PreviewPanel({
   paired: boolean;
   summary: IssueSummary | null;
   total: number | null;
+  infoFiltered: number;
   truncated: boolean;
   loading: boolean;
   validating: boolean;
@@ -97,7 +99,8 @@ export function PreviewPanel({
       />
       {summary && total !== null && (
         <div className="flex flex-wrap items-center gap-1.5 px-4 pb-3">
-          <Badge>{total} 个节点</Badge>
+          <Badge>{total} 个代理节点</Badge>
+          <span className="text-xs text-ink-3">{infoFiltered > 0 ? `已过滤 ${infoFiltered} 个信息节点（剩余流量、到期等）` : '剩余流量、到期等信息节点不计入预览'}</span>
           {paired && <Badge tone={changed ? 'accent' : 'neutral'}>{changed} 个改名</Badge>}
           {summary.collisions.length > 0 && <Badge tone="warn">{summary.collisions.length} 处重名已自动区分</Badge>}
           {summary.dedup.length > 0 && <Badge>{summary.dedup.length} 个重复节点会移除</Badge>}

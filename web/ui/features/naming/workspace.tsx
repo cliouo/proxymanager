@@ -289,7 +289,8 @@ function Workspace({
             <span className="text-ink-4">·</span>
             <span>{KIND_LABEL[type]}</span>
             <span className="text-ink-4">·</span>
-            <span className="tnum">{data.diagnostics.nodeCount} 个节点</span>
+            <span className="tnum">输入 {data.diagnostics.nodeCount} 个节点</span>
+            {data.diagnostics.infoFiltered > 0 && <span>· {data.diagnostics.infoFiltered} 个信息节点（剩余流量、到期等）已过滤</span>}
           </>
         }
         title={
@@ -361,6 +362,7 @@ function Workspace({
             paired={table?.paired ?? true}
             summary={summary}
             total={preview.data?.after.count ?? null}
+            infoFiltered={preview.data?.infoFiltered ?? 0}
             truncated={!!preview.data?.after.truncated}
             loading={!preview.data && !preview.error}
             validating={preview.isValidating || (!!planJson && planJson !== debouncedJson)}

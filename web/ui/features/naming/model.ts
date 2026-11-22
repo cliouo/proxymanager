@@ -73,6 +73,7 @@ export interface NamingWorkspaceData {
   diagnostics: {
     memberWarnings?: Array<{ memberId: string; message: string }>;
     nodeCount: number;
+    infoFiltered: number;
     changed: number;
     collisions: string[];
     deduped: Array<{ kept: string; dropped: string; sourceKey?: string }>;
@@ -87,6 +88,7 @@ export interface NamingWorkspaceData {
 }
 
 export interface NamingPreviewData {
+  infoFiltered: number;
   after: NamesPayload;
   issues: PreviewIssue[];
   candidate: { id: string; index: number; mode: 'added' | 'replaced' | 'kept' };

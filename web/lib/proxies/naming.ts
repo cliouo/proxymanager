@@ -1193,6 +1193,7 @@ export interface TrueDedupEntry {
 
 export interface RenameTemplateApplyResult {
   proxies: Record<string, unknown>[];
+  infoFiltered: number;
   /** Nodes whose name changed. */
   changed: number;
   /**
@@ -1357,6 +1358,7 @@ export function applyRenameTemplate(
   // occurrence wins (input order == source order == the documented
   // source-priority policy).
   const seenIdentity = new Map<string, number>();
+  let infoFiltered = 0;
   const deduped: TrueDedupEntry[] = [];
   const surviving: Array<{ proxy: Record<string, unknown>; index: number }> = [];
   proxies.forEach((p, i) => {
@@ -1369,7 +1371,10 @@ export function applyRenameTemplate(
     if (
       savedInfo === true ||
       (savedInfo !== false && isInfoNodeName(rawName))
-    ) return;
+    ) {
+      infoFiltered += 1;
+      return;
+    }
     if (fp === null) {
       surviving.push({ proxy: p, index: i });
       return;
@@ -1603,7 +1608,7 @@ export function applyRenameTemplate(
     const next = names?.size === 1 ? [...names][0] : undefined;
     return typeof next === 'string' && next !== target ? { ...proxy, 'dialer-proxy': next } : proxy;
   });
-  return { proxies: referenced, changed, collisions, collisionNodes, deduped };
+  return { proxies: referenced, infoFiltered, changed, collisions, collisionNodes, deduped };
 }
 
 function compileTemplateSafe(template: string): TemplateToken[] {

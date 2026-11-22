@@ -255,6 +255,7 @@ interface WorkspacePayload {
   diagnostics: {
     memberWarnings?: MemberNamingWarning[];
     nodeCount: number;
+    infoFiltered: number;
     changed: number;
     collisions: string[];
     deduped: Array<{ kept: string; dropped: string; sourceKey?: string }>;
@@ -381,6 +382,7 @@ async function loadWorkspace(
       health,
       diagnostics: {
         nodeCount: withProvenance.length,
+        infoFiltered: result.infoFiltered,
         changed: result.changed,
         collisions: result.collisions.map(safeIssueText),
         deduped: result.deduped.map((d) => ({
@@ -474,6 +476,7 @@ async function loadWorkspace(
     health,
     diagnostics: {
       nodeCount: merged.length,
+      infoFiltered: result.infoFiltered,
       memberWarnings: collectionMemberNamingWarnings(enabledCollectionMemberSubs(collection, subs), true),
       changed: result.changed,
       collisions: result.collisions.map(safeIssueText),
@@ -572,6 +575,7 @@ export const POST = withProblemDetails(async (request: Request, ctx: Ctx) => {
     return Response.json({
       data: {
         after: preview.after,
+        infoFiltered: preview.infoFiltered,
         issues: preview.issues,
         candidate: { id: candidate.id, index: candidate.index, mode: candidate.mode },
       },
