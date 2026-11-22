@@ -159,7 +159,7 @@ export type SubscriptionPreflightSnapshot = Map<string, Promise<FetchSubscriptio
 
 const rawSnapshots = new WeakMap<SubscriptionPreflightSnapshot, SubscriptionRawSnapshot>();
 
-function subscriptionSnapshotKey(subscription: Subscription): string {
+function subscriptionSnapshotKey(subscription: Subscription, raw = false): string {
   // Runtime sync/error fields and raw snapshot bytes do not belong here. The
   // bounded definition metadata/checksum identifies manual candidates without
   // copying secret content into the memoization key.
@@ -179,7 +179,7 @@ function subscriptionSnapshotKey(subscription: Subscription): string {
     ttl_ms: subscription.ttl_ms,
     content: subscription.content,
     tags: subscription.tags,
-    operators: subscription.operators,
+    operators: raw ? undefined : subscription.operators,
     fetch_failure_policy: subscription.fetch_failure_policy,
     refresh_mode: subscription.refresh_mode,
     fetch_identity_revision: subscription.fetch_identity_revision,
@@ -209,7 +209,7 @@ export async function resolveSubscriptionForPreflight(
         ordinalPlanningSession: options?.ordinalPlanningSession,
         contentOverrides: options?.contentOverrides,
         managedCollection: options?.managedCollection,
-        ...(snapshot ? { rawSnapshot: { key: definitionKey, entries: rawSnapshots.get(snapshot)! } } : {}),
+        ...(snapshot ? { rawSnapshot: { key: subscriptionSnapshotKey(subscription, true), entries: rawSnapshots.get(snapshot)! } } : {}),
       });
     if (!snapshot) return await resolve();
 

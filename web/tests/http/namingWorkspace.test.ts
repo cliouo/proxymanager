@@ -178,6 +178,10 @@ vi.mock('@/lib/services/configPreflight', () => ({
     configVersion: counters.get(REDIS_KEYS.configVersion) ?? 0,
   })),
 }));
+vi.mock('@/lib/services/namingCandidateService', () => ({
+  loadNamingCandidateContext: vi.fn(async () => ({ recommend: async () => [] })),
+  publicNamingCandidate: (candidate: unknown) => candidate,
+}));
 vi.mock('@/lib/services/subscriptionFetcher', () => ({
   resolveSubscriptionProxiesRaw: vi.fn(async () => ({
     proxies: [
@@ -302,6 +306,17 @@ async function call(
 }
 
 describe('GET /api/v1/naming/[type]/[id]', () => {
+  it('returns read-only policy candidates and rejects stale analysis versions', async () => {
+    seedSub();
+    const before = JSON.stringify([...stores].map(([key, entries]) => [key, [...entries]]));
+    const version = counters.get(REDIS_KEYS.configVersion) ?? 0;
+    const result = await call(POST, 'subscription', SUB_ID, { candidates: true, expectedVersion: version });
+    expect(result.status).toBe(200);
+    expect(await result.json()).toEqual({ data: { configVersion: version, candidates: [] } });
+    expect(JSON.stringify([...stores].map(([key, entries]) => [key, [...entries]]))).toBe(before);
+    const stale = await call(POST, 'subscription', SUB_ID, { candidates: true, expectedVersion: version + 1 });
+    expect(stale.status).toBe(412);
+  });
   it.each(['subscription', 'collection'] as const)('includes saved facts in %s health coverage', async (type) => {
     const fingerprint = nodeFingerprint({ name: 'old', type: 'ss', server: 'a.example.com', port: 443 })!;
     const operators = [{ id: 'n', kind: 'rename-template', template: '${vendor} ${tags}', nodeFacts: { [fingerprint]: { vendor: 'Custom', tags: ['IEPL'] } } }];

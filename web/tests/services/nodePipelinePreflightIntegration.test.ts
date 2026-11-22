@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   getConfigVersion: vi.fn(),
   getOrdinalGeneration: vi.fn(),
   getProfile: vi.fn(),
+  listProfiles: vi.fn(),
   getCollection: vi.fn(),
   listCollections: vi.fn(),
   listDevices: vi.fn(),
@@ -23,7 +24,7 @@ vi.mock('@/lib/repos/baseRepo', () => ({ getBase: mocks.getBase }));
 vi.mock('@/lib/repos/configVersionRepo', () => ({
   getConfigVersion: mocks.getConfigVersion,
 }));
-vi.mock('@/lib/repos/profilesRepo', () => ({ getProfile: mocks.getProfile, listProfiles: async () => [] }));
+vi.mock('@/lib/repos/profilesRepo', () => ({ getProfile: mocks.getProfile, listProfiles: mocks.listProfiles }));
 vi.mock('@/lib/repos/collectionsRepo', () => ({
   getCollection: mocks.getCollection,
   listCollections: mocks.listCollections,
@@ -75,6 +76,7 @@ import { nodeFingerprint } from '@/lib/proxies/naming';
 import { analyzeSourceFacts } from '@/lib/proxies/namingHealth';
 import { exportCollectionNodes, exportSubscriptionNodes, mergeCollectionMemberProxies } from '@/lib/services/nodeExportService';
 import { previewNamingCollection } from '@/lib/services/namingPreviewService';
+import { loadNamingCandidateContext } from '@/lib/services/namingCandidateService';
 import { resolveSubscriptionProxies } from '@/lib/services/subscriptionFetcher';
 import { resolveConfig } from '@/lib/engine/resolve';
 import {
@@ -164,6 +166,7 @@ describe('outer pipeline save integration', () => {
     mocks.getConfigVersion.mockResolvedValue(7);
     mocks.getOrdinalGeneration.mockResolvedValue(0);
     mocks.getProfile.mockImplementation(async (id: string) => profiles.get(id) ?? null);
+    mocks.listProfiles.mockResolvedValue([...profiles.values()]);
     mocks.getBase.mockResolvedValue({
       content: BASE,
       etag: 'base-etag',
@@ -376,6 +379,132 @@ describe('outer pipeline save integration', () => {
       expect(direct.proxies).toEqual(serving.proxies);
       if (!managedFirst) expect((await managed()).proxies.map((p) => p.name)).toEqual(['edge', 'edge']);
       expect(fetcher).toHaveBeenCalledTimes(1);
+      expect(mocks.setFetchCache).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('plans filter recovery against the serving base-proxy suffix', async () => {
+    const { subscription } = await aggregateFixture();
+    const base = BASE.replace('proxies:', 'proxies:\n  - name: 日本\n    type: direct');
+    mocks.getBase.mockResolvedValue({ content: base, etag: 'base', updated_at: 1 });
+    mocks.listProfiles.mockResolvedValue([profile(DIRECT_PROFILE_ID, { type: 'subscription', id: SUB_ID })]);
+    mocks.listProxyGroups.mockResolvedValue([{ id: DIRECT_PROFILE_ID, name: 'Members', kind: 'raw', type: 'select', rank: 0, updated_at: 1,
+      'include-all-proxies': true, filter: '^member 日本 ' }]);
+    const next: Subscription = { ...subscription, operators: subscription.operators.map((row) => row.kind === 'rename-template' ? { ...row, template: '${region}' } : row) };
+    const context = await loadNamingCandidateContext('subscription', SUB_ID, 7);
+    const candidate = await context.analyze(next, { id: 'test', title: 'Test', template: '${region}' });
+    const served = await resolveConfig(base, [], [next], [], [], {
+      boundSource: { type: 'subscription', id: SUB_ID }, persistSnapshot: false, persistOrdinals: false,
+    });
+    const finalName = `日本 · ${subscription.display_name?.trim() || subscription.name}`;
+    expect(served.nodeNames).toContain(finalName);
+    expect(candidate.groups[0].migration).toEqual({ filter: `^(?:${finalName})$`, after: 1 });
+    expect(context.changesFor(candidate)[0].groups[0].after.filter).toBe(`^(?:${finalName})$`);
+  });
+
+  it('tracks cross-source collision suffixes in counts, filters and exact references', async () => {
+    const { subscription, collection } = await aggregateFixture();
+    const backup: Subscription = { ...subscription, id: COLLECTION_PROFILE_ID, name: '机场B', display_name: 'Backup',
+      content: stringify({ proxies: [{ ...JP_NODE, name: '日本', server: 'backup.example' }] }), operators: [] };
+    const col = { ...collection, subscription_ids: [SUB_ID, backup.id], operators: [] };
+    mocks.listSubscriptions.mockResolvedValue([subscription, backup]);
+    mocks.listCollections.mockResolvedValue([col]);
+    mocks.listProfiles.mockResolvedValue([profile(COLLECTION_PROFILE_ID, { type: 'collection', id: col.id })]);
+    mocks.listProxyGroups.mockResolvedValue([
+      { id: DIRECT_PROFILE_ID, name: 'Dynamic', kind: 'raw', type: 'select', rank: 0, updated_at: 1, 'include-all-proxies': true, filter: '^日本$' },
+      { id: COLLECTION_PROFILE_ID, name: 'Manual', kind: 'manual', type: 'select', rank: 1, updated_at: 1, proxies: ['日本'] },
+    ]);
+    mocks.listRules.mockResolvedValue([{ id: DIRECT_PROFILE_ID, policy: '日本' }]);
+    const next: Subscription = { ...subscription, operators: subscription.operators.map((row) => row.kind === 'rename-template' ? { ...row, template: '${region}' } : row) };
+    const context = await loadNamingCandidateContext('subscription', SUB_ID, 7);
+    const candidate = await context.analyze(next, { id: 'test', title: 'Test', template: '${region}' });
+    const served = await resolveConfig(BASE, [], [next, backup], [], [], {
+      collections: [col], boundSource: { type: 'collection', id: col.id }, persistSnapshot: false, persistOrdinals: false,
+    });
+    expect(served.nodeNames).toContain('日本 · Backup');
+    expect(candidate.groups[0].migration).toEqual({ filter: '^(?:日本 · Backup)$', after: 1 });
+    expect(candidate.references).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'manual', before: '日本', after: '日本 · Backup', blocked: false }),
+      expect.objectContaining({ kind: 'rule', before: '日本', after: '日本 · Backup', blocked: false }),
+    ]));
+    const changes = context.changesFor(candidate)[0];
+    expect(changes.groups.find((g) => g.before.id === COLLECTION_PROFILE_ID)?.after.proxies).toEqual(['日本 · Backup']);
+    expect(changes.rules[0].after.policy).toBe('日本 · Backup');
+  });
+
+  it.each([false, true])('rewrites a renamed empty-fallback before final preflight (inherited: %s)', async (inherited) => {
+    const { subscription } = await aggregateFixture();
+    mocks.getBase.mockResolvedValue({ content: 'proxies: []\n# === PROXY-GROUPS ===\nrules: ["MATCH,DIRECT"]\n', etag: 'base', updated_at: 1 });
+    mocks.listProfiles.mockResolvedValue([profile(DIRECT_PROFILE_ID, { type: 'subscription', id: SUB_ID })]);
+    const oldName = 'member 日本 01';
+    mocks.listProxyGroups.mockResolvedValue([{ id: DIRECT_PROFILE_ID, name: 'Fallback', kind: 'raw', type: 'select', rank: 0, updated_at: 1,
+      'include-all-proxies': true, filter: '^新加坡$', ...(inherited ? { template_id: COLLECTION_ID } : { 'empty-fallback': oldName }) }]);
+    if (inherited) mocks.listProxyGroupTemplates.mockResolvedValue([{ id: COLLECTION_ID, name: 'Inherited', 'empty-fallback': oldName }]);
+    const next: Subscription = { ...subscription, operators: subscription.operators.map((row) => row.kind === 'rename-template' ? { ...row, template: '${region}' } : row) };
+    const context = await loadNamingCandidateContext('subscription', SUB_ID, 7);
+    await expect(preflightProfileConfig(DIRECT_PROFILE_ID, () => ({ subscriptions: [next] }), context)).rejects.toThrow('empty-fallback is invalid');
+    const candidate = await context.analyze(next, { id: 'test', title: 'Test', template: '${region}' });
+    expect(candidate.references).toContainEqual({ profileId: DIRECT_PROFILE_ID, kind: 'fallback', owner: DIRECT_PROFILE_ID,
+      before: oldName, after: '日本', blocked: false });
+    expect(candidate.groups[0].migration).toBeUndefined();
+    const changes = context.changesFor(candidate)[0];
+    expect(changes.groups[0].after['empty-fallback']).toBe('日本');
+    expect(changes.groups[0].after.filter).toBe('^新加坡$');
+    await expect(preflightProfileConfig(DIRECT_PROFILE_ID, (state) => ({ subscriptions: [next],
+      proxyGroups: state.proxyGroups.map((g) => changes.groups.find((patch) => patch.before.id === g.id)?.after ?? g),
+    }), context)).resolves.toMatchObject({ configVersion: 7 });
+    expect(mocks.setFetchCache).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])('never blocks on a parked rule and rewrites it only when unique (drop: %s)', async (drop) => {
+    const { subscription } = await aggregateFixture();
+    mocks.getBase.mockResolvedValue({ content: 'proxies: []\nrules: ["MATCH,DIRECT"]\n# === RULES ===\n', etag: 'base', updated_at: 1 });
+    mocks.listProfiles.mockResolvedValue([profile(DIRECT_PROFILE_ID, { type: 'subscription', id: SUB_ID })]);
+    mocks.listRules.mockResolvedValue([{ id: DIRECT_PROFILE_ID, type: 'DOMAIN', value: 'parked.example', anchor: 'RULES', policy: 'member 日本 01',
+      enabled: false, source: 'manual', rank: 0, added_at: 1, updated_at: 1, revision: 1 }]);
+    const next: Subscription = { ...subscription, operators: subscription.operators.map((row) => row.kind === 'rename-template' ? { ...row, template: '${region}' } : row) };
+    if (drop) next.operators.push({ id: 'drop', kind: 'filter-regex', mode: 'keep', pattern: '^never-match$' });
+    const context = await loadNamingCandidateContext('subscription', SUB_ID, 7);
+    const candidate = await context.analyze(next, { id: 'test', title: 'Test', template: '${region}' });
+    expect(candidate.blocked).toBe(false);
+    const changes = context.changesFor(candidate);
+    if (drop) expect(changes).toEqual([]);
+    else expect(changes[0].rules[0].after).toMatchObject({ enabled: false, policy: '日本', revision: 8 });
+    await expect(preflightProfileConfig(DIRECT_PROFILE_ID, (state) => ({ subscriptions: [next],
+      rules: state.rules.map((r) => changes[0]?.rules.find((patch) => patch.before.id === r.id)?.after ?? r),
+    }), context)).resolves.toMatchObject({ configVersion: 7 });
+  });
+
+  it('recommends from all consumers with template inheritance and a single zero-write upstream snapshot', async () => {
+    const { raw, subscription } = await aggregateFixture();
+    const remote = { ...subscription, kind: 'remote', url: 'https://upstream.example/sub', content: undefined } as Subscription;
+    mocks.listSubscriptions.mockResolvedValue([remote]);
+    mocks.listProxyGroups.mockImplementation(async (profileId: string) => [{
+      id: profileId, name: '地区线路', kind: 'raw', type: 'select', rank: 0, updated_at: 1,
+      template_id: COLLECTION_ID, filter: profileId === DIRECT_PROFILE_ID ? '^member 日本 ' : '家宽',
+    }]);
+    mocks.listProxyGroupTemplates.mockResolvedValue([{ id: COLLECTION_ID, name: 'inherited', updated_at: 1,
+      'include-all-proxies': true, 'exclude-type': 'Direct', 'exclude-filter': 'do-not-match' }]);
+    const fetcher = vi.fn(async () => new Response(stringify({ proxies: [raw] })));
+    vi.stubGlobal('fetch', fetcher);
+    try {
+      const context = await loadNamingCandidateContext('subscription', SUB_ID, 7);
+      const candidates = await context.recommend();
+      expect(candidates).toHaveLength(3);
+      for (const candidate of candidates) {
+        expect(candidate.blocked).toBe(false);
+        expect(candidate.sample[0]).toContain('家宽');
+        expect(candidate.groups).toHaveLength(2);
+        const direct = candidate.groups.find((g) => g.profileId === DIRECT_PROFILE_ID)!;
+        expect([direct.before, direct.after, direct.migration?.after]).toEqual([1, 0, 1]);
+        const collection = candidate.groups.find((g) => g.profileId === COLLECTION_PROFILE_ID)!;
+        expect([collection.before, collection.after]).toEqual([1, 1]);
+        expect(context.changesFor(candidate).map((p) => p.profileId)).toEqual([DIRECT_PROFILE_ID]);
+      }
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      expect(mocks.getFetchCache).toHaveBeenCalledTimes(1);
       expect(mocks.setFetchCache).not.toHaveBeenCalled();
     } finally {
       vi.unstubAllGlobals();
