@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { NamingCandidate } from '@/lib/proxies/namingCandidates';
-import { candidateRationale, groupingPreviewMatches, groupingSelection, toggleGroupingPurpose } from '@/ui/features/naming/model';
+import { candidateRationale, groupingPreviewMatches, groupingSelection, namingUndoFeedback, toggleGroupingPurpose } from '@/ui/features/naming/model';
 import type { GroupingPreview } from '@/lib/proxies/namingGroupGeneration';
 import { fetchQuery, getQueryData } from '@/ui/data/query';
 
@@ -57,5 +57,19 @@ describe('candidate recommendation rationale', () => {
     expect(candidateRationale({ ...candidate, groups: [] })).toBe('没有策略组，无需迁移筛选');
     expect(candidateRationale({ ...candidate, references: [{ profileId: 'p', kind: 'manual', owner: 'g', before: 'old', blocked: true }] }))
       .toContain('1 处精确引用无法自动迁移');
+  });
+});
+
+describe('generated-group Undo feedback', () => {
+  it('warns that Undo removes the generated groups and names them', () => {
+    expect(namingUndoFeedback(['节点选择', '🇯🇵 日本'])).toEqual({ label: '撤销并移除 2 个策略组',
+      description: '撤销将移除本次生成的 2 个策略组：节点选择、🇯🇵 日本。' });
+  });
+  it('counts groups from multiple profiles while listing repeated names once', () => {
+    expect(namingUndoFeedback(['节点选择', '节点选择']).description).toBe('撤销将移除本次生成的 2 个策略组：节点选择。');
+  });
+  it('does not claim to remove groups when none were created', () => {
+    expect(namingUndoFeedback()).toEqual({ label: '撤销', description: undefined });
+    expect(namingUndoFeedback([]).description).toBeUndefined();
   });
 });

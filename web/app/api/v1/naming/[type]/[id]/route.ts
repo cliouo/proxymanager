@@ -167,10 +167,12 @@ function projectHistoryPlan(
   sourceAliases?: Record<string, string>;
   nodeFacts?: NodeFacts;
   disabled?: boolean;
+  createdGroups?: string[];
 } {
   if (!prior) return { present: false };
   return {
     present: true,
+    createdGroups: (prior.profileChanges ?? []).flatMap((change) => (change.createdGroups ?? []).map((group) => safeIssueText(group.name))),
     // display-only surface: dirty template content (URLs/tokens/credentials)
     // is redacted + bounded before it can leave storage (finding 7). The
     // EDITABLE managed template stays raw — the editor round-trips it.
@@ -252,7 +254,7 @@ interface WorkspacePayload {
   entity: { type: 'subscription' | 'collection'; ref: string; label: string };
   aggregate: boolean;
   managed: ReturnType<typeof planOf>;
-  priorPlan: ReturnType<typeof planOf>;
+  priorPlan: ReturnType<typeof projectHistoryPlan>;
   recommended: string;
   health: ReturnType<typeof analyzeSourceFacts>;
   diagnostics: {

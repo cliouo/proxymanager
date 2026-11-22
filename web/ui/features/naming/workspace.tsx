@@ -29,6 +29,7 @@ import {
   activationOf,
   buildRows,
   fieldStats,
+  namingUndoFeedback,
   planBody,
   ruleError,
   samePlan,
@@ -152,8 +153,9 @@ function Workspace({
       ws.mutate(next);
       setPlan(storedPlan(next));
       refreshShared();
-      notify.success(groupingPurposes ? '命名与策略组已生成' : '推荐命名方案与引用迁移已应用', undefined, {
-        label: '撤销', onClick: () => void restore(next.configVersion),
+      const undo = namingUndoFeedback(next.priorPlan.createdGroups);
+      notify.success(groupingPurposes ? '命名与策略组已生成' : '推荐命名方案与引用迁移已应用', undo.description, {
+        label: undo.label, onClick: () => void restore(next.configVersion),
       });
     } catch (error) {
       if (isVersionConflict(error)) await onConflict();
@@ -205,18 +207,20 @@ function Workspace({
 
   const rollback = async () => {
     const prior = data.priorPlan;
+    const undo = namingUndoFeedback(prior.createdGroups);
     const ok = await confirmAction({
       title: '撤销上次应用？',
       tone: 'danger',
       confirmText: '撤销',
-      description: prior.template ? (
+      description: (
         <span className="flex flex-col gap-2">
-          <span>命名会恢复为上一次的方案：</span>
-          <Code className="break-all">{prior.template}</Code>
-          <span>如该方案迁移过策略组筛选或精确引用，也会一并恢复；已被后续编辑的项不会被覆盖。</span>
+          {prior.template ? <>
+            <span>命名会恢复为上一次的方案：</span>
+            <Code className="break-all">{prior.template}</Code>
+            <span>如该方案迁移过策略组筛选或精确引用，也会一并恢复；已被后续编辑的项不会被覆盖。</span>
+          </> : <span>上次应用之前没有启用智能命名，撤销后节点会恢复原来的名字。如有策略组筛选或引用迁移，也会一并恢复。</span>}
+          {undo.description && <span className="text-bad">{undo.description}</span>}
         </span>
-      ) : (
-        '上次应用之前没有启用智能命名，撤销后节点会恢复原来的名字。如有策略组筛选或引用迁移，也会一并恢复。'
       ),
     });
     if (!ok) return;

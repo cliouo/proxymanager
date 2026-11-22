@@ -33,6 +33,13 @@ export function groupingPreviewMatches(preview: GroupingPreview | undefined, sel
   return purposes.length === selected.length && purposes.every((id) => selected.includes(id));
 }
 
+export function namingUndoFeedback(createdGroups: string[] = []) {
+  return createdGroups.length ? {
+    label: `撤销并移除 ${createdGroups.length} 个策略组`,
+    description: `撤销将移除本次生成的 ${createdGroups.length} 个策略组：${[...new Set(createdGroups)].join('、')}。`,
+  } : { label: '撤销', description: undefined };
+}
+
 export function candidateRationale(candidate: NamingCandidate): string {
   const changed = candidate.groups.filter((g) => g.broken || g.error || g.before !== (g.migration?.after ?? g.after)).length;
   const migrated = candidate.groups.filter((g) => g.migration).length;
@@ -82,7 +89,7 @@ export interface NamingWorkspaceData {
   entity: { type: TargetType; ref: string; label: string };
   aggregate: boolean;
   managed: PlanView;
-  priorPlan: PlanView;
+  priorPlan: PlanView & { createdGroups?: string[] };
   recommended: string;
   health: SourceHealthReport[];
   diagnostics: {
