@@ -5,6 +5,7 @@ import { api } from '@/ui/data/api';
 import { useQuery } from '@/ui/data/query';
 import type { NamingCandidate } from '@/lib/proxies/namingCandidates';
 import type { NamingWorkspaceData, TargetType } from './model';
+import { candidateRationale } from './model';
 
 export function NamingCandidates({ type, id, version, busy, onApply }: {
   type: TargetType; id: string; version: number; busy: boolean;
@@ -20,8 +21,9 @@ export function NamingCandidates({ type, id, version, busy, onApply }: {
     {!!query.error && <p role="alert" className="text-bad">推荐方案加载失败，请刷新页面重试。</p>}
     {!query.data && !query.error && <p className="text-ink-3">正在分析策略组与节点命名…</p>}
     <div className="grid gap-4 @3xl/main:grid-cols-3">
-      {query.data?.candidates.map((candidate) => <div key={candidate.id} className="min-w-0 rounded-lg border border-line p-3">
-        <h3 className="font-medium">{candidate.title}</h3>
+      {query.data?.candidates.map((candidate, index) => <div key={candidate.id} className="min-w-0 rounded-lg border border-line p-3">
+        <h3 className="font-medium">{candidate.title}{index === 0 && <span className="ml-2 text-xs text-accent">优先推荐</span>}</h3>
+        <p className="my-2 text-xs text-ink-3">{index === 0 ? '推荐理由：' : '方案说明：'}{candidateRationale(candidate)}</p>
         {candidate.emptiedGroups.length > 0 && <p className="my-2 text-xs text-bad">应用后 {candidate.emptiedGroups.length} 个策略组将变空，无法自动恢复筛选。</p>}
         <div className="my-2 max-h-40 overflow-auto break-words text-xs text-ink-2">
           {candidate.sample.map((name, i) => <div key={i}>{name}</div>)}
