@@ -3,7 +3,7 @@ import { parse, stringify } from 'yaml';
 import { materializeDynamicProxyGroups } from '@/lib/engine/materializeProxyGroups';
 import { analyzeNamingCandidate, groupNodeMembers, inferNamingTemplates, rankNamingCandidates,
   type CandidateGroup, type CandidateNode, type CandidateProfile } from '@/lib/proxies/namingCandidates';
-import { applyRenameTemplate, formatNodeName, withRawIdentity } from '@/lib/proxies/naming';
+import { applyRenameTemplate, formatNodeName, recognizeName, withRawIdentity } from '@/lib/proxies/naming';
 
 const node = (identity: string, name: string, scoped = true, type = 'ss'): CandidateNode => ({ identity, name, scoped, type, sourceKey: scoped ? 'airport' : 'other' });
 const before = [node('hk', 'HK IEPL x2 01'), node('jp', 'JP IPLC 02'), node('other', 'HK IEPL existing', false)];
@@ -13,6 +13,33 @@ const profile = (groups = [group()]): CandidateProfile => ({ id: 'p', name: 'Pro
 const template = { id: 'test', title: 'Test', template: '${region}' };
 
 describe('policy-aware candidate inference and membership', () => {
+  it.each([
+    ['HK', 'HK IEPL 0.5x 01', '香港'],
+    ['家庭宽带', 'HK 家庭宽带 0.5x 01', '家宽'],
+    ['×0\\.5', 'HK IEPL ×0.5 01', '0\\.5x'],
+  ])('recovers %s despite an info-like source alias in rendered names', (filter, name, token) => {
+    const before = [{ ...node('a', name), sourceLabel: '我的订阅' }];
+    const naming = '${region} ${tags} ${rate} ${source} ${index}';
+    const after = before.map((n) => ({ ...n, name: formatNodeName({ name: n.name,
+      source: { key: n.sourceKey!, label: n.sourceLabel }, config: { template: naming } }) }));
+    const input = group({ filter });
+    const result = analyzeNamingCandidate({ ...template, template: naming }, [{ ...profile([input]), before, after }], []);
+    expect(result.groups[0].migration?.filter).toContain(token);
+    expect(result.groups[0].migration?.after).toBe(1);
+    expect(result.groups[0].broken).toBeFalsy();
+  });
+
+  it('uses captured renderer facts rather than a conflicting displayed region in field recovery', () => {
+    const before = [node('a', 'JP IEPL 01')];
+    const after = [{ ...before[0], name: '日本 IEPL 01 · 香港', sourceLabel: '香港',
+      facts: { region: 'JP', tags: recognizeName(before[0].name).tags } }];
+    const input = group({ filter: 'JP' });
+    const naming = '${region} ${tags} ${index} · ${source}';
+    const result = analyzeNamingCandidate({ ...template, template: naming }, [{ ...profile([input]), before, after }], []);
+    expect(result.groups[0].migration?.filter).toContain('日本');
+    expect(result.groups[0].migration?.after).toBe(1);
+  });
+
   it('refuses region-only recovery when the old filter also requires residual Premium text', () => {
     const before = [node('a', 'HK Premium 01')];
     const after = [node('a', '香港 01')];

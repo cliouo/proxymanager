@@ -106,7 +106,7 @@ function selectorDependencies(nodes: CandidateNode[], groups: CandidateGroup[]) 
   const selectors = groups.flatMap((g) => [g.values.filter, g.values['exclude-filter']])
     .filter((s): s is string => typeof s === 'string').join(' ');
   const has = (value: string) => value !== '' && selectors.toLowerCase().includes(value.toLowerCase());
-  const recognized = nodes.map((node) => recognizeName(node.name));
+  const recognized = nodes.map((node) => probeState(node).facts);
   const region = REGIONS.some((r) => [r.zh, r.emoji].some(has) ||
     [r.code, r.alpha3].some((code) => new RegExp(`(?:^|[^a-z])${code}(?:$|[^a-z])`, 'i').test(selectors)));
   const tags = /IEPL|IPLC|专线|家宽|家庭宽带|BGP|原生|native/i.test(selectors);
@@ -145,7 +145,7 @@ const escapeRegex = (name: string) => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
 type SelectorField = keyof ReturnType<typeof selectorDependencies>;
 
 function fieldValues(node: CandidateNode) {
-  const recognized = recognizeName(node.name);
+  const recognized = probeState(node).facts;
   const region = recognized.region ? regionByCode(recognized.region) : undefined;
   return {
     region: region ? [region.zh, region.code, region.emoji] : [],
