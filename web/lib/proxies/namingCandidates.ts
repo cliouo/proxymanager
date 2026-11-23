@@ -148,7 +148,7 @@ function fieldValues(node: CandidateNode) {
   const recognized = probeState(node).facts;
   const region = recognized.region ? regionByCode(recognized.region) : undefined;
   return {
-    region: region ? [region.zh, region.code, region.emoji] : [],
+    region: region ? [region.zh, region.code, ...(region.code === 'CN' ? [] : [region.emoji])] : [],
     tags: recognized.tags,
     rate: recognized.rate === null ? [] : [formatRate(recognized.rate)],
     source: [node.sourceLabel ?? node.sourceKey].filter((s): s is string => !!s),
@@ -251,6 +251,10 @@ function selectorProbes(before: CandidateNode[], recovered: CandidateNode[], tem
       const newVariant = { facts: { ...newState.facts, ...change.facts }, sourceLabel: change.sourceLabel ?? newState.sourceLabel };
       pairs.push({ before: original.namingTemplate ? renderProbe(original, oldVariant, original.namingTemplate) : renderRawNamingProbe(original, change.field, oldVariant),
         after: renderProbe(node, newVariant, template) });
+      if (change.field === 'region' && ['TW', 'HK', 'MO'].includes(change.facts?.region ?? '')) {
+        pairs.push({ before: pairs[pairs.length - 1].before,
+          after: renderProbe(node, newVariant, template, '🇨🇳 fresh-node') });
+      }
     }
   }
   return pairs;

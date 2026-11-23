@@ -11,6 +11,11 @@ const nodes: CandidateNode[] = raw.map((name, i) => ({ identity: `node-${i}`, na
 const members = (filter: string, pool = nodes) => groupNodeMembers({ id: 'g', name: 'g', values: { 'include-all-proxies': true, filter } }, pool).nodes;
 
 describe('purpose-based naming and group generation', () => {
+  it('refuses mainland groups when only the shared CN flag is rendered', () => {
+    const naming = '${emoji} ${index}';
+    const pool = [{ ...nodes[0], identity: 'cn', name: '🇨🇳 03', facts: { region: 'CN', tags: [] }, namingTemplate: naming }];
+    expect(generateNamingGroups(pool, naming, ['region']).blocked).toBe(true);
+  });
   it('groups CN-flagged Taiwan, Hong Kong and Macau by text region, not their shared flag', () => {
     const pool: CandidateNode[] = ['🇨🇳 TW01 0.20x', '🇨🇳 HK 02', '🇨🇳 MO 03', '🇨🇳 上海 01'].map((name, i) => {
       let facts: CandidateNode['facts'];

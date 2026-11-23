@@ -13,6 +13,16 @@ const profile = (groups = [group()]): CandidateProfile => ({ id: 'p', name: 'Pro
 const template = { id: 'test', title: 'Test', template: '${region}' };
 
 describe('policy-aware candidate inference and membership', () => {
+  it('does not migrate mainland selectors to the CN flag shared with Taiwan, Hong Kong and Macau', () => {
+    const before = [node('cn', 'CN 03')];
+    const naming = '${emoji} ${region} ${index}';
+    const after = [node('cn', '🇨🇳 中国 03')];
+    const input = group({ filter: 'CN' });
+    const result = analyzeNamingCandidate({ ...template, template: naming }, [{ ...profile([input]), before, after }], []);
+    const migration = result.groups[0].migration!;
+    expect(migration).toBeDefined();
+    expect(groupNodeMembers(input, ['台湾', '香港', '澳门'].map((name) => node(name, `🇨🇳 ${name} 04`)), migration.filter).nodes).toEqual([]);
+  });
   it('migrates Taiwan selectors without admitting China nodes sharing the CN flag', () => {
     const before = [node('tw', '🇨🇳 TW01 0.20x'), node('cn', '🇨🇳 上海 01')];
     const naming = '${emoji} ${region} · ${index}${?rate: · ${rate}}';
