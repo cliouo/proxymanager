@@ -1,5 +1,7 @@
 'use client';
 
+import { navigateWithGuard } from '@/ui/features/groups/guard';
+
 import { useMemo, useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import { Command } from 'cmdk';
@@ -91,8 +93,10 @@ export function CommandPalette() {
     setSearch('');
   };
   const go = (href: string) => {
-    close();
-    router.push(href);
+    void navigateWithGuard(() => {
+      close();
+      router.push(href);
+    });
   };
   const path = (sub?: string) => (profile ? profilePath(profile.name, sub) : '/');
 

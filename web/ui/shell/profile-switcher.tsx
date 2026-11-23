@@ -1,5 +1,7 @@
 'use client';
 
+import { navigateWithGuard } from '@/ui/features/groups/guard';
+
 import { useMemo, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { Command } from 'cmdk';
@@ -52,8 +54,10 @@ export function ProfileSwitcher({ collapsed }: { collapsed?: boolean }) {
     return profilePath(profile.name, keep);
   };
   const go = (profile: Profile) => {
-    setOpen(false);
-    router.push(targetHref(profile));
+    void navigateWithGuard(() => {
+      setOpen(false);
+      router.push(targetHref(profile));
+    });
   };
 
   return (
@@ -126,8 +130,10 @@ export function ProfileSwitcher({ collapsed }: { collapsed?: boolean }) {
           <button
             type="button"
             onClick={() => {
-              setOpen(false);
-              router.push('/profiles?new=1');
+              void navigateWithGuard(() => {
+                setOpen(false);
+                router.push('/profiles?new=1');
+              });
             }}
             className="flex h-8 flex-1 items-center gap-2 rounded-md px-2 text-[13px] text-ink-2 hover:bg-surface-2 hover:text-ink"
           >
@@ -136,8 +142,10 @@ export function ProfileSwitcher({ collapsed }: { collapsed?: boolean }) {
           <button
             type="button"
             onClick={() => {
-              setOpen(false);
-              router.push('/profiles');
+              void navigateWithGuard(() => {
+                setOpen(false);
+                router.push('/profiles');
+              });
             }}
             className="flex h-8 items-center gap-2 rounded-md px-2 text-[13px] text-ink-2 hover:bg-surface-2 hover:text-ink"
           >

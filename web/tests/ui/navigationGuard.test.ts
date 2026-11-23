@@ -1,0 +1,51 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { confirmLeave, hasUnsavedEdits, navigateWithGuard, registerDirtyCheck } from '@/ui/features/groups/guard';
+import * as feedback from '@/ui/primitives/feedback';
+
+let unregister = () => {};
+afterEach(() => {
+  unregister();
+  vi.restoreAllMocks();
+});
+
+describe('shared editor navigation guard', () => {
+  it.each([true, false])('honors the dirty pipeline confirmation (leave: %s)', async (leave) => {
+    unregister = registerDirtyCheck(() => true, '处理流程有未保存的修改，离开后会丢失。');
+    const confirm = vi.spyOn(feedback, 'confirmAction').mockResolvedValueOnce(leave);
+    const navigate = vi.fn();
+    const pending = navigateWithGuard(navigate);
+    expect(navigate).not.toHaveBeenCalled();
+    await pending;
+    expect(confirm).toHaveBeenCalledWith(expect.objectContaining({ description: expect.stringContaining('处理流程') }));
+    expect(navigate).toHaveBeenCalledTimes(leave ? 1 : 0);
+  });
+
+  it('does not ask for clean or unmounted editors', async () => {
+    unregister = registerDirtyCheck(() => false);
+    const confirm = vi.spyOn(feedback, 'confirmAction');
+    const navigate = vi.fn();
+    await navigateWithGuard(navigate);
+    unregister();
+    await navigateWithGuard(navigate);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(navigate).toHaveBeenCalledTimes(2);
+  });
+
+  it('retains the group editor message and ignores stale cleanup', async () => {
+    const cleanup = registerDirtyCheck(() => true, '处理流程');
+    unregister = registerDirtyCheck(() => true);
+    cleanup();
+    expect(hasUnsavedEdits()).toBe(true);
+    const confirm = vi.spyOn(feedback, 'confirmAction').mockResolvedValueOnce(false);
+    await confirmLeave();
+    expect(confirm).toHaveBeenCalledWith(expect.objectContaining({ description: expect.stringContaining('当前策略组') }));
+  });
+
+  it('does not navigate if confirmation fails', async () => {
+    unregister = registerDirtyCheck(() => true);
+    vi.spyOn(feedback, 'confirmAction').mockRejectedValueOnce(new Error('confirmation failed'));
+    const navigate = vi.fn();
+    await expect(navigateWithGuard(navigate)).rejects.toThrow('confirmation failed');
+    expect(navigate).not.toHaveBeenCalled();
+  });
+});
