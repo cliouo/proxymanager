@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   closestCenter,
   DndContext,
@@ -73,6 +73,7 @@ export function PipelineEditor({
   operators,
   updatedAt,
   namingHref,
+  onDirtyChange,
   active = true,
   originHint,
 }: {
@@ -81,6 +82,7 @@ export function PipelineEditor({
   operators: StoredOperator[];
   updatedAt: number | undefined;
   namingHref: string;
+  onDirtyChange?: (dirty: boolean) => void;
   /** Only the visible tab handles ⌘S. */
   active?: boolean;
   originHint?: string;
@@ -98,6 +100,10 @@ export function PipelineEditor({
   const [dragging, setDragging] = useState(false);
 
   const dirty = stableKey(draft) !== stableKey(snapshot.base);
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+    return () => onDirtyChange?.(false);
+  }, [dirty, onDirtyChange]);
 
   // The saved pipeline changed underneath us (refetch after save, another tab…).
   const incomingIsOlder =

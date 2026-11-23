@@ -11,6 +11,7 @@ import { Badge, Button, Card, EmptyState, Menu, Monogram, notify, Skeleton, TabP
 import { Page, PageHeader } from '@/ui/shell/page';
 import { HealthPill, sourceHealth, TrafficMeter, trafficOf } from '@/ui/viz/health';
 import { PipelineEditor } from '@/ui/pipeline/pipeline-editor';
+import { NamingLink, NamingSetupPrompt } from './naming-entry';
 import { deleteSource, patchSource, refreshSource, setSourceEnabled } from './actions';
 import { ManualImportDialog } from './manual-import';
 import { canServerRefresh, msToMinutes, sourceLink, sourceMode, sourceTitle, type Source } from './model';
@@ -67,6 +68,7 @@ export function SourceDetail() {
   const { copied, copy } = useCopy();
   const [busy, setBusy] = useState<'refresh' | 'mode' | null>(null);
   const [importing, setImporting] = useState(false);
+  const [pipelineDirty, setPipelineDirty] = useState(false);
 
   if (!source) {
     if (detail.error) {
@@ -158,6 +160,7 @@ export function SourceDetail() {
         }
         actions={
           <>
+            <NamingLink href={`/sources/${source.id}/naming`} dirty={pipelineDirty} />
             {canServerRefresh(source) && (
               <Button
                 icon={RefreshCw}
@@ -222,11 +225,13 @@ export function SourceDetail() {
             )}
             {visited.has('pipeline') && (
               <TabPanel value="pipeline" forceMount className="outline-none data-[state=inactive]:hidden">
+                <NamingSetupPrompt href={`/sources/${source.id}/naming`} operators={source.operators} dirty={pipelineDirty} />
                 <PipelineEditor
                   target={{ kind: 'subscription', id: source.id }}
                   operators={source.operators}
                   updatedAt={source.updated_at}
                   namingHref={`/sources/${source.id}/naming`}
+                  onDirtyChange={setPipelineDirty}
                   active={tab === 'pipeline'}
                   originHint={source.kind === 'local' ? '来自你粘贴的节点内容' : '拉取并解析订阅后得到的节点'}
                 />
