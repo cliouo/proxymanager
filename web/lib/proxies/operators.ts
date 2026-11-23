@@ -14,7 +14,7 @@ import type { Operator } from '@/schemas/operator';
 import { USELESS_PATTERNS } from './infoNodes';
 import { applyRenameTemplate, type OrdinalResolver } from './naming';
 import { redactSensitiveText } from './namingSanitize';
-import { sourceOf } from './provenance';
+import { envelopeOf, mergeEnvelope, sourceOf } from './provenance';
 import { detectRegion, flagFromCode, regionByCode, stripFlags } from './regions';
 import { assertSafeRuntimeRegexInput, compileSafeRuntimeRegex } from './regexSafety';
 
@@ -375,7 +375,16 @@ export function applyOperators(
       });
       continue;
     }
+    const priorNames = op.kind !== 'rename-template' && op.kind !== 'dedup'
+      ? new Map(proxies.map((p) => [envelopeOf(p)?.renderedNaming, nameOf(p)])) : undefined;
     const res = runOne(proxies, op, ordinalResolver);
+    if (priorNames && res.changed) {
+      res.proxies = res.proxies.map((p) => {
+        const rendered = envelopeOf(p)?.renderedNaming;
+        return rendered && !rendered.stale && priorNames.get(rendered) !== nameOf(p)
+          ? mergeEnvelope(p, { renderedNaming: { ...rendered, stale: true } }) : p;
+      });
+    }
     steps.push({
       id: op.id,
       kind: op.kind,

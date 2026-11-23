@@ -33,6 +33,13 @@ export interface SourceIdentity {
  * ever enter management responses, assistant payloads or serialised configs.
  */
 export interface NodeEnvelope {
+  renderedNaming?: {
+    stale?: boolean;
+    facts: NodeRecognitionFacts;
+    template: string;
+    tw2cn?: boolean;
+    sourceLabel?: string;
+  };
   memberNaming?: {
     facts?: NodeRecognitionFacts;
     recognitionRules?: RecognitionRule[];

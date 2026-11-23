@@ -179,8 +179,12 @@ vi.mock('@/lib/services/configPreflight', () => ({
   })),
 }));
 vi.mock('@/lib/services/namingCandidateService', () => ({
-  loadNamingCandidateContext: vi.fn(async () => ({ recommend: async () => [] })),
+  loadNamingCandidateContext: vi.fn(async () => ({ recommend: async () => [], grouping: async (purposes?: string[]) => ({
+    configVersion: 0, template: '${region} ${index}', purposes: [{ id: 'region', label: '地区', count: 1, selected: purposes?.includes('region') ?? true }],
+    profiles: [{ name: 'Profile', groups: [{ name: '🇭🇰 香港', kind: 'filter', type: 'select', filter: '香港', count: 1, sample: ['香港 01'] }] }], warnings: [], blocked: false,
+  }) })),
   publicNamingCandidate: (candidate: unknown) => candidate,
+  publicGroupingPreview: (preview: unknown) => preview,
 }));
 vi.mock('@/lib/services/subscriptionFetcher', () => ({
   resolveSubscriptionProxiesRaw: vi.fn(async () => ({
@@ -328,6 +332,35 @@ describe('GET /api/v1/naming/[type]/[id]', () => {
     expect(JSON.stringify([...stores].map(([key, entries]) => [key, [...entries]]))).toBe(before);
     const stale = await call(POST, 'subscription', SUB_ID, { candidates: true, expectedVersion: version + 1 });
     expect(stale.status).toBe(412);
+  });
+
+  it('previews grouping purposes without writes, validates purpose choices and rejects stale versions', async () => {
+    seedSub();
+    const version = counters.get(REDIS_KEYS.configVersion) ?? 0;
+    const before = JSON.stringify([...stores].map(([key, entries]) => [key, [...entries]]));
+    const response = await call(POST, 'subscription', SUB_ID, { grouping: {}, expectedVersion: version });
+    expect(response.status).toBe(200);
+    expect((await response.json()).data.purposes[0]).toMatchObject({ id: 'region', count: 1, selected: true });
+    const empty = await call(POST, 'subscription', SUB_ID, { grouping: { purposes: [] }, expectedVersion: version });
+    expect(empty.status).toBe(200);
+    expect((await empty.json()).data.purposes[0].selected).toBe(false);
+    for (const purposes of [['unknown'], ['region', 'region']]) {
+      expect((await call(POST, 'subscription', SUB_ID, { grouping: { purposes }, expectedVersion: version })).status).toBe(422);
+    }
+    expect((await call(POST, 'subscription', SUB_ID, { grouping: {}, expectedVersion: version + 1 })).status).toBe(412);
+    expect(JSON.stringify([...stores].map(([key, entries]) => [key, [...entries]]))).toBe(before);
+  });
+
+  it('forwards selected purposes to the audited naming apply path', async () => {
+    seedSub();
+    const namingApply = await import('@/lib/services/namingApplyService');
+    const apply = vi.spyOn(namingApply, 'applyNamingPlan').mockResolvedValueOnce({ planningVersion: 0, confirmedVersion: 0, history: 'created', mode: 'added', label: 'Airport' });
+    try {
+      const version = counters.get(REDIS_KEYS.configVersion) ?? 0;
+      const response = await call(POST, 'subscription', SUB_ID, { apply: { template: '${region} ${index}', groupingPurposes: ['region', 'low-rate'] }, expectedVersion: version });
+      expect(response.status).toBe(200);
+      expect(apply).toHaveBeenCalledWith('subscription', SUB_ID, expect.objectContaining({ groupingPurposes: ['region', 'low-rate'] }), expect.objectContaining({ expectedVersion: version, audit: expect.objectContaining({ scope: 'global' }) }));
+    } finally { apply.mockRestore(); }
   });
   it.each(['subscription', 'collection'] as const)('includes saved facts in %s health coverage', async (type) => {
     const fingerprint = nodeFingerprint({ name: 'old', type: 'ss', server: 'a.example.com', port: 443 })!;

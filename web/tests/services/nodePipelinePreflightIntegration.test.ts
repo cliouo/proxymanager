@@ -76,7 +76,7 @@ import { nodeFingerprint } from '@/lib/proxies/naming';
 import { analyzeSourceFacts } from '@/lib/proxies/namingHealth';
 import { exportCollectionNodes, exportSubscriptionNodes, mergeCollectionMemberProxies } from '@/lib/services/nodeExportService';
 import { previewNamingCollection } from '@/lib/services/namingPreviewService';
-import { loadNamingCandidateContext } from '@/lib/services/namingCandidateService';
+import { loadNamingCandidateContext, publicGroupingPreview } from '@/lib/services/namingCandidateService';
 import { resolveSubscriptionProxies } from '@/lib/services/subscriptionFetcher';
 import { resolveConfig } from '@/lib/engine/resolve';
 import {
@@ -283,6 +283,155 @@ describe('outer pipeline save integration', () => {
     mocks.getCollection.mockResolvedValue(collection);
     return { raw, subscription, collection };
   }
+
+  it('generates from the real after-pool only for the group-less shared consumer and preflights its final config', async () => {
+    const { subscription } = await aggregateFixture();
+    mocks.getBase.mockResolvedValue({ content: 'mixed-port: 7890\n# === PROXY-GROUPS ===\nrules:\n  - MATCH,DIRECT\n', etag: 'base', updated_at: 1 });
+    mocks.listProxyGroups.mockImplementation(async (id: string) => id === DIRECT_PROFILE_ID ? [{ id: DIRECT_PROFILE_ID, name: 'Existing', kind: 'filter', type: 'select',
+      rank: 0, updated_at: 1, 'include-all-proxies': true }] : []);
+    const context = await loadNamingCandidateContext('subscription', SUB_ID, 7);
+    expect(context.hasGrouplessProfiles).toBe(true);
+    const preview = await context.grouping();
+    expect(preview.blocked).toBe(false);
+    expect(preview.profiles).toHaveLength(1);
+    expect(preview.purposes.find((p) => p.id === 'region')).toMatchObject({ count: 1, selected: true });
+    expect(preview.purposes.find((p) => p.id === 'residential')).toMatchObject({ count: 1, selected: false });
+    expect(preview.purposes.find((p) => p.id === 'dedicated')).toMatchObject({ count: 0, selected: false });
+    const next: Subscription = { ...subscription, operators: subscription.operators.map((row) => row.kind === 'rename-template' ? { ...row, template: preview.template } : row) };
+    const changes = await context.groupChanges(next, preview.template, ['region']);
+    expect(changes.map((c) => c.profileId)).toEqual([COLLECTION_PROFILE_ID]);
+    expect(changes[0].createdGroups?.map((g) => g.name)).toEqual(['节点选择', '🇯🇵 日本']);
+    const checked = await preflightProfileConfig(COLLECTION_PROFILE_ID, () => ({ proxyGroups: changes[0].createdGroups!, subscriptions: [next] }), {
+      subscriptionSnapshot: context.subscriptionSnapshot, ordinalPlanningSession: context.ordinalPlanningSession,
+    });
+    expect(checked.configVersion).toBe(7);
+    const sources = await context.grouping(['source']);
+    expect(sources.blocked).toBe(false);
+    expect(sources.profiles[0].groups[1].kind).toBe('single-sub');
+    expect(JSON.stringify(publicGroupingPreview(sources))).not.toContain('bound_subscription_id');
+    expect(mocks.setFetchCache).not.toHaveBeenCalled();
+  });
+
+  it('does not offer generation to profiles whose base already supplies groups', async () => {
+    await aggregateFixture();
+    const context = await loadNamingCandidateContext('subscription', SUB_ID, 7);
+    expect(context.hasGrouplessProfiles).toBe(false);
+    expect(await context.grouping(['region'])).toMatchObject({ profiles: [], blocked: true });
+  });
+
+  it('preselects non-region purposes at two real rendered nodes and derives source/tag/rate fields', async () => {
+    const subscription: Subscription = { ...(await mocks.listSubscriptions())[0], kind: 'local', url: undefined,
+      content: stringify({ proxies: [{ ...US_NODE, name: 'HK 家宽 0.5x 01' }, { ...JP_NODE, name: 'JP 家宽 0.5x 02' }] }), operators: [] };
+    mocks.listSubscriptions.mockResolvedValue([subscription]);
+    mocks.listProfiles.mockResolvedValue([profile(DIRECT_PROFILE_ID, { type: 'subscription', id: SUB_ID })]);
+    mocks.getBase.mockResolvedValue({ content: 'proxies: []\n# === PROXY-GROUPS ===\nrules: ["MATCH,DIRECT"]\n', etag: 'base', updated_at: 1 });
+    const context = await loadNamingCandidateContext('subscription', SUB_ID, 7);
+    const preview = await context.grouping();
+    expect(preview.blocked).toBe(false);
+    expect(preview.purposes.filter((p) => p.selected).map((p) => p.id)).toEqual(['region', 'source', 'low-rate', 'residential']);
+    expect(preview.purposes.filter((p) => p.id !== 'dedicated').every((p) => p.count === 2)).toBe(true);
+    expect(preview.template).toContain('${source}');
+    expect(preview.template).toContain('${tags}');
+    expect(preview.template).toContain('${rate}');
+    expect(preview.profiles[0].groups.slice(1).every((g) => g.kind === 'filter')).toBe(true);
+  });
+
+  it('groups using renderer facts including saved member facts and rules rather than region-like source aliases', async () => {
+    const { collection, subscription, raw } = await aggregateFixture();
+    mocks.listSubscriptions.mockResolvedValue([{ ...subscription, operators: subscription.operators.map((row) => row.kind === 'rename-template'
+      ? { ...row, nodeFacts: { [nodeFingerprint(raw)!]: { tags: ['家宽'], rate: 0.5 } } } : row) }]);
+    const next = { ...collection, operators: [{ id: 'managed', kind: 'rename-template' as const,
+      template: '${emoji} ${region} ${source} ${tags} ${rate} ${index}', sourceAliases: { [subscription.name]: '香港' },
+      recognitionRules: [{ pattern: '日本', field: 'region' as const, value: 'SG' }] }] };
+    mocks.listCollections.mockResolvedValue([next]);
+    mocks.listProfiles.mockResolvedValue([profile(COLLECTION_PROFILE_ID, { type: 'collection', id: COLLECTION_ID })]);
+    mocks.getBase.mockResolvedValue({ content: '# === PROXY-GROUPS ===\nrules: ["MATCH,DIRECT"]\n', etag: 'base', updated_at: 1 });
+    const context = await loadNamingCandidateContext('collection', COLLECTION_ID, 7);
+    const preview = await context.grouping(['region', 'low-rate', 'residential']);
+    expect(preview.blocked).toBe(false);
+    expect(preview.profiles[0].groups.map((g) => g.name)).toEqual(['节点选择', '🇸🇬 新加坡', '低倍率', '家宽']);
+    expect(preview.purposes.find((p) => p.id === 'region')?.count).toBe(1);
+  });
+
+  it.each([false, true])('probes untouched members with their own policy in an unmanaged collection (managed=%s)', async (managed) => {
+    const { subscription, collection } = await aggregateFixture();
+    const edited: Subscription = { ...subscription, content: stringify({ proxies: [{ ...US_NODE, name: 'HK 01' }] }), operators: [] };
+    const untouched: Subscription = { ...subscription, id: '33333333-3333-4333-8333-333333333333', name: 'raw-member', display_name: 'Raw',
+      content: stringify({ proxies: [{ ...JP_NODE, name: 'JP 01' }] }),
+      operators: managed ? [{ id: 'member-template', kind: 'rename-template', template: '${region_code} ${index}', recognitionRules: [] }] : [] };
+    mocks.listSubscriptions.mockResolvedValue([edited, untouched]);
+    mocks.listCollections.mockResolvedValue([{ ...collection, subscription_ids: [SUB_ID, untouched.id], operators: [] }]);
+    mocks.listProfiles.mockResolvedValue([profile(COLLECTION_PROFILE_ID, { type: 'collection', id: COLLECTION_ID })]);
+    mocks.getBase.mockResolvedValue({ content: '# === PROXY-GROUPS ===\nrules: ["MATCH,DIRECT"]\n', etag: 'base', updated_at: 1 });
+    const context = await loadNamingCandidateContext('subscription', SUB_ID, 7);
+    const preview = await context.grouping(['region']);
+    expect(preview.blocked).toBe(false);
+    const japan = preview.profiles[0].groups.find((g) => g.name === '🇯🇵 日本')!;
+    expect(japan.count).toBe(1);
+    expect(preview.profiles[0].groups.find((g) => g.name === '🇭🇰 香港')?.count).toBe(1);
+    expect(japan.sample).toContain('JP 01');
+    expect(japan.filter).toContain('JP');
+  });
+
+  it('preserves Taiwan renderer facts and validates separate region selectors with tw2cn enabled', async () => {
+    const { subscription, collection } = await aggregateFixture();
+    mocks.listSubscriptions.mockResolvedValue([{ ...subscription, operators: [],
+      content: stringify({ proxies: [{ ...JP_NODE, name: 'TW 01' }, { ...US_NODE, name: 'CN 02' }] }) }]);
+    mocks.listCollections.mockResolvedValue([{ ...collection, operators: [{ id: 'managed', kind: 'rename-template',
+      template: '${emoji} ${region} ${index}', tw2cn: true, recognitionRules: [] }] }]);
+    mocks.listProfiles.mockResolvedValue([profile(COLLECTION_PROFILE_ID, { type: 'collection', id: COLLECTION_ID })]);
+    mocks.getBase.mockResolvedValue({ content: '# === PROXY-GROUPS ===\nrules: ["MATCH,DIRECT"]\n', etag: 'base', updated_at: 1 });
+    const context = await loadNamingCandidateContext('collection', COLLECTION_ID, 7);
+    const preview = await context.grouping(['region']);
+    expect(preview.blocked).toBe(false);
+    const taiwan = preview.profiles[0].groups.find((g) => g.name === '🇹🇼 台湾')!;
+    const china = preview.profiles[0].groups.find((g) => g.name === '🇨🇳 中国')!;
+    expect(taiwan.count).toBe(1);
+    expect(taiwan.sample[0]).toMatch(/^🇨🇳 台湾/);
+    expect(china.count).toBe(1);
+    expect(china.sample[0]).toMatch(/^🇨🇳 中国/);
+  });
+
+  it('re-recognizes final member names when a trailing rename changes template facts', async () => {
+    const { subscription, collection } = await aggregateFixture();
+    const member: Subscription = { ...subscription, id: '33333333-3333-4333-8333-333333333333', name: 'post-template-member',
+      content: stringify({ proxies: [{ ...JP_NODE, name: 'HK IEPL 01' }] }), operators: [
+        { id: 'member-naming', kind: 'rename-template', template: '${emoji} ${region} ${tags} ${index}', recognitionRules: [] },
+        { id: 'trailing-edit', kind: 'rename-regex', pattern: 'IEPL', replacement: '家宽' },
+      ] };
+    mocks.listSubscriptions.mockResolvedValue([subscription, member]);
+    mocks.listCollections.mockResolvedValue([{ ...collection, subscription_ids: [SUB_ID, member.id], operators: [] }]);
+    mocks.listProfiles.mockResolvedValue([profile(COLLECTION_PROFILE_ID, { type: 'collection', id: COLLECTION_ID })]);
+    mocks.getBase.mockResolvedValue({ content: '# === PROXY-GROUPS ===\nrules: ["MATCH,DIRECT"]\n', etag: 'base', updated_at: 1 });
+    const context = await loadNamingCandidateContext('subscription', SUB_ID, 7);
+    const preview = await context.grouping(['residential', 'dedicated']);
+    expect(preview.purposes.find((p) => p.id === 'residential')?.count).toBe(2);
+    expect(preview.purposes.find((p) => p.id === 'dedicated')?.count).toBe(0);
+    expect(preview.blocked).toBe(false);
+    const residential = preview.profiles[0].groups.find((g) => g.name === '家宽')!;
+    expect(residential.count).toBe(2);
+    expect(residential.sample).toContain('🇭🇰 香港 家宽 01');
+    expect(preview.profiles[0].groups.some((g) => g.name === '专线')).toBe(false);
+  });
+
+  it('keeps Japan renderer facts when export collision suffixing adds a Hong Kong source label', async () => {
+    const { subscription, collection } = await aggregateFixture();
+    const member: Subscription = { ...subscription, id: '33333333-3333-4333-8333-333333333333', name: 'collision-member', display_name: '香港',
+      content: stringify({ proxies: [{ ...JP_NODE, name: 'JP 01' }] }),
+      operators: [{ id: 'member-template', kind: 'rename-template', template: '${region}', recognitionRules: [] }] };
+    mocks.listSubscriptions.mockResolvedValue([subscription, member]);
+    mocks.listCollections.mockResolvedValue([{ ...collection, subscription_ids: [SUB_ID, member.id], operators: [] }]);
+    mocks.listProfiles.mockResolvedValue([profile(COLLECTION_PROFILE_ID, { type: 'collection', id: COLLECTION_ID })]);
+    mocks.getBase.mockResolvedValue({ content: stringify({ proxies: [{ name: '日本', type: 'direct' }] })
+      + '# === PROXY-GROUPS ===\nrules: ["MATCH,DIRECT"]\n', etag: 'base', updated_at: 1 });
+    const context = await loadNamingCandidateContext('subscription', SUB_ID, 7);
+    const preview = await context.grouping(['region']);
+    expect(preview.blocked).toBe(false);
+    const japan = preview.profiles[0].groups.find((g) => g.name === '🇯🇵 日本')!;
+    expect(japan.count).toBe(3);
+    expect(japan.sample).toContain('日本 · 香港');
+    expect(preview.profiles[0].groups.some((g) => g.name === '🇭🇰 香港')).toBe(false);
+  });
 
   it('renders members once using manual edits and identity facts, with export/preview/serve/preflight parity', async () => {
     const { subscription, collection } = await aggregateFixture();

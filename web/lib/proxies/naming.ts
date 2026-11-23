@@ -908,6 +908,7 @@ export function regionLabelFor(code: string, style: 'zh' | 'code'): string {
 }
 
 export interface FormatNodeOptions {
+  onRecognized?: (facts: NodeRecognitionFacts) => void;
   facts?: NodeRecognitionFacts;
   name: string;
   rawName?: string;
@@ -1088,6 +1089,9 @@ export function formatNodeName(opts: FormatNodeOptions): string {
     { ...recognizedBase, region: recognizedBase.region ?? recognizedRaw.region },
     opts.facts,
   );
+  opts.onRecognized?.({ region: recognized.region ?? undefined, tags: [...recognized.tags], rate: recognized.rate ?? undefined,
+    route: recognized.route === '中转' || recognized.route === '直连' || recognized.route === '落地' || recognized.route === '入口' ? recognized.route : undefined,
+    vendor: recognized.vendor ?? undefined });
   if (templateUsesField(tokens, 'tags')) {
     recognized.base = recognizeTags(recognized.base).residual;
     for (const rule of config.recognitionRules ?? []) {
@@ -1446,6 +1450,7 @@ export function applyRenameTemplate(
 
   const candidates: Array<{
     proxy: Record<string, unknown>;
+    facts?: NodeRecognitionFacts;
     name: string;
     formatted: string;
     changed: boolean;
@@ -1458,6 +1463,7 @@ export function applyRenameTemplate(
     const key = source?.key ?? '';
 
     const recognition = effectiveNodeRecognition(p, config.recognitionRules, config.nodeFacts);
+    let facts: NodeRecognitionFacts | undefined;
 
     const formatted =
       name === ''
@@ -1471,8 +1477,9 @@ export function applyRenameTemplate(
             indexWidth: Math.max(2, widthBySource.get(key) ?? 2),
             config: { ...config, recognitionRules: recognition.rules },
             facts: recognition.facts,
+            onRecognized: (recognized) => { facts = recognized; },
           });
-    candidates.push({ proxy: p, name, formatted, changed: name !== '' && formatted !== name });
+    candidates.push({ proxy: p, facts, name, formatted, changed: name !== '' && formatted !== name });
   }
 
   // Deterministic uniqueness contract: the FINAL output has NO duplicate
@@ -1581,8 +1588,10 @@ export function applyRenameTemplate(
   }
 
   const out: Record<string, unknown>[] = candidates.map((c, i) => {
-    if (c.name === '' || firstUnchanged.has(i)) return c.proxy;
-    return { ...c.proxy, name: finals.get(i)! };
+    const proxy = c.name === '' || firstUnchanged.has(i) ? c.proxy : { ...c.proxy, name: finals.get(i)! };
+    const source = effectiveSourceOf(c.proxy);
+    return c.facts ? mergeEnvelope(proxy, { renderedNaming: { facts: c.facts, template: config.template, tw2cn: config.tw2cn,
+      sourceLabel: (config.sourceAliases?.[source?.key ?? ''] ?? source?.label)?.trim() } }) : proxy;
   });
   const finalByIdentity = new Map<string | null, unknown>();
   const identityCounts = new Map<string | null, number>();

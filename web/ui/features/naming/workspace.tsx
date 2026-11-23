@@ -14,6 +14,7 @@ import { profilePath } from '@/ui/shell/scope';
 import { Badge, Button, Card, Code, confirmAction, EmptyState, Monogram, notify, Skeleton } from '@/ui/primitives';
 import { TemplateComposer } from './composer';
 import { NamingCandidates, applyNamingCandidate } from './candidates';
+import type { GroupingPurpose } from '@/lib/proxies/namingGroupGeneration';
 import {
   applyPlan,
   isVersionConflict,
@@ -143,15 +144,15 @@ function Workspace({
     notify.warn('配置刚被其他操作修改', '已刷新到最新状态，你的改动还在。请再看一眼预览，然后重新应用。');
   };
 
-  const applyCandidate = async (template: string) => {
+  const applyCandidate = async (template: string, groupingPurposes?: GroupingPurpose[]) => {
     if (busy) return;
     setBusy('apply');
     try {
-      const next = await applyNamingCandidate(type, id, template, data.configVersion);
+      const next = await applyNamingCandidate(type, id, template, data.configVersion, groupingPurposes);
       ws.mutate(next);
       setPlan(storedPlan(next));
       refreshShared();
-      notify.success('推荐命名方案与引用迁移已应用', undefined, {
+      notify.success(groupingPurposes ? '命名与策略组已生成' : '推荐命名方案与引用迁移已应用', undefined, {
         label: '撤销', onClick: () => void restore(next.configVersion),
       });
     } catch (error) {

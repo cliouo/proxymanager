@@ -27,6 +27,7 @@
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { isDeepStrictEqual } from 'node:util';
 import type { NamingProfileChange } from '@/schemas/namingProfileChanges';
+import { GROUPING_PURPOSES, type GroupingPurpose } from '@/lib/proxies/namingGroupGeneration';
 import { loadNamingCandidateContext } from './namingCandidateService';
 import type { SubscriptionPreflightSnapshot } from './configPreflight';
 import type { OrdinalPlanningSession } from './nodeOrdinalService';
@@ -76,6 +77,7 @@ import {
 } from '@/schemas';
 
 export interface NamingApplyPlan {
+  groupingPurposes?: GroupingPurpose[];
   nodeFacts?: import('@/lib/proxies/naming').NodeFacts;
   /** Required on the apply path; a legacy prior row restores via rawOp. */
   template?: string;
@@ -183,7 +185,7 @@ export function buildNamingAudit(
       mode: options.mode,
       ...(options.profileChanges?.length ? { migration: {
         profiles: options.profileChanges.length,
-        groups: options.profileChanges.reduce((n, p) => n + p.groups.length, 0),
+        groups: options.profileChanges.reduce((n, p) => n + p.groups.length + (p.createdGroups?.length ?? 0) + (p.removedGroups?.length ?? 0), 0),
         rules: options.profileChanges.reduce((n, p) => n + p.rules.length, 0),
       } } : {}),
     },
@@ -490,7 +492,16 @@ async function commitUnderBracket(options: {
         }
         return current.map((v) => pairs.find((p) => p.before.id === v.id)?.after ?? v);
       };
-      return { proxyGroups: replace(state.proxyGroups, change.groups), rules: replace(state.rules, change.rules) };
+      for (const group of change.removedGroups ?? []) {
+        if (!isDeepStrictEqual(state.proxyGroups.find((g) => g.id === group.id), group)) {
+          throw ProblemDetailsError.preconditionFailed('命名生成的策略组已被编辑，请先处理这些修改再撤销。');
+        }
+      }
+      if (change.createdGroups?.length && state.proxyGroups.length) {
+        throw ProblemDetailsError.preconditionFailed('此配置文件已有策略组，请刷新后重试。');
+      }
+      const removed = new Set(change.removedGroups?.map((g) => g.id));
+      return { proxyGroups: [...replace(state.proxyGroups, change.groups).filter((g) => !removed.has(g.id)), ...(change.createdGroups ?? [])], rules: replace(state.rules, change.rules) };
     },
     commit: (version, ordinalPlan) =>
       commitEntityWithNamingHistory({
@@ -553,7 +564,7 @@ export async function applyNamingPlan(
   if (!options?.audit) {
     throw ProblemDetailsError.preconditionFailed('命名写入必须携带审计信息。');
   }
-  if (options.migrateGroups && options.audit.scope !== 'global') {
+  if ((options.migrateGroups || plan.groupingPurposes !== undefined) && options.audit.scope !== 'global') {
     throw ProblemDetailsError.forbidden('跨配置文件的命名迁移只能从管理员命名工作区应用。');
   }
   // Profile-scoped assistant writes capture their membership bracket first.
@@ -582,6 +593,16 @@ export async function applyNamingPlan(
     options?.expectedVersion !== undefined
       ? await assertBracketVersion(options.expectedVersion)
       : await getConfigVersion();
+  let groupingContext: Awaited<ReturnType<typeof loadNamingCandidateContext>> | undefined;
+  if (plan.groupingPurposes !== undefined) {
+    if (!plan.groupingPurposes.length || new Set(plan.groupingPurposes).size !== plan.groupingPurposes.length || plan.groupingPurposes.some((p) => !GROUPING_PURPOSES.includes(p))) {
+      throw ProblemDetailsError.badRequest('请选择有效且不重复的分组用途。');
+    }
+    groupingContext = await loadNamingCandidateContext(type, id, planningVersion);
+    const grouping = await groupingContext.grouping(plan.groupingPurposes);
+    if (grouping.blocked || !grouping.profiles.length) throw ProblemDetailsError.unprocessable('无法安全生成策略组，请检查分组预览。');
+    plan = { ...plan, template: grouping.template };
+  }
   const historyField = `${type}:${id}`;
   const entity = await readEntity(type, id);
   // Round-3: the LOGICAL managed row comes from the snapshot's aligned
@@ -627,7 +648,7 @@ export async function applyNamingPlan(
     snapshot,
     completeNamingPlan(
       {
-        template: plan.template,
+        template: plan.template!,
         tw2cn: plan.tw2cn,
         sourceAliases: resolvedAliases,
         recognitionRules: plan.recognitionRules,
@@ -682,12 +703,20 @@ export async function applyNamingPlan(
     operators: namingResult.storage as Subscription['operators'],
     updated_at: nowSeconds(),
   };
-  const migrationContext = options.migrateGroups ? await loadNamingCandidateContext(type, id, planningVersion) : undefined;
+  const migrationContext = groupingContext ?? (options.migrateGroups ? await loadNamingCandidateContext(type, id, planningVersion) : undefined);
   const impact = migrationContext ? await migrationContext.analyze(nextEntity, { id: 'apply', title: '应用方案', template: plan.template! }) : undefined;
   const profileChanges = migrationContext && impact ? migrationContext.changesFor(impact) : [];
+  if (groupingContext) {
+    const generated = await groupingContext.groupChanges(nextEntity, plan.template!, plan.groupingPurposes!);
+    for (const change of generated) {
+      const existing = profileChanges.find((p) => p.profileId === change.profileId);
+      if (existing) existing.createdGroups = change.createdGroups;
+      else profileChanges.push(change);
+    }
+  }
   if (profileChanges.length) priorState.profileChanges = profileChanges;
   const historyValue = safeJsonStringify(priorState);
-  if (options.migrateGroups && historyValue.length > MAX_NAMING_HISTORY_BYTES) {
+  if ((options.migrateGroups || groupingContext) && historyValue.length > MAX_NAMING_HISTORY_BYTES) {
     throw ProblemDetailsError.unprocessable('命名与引用迁移快照过大，无法安全保留撤销记录，请先缩小迁移范围。');
   }
   const mode = priorOp ? 'replaced' : 'added';
@@ -833,6 +862,7 @@ export async function rollbackNamingPlan(
     updated_at: nowSeconds(),
   };
   const profileChanges = prior.profileChanges?.map((p) => ({ profileId: p.profileId,
+    ...(p.createdGroups?.length ? { removedGroups: p.createdGroups } : {}),
     groups: p.groups.map(({ before, after }) => ({ before: after, after: { ...before, updated_at: nowSeconds() } })),
     rules: p.rules.map(({ before, after }) => ({ before: after, after: { ...before, revision: planningVersion + 1, updated_at: nowSeconds() } })),
   }));

@@ -9,7 +9,10 @@ export interface CandidateNode {
   scoped: boolean;
   sourceKey?: string;
   sourceLabel?: string;
-  namingTemplate?: string;
+  sourceId?: string;
+  namingTemplate?: string | null;
+  namingTw2cn?: boolean;
+  facts?: NodeRecognitionFacts;
   dialer?: string;
 }
 
@@ -157,9 +160,13 @@ function tokenSelector(token: string) {
   return `${/^[A-Za-z0-9.]/.test(token) ? '(?<![A-Za-z0-9.])' : ''}${escapeRegex(token)}${/[A-Za-z0-9.]$/.test(token) ? '(?![A-Za-z0-9.])' : ''}`;
 }
 
+export function fieldValueSelector(values: readonly string[]) {
+  return `(?:${[...new Set(values)].map(tokenSelector).join('|')})`;
+}
+
 function probeState(node: CandidateNode) {
-  const recognized = recognizeName(node.name);
-  return { facts: { region: recognized.region, tags: recognized.tags, rate: recognized.rate, vendor: recognized.vendor },
+  const recognized = node.facts ?? recognizeName(node.name, undefined, { detectInfo: false });
+  return { facts: { region: recognized.region ?? null, tags: recognized.tags ?? [], rate: recognized.rate ?? null, vendor: recognized.vendor ?? null },
     sourceLabel: node.sourceLabel ?? node.sourceKey ?? '' };
 }
 
@@ -173,7 +180,7 @@ function renderProbe(node: CandidateNode, state: ProbeState, template: string) {
     config: { template } });
 }
 
-function rawProbe(node: CandidateNode, field: SelectorField, state: ProbeState) {
+export function renderRawNamingProbe(node: CandidateNode, field: SelectorField, state: ProbeState) {
   const original = probeState(node);
   const facts = state.facts;
   if (field === 'region') {
@@ -228,7 +235,7 @@ function selectorProbes(before: CandidateNode[], recovered: CandidateNode[], tem
     for (const change of changes) {
       const oldVariant = { facts: { ...oldState.facts, ...change.facts }, sourceLabel: change.sourceLabel ?? oldState.sourceLabel };
       const newVariant = { facts: { ...newState.facts, ...change.facts }, sourceLabel: change.sourceLabel ?? newState.sourceLabel };
-      pairs.push({ before: original.namingTemplate ? renderProbe(original, oldVariant, original.namingTemplate) : rawProbe(original, change.field, oldVariant),
+      pairs.push({ before: original.namingTemplate ? renderProbe(original, oldVariant, original.namingTemplate) : renderRawNamingProbe(original, change.field, oldVariant),
         after: renderProbe(node, newVariant, template) });
     }
   }
@@ -246,7 +253,7 @@ function migratedSelector(group: CandidateGroup, before: CandidateNode[], after:
       const retained = values.filter((value) => constrained.some((tag) => tag === value));
       if (retained.length) values = retained;
     }
-    return values.length ? [{ field, selector: `(?:${values.map(tokenSelector).join('|')})` }] : [];
+    return values.length ? [{ field, selector: fieldValueSelector(values) }] : [];
   });
   const probes = selectorProbes(before, recovered, template);
   const exclude = typeof group.values['exclude-filter'] === 'string' ? group.values['exclude-filter'] : undefined;

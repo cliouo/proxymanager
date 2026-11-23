@@ -35,7 +35,8 @@ import { NodeFactsSchema } from '@/schemas/nodeFacts';
 import type { NodeFacts } from '@/lib/proxies/naming';
 import { enabledCollectionMemberSubs } from '@/lib/engine/resolve';
 import { collectionMemberNamingWarnings, type MemberNamingWarning } from '@/lib/proxies/collectionNaming';
-import { loadNamingCandidateContext, publicNamingCandidate } from '@/lib/services/namingCandidateService';
+import { loadNamingCandidateContext, publicNamingCandidate, publicGroupingPreview } from '@/lib/services/namingCandidateService';
+import { GROUPING_PURPOSES } from '@/lib/proxies/namingGroupGeneration';
 import {
   projectAliasKeysToHandles,
   resolveSourceAliasKeys,
@@ -130,8 +131,10 @@ const ExpectedVersion = z
   .min(0)
   .max(Number.MAX_SAFE_INTEGER, '配置版本超出安全范围');
 
-const ApplyBody = z.object({ apply: PlanBody, expectedVersion: ExpectedVersion, migrateGroups: z.boolean().optional() }).strict();
+const GroupingPurposes = z.array(z.enum(GROUPING_PURPOSES)).max(5).refine((values) => new Set(values).size === values.length, '分组用途不能重复');
+const ApplyBody = z.object({ apply: PlanBody.extend({ groupingPurposes: GroupingPurposes.min(1).optional() }), expectedVersion: ExpectedVersion, migrateGroups: z.boolean().optional() }).strict();
 const CandidatesBody = z.object({ candidates: z.literal(true), expectedVersion: ExpectedVersion }).strict();
+const GroupingBody = z.object({ grouping: z.object({ purposes: GroupingPurposes.optional() }).strict(), expectedVersion: ExpectedVersion }).strict();
 
 /**
  * Read-only workspace preview variant: build the SAME managed candidate the
@@ -148,7 +151,7 @@ const RollbackBody = z
   })
   .strict();
 
-const PostBody = z.union([ApplyBody, PreviewBody, RollbackBody, CandidatesBody]);
+const PostBody = z.union([ApplyBody, PreviewBody, RollbackBody, CandidatesBody, GroupingBody]);
 
 /** Project a PERSISTED history plan for the workspace response — explicit
  * fields only (template/tw2cn/sourceAliases/disabled). rawOp, opId, position
@@ -526,11 +529,18 @@ export const POST = withProblemDetails(async (request: Request, ctx: Ctx) => {
     throw ProblemDetailsError.badRequest('Request body must be valid JSON.');
   });
   const body = PostBody.parse(raw);
+  if ('grouping' in body) {
+    await requireGlobalNamingTarget(type, id);
+    if (await getConfigVersion() !== body.expectedVersion) throw ProblemDetailsError.preconditionFailed('配置已修改，请刷新分组预览。');
+    const context = await loadNamingCandidateContext(type, id, body.expectedVersion);
+    return Response.json({ data: publicGroupingPreview(await context.grouping(body.grouping.purposes)) });
+  }
   if ('candidates' in body) {
     await requireGlobalNamingTarget(type, id);
     if (await getConfigVersion() !== body.expectedVersion) throw ProblemDetailsError.preconditionFailed('配置已修改，请刷新推荐方案。');
     const context = await loadNamingCandidateContext(type, id, body.expectedVersion);
-    return Response.json({ data: { configVersion: body.expectedVersion, candidates: (await context.recommend()).map(publicNamingCandidate) } });
+    return Response.json({ data: { configVersion: body.expectedVersion, candidates: (await context.recommend()).map(publicNamingCandidate),
+      ...(context.hasGrouplessProfiles ? { groupingAvailable: true } : {}) } });
   }
 
   // READ-ONLY workspace preview variant: same shared candidate builder as
