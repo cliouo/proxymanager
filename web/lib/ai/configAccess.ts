@@ -115,8 +115,22 @@ function proxyNameProjection(doc: Document, scoped: Set<Pair>) {
 
   const definitions = new Map<Node, string>();
   const names = new Map<string, string>();
+  const groupNames = new Set<string>();
   const reserved = new Set<string>();
   visit(doc, {
+    Pair(_, pair) {
+      if (pairKey(doc, pair) !== 'proxy-groups') return;
+      const groups = resolve(pair.value);
+      if (!isSeq(groups)) return;
+      for (const item of groups.items) {
+        const group = resolve(item);
+        const name = isMap(group) ? property(group, 'name') : undefined;
+        if (!isScalar(name) || typeof name.value !== 'string') continue;
+        groupNames.add(name.value);
+        definitions.set(name, name.value);
+        if (!names.has(name.value)) names.set(name.value, scrubUrlTokens(name.value));
+      }
+    },
     Map(_, map) {
       const name = property(map, 'name');
       if (!isScalar(name) || typeof name.value !== 'string') return;
@@ -132,7 +146,8 @@ function proxyNameProjection(doc: Document, scoped: Set<Pair>) {
       ));
     },
   });
-  for (const [original, masked] of names) {
+  for (const original of new Set([...groupNames, ...names.keys()])) {
+    const masked = names.get(original) ?? original;
     if (original === masked) continue;
     let name = masked;
     for (let suffix = 2; reserved.has(name); suffix += 1) name = `${masked} #${suffix}`;
@@ -155,7 +170,8 @@ function proxyNameProjection(doc: Document, scoped: Set<Pair>) {
   visit(doc, {
     Pair(_, pair) {
       switch (pairKey(doc, pair)) {
-        case 'dialer-proxy': project(pair.value); break;
+        case 'dialer-proxy':
+        case 'empty-fallback': project(pair.value); break;
         case 'proxies': projectList(pair.value); break;
         case 'rules': projectList(pair.value, true); break;
         case 'sub-rules': {
@@ -410,7 +426,8 @@ function navigate(
       if (!Array.isArray(cur) || !Array.isArray(original)) return undefined;
       const index = original.findIndex((it) => isObj(it) &&
         (it.name === s.selector ||
-          (s.key === 'proxies' && typeof it.name === 'string' && projectedNames.get(it.name) === s.selector)));
+          ((s.key === 'proxies' || s.key === 'proxy-groups') &&
+            typeof it.name === 'string' && projectedNames.get(it.name) === s.selector)));
       cur = cur[index];
       original = original[index];
     }

@@ -254,6 +254,36 @@ rules:
     expect(getConfigSection(source, 'proxies[***].type').yaml).toBe('trojan');
   });
 
+  it('reserves projected group names before assigning unique names to members', () => {
+    const groupName = 'https://label.example/fixture-group?token=fixture-token';
+    const otherGroup = 'https://label.example/other-group';
+    const proxyName = 'https://label.example/fixture-proxy';
+    const group = 'https://label.example/***';
+    const nested = `${group} #2`;
+    const proxy = `${group} #3`;
+    const source = stringify({
+      proxies: [{ name: proxyName, server: 'edge.example', type: 'ss' }],
+      'proxy-groups': [
+        { name: groupName, type: 'select', proxies: [proxyName, otherGroup] },
+        { name: otherGroup, type: 'select', proxies: [proxyName], 'empty-fallback': proxyName },
+      ],
+      rules: [`DOMAIN,example.com,${otherGroup}`, `MATCH,${groupName}`],
+    });
+    expect(parse(fullRedactedYaml(source))).toMatchObject({
+      proxies: [{ name: proxy }],
+      'proxy-groups': [
+        { name: group, proxies: [proxy, nested] },
+        { name: nested, proxies: [proxy], 'empty-fallback': proxy },
+      ],
+      rules: [`DOMAIN,example.com,${nested}`, `MATCH,${group}`],
+    });
+    expect(buildOutline(source)).toContainEqual({
+      key: 'proxy-groups', kind: 'list-named', count: 2, names: [group, nested],
+    });
+    expect(getConfigSection(source, `proxy-groups[${nested}].name`).yaml).toBe(nested);
+    expect(getConfigSection(source, `proxies[${proxy}].name`).yaml).toBe(proxy);
+  });
+
   it('scrubs URL credentials in node definitions and every reference using the projected name', () => {
     const name = 'HK https://user:fixture-password@label.example/fixture-secret?token=fixture-token';
     const projected = 'HK https://label.example/***';
