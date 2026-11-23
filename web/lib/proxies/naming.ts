@@ -44,6 +44,7 @@
  */
 
 import {
+  cnFlagTextRegion,
   codeFromFlag,
   flagFromCode,
   maskDataSizeUnits,
@@ -829,10 +830,10 @@ export function recognizeName(
   let base = stripFlags(name);
 
   let region: string | null = flagCode;
-  const cnTextRegions = ['TW', 'HK', 'MO'];
-  const hit = (flagCode === 'CN' ? firstRegionHit(base, cnTextRegions) : null) ?? firstRegionHit(base);
+  const cnRegion = cnFlagTextRegion(name, flagCode);
+  const hit = (cnRegion ? firstRegionHit(base, [cnRegion.code]) : null) ?? firstRegionHit(base);
   if (hit) {
-    if (region === null || (flagCode === 'CN' && cnTextRegions.includes(hit.code))) region = hit.code;
+    if (region === null || cnRegion?.code === hit.code) region = hit.code;
     base = `${base.slice(0, hit.start)} ${base.slice(hit.end)}`;
   }
 

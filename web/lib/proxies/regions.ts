@@ -334,6 +334,12 @@ export function maskDataSizeUnits(name: string): string {
   return name.replace(/\d+(?:\.\d+)?\s*[MGT]B\b/gi, (size) => ' '.repeat(size.length));
 }
 
+export function cnFlagTextRegion(name: string, flagCode = codeFromFlag(name)): Region | undefined {
+  if (flagCode !== 'CN') return undefined;
+  const text = maskDataSizeUnits(stripFlags(name));
+  return REGIONS.find((region) => ['TW', 'HK', 'MO'].includes(region.code) && region.patterns.some((pattern) => pattern.test(text)));
+}
+
 /**
  * Detect the region of a node name. Prefers an explicit flag emoji, then
  * keyword/code patterns. Returns the region code (e.g. `HK`) or null.
@@ -342,6 +348,8 @@ export function detectRegion(name: string): string | null {
   if (!name || isInfoNodeName(name)) return null;
   name = maskDataSizeUnits(name);
   const fromFlag = codeFromFlag(name);
+  const cnRegion = cnFlagTextRegion(name, fromFlag);
+  if (cnRegion) return cnRegion.code;
   if (fromFlag && REGION_BY_CODE.has(fromFlag)) return fromFlag;
   for (const region of REGIONS) {
     if (region.patterns.some((re) => re.test(name))) return region.code;

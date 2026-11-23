@@ -302,6 +302,13 @@ describe('applyOperators · dedup', () => {
 });
 
 describe('applyOperators · filter-region', () => {
+  it.each([['TW', 'TW01', '台湾'], ['HK', 'HK 02', '香港'], ['MO', 'MO 03', '澳门']])('keeps CN-flagged %s nodes before and after naming', (region, raw, label) => {
+    const names = [`🇨🇳 ${raw}`, `🇨🇳 ${label} · 03`];
+    const { proxies } = applyOperators(names.map((name) => ({ name, type: 'ss' })), [
+      op({ kind: 'filter-region', mode: 'keep', regions: [region] }),
+    ]);
+    expect(proxies.map((p) => p.name)).toEqual(names);
+  });
   it('keeps only selected regions', () => {
     const { proxies } = applyOperators(sample, [
       op({ kind: 'filter-region', mode: 'keep', regions: ['HK'] }),
