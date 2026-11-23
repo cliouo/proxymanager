@@ -86,6 +86,13 @@ describe('buildOutline', () => {
 });
 
 describe('getConfigSection redaction', () => {
+  it('masks sensitive fields when the key is an alias', () => {
+    const yaml = 'x-key: &key secret\n*key : controller-value\n';
+    expect(getConfigSection(yaml, 'secret')).toEqual({
+      found: true, redacted: true, yaml: '***',
+    });
+    expect(fullRedactedYaml(yaml)).not.toContain('controller-value');
+  });
   it('masks node passwords but keeps structure', () => {
     const r = getConfigSection(YAML, 'proxies');
     expect(r.found).toBe(true);

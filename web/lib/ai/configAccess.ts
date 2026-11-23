@@ -36,8 +36,9 @@ function isObj(v: unknown): v is Obj {
 
 /* ─── structure-faithful redaction (full view) ──────────────────────── */
 
-function pairKey(pair: Pair): string {
-  return isScalar(pair.key) ? String(pair.key.value) : '';
+function pairKey(doc: Document, pair: Pair): string {
+  const key = isAlias(pair.key) ? pair.key.resolve(doc) : pair.key;
+  return isScalar(key) ? String(key.value) : '';
 }
 
 function isProxyBlock(key: string): boolean {
@@ -65,7 +66,7 @@ function proxyPairs(doc: Document): Set<Pair> {
   });
   visit(doc, {
     Pair(_, pair) {
-      if (isProxyBlock(pairKey(pair)) && isNode(pair.value)) mark(pair.value);
+      if (isProxyBlock(pairKey(doc, pair)) && isNode(pair.value)) mark(pair.value);
     },
   });
   return pairs;
@@ -126,14 +127,14 @@ export function redactDocument(doc: Document, maskInheritedHealthCheckUrls = fal
   visit(doc, {
     Pair(_, pair, path) {
       if (!isNode(pair.value)) return;
-      const key = pairKey(pair);
+      const key = pairKey(doc, pair);
       const value = isAlias(pair.value) ? pair.value.resolve(doc) : pair.value;
       if (!value) return;
       if (scoped.has(pair) && key === 'name') names.add(value);
       const proxyUrl = key === 'url' && (
-        path.some((ancestor) => isPair(ancestor) && isProxyBlock(pairKey(ancestor))) ||
+        path.some((ancestor) => isPair(ancestor) && isProxyBlock(pairKey(doc, ancestor))) ||
         (scoped.has(pair) && (maskInheritedHealthCheckUrls ||
-          !path.some((ancestor) => isPair(ancestor) && pairKey(ancestor) === 'health-check')))
+          !path.some((ancestor) => isPair(ancestor) && pairKey(doc, ancestor) === 'health-check')))
       );
       if (
         SENSITIVE_KEY.test(key) ||
