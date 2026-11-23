@@ -30,6 +30,14 @@ const AGG_TEMPLATE = DEFAULT_NAMING_TEMPLATE;
 /* ─── recognition ──────────────────────────────────────────────────── */
 
 describe('recognizeName', () => {
+  it.each([['香港', 'HK'], ['台湾', 'TW'], ['澳门', 'MO']])('keeps the CN-flagged %s region when the source alias has the same label', (label, region) => {
+    let facts: { region?: string } | undefined;
+    const rendered = formatNodeName({ name: `🇨🇳 ${label} 02`, source: { key: 'a', label },
+      config: config('${emoji} ${region} · ${source} · ${index}'), index: 2,
+      onRecognized: (value) => { facts = value; } });
+    expect(rendered).toBe(`🇨🇳 ${label} · ${label} · 02`);
+    expect(facts?.region).toBe(region);
+  });
   it.each([
     ['🇨🇳 TW01 0.20x', 'TW'], ['🇨🇳 TW02', 'TW'],
     ['🇨🇳 HK 02', 'HK'], ['🇨🇳 MO 03', 'MO'],

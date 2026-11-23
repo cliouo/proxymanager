@@ -1089,7 +1089,8 @@ export function formatNodeName(opts: FormatNodeOptions): string {
     ? recognizeName(recognitionName, config.recognitionRules, { detectInfo: false })
     : recognizedBase;
   const recognized = applyNodeRecognitionFacts(
-    { ...recognizedBase, region: recognizedBase.region ?? recognizedRaw.region },
+    { ...recognizedBase, region: recognizedBase.region === 'CN' && cnFlagTextRegion(recognitionName)
+      ? recognizedRaw.region : recognizedBase.region ?? recognizedRaw.region },
     opts.facts,
   );
   opts.onRecognized?.({ region: recognized.region ?? undefined, tags: [...recognized.tags], rate: recognized.rate ?? undefined,
