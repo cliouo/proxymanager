@@ -24,7 +24,7 @@ import { keys, refreshShared } from '@/ui/data/hooks';
 import { setQueryData } from '@/ui/data/query';
 import type { Operator, OperatorStepTrace, StoredOperator } from '@/ui/data/types';
 import { stableKey } from '@/ui/features/sources/model';
-import { navigateWithGuard, registerDirtyCheck } from '@/ui/features/groups/guard';
+import { navigateWithGuard, PIPELINE_LEAVE_CONFIRMATION, registerDirtyCheck } from '@/ui/features/groups/guard';
 import { Button, Menu, notify, Tooltip } from '@/ui/primitives';
 import { useHotkey } from '@/ui/shell/hotkeys';
 import { SaveBar } from '@/ui/shell/page';
@@ -113,7 +113,7 @@ export function PipelineEditor({
   const [dragging, setDragging] = useState(false);
 
   const dirty = stableKey(draft) !== stableKey(snapshot.base);
-  useEffect(() => registerDirtyCheck(() => dirty, '处理流程有未保存的修改，离开后会丢失。'), [dirty]);
+  useEffect(() => registerDirtyCheck(() => dirty, PIPELINE_LEAVE_CONFIRMATION), [dirty]);
   useEffect(() => {
     if (!dirty) return;
     const onBeforeUnload = (event: BeforeUnloadEvent) => {

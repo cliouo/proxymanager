@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { StoredOperator } from '@/ui/data/types';
 import { guardNamingNavigation, NamingLink, NamingSetupPrompt } from '@/ui/features/sources/naming-entry';
 import * as feedback from '@/ui/primitives/feedback';
+import { PIPELINE_LEAVE_CONFIRMATION } from '@/ui/features/groups/guard';
 import { PageHeader } from '@/ui/shell/page';
 
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }));
@@ -15,7 +16,7 @@ describe('naming navigation with an unsaved pipeline draft', () => {
     const navigate = vi.fn();
     await guardNamingNavigation(event, true, navigate);
     expect(event.preventDefault).toHaveBeenCalledOnce();
-    expect(confirm).toHaveBeenCalledWith(expect.objectContaining({ description: expect.stringContaining('处理流程') }));
+    expect(confirm).toHaveBeenCalledWith(PIPELINE_LEAVE_CONFIRMATION);
     expect(navigate).toHaveBeenCalledTimes(leave ? 1 : 0);
     confirm.mockRestore();
   });
