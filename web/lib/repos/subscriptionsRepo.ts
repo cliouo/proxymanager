@@ -486,7 +486,7 @@ export async function listSubscriptionSummaries(
   for (let attempt = 0; attempt < 3; attempt++) {
     const version = (await redis.get<number>(REDIS_KEYS.configVersion)) ?? 0;
     const key = readStoredInfo
-      ? `subscription-summaries-with-info:v2:${version}`
+      ? `subscription-summaries-with-info:v3:${version}`
       : `subscription-summaries:v1:${version}`;
     const cached = await redis.get<SubscriptionSummary[]>(key);
     if (Array.isArray(cached)) return cached;

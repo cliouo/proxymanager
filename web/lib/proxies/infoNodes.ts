@@ -57,7 +57,7 @@ const TRAFFIC_VALUE = `${SIZE}(?:\\s*/\\s*${SIZE})?\\s*$`;
 const USED_LABEL = labelPattern(USED, TRAFFIC_VALUE);
 const REMAINING_LABEL = labelPattern(REMAINING, TRAFFIC_VALUE);
 const EXPIRY_LABEL = labelPattern(EXPIRY);
-const EXPIRY_DATE = labelPattern(EXPIRY, '(\\d{4})[-/.年](\\d{1,2})[-/.月](\\d{1,2})(?!\\d)');
+const EXPIRY_DATE = labelPattern(EXPIRY, String.raw`(\d{4})[-/.年](\d{1,2})[-/.月](\d{1,2})日?(?:[T\s]+(\d{1,2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?\s*(Z|[+-]\d{2}:?\d{2})?)?\s*$`);
 const NOTICE_LABEL = labelPattern(NOTICE);
 
 function subscriptionLabel(name: string): string {
@@ -81,6 +81,21 @@ function toBytes(number: string, unit: string): number | undefined {
   return Number.isSafeInteger(bytes) ? bytes : undefined;
 }
 
+function expirySeconds(date: RegExpMatchArray): number | undefined {
+  const [, year, month, day, hours = '0', minutes = '0', seconds = '0', zone] = date;
+  const utc = new Date(Date.UTC(+year, +month - 1, +day, +hours, +minutes, +seconds));
+  if (
+    utc.getUTCFullYear() !== +year || utc.getUTCMonth() !== +month - 1 || utc.getUTCDate() !== +day ||
+    +hours > 23 || +minutes > 59 || +seconds > 59
+  ) return;
+  if (!zone || zone.toUpperCase() === 'Z') return utc.getTime() / 1000;
+  const offsetHours = Number(zone.slice(1, 3));
+  const offsetMinutes = Number(zone.slice(-2));
+  if (offsetHours > 23 || offsetMinutes > 59) return;
+  const offset = (offsetHours * 60 + offsetMinutes) * (zone.startsWith('-') ? -1 : 1);
+  return utc.getTime() / 1000 - offset * 60;
+}
+
 export function subscriptionTrafficFromNodes(names: readonly string[]): SubscriptionTraffic | undefined {
   let used: number | undefined;
   let total: number | undefined;
@@ -100,13 +115,7 @@ export function subscriptionTrafficFromNodes(names: readonly string[]): Subscrip
       remaining ??= toBytes(available[1], available[2]);
       if (available[3]) total ??= toBytes(available[3], available[4]);
     }
-    if (date) {
-      const [year, month, day] = date.slice(1).map(Number);
-      const utc = new Date(Date.UTC(year, month - 1, day));
-      if (utc.getUTCFullYear() === year && utc.getUTCMonth() === month - 1 && utc.getUTCDate() === day) {
-        expire ??= utc.getTime() / 1000;
-      }
-    }
+    if (date) expire ??= expirySeconds(date);
   }
   if (used === undefined && remaining !== undefined && total !== undefined && remaining <= total) {
     used = total - remaining;
