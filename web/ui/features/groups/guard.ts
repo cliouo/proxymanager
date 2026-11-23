@@ -28,6 +28,8 @@ export async function confirmLeave(): Promise<boolean> {
   });
 }
 
-export async function navigateWithGuard(navigate: () => void): Promise<void> {
-  if (await confirmLeave()) navigate();
+export async function navigateWithGuard(navigate: () => void, href?: string): Promise<void> {
+  const target = href && typeof window !== 'undefined' ? new URL(href, window.location.href) : null;
+  const samePage = target && target.origin === window.location.origin && target.pathname === window.location.pathname;
+  if (samePage || await confirmLeave()) navigate();
 }

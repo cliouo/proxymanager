@@ -6,6 +6,7 @@ let unregister = () => {};
 afterEach(() => {
   unregister();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe('shared editor navigation guard', () => {
@@ -46,6 +47,30 @@ describe('shared editor navigation guard', () => {
     vi.spyOn(feedback, 'confirmAction').mockRejectedValueOnce(new Error('confirmation failed'));
     const navigate = vi.fn();
     await expect(navigateWithGuard(navigate)).rejects.toThrow('confirmation failed');
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it.each(['sources', 'pools'])('allows query/tab changes for the current %s entity without discarding the draft', async (kind) => {
+    const pathname = `/${kind}/entity-id`;
+    vi.stubGlobal('window', { location: new URL(`http://localhost:3000${pathname}?tab=pipeline`) });
+    unregister = registerDirtyCheck(() => true, '处理流程');
+    const confirm = vi.spyOn(feedback, 'confirmAction');
+    const navigate = vi.fn();
+    for (const href of [pathname, `${pathname}?tab=nodes`, `${pathname}#top`]) {
+      await navigateWithGuard(navigate, href);
+    }
+    expect(confirm).not.toHaveBeenCalled();
+    expect(navigate).toHaveBeenCalledTimes(3);
+    expect(hasUnsavedEdits()).toBe(true);
+  });
+
+  it.each(['/sources/other-id', '/sources/entity-id/naming', '/pools/entity-id', 'https://example.invalid/sources/entity-id'])('still guards navigation away to %s', async (href) => {
+    vi.stubGlobal('window', { location: new URL('http://localhost:3000/sources/entity-id?tab=pipeline') });
+    unregister = registerDirtyCheck(() => true);
+    const confirm = vi.spyOn(feedback, 'confirmAction').mockResolvedValueOnce(false);
+    const navigate = vi.fn();
+    await navigateWithGuard(navigate, href);
+    expect(confirm).toHaveBeenCalledOnce();
     expect(navigate).not.toHaveBeenCalled();
   });
 });

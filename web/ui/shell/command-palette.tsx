@@ -96,7 +96,7 @@ export function CommandPalette() {
     void navigateWithGuard(() => {
       close();
       router.push(href);
-    });
+    }, href);
   };
   const path = (sub?: string) => (profile ? profilePath(profile.name, sub) : '/');
 
