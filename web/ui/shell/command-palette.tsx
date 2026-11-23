@@ -29,6 +29,7 @@ import { ALL_NAV } from './nav';
 import { profilePath, useActiveProfile } from './scope';
 import { openAssistant, openShare, setUi, useUi } from './state';
 import { profileTitle } from './profile-switcher';
+import { namingCommand } from './naming-command';
 
 const groupClass =
   'px-1.5 [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:pb-1.5 [&_[cmdk-group-heading]]:pt-3 [&_[cmdk-group-heading]]:text-[11px] [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-ink-3';
@@ -250,28 +251,34 @@ export function CommandPalette() {
 
         {(sources?.length || pools?.length) ? (
           <Command.Group heading="智能命名" className={groupClass}>
-            {sources?.map((source) => (
+            {sources?.map((source) => {
+              const command = namingCommand(source.display_name || source.name, ['source', source.id, source.name]);
+              return (
               <Item
                 key={`naming-source-${source.id}`}
-                value={`naming source ${source.id} ${source.name} ${source.display_name ?? ''} 智能命名`}
+                value={command.value}
                 icon={<Sparkles size={13} />}
                 hint="订阅源"
                 onSelect={() => go(`/sources/${source.id}/naming`)}
               >
-                智能命名 · {source.display_name || source.name}
+                {command.label}
               </Item>
-            ))}
-            {pools?.map((pool) => (
+              );
+            })}
+            {pools?.map((pool) => {
+              const command = namingCommand(pool.name, ['pool', pool.id, pool.slug ?? '']);
+              return (
               <Item
                 key={`naming-pool-${pool.id}`}
-                value={`naming pool ${pool.id} ${pool.name} ${pool.slug ?? ''} 智能命名`}
+                value={command.value}
                 icon={<Sparkles size={13} />}
                 hint="聚合订阅"
                 onSelect={() => go(`/pools/${pool.id}/naming`)}
               >
-                智能命名 · {pool.name}
+                {command.label}
               </Item>
-            ))}
+              );
+            })}
           </Command.Group>
         ) : null}
 
