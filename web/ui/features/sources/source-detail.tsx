@@ -21,7 +21,7 @@ import { DistributionPanel, NodesPanel, TAB_SCROLL, UsagePanel, useSubBase, useT
 const TABS = ['nodes', 'pipeline', 'settings', 'usage', 'share'] as const;
 
 function Facts({ source }: { source: Source }) {
-  const traffic = trafficOf(source.fetch_health);
+  const traffic = source.traffic ?? trafficOf(source.fetch_health) ?? source.manual_snapshot?.traffic;
   const health = source.fetch_health;
   const mode = sourceMode(source);
   const cells: Array<{ label: string; value: React.ReactNode }> = [];

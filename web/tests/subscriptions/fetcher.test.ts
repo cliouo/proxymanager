@@ -307,6 +307,34 @@ describe('fetchSubscription', () => {
     expect(result.yaml).toContain('HK-01');
   });
 
+  it('drops airport info labels but parses usage and expiry before dropping them', async () => {
+    const names = ['imm_当前流量：1.91G / 500.00G', 'imm_到期时间：2027-06-24', '官网：https://example.invalid', 'imm_HKG 01', 'Singapore Preset 01', 'US Traffic Relay'];
+    const text = names.map((name) => `trojan://p@example.invalid:443#${encodeURIComponent(name)}`).join('\n');
+    vi.mocked(globalThis.fetch).mockResolvedValueOnce(new Response(Buffer.from(text).toString('base64')));
+    const result = await fetchSubscription('https://upstream.example/sub');
+    expect(result.proxyCount).toBe(3);
+    expect(parse(result.yaml).proxies.map((proxy: { name: string }) => proxy.name)).toEqual(names.slice(3));
+    expect(result.traffic).toEqual({
+      upload: 0,
+      download: Math.round(1.91 * 1024 ** 3),
+      total: 500 * 1024 ** 3,
+      expire: Date.UTC(2027, 5, 24) / 1000,
+      from_node_labels: true,
+    });
+  });
+
+  it('keeps English info labels when requested and prioritizes header usage', async () => {
+    const names = ['Traffic Used: 1 GB / 5 GB', 'Expires on: 2027-06-24', 'HK'];
+    const text = names.map((name) => `trojan://p@example.invalid:443#${encodeURIComponent(name)}`).join('\n');
+    vi.mocked(globalThis.fetch).mockResolvedValueOnce(new Response(text, {
+      headers: { 'subscription-userinfo': 'upload=10; download=20; total=30' },
+    }));
+    const result = await fetchSubscription('https://upstream.example/sub', { keepInfoNodes: true });
+    expect(result.proxyCount).toBe(3);
+    expect(parse(result.yaml).proxies.map((proxy: { name: string }) => proxy.name)).toEqual(names);
+    expect(result.traffic).toEqual({ upload: 10, download: 20, total: 30, expire: Date.UTC(2027, 5, 24) / 1000 });
+  });
+
   it('forwards a custom User-Agent', async () => {
     const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>;
     fetchMock.mockResolvedValueOnce(new Response(SAMPLE_PROXIES_ONLY, { status: 200 }));

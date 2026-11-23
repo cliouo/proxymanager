@@ -49,6 +49,7 @@ export interface NodeEnvelope {
   source?: SourceIdentity;
   /** Original name at the raw fetch boundary (pre-any-operator). */
   rawName?: string;
+  subscriptionInfo?: true;
   /**
    * Immutable raw-identity fingerprint: canonical hash over the node's
    * connection-defining config as fetched upstream. Computed ONCE at the

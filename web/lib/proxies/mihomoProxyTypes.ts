@@ -1,3 +1,5 @@
+export const MAX_PROXY_NAME_LENGTH = 512;
+
 // MetaCubeX/mihomo v1.19.28, adapter/parser.go at
 // cbd11db1e13a75d8e680e0fe7742c95be4cba2be.
 export const FIXED_MIHOMO_PROXY_TYPES = new Set([

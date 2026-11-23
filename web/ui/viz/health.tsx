@@ -104,17 +104,25 @@ export function TrafficMeter({
 }) {
   const used = traffic.upload + traffic.download;
   const unlimited = traffic.total <= 0;
-  const ratio = unlimited ? 0 : Math.min(1, used / traffic.total);
+  const showBar = !unlimited && traffic.remaining === undefined && !traffic.expiry_only;
+  const ratio = showBar ? Math.min(1, used / traffic.total) : 0;
   const days = traffic.expire > 0 ? daysUntil(traffic.expire) : null;
   const barColor = ratio > 0.9 ? 'var(--bad)' : ratio > 0.75 ? 'var(--warn)' : 'var(--ink)';
   return (
     <div className={cn('flex flex-col gap-1.5', className)}>
       <div className="flex items-baseline justify-between gap-2 text-xs">
-        <span className="tnum text-ink-2">
-          <span className="font-medium text-ink">{formatBytes(used)}</span>
-          {!unlimited && <span className="text-ink-3"> / {formatBytes(traffic.total)}</span>}
-          {unlimited && <span className="text-ink-3"> 已用 · 不限量</span>}
-        </span>
+        {!traffic.expiry_only && (
+          <span className="tnum text-ink-2">
+            <span className="font-medium text-ink">{formatBytes(traffic.remaining ?? used)}</span>
+            {traffic.remaining !== undefined ? (
+              <span className="text-ink-3"> 剩余</span>
+            ) : !unlimited ? (
+              <span className="text-ink-3"> / {formatBytes(traffic.total)}</span>
+            ) : (
+              <span className="text-ink-3">{traffic.total_unknown ? ' 已用' : ' 已用 · 不限量'}</span>
+            )}
+          </span>
+        )}
         {days !== null && (
           <span
             className={cn('tnum shrink-0', days < 0 ? 'text-bad' : days <= 7 ? 'text-warn' : 'text-ink-3')}
@@ -124,7 +132,7 @@ export function TrafficMeter({
           </span>
         )}
       </div>
-      {!unlimited && (
+      {showBar && (
         <div className={cn('relative overflow-hidden rounded-full bg-surface-3', compact ? 'h-1' : 'h-1.5')}>
           <motion.div
             className="absolute inset-y-0 left-0 rounded-full"

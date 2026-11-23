@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   resolveSubscriptionContent,
   resolveSubscriptionProxiesRaw,
+  validateManualSubscriptionContent,
 } from '@/lib/services/subscriptionFetcher';
 import type { Subscription } from '@/schemas';
 const SUB_ID = '11111111-1111-4111-8111-111111111111';
@@ -70,6 +71,32 @@ describe('manual remote subscription resolution', () => {
     });
     expect(result.proxyCount).toBe(1);
     expect(result.proxies[0]?.name).toBe('HK');
+  });
+
+  it('retains usage metadata and verifies the raw count before filtering manual content', async () => {
+    const content = `${CLASH_CONTENT}\n  - { name: '剩余流量：10GB', type: trojan, server: hk.example, port: 443, password: test-password }`;
+    const source = manualSub({
+      manual_snapshot_meta: {
+        updated_at: 7,
+        proxy_count: 2,
+        origin: 'web',
+        fetch_identity_revision: 2,
+        content_sha256: 'a'.repeat(64),
+      },
+    });
+    const options = { writeCache: false, contentOverrides: new Map([[SUB_ID, content]]) };
+    const validated = validateManualSubscriptionContent(content);
+    expect(validated).toMatchObject({
+      proxyCount: 2,
+      infoProxyCount: 1,
+      traffic: { remaining: 10 * 1024 ** 3 },
+    });
+    const dropped = await resolveSubscriptionProxiesRaw(source, options);
+    expect(dropped.proxyCount).toBe(1);
+    expect(dropped.traffic).toEqual(validated.traffic);
+    const kept = await resolveSubscriptionProxiesRaw({ ...source, keep_info_nodes: true }, options);
+    expect(kept.proxyCount).toBe(2);
+    expect(kept.traffic).toEqual(validated.traffic);
   });
 
   it('fails closed when manual mode has no imported bytes', async () => {

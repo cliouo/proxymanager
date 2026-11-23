@@ -247,6 +247,7 @@ function runOne(
 
     case 'dedup': {
       const seen = new Set<string>();
+      const realKeys = new Set(proxies.filter((p) => !envelopeOf(p)?.subscriptionInfo).map((p) => dedupKey(p, op.by)));
       const counts = new Map<string, number>();
       const out: ClashProxy[] = [];
       let dropped = 0;
@@ -257,9 +258,9 @@ function runOne(
           out.push(p); // can't compute a key — never over-dedup
           continue;
         }
-        if (!seen.has(key)) {
+        const realNodePreferred = envelopeOf(p)?.subscriptionInfo && realKeys.has(key);
+        if (!seen.has(key) && !realNodePreferred) {
           seen.add(key);
-          counts.set(key, 1);
           out.push(p);
           continue;
         }

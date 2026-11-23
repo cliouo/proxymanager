@@ -181,6 +181,7 @@ function subscriptionSnapshotKey(subscription: Subscription, raw = false): strin
     tags: subscription.tags,
     operators: raw ? undefined : subscription.operators,
     fetch_failure_policy: subscription.fetch_failure_policy,
+    keep_info_nodes: subscription.keep_info_nodes === true,
     refresh_mode: subscription.refresh_mode,
     fetch_identity_revision: subscription.fetch_identity_revision,
     manual_snapshot_meta: subscription.manual_snapshot_meta,

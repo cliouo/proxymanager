@@ -48,6 +48,7 @@ export function SourceSettings({ source, active }: { source: Source; active: boo
       name: source.name,
       tags: source.tags,
       enabled: source.enabled,
+      keepInfoNodes: source.keep_info_nodes === true,
       url: source.url ?? '',
       ua: source.ua_override ?? '',
       rows: headersToRows(source.custom_headers),
@@ -76,6 +77,7 @@ export function SourceSettings({ source, active }: { source: Source; active: boo
   if (form.name !== source.name) patch.name = form.name;
   if (stableKey(form.tags) !== stableKey(source.tags)) patch.tags = form.tags;
   if (form.enabled !== source.enabled) patch.enabled = form.enabled;
+  if (form.keepInfoNodes !== initial.keepInfoNodes) patch.keep_info_nodes = form.keepInfoNodes;
   if (remote) {
     if (form.url.trim() !== (source.url ?? '')) patch.url = form.url.trim();
     if (form.ua.trim() !== (source.ua_override ?? '').trim()) patch.ua_override = form.ua.trim();
@@ -136,6 +138,13 @@ export function SourceSettings({ source, active }: { source: Source; active: boo
             <p className="mt-0.5 text-xs text-ink-3">停用后不再拉取，也不向任何配置文件提供节点。</p>
           </div>
           <Switch checked={form.enabled} onCheckedChange={(on) => set('enabled', on)} label="启用这个订阅源" />
+        </div>
+        <div className="flex items-center justify-between gap-4 border-t border-line pt-4">
+          <div>
+            <div className="text-[13px] font-medium text-ink">保留订阅信息节点</div>
+            <p className="mt-0.5 text-xs text-ink-3">默认从节点列表移除流量、到期和官网等信息节点，流量和到期信息仍会显示。</p>
+          </div>
+          <Switch checked={form.keepInfoNodes} onCheckedChange={(on) => set('keepInfoNodes', on)} label="保留订阅信息节点" />
         </div>
       </Section>
 

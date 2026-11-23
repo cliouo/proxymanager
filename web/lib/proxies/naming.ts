@@ -1310,8 +1310,8 @@ export type OrdinalResolver = (proxy: unknown, sourceKey: string) => number | un
 
 /**
  * Run the rename-template over a proxy list. Deterministic + unique:
- *   - TRUE dedup by node identity (canonical config fingerprint): the first
- *     occurrence per source-priority order wins; dropped nodes are reported
+ *   - TRUE dedup by node identity (canonical config fingerprint): real nodes
+ *     take precedence, then source-priority order; dropped nodes are reported
  *     in `deduped`;
  *   - per-source ordinals resolve in this order: a PERSISTED server-side
  *     assignment (via `ordinalResolver`, monotonic non-reuse), then an
@@ -1358,32 +1358,36 @@ export function applyRenameTemplate(
     });
   }
 
-  // Pass 0 — true dedup by identity (canonical config fingerprint). First
-  // occurrence wins (input order == source order == the documented
-  // source-priority policy).
-  const seenIdentity = new Map<string, number>();
+  // Pass 0 — true dedup by identity. Prefer real nodes, then source order.
   let infoFiltered = 0;
+  const eligible = proxies.map((p) => {
+    const envelope = envelopeOf(p);
+    const savedInfo = effectiveNodeRecognition(p, config.recognitionRules, config.nodeFacts).facts?.info;
+    const rawName = envelope?.rawName ?? (typeof p.name === 'string' ? p.name : '');
+    if (savedInfo === true || (savedInfo !== false && !envelope?.subscriptionInfo && isInfoNodeName(rawName))) {
+      infoFiltered += 1;
+      return false;
+    }
+    return true;
+  });
+  const seenIdentity = new Map<string, number>();
+  const realIdentity = new Map<string, number>();
+  proxies.forEach((p, i) => {
+    const fp = rawIdentityByIndex.get(i)?.fp;
+    if (eligible[i] && !envelopeOf(p)?.subscriptionInfo && fp !== undefined && !realIdentity.has(fp)) {
+      realIdentity.set(fp, i);
+    }
+  });
   const deduped: TrueDedupEntry[] = [];
   const surviving: Array<{ proxy: Record<string, unknown>; index: number }> = [];
   proxies.forEach((p, i) => {
-    // Identity is the IMMUTABLE raw fingerprint carried from the fetch
-    // boundary when present (fallback: compute from the current object — the
-    // documented path for envelope-less test inputs).
-    const fp = fingerprintOf(p) ?? nodeFingerprint(p);
-    const savedInfo = effectiveNodeRecognition(p, config.recognitionRules, config.nodeFacts).facts?.info;
-    const rawName = envelopeOf(p)?.rawName ?? (typeof p.name === 'string' ? p.name : '');
-    if (
-      savedInfo === true ||
-      (savedInfo !== false && isInfoNodeName(rawName))
-    ) {
-      infoFiltered += 1;
-      return;
-    }
-    if (fp === null) {
+    if (!eligible[i]) return;
+    const fp = rawIdentityByIndex.get(i)?.fp;
+    if (fp === undefined) {
       surviving.push({ proxy: p, index: i });
       return;
     }
-    const first = seenIdentity.get(fp);
+    const first = (envelopeOf(p)?.subscriptionInfo ? realIdentity.get(fp) : undefined) ?? seenIdentity.get(fp);
     if (first === undefined) {
       seenIdentity.set(fp, i);
       surviving.push({ proxy: p, index: i });
@@ -1466,8 +1470,8 @@ export function applyRenameTemplate(
     let facts: NodeRecognitionFacts | undefined;
 
     const formatted =
-      name === ''
-        ? ''
+      name === '' || envelopeOf(p)?.subscriptionInfo
+        ? name
         : formatNodeName({
             name,
             rawName: envelopeOf(p)?.rawName,

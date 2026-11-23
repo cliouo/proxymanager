@@ -7,7 +7,7 @@ import {
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { MAX_PROXY_NODES, validateMihomoProxyList } from '@/lib/proxies/mihomoProxyValidator';
 import { applyOperators, type ClashProxy } from '@/lib/proxies/operators';
-import { fingerprintOf, sourceOf, stripSource, withSource } from '@/lib/proxies/provenance';
+import { envelopeOf, fingerprintOf, sourceOf, stripSource, withSource } from '@/lib/proxies/provenance';
 import { dedupByNameAndIdentity } from '@/lib/proxies/nodeDedup';
 import { nodeFingerprint } from '@/lib/proxies/naming';
 import {
@@ -140,6 +140,7 @@ export function dedupExportProxies(
       sourceKey: sourceOf(item)?.key ?? '',
       sourceLabel: sourceOf(item)?.label ?? 'node',
       managed: isManaged(item),
+      subscriptionInfo: envelopeOf(item)?.subscriptionInfo,
       original: item,
     };
   });
