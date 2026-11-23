@@ -64,7 +64,7 @@ function SourceCard({ source, subBase }: { source: Source; subBase: string | nul
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const health = sourceHealth(source);
-  const traffic = trafficOf(source.fetch_health);
+  const traffic = trafficOf(source.fetch_health) ?? source.manual_snapshot?.traffic;
   const title = sourceTitle(source);
   const refreshable = canServerRefresh(source);
   return (

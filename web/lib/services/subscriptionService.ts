@@ -125,6 +125,7 @@ const RENDER_AFFECTING_SUBSCRIPTION_FIELDS = new Set([
   'tags',
   'operators',
   'fetch_failure_policy',
+  'keep_info_nodes',
   'refresh_mode',
 ]);
 
@@ -139,6 +140,12 @@ function assertPolicyAllowedForKind(kind: Subscription['kind'], policy: unknown)
     throw ProblemDetailsError.unprocessable(
       '本地订阅不支持 fetch_failure_policy（失败策略仅限远程订阅）。',
     );
+  }
+}
+
+function assertInfoSettingAllowed(kind: Subscription['kind'], keepInfoNodes: boolean | undefined): void {
+  if (kind === 'local' && keepInfoNodes !== undefined) {
+    throw ProblemDetailsError.unprocessable('本地订阅不支持 keep_info_nodes。');
   }
 }
 
@@ -185,7 +192,8 @@ export function projectSubscriptionAdminView(
     manual_snapshot: meta
       ? {
           updated_at: meta.updated_at,
-          proxy_count: meta.proxy_count,
+          proxy_count: meta.proxy_count - (subscription.keep_info_nodes ? 0 : meta.info_proxy_count ?? 0),
+          ...(meta.traffic ? { traffic: meta.traffic } : {}),
           origin: meta.origin,
           source_changed:
             meta.fetch_identity_revision !== effectiveFetchIdentityRevision(subscription),
@@ -230,6 +238,7 @@ export function generateSubscriptionId(): string {
 
 export async function createSubscription(input: SubscriptionCreate): Promise<Subscription> {
   assertPolicyAllowedForKind(input.kind, input.fetch_failure_policy);
+  assertInfoSettingAllowed(input.kind, input.keep_info_nodes);
   const planningVersion = await getConfigVersion();
   const dup = await getSubscriptionByName(input.name);
   if (dup) {
@@ -275,6 +284,7 @@ export async function replaceSubscription(
   input: SubscriptionCreate,
 ): Promise<Subscription> {
   assertPolicyAllowedForKind(input.kind, input.fetch_failure_policy);
+  assertInfoSettingAllowed(input.kind, input.keep_info_nodes);
   const planningVersion = await getConfigVersion();
   const current = await getSubscription(id);
   if (!current) {
@@ -369,6 +379,7 @@ export async function patchSubscription(
   }
   if (Object.keys(patch).length === 0) return current;
 
+  assertInfoSettingAllowed(patch.kind ?? current.kind, patch.keep_info_nodes);
   let next: Subscription = {
     ...current,
     ...patch,
@@ -385,6 +396,7 @@ export async function patchSubscription(
       throw ProblemDetailsError.unprocessable('本地订阅不支持 refresh_mode。');
     }
     delete next.fetch_failure_policy;
+    delete next.keep_info_nodes;
     delete next.refresh_mode;
     delete next.manual_snapshot_meta;
   } else {
@@ -427,6 +439,7 @@ export async function patchSubscription(
         url: next.url,
         userAgent: subscriptionUserAgent(next),
         headers: customHeaders,
+        keepInfoNodes: next.keep_info_nodes,
       }),
       entry: {
         content: fresh.yaml,
@@ -538,6 +551,8 @@ export async function importManualSubscriptionContent(
     manual_snapshot_meta: {
       updated_at: importedAt,
       proxy_count: validated.proxyCount,
+      ...(validated.infoProxyCount ? { info_proxy_count: validated.infoProxyCount } : {}),
+      ...(validated.traffic ? { traffic: validated.traffic } : {}),
       origin,
       fetch_identity_revision: effectiveFetchIdentityRevision(current),
       content_sha256: createHash('sha256').update(content, 'utf8').digest('hex'),
@@ -570,7 +585,10 @@ export async function importManualSubscriptionContent(
       }),
   });
 
-  return { proxyCount: validated.proxyCount, updatedAt: importedAt };
+  return {
+    proxyCount: validated.proxyCount - (current.keep_info_nodes ? 0 : validated.infoProxyCount),
+    updatedAt: importedAt,
+  };
 }
 
 export interface DeleteSubscriptionResult {

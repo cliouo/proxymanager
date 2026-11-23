@@ -4,7 +4,7 @@
  * export all run this ONE machine so preview/render/single-export/
  * collection-export produce identical identity/name sets.
  *
- * Rules (deterministic, input order = explicit source priority):
+ * Rules (deterministic, real nodes first, then input order = source priority):
  *   1. GLOBAL raw-fingerprint true-dedup: an identity already kept by an
  *      earlier node is dropped REGARDLESS of its display name — the first
  *      keeper's source is named in the diagnostics.
@@ -36,6 +36,7 @@ export interface DedupInputNode {
   /** PER-NODE managed provenance: this node's own source has an active
    * rename-template (or, for resolve, the collection stage is managed). */
   managed: boolean;
+  subscriptionInfo?: true;
   /** Opaque caller payload (e.g. the original proxy object) — round-trips
    * untouched through the machine so callers can rebuild outputs. */
   original?: unknown;
@@ -99,7 +100,9 @@ export function dedupByNameAndIdentity(
   const deduped: DedupDiagnostics['deduped'] = [];
   const resolved: DedupDiagnostics['resolved'] = [];
 
-  for (const node of nodes) {
+  const infoNodes = nodes.filter((node) => node.subscriptionInfo);
+  const ordered = infoNodes.length ? [...nodes.filter((node) => !node.subscriptionInfo), ...infoNodes] : nodes;
+  for (const node of ordered) {
     if (node.name === '') {
       kept.push({ node, finalName: '' });
       continue;
@@ -207,6 +210,10 @@ export function dedupByNameAndIdentity(
     finalByName.set(node.name, { node, sourceKey: node.sourceKey });
     taken.add(node.name);
     kept.push({ node, finalName: node.name });
+  }
+  if (infoNodes.length) {
+    const index = new Map(nodes.map((node, i) => [node, i]));
+    kept.sort((a, b) => index.get(a.node)! - index.get(b.node)!);
   }
   return { kept, diagnostics: { deduped, resolved } };
 }

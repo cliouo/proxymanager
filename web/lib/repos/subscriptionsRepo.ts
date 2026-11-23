@@ -105,6 +105,8 @@ if entityAction == 'set' then
       if type(meta) ~= 'table' or
          not isSafeUnsignedNumber(meta.updated_at) or
          not isSafeUnsignedNumber(meta.proxy_count) or meta.proxy_count < 1 or
+         (meta.info_proxy_count ~= nil and
+          (not isSafeUnsignedNumber(meta.info_proxy_count) or meta.info_proxy_count > meta.proxy_count)) or
          (meta.origin ~= 'web' and meta.origin ~= 'extension') or
          not isSafeUnsignedNumber(meta.fetch_identity_revision) or
          type(meta.content_sha256) ~= 'string' or

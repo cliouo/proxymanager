@@ -71,6 +71,9 @@ export const SubscriptionTrafficSchema = z.object({
   download: z.number().nonnegative(),
   total: z.number().nonnegative(),
   expire: z.number().int(),
+  remaining: z.number().nonnegative().optional(),
+  expiry_only: z.literal(true).optional(),
+  total_unknown: z.literal(true).optional(),
 });
 
 /**
@@ -110,18 +113,22 @@ export const SubscriptionManualSnapshotMetaSchema = z
   .object({
     updated_at: z.number().int().nonnegative(),
     proxy_count: z.number().int().positive(),
+    info_proxy_count: z.number().int().nonnegative().optional(),
+    traffic: SubscriptionTrafficSchema.optional(),
     origin: SubscriptionManualUpdateOriginSchema,
     fetch_identity_revision: z.number().int().nonnegative(),
     content_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
   })
-  .strict();
+  .strict()
+  .refine((meta) => (meta.info_proxy_count ?? 0) <= meta.proxy_count);
 export type SubscriptionManualSnapshotMeta = z.infer<typeof SubscriptionManualSnapshotMetaSchema>;
 
 /** Secret-free admin projection of the stored manual snapshot metadata. */
 export const SubscriptionManualSnapshotSchema = z
   .object({
     updated_at: z.number().int().nonnegative(),
-    proxy_count: z.number().int().positive(),
+    proxy_count: z.number().int().nonnegative(),
+    traffic: SubscriptionTrafficSchema.optional(),
     origin: SubscriptionManualUpdateOriginSchema,
     source_changed: z.boolean(),
   })
@@ -146,7 +153,7 @@ export const ManualSubscriptionRefreshReceiptSchema = z
   .object({
     data: z
       .object({
-        proxyCount: z.number().int().positive(),
+        proxyCount: z.number().int().nonnegative(),
         updatedAt: z.number().int().nonnegative(),
       })
       .strict(),
@@ -345,6 +352,7 @@ export const SubscriptionSchema: z.ZodType<Subscription> = z
       ...StoredSubscriptionFields,
       kind: z.literal('remote'),
       fetch_failure_policy: SubscriptionFetchFailurePolicySchema.optional(),
+      keep_info_nodes: z.boolean().optional(),
       refresh_mode: SubscriptionRefreshModeSchema.optional(),
       fetch_identity_revision: z.number().int().nonnegative().optional(),
       // Preserve malformed legacy/corrupt metadata so a manual source reaches
@@ -361,6 +369,7 @@ export const SubscriptionSchema: z.ZodType<Subscription> = z
       ...StoredSubscriptionFields,
       kind: SubscriptionKindSchema.default('remote'),
       fetch_failure_policy: SubscriptionFetchFailurePolicySchema.optional(),
+      keep_info_nodes: z.boolean().optional(),
       refresh_mode: SubscriptionRefreshModeSchema.optional(),
       fetch_identity_revision: z.number().int().nonnegative().optional(),
       manual_snapshot_meta: z.unknown().optional(),
@@ -392,6 +401,7 @@ export const SubscriptionCreateSchema = z
     // Remote-only declarative policy; an explicit value on a LOCAL create is
     // rejected by the service against the merged candidate (422).
     fetch_failure_policy: SubscriptionFetchFailurePolicySchema.optional(),
+    keep_info_nodes: z.boolean().optional(),
   })
   .refine(
     (s) => (s.kind === 'remote' ? !!s.url : !!s.content),
@@ -415,6 +425,7 @@ export const SubscriptionUpdateSchema = z.object({
   tags: z.array(z.string()).optional(),
   operators: MutableOperatorListSchema.optional(),
   fetch_failure_policy: SubscriptionFetchFailurePolicySchema.optional(),
+  keep_info_nodes: z.boolean().optional(),
   // Import is the sole transition into manual mode. Generic PATCH can only
   // request the validated manual → server-auto transition.
   refresh_mode: z.literal('server-auto').optional(),
@@ -436,6 +447,7 @@ export const SubscriptionAdminViewSchema: z.ZodType<SubscriptionAdminView> = z.d
       ...StoredSubscriptionFields,
       kind: z.literal('remote'),
       fetch_failure_policy: SubscriptionFetchFailurePolicySchema,
+      keep_info_nodes: z.boolean().optional(),
       fetch_health: SubscriptionFetchHealthSchema.nullable(),
       refresh_mode: SubscriptionRefreshModeSchema,
       manual_snapshot: SubscriptionManualSnapshotSchema.nullable(),
@@ -470,6 +482,7 @@ export interface SubscriptionAdminView {
   operators: StoredOperator[];
   updated_at?: number;
   fetch_failure_policy?: SubscriptionFetchFailurePolicy;
+  keep_info_nodes?: boolean;
   fetch_health?: SubscriptionFetchHealth | null;
   refresh_mode?: SubscriptionRefreshMode;
   manual_snapshot?: SubscriptionManualSnapshot | null;
@@ -492,6 +505,7 @@ export interface Subscription {
   operators: StoredOperator[];
   updated_at?: number;
   fetch_failure_policy?: 'use-stale-cache' | 'fail-closed';
+  keep_info_nodes?: boolean;
   refresh_mode?: SubscriptionRefreshMode;
   /** Server-owned optimistic identity. Missing legacy values are effective zero. */
   fetch_identity_revision?: number;

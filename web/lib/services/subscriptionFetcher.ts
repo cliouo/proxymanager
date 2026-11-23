@@ -2,6 +2,7 @@ import { parse, stringify } from 'yaml';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { readCapped } from '@/lib/net/safeFetch';
 import { applyOperators, type ClashProxy } from '@/lib/proxies/operators';
+import { isSubscriptionInfoNodeName, subscriptionTrafficFromNodes } from '@/lib/proxies/infoNodes';
 import { withRawIdentity, type OrdinalResolver, type RecognitionRule } from '@/lib/proxies/naming';
 import { isActiveCurrentRenameTemplateOperator, isExecutableOperator } from '@/schemas/operator';
 import { fingerprintOf, mergeEnvelope, stripSource } from '@/lib/proxies/provenance';
@@ -491,7 +492,7 @@ function resolveRawText(
         'A manual subscription must contain at least one node.',
       );
     }
-    return rawFromProxies(proxies, { proxyCount, traffic: undefined }, deferUniqueNames);
+    return rawFromProxies(proxies, { proxyCount }, deferUniqueNames);
   } catch (error) {
     throw asSubscriptionValidationError(
       error,
@@ -506,9 +507,37 @@ function resolveRawText(
 export function validateManualSubscriptionContent(
   content: string,
   deferUniqueNames = false,
-): FetchSubscriptionProxiesResult {
+): FetchSubscriptionProxiesResult & { infoProxyCount: number } {
   const raw = resolveRawText(content, deferUniqueNames, true);
-  return { proxies: raw.getProxies(), proxyCount: raw.proxyCount };
+  const proxies = raw.getProxies();
+  const names = proxyNames(proxies);
+  return {
+    proxies,
+    proxyCount: raw.proxyCount,
+    infoProxyCount: names.filter(isSubscriptionInfoNodeName).length,
+    traffic: subscriptionTrafficFromNodes(names),
+  };
+}
+
+function proxyNames(proxies: readonly unknown[]): string[] {
+  return proxies.flatMap((proxy) => {
+    const name = (proxy as { name?: unknown } | null | undefined)?.name;
+    return typeof name === 'string' ? [name] : [];
+  });
+}
+
+function withoutInfoNodes(proxies: unknown[]): unknown[] {
+  return proxies.filter((proxy) => {
+    const name = (proxy as { name?: unknown } | null | undefined)?.name;
+    return typeof name !== 'string' || !isSubscriptionInfoNodeName(name);
+  });
+}
+
+function projectRemoteText(raw: RawResolved, keepInfoNodes: boolean, deferUniqueNames: boolean): RawResolved {
+  const all = raw.getProxies();
+  const traffic = subscriptionTrafficFromNodes(proxyNames(all));
+  const proxies = keepInfoNodes ? all : withoutInfoNodes(all);
+  return rawFromProxies(proxies, { traffic, proxyCount: proxies.length }, deferUniqueNames);
 }
 
 /**
@@ -521,12 +550,28 @@ export function validateManualSubscriptionContent(
  *     `stale: true` (unless `noCache` — the caller explicitly asked for
  *     fresh, so we surface the error).
  *
- * Cache key is keyed by url + ua + custom_headers (Sub-Store convention) so
- * two subs hitting the same airport with the same UA share cache; flipping
- * UA invalidates. Entries persist in Redis for `max(ttl_ms, STALE_TTL_MS)`
+ * Cache entries are shared by upstream URL, UA, headers and info-node policy.
+ * Entries persist in Redis for `max(ttl_ms, STALE_TTL_MS)`
  * so the stale-on-error fallback has something to serve past expiry.
  */
 async function resolveSubscriptionRaw(
+  sub: Subscription,
+  options: SubscriptionResolveOptions = {},
+): Promise<RawResolved> {
+  const raw = await resolveUnmarkedSubscriptionRaw(sub, options);
+  if (sub.kind !== 'remote' || !sub.keep_info_nodes) return raw;
+  let marked: Record<string, unknown>[] | undefined;
+  return {
+    ...raw,
+    getProxies: () => (marked ??= raw.getProxies().map((proxy) =>
+      typeof proxy.name === 'string' && isSubscriptionInfoNodeName(proxy.name)
+        ? mergeEnvelope(proxy, { subscriptionInfo: true })
+        : proxy,
+    )),
+  };
+}
+
+async function resolveUnmarkedSubscriptionRaw(
   sub: Subscription,
   options: SubscriptionResolveOptions = {},
 ): Promise<RawResolved> {
@@ -549,7 +594,7 @@ async function resolveSubscriptionRaw(
         );
       }
     }
-    return raw;
+    return sub.kind === 'remote' ? projectRemoteText(raw, sub.keep_info_nodes === true, deferUniqueNames) : raw;
   }
 
   if (sub.kind === 'local') {
@@ -587,7 +632,7 @@ async function resolveSubscriptionRaw(
         'Manual subscription snapshot metadata is invalid.',
       );
     }
-    return raw;
+    return projectRemoteText(raw, sub.keep_info_nodes === true, deferUniqueNames);
   }
 
   if (!sub.url) {
@@ -606,6 +651,7 @@ async function resolveSubscriptionRaw(
     url: sub.url,
     userAgent: subscriptionUserAgent(sub),
     headers: customHeaders,
+    keepInfoNodes: sub.keep_info_nodes,
   });
 
   // Read once up front — we may use it as fresh, or as the stale fallback.
@@ -654,6 +700,7 @@ async function resolveSubscriptionRaw(
       timeoutMs: options.timeoutMs ?? FETCH_TIMEOUT_MS,
       customHeaders,
       deferUniqueNames: options.rawSnapshot ? true : deferUniqueNames,
+      keepInfoNodes: sub.keep_info_nodes,
     });
     let pending = options.rawSnapshot?.entries.get(options.rawSnapshot.key);
     if (!pending) {
@@ -778,7 +825,7 @@ async function resolveSubscriptionRaw(
 /** Fetch + normalise an upstream subscription URL into a Clash provider YAML. */
 export async function fetchSubscription(
   url: string,
-  options: { userAgent?: string; timeoutMs?: number } = {},
+  options: { userAgent?: string; timeoutMs?: number; keepInfoNodes?: boolean } = {},
 ): Promise<FetchSubscriptionResult> {
   const raw = await fetchSubscriptionInternal(url, options);
   return { yaml: raw.getYaml(), traffic: raw.traffic, proxyCount: raw.proxyCount };
@@ -791,6 +838,7 @@ async function fetchSubscriptionInternal(
     timeoutMs?: number;
     customHeaders?: Record<string, string>;
     deferUniqueNames?: boolean;
+    keepInfoNodes?: boolean;
   } = {},
 ): Promise<RawResolved> {
   const upstreamUrl = parseSubscriptionUrl(url);
@@ -805,6 +853,7 @@ async function fetchSubscriptionInternal(
 
   let text: string;
   let traffic: SubscriptionTraffic | undefined;
+  let trafficHeader: string | null;
   try {
     let currentUrl = upstreamUrl;
     let response: Response | undefined;
@@ -865,7 +914,8 @@ async function fetchSubscriptionInternal(
     if (!response.ok) {
       throw new RemoteFetchAttemptError('http');
     }
-    traffic = parseTrafficHeader(response.headers.get('subscription-userinfo'));
+    trafficHeader = response.headers.get('subscription-userinfo');
+    traffic = parseTrafficHeader(trafficHeader);
     const declaredLength = Number(response.headers.get('content-length') ?? '');
     if (Number.isFinite(declaredLength) && declaredLength > MAX_SUBSCRIPTION_BODY_BYTES) {
       await response.body?.cancel().catch(() => undefined);
@@ -902,7 +952,19 @@ async function fetchSubscriptionInternal(
   let proxies: Record<string, unknown>[];
   let proxyCount: number;
   try {
-    ({ proxies, proxyCount } = normaliseToClashProxies(text, options.deferUniqueNames ?? false));
+    ({ proxies, proxyCount } = normaliseToClashProxies(text, options.deferUniqueNames ?? false, (list) => {
+      const inferred = subscriptionTrafficFromNodes(proxyNames(list));
+      if (!traffic) {
+        traffic = inferred;
+      } else if (inferred) {
+        const hasHeaderUsage = /(?:^|;)\s*(?:upload|download|total)\s*=/.test(trafficHeader ?? '');
+        traffic = {
+          ...(hasHeaderUsage ? traffic : inferred),
+          expire: traffic.expire || inferred.expire,
+        };
+      }
+      return options.keepInfoNodes === true ? list : withoutInfoNodes(list);
+    }));
   } catch (error) {
     // Whitelist (P-FFP v1): structured content/format failures and proxy-node
     // rejections of NEWLY FETCHED bytes become typed eligible categories;
@@ -999,7 +1061,8 @@ function classifyFreshContentError(error: unknown): unknown {
 export function parseTrafficHeader(value: string | null): SubscriptionTraffic | undefined {
   if (!value) return undefined;
   const fields: SubscriptionTraffic = { upload: 0, download: 0, total: 0, expire: 0 };
-  const acceptedKeys = new Set<keyof SubscriptionTraffic>([
+  type HeaderField = 'upload' | 'download' | 'total' | 'expire';
+  const acceptedKeys = new Set<HeaderField>([
     'upload',
     'download',
     'total',
@@ -1011,10 +1074,10 @@ export function parseTrafficHeader(value: string | null): SubscriptionTraffic | 
     const eq = trimmed.indexOf('=');
     if (eq <= 0) continue;
     const key = trimmed.slice(0, eq).trim();
-    if (!acceptedKeys.has(key as keyof SubscriptionTraffic)) continue;
+    if (!acceptedKeys.has(key as HeaderField)) continue;
     recognised = true;
     const raw = trimmed.slice(eq + 1).trim();
-    fields[key as keyof SubscriptionTraffic] = raw === '' ? Number.NaN : Number(raw);
+    fields[key as HeaderField] = raw === '' ? Number.NaN : Number(raw);
   }
   if (!recognised) return undefined;
   const parsed = SubscriptionTrafficSchema.safeParse(fields);
@@ -1067,6 +1130,7 @@ export function serialiseLocalProxies(proxies: Record<string, unknown>[]): strin
 function normaliseToClashProxies(
   text: string,
   deferUniqueNames = false,
+  select: (list: unknown[]) => unknown[] = (list) => list,
 ): {
   proxies: Record<string, unknown>[];
   proxyCount: number;
@@ -1079,7 +1143,7 @@ function normaliseToClashProxies(
   // 1) Clash YAML with a `proxies:` array
   const fromYaml = tryExtractProxiesFromYaml(cleaned);
   if (fromYaml) {
-    const proxies = validateProviderProxyList(fromYaml, deferUniqueNames);
+    const proxies = validateProviderProxyList(select(fromYaml), deferUniqueNames);
     return { proxies, proxyCount: proxies.length };
   }
 
@@ -1091,7 +1155,7 @@ function normaliseToClashProxies(
   if (decoded) {
     const fromDecodedYaml = tryExtractProxiesFromYaml(decoded);
     if (fromDecodedYaml) {
-      const proxies = validateProviderProxyList(fromDecodedYaml, deferUniqueNames);
+      const proxies = validateProviderProxyList(select(fromDecodedYaml), deferUniqueNames);
       return { proxies, proxyCount: proxies.length };
     }
   }
@@ -1107,7 +1171,7 @@ function normaliseToClashProxies(
     // common exporter noise. Keep every parsable node and only fail closed
     // when the response contains no usable node at all.
     if (proxies.length > 0) {
-      const validated = validateProviderProxyList(proxies, deferUniqueNames);
+      const validated = validateProviderProxyList(select(proxies), deferUniqueNames);
       return { proxies: validated, proxyCount: validated.length };
     }
     if (errors.length > 0) {

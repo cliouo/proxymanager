@@ -19,7 +19,7 @@ import { SubscriptionTrafficSchema, type SubscriptionTraffic } from '@/schemas';
 export interface FetchCacheEntry {
   /** Stored verbatim — the Clash provider YAML we normalised on the prior fetch. */
   content: string;
-  /** Sub-Userinfo parse from the previous fetch (passthrough on cache hit). */
+  /** Traffic and expiry parsed during the previous fetch. */
   traffic?: SubscriptionTraffic;
   /** When the original fetch landed, ms epoch. */
   fetched_at: number;
@@ -31,6 +31,7 @@ export interface CacheKeyParts {
   url: string;
   userAgent?: string;
   headers?: Record<string, string>;
+  keepInfoNodes?: boolean;
 }
 
 /** Server-side fetches retain their historical 10 MiB response contract. */
@@ -46,6 +47,8 @@ const MAX_CACHE_CLOCK_SKEW_MS = 5 * 60 * 1000;
  * part of the cache identity. Bump this whenever those semantics change; an
  * unversioned key is treated as epoch 1.
  *
+ * 15 → drop upstream info nodes by default, with distinct keep/drop entries.
+ *
  * 14 → accept WireGuard PSK query aliases presharedkey and psk, so previously
  *       rejected links are re-fetched into normalized provider YAML.
  *
@@ -60,13 +63,13 @@ const MAX_CACHE_CLOCK_SKEW_MS = 5 * 60 * 1000;
  *       cached normalized lists with duplicate names are only legal under the
  *       new semantics.
  */
-export const FETCH_CACHE_EPOCH = 14;
+export const FETCH_CACHE_EPOCH = 15;
 
-export function buildCacheKey({ url, userAgent, headers }: CacheKeyParts): string {
+export function buildCacheKey({ url, userAgent, headers, keepInfoNodes }: CacheKeyParts): string {
   const headerStr = headers ? JSON.stringify(sortRecord(headers)) : '';
   const ua = userAgent ?? '';
   return createHash('sha256')
-    .update(`proxy-parser-v${FETCH_CACHE_EPOCH}\x00${url}\x00${ua}\x00${headerStr}`)
+    .update(`proxy-parser-v${FETCH_CACHE_EPOCH}\x00${url}\x00${ua}\x00${headerStr}\x00${keepInfoNodes === true ? 'keep' : 'drop'}`)
     .digest('hex')
     .slice(0, 16);
 }

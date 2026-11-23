@@ -48,6 +48,7 @@ export function SourceSettings({ source, active }: { source: Source; active: boo
       name: source.name,
       tags: source.tags,
       enabled: source.enabled,
+      keepInfoNodes: source.keep_info_nodes === true,
       url: source.url ?? '',
       ua: source.ua_override ?? '',
       rows: headersToRows(source.custom_headers),
@@ -77,6 +78,7 @@ export function SourceSettings({ source, active }: { source: Source; active: boo
   if (stableKey(form.tags) !== stableKey(source.tags)) patch.tags = form.tags;
   if (form.enabled !== source.enabled) patch.enabled = form.enabled;
   if (remote) {
+    if (form.keepInfoNodes !== initial.keepInfoNodes) patch.keep_info_nodes = form.keepInfoNodes;
     if (form.url.trim() !== (source.url ?? '')) patch.url = form.url.trim();
     if (form.ua.trim() !== (source.ua_override ?? '').trim()) patch.ua_override = form.ua.trim();
     if (!sameHeaders(headers.headers, source.custom_headers)) patch.custom_headers = headers.headers;
@@ -164,6 +166,13 @@ export function SourceSettings({ source, active }: { source: Source; active: boo
             )}
           </Field>
           <Field label="拉取失败时">{() => <PolicyPicker value={form.policy} onChange={(p) => set('policy', p)} />}</Field>
+          <div className="flex items-center justify-between gap-4 border-t border-line pt-4">
+            <div>
+              <div className="text-[13px] font-medium text-ink">保留订阅信息节点</div>
+              <p className="mt-0.5 text-xs text-ink-3">默认从节点列表移除流量、到期和官网等信息节点，流量和到期信息仍会显示。</p>
+            </div>
+            <Switch checked={form.keepInfoNodes} onCheckedChange={(on) => set('keepInfoNodes', on)} label="保留订阅信息节点" />
+          </div>
         </Section>
       ) : (
         <Section title="节点内容" description="Clash 格式的 YAML，包含一个 proxies: 列表。保存前会检查所有用到它的配置文件。">

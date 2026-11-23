@@ -23,6 +23,8 @@ import {
   resolveSubscriptionProxiesRaw,
 } from '@/lib/services/subscriptionFetcher';
 import { getFetchCache, setFetchCache } from '@/lib/repos/fetchCacheRepo';
+import { dedupExportProxies } from '@/lib/services/nodeExportService';
+import { applyRenameTemplate } from '@/lib/proxies/naming';
 
 const getCacheMock = getFetchCache as unknown as ReturnType<typeof vi.fn>;
 const setCacheMock = setFetchCache as unknown as ReturnType<typeof vi.fn>;
@@ -147,6 +149,36 @@ describe('object pipeline ≡ string pipeline', () => {
     expect(JSON.parse(JSON.stringify(obj.proxies))).toEqual(parseProxies(str.yaml));
     expect(str.yaml).toBe(cachedYaml); // 字符串路径仍原样返回缓存条目
     expect(obj.traffic).toEqual({ upload: 1, download: 2, total: 3, expire: 4 });
+  });
+
+  it('only keeps non-duplicate info nodes when enabled, even after renaming before dedup', async () => {
+    const upstream = [
+      'trojan://p@hk.invalid:443#' + encodeURIComponent('当前流量：1G / 50G'),
+      'trojan://p@hk.invalid:443#HK-01',
+      'trojan://p@jp.invalid:443#' + encodeURIComponent('到期时间：2027-06-24'),
+    ].join('\n');
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(upstream)));
+    getCacheMock.mockResolvedValue(null);
+    const source = makeSub({ kind: 'remote', url: 'https://up.example/sub', keep_info_nodes: true });
+    try {
+      const deduped = await resolveSubscriptionProxies({
+        ...source,
+        operators: [
+          { id: 'prefix', kind: 'rename-regex', pattern: '^', replacement: 'imm_', flags: '' },
+          { id: 'dedup', kind: 'dedup', by: 'server-port', action: 'drop' },
+        ],
+      }, { writeCache: false });
+      expect(deduped.proxies.map((p) => p.name)).toEqual(['imm_HK-01', 'imm_到期时间：2027-06-24']);
+      const raw = await resolveSubscriptionProxies(source, { writeCache: false });
+      const output = dedupExportProxies(raw.proxies, () => false);
+      expect(output.proxies.map((p) => p.name)).toEqual(['HK-01', '到期时间：2027-06-24']);
+      expect(output.deduped).toEqual([{ kept: 'HK-01', dropped: '当前流量：1G / 50G' }]);
+      const named = applyRenameTemplate(raw.proxies, { template: '${region_code}' });
+      expect(named.proxies.map((p) => p.name)).toEqual(['HK', '到期时间：2027-06-24']);
+      expect(named.deduped[0]).toMatchObject({ kept: 'HK-01', dropped: '当前流量：1G / 50G' });
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('derives the cache-hit count from validated YAML instead of untrusted metadata', async () => {

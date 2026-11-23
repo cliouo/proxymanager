@@ -71,7 +71,7 @@ import {
 import { effectiveFetchFailurePolicy } from '@/schemas/subscription';
 import { applyOperators } from '@/lib/proxies/operators';
 import { templateUsesIndexField, type OrdinalResolver } from '@/lib/proxies/naming';
-import { fingerprintOf, sourceOf, withSource } from '@/lib/proxies/provenance';
+import { envelopeOf, fingerprintOf, sourceOf, withSource } from '@/lib/proxies/provenance';
 import { dedupByNameAndIdentity } from '@/lib/proxies/nodeDedup';
 import {
   createOrdinalDomainRegistry,
@@ -773,6 +773,7 @@ async function resolveConfigInternal(
     sourceKey: cand.fromSub,
     sourceLabel: cand.fromSubLabel,
     managed: managedSubs.has(cand.fromSub) || collectionManaged,
+    subscriptionInfo: envelopeOf(cand.node)?.subscriptionInfo,
     original: cand,
   }));
   const dedupResult = dedupByNameAndIdentity(dedupNodes, baseProxyNames);
