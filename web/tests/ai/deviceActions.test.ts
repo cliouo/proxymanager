@@ -218,12 +218,16 @@ describe('device patch guardrails', () => {
     expect(invalidData.issues).toHaveLength(1);
     expect(invalidData.yaml).toBeNull();
 
-    mocks.buildDeviceConfig.mockReturnValue('port: 7891\n');
+    mocks.buildDeviceConfig.mockReturnValue(
+      'port: 7891\nproxies:\n  - {name: "[HK-01]", server: node.example.invalid, port: 48443, sni: tls.example.invalid}\n',
+    );
     const valid = await action.run(CTX, { device_id: DEVICE_ID, include_yaml: true });
     const validData = valid.data as { valid: boolean; issues: unknown[]; yaml: string | null };
     expect(validData.valid).toBe(true);
     expect(validData.issues).toHaveLength(0);
     expect(validData.yaml).toContain('port: 7891');
+    expect(validData.yaml).toContain('[HK-01]');
+    expect(validData.yaml).not.toMatch(/node\.example\.invalid|tls\.example\.invalid|48443/);
     // Stored patch/features (with the real secret) went to the renderer,
     // never into the envelope.
     expect(mocks.buildDeviceConfig).toHaveBeenLastCalledWith(

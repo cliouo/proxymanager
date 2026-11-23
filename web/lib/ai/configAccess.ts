@@ -5,7 +5,7 @@
  *
  * Two views, two strategies:
  *   - get_config_full → `fullRedactedYaml`: structure-faithful. Redaction edits
- *     sensitive scalar VALUES in place on the parsed Document, so anchors (&x),
+ *     sensitive values in place on the parsed Document, so anchors (&x),
  *     aliases (*x), merge keys (<<:), comments and flow style all survive
  *     `doc.toString()`. (The old code went through `doc.toJS()`, which resolves
  *     aliases into inline copies and drops anchors — making the model
@@ -18,7 +18,10 @@
  * config-section scenario.
  */
 
-import { isPair, isScalar, parseDocument, stringify, visit, type Document } from 'yaml';
+import {
+  isAlias, isNode, isPair, isScalar, parseDocument, Scalar, stringify, visit,
+  type Document, type Node, type Pair,
+} from 'yaml';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { getBase } from '@/lib/repos/baseRepo';
 import { parsePath, SENSITIVE_KEY } from './configPath';
@@ -33,15 +36,39 @@ function isObj(v: unknown): v is Obj {
 
 /* ─── structure-faithful redaction (full view) ──────────────────────── */
 
-/** A `url` is a credential only under node/subscription sources, not elsewhere. */
-function inSecretUrlScope(path: readonly unknown[]): boolean {
-  for (const n of path) {
-    if (isPair(n) && isScalar(n.key)) {
-      const k = n.key.value;
-      if (k === 'proxies' || k === 'proxy-providers') return true;
-    }
-  }
-  return false;
+function pairKey(pair: Pair): string {
+  return isScalar(pair.key) ? String(pair.key.value) : '';
+}
+
+function isProxyBlock(key: string): boolean {
+  return key === 'proxies' || key === 'proxy-providers';
+}
+
+const PROXY_CONNECTION_KEY =
+  /^(?:server|servername|serverport|serverports|port|ports|sni|peer|host|hostname|address|ip|uid|userid|user|username|clientid|apikey|accesskey|publickey|shortid|header|headers|path|query|params|urlparams)$/i;
+
+function proxyPairs(doc: Document): Set<Pair> {
+  const pairs = new Set<Pair>();
+  const visited = new Set<Node>();
+  const mark = (root: Node) => visit(root, {
+    Node(_, node) {
+      if (visited.has(node)) return visit.SKIP;
+      visited.add(node);
+      if (isAlias(node)) {
+        const target = node.resolve(doc);
+        if (target) mark(target);
+      }
+    },
+    Pair(_, pair) {
+      pairs.add(pair);
+    },
+  });
+  visit(doc, {
+    Pair(_, pair) {
+      if (isProxyBlock(pairKey(pair)) && isNode(pair.value)) mark(pair.value);
+    },
+  });
+  return pairs;
 }
 
 // There is no reliable way to distinguish a public path/query value from a
@@ -78,7 +105,7 @@ function scrubComment(c: string | null | undefined): string | null | undefined {
   return c
     .replace(/https?:\/\/\S+/gi, REDACTED)
     .replace(
-      /\b(token|secret|password|passwd|uuid|psk|key|credential|auth)\s*[=:]\s*\S+/gi,
+      /\b(token|secret|password|passwd|uuid|psk|key|credential|auth|server|port|sni|server[-_]?name|uid)\s*[=:]\s*\S+/gi,
       `$1=${REDACTED}`,
     );
 }
@@ -89,11 +116,43 @@ interface Commentable {
 }
 
 /**
- * Mask credential scalars in place on a parsed Document, and scrub secrets out
- * of comments. Only scalar values + comment strings are touched, so anchors,
- * aliases, merge keys and structure are preserved on round-trip.
+ * Mask sensitive values at their definitions, including values reached through
+ * aliases, so neither the anchor definition nor a section drill-down leaks.
  */
-export function redactDocument(doc: Document): boolean {
+export function redactDocument(doc: Document, maskInheritedHealthCheckUrls = false): boolean {
+  const scoped = proxyPairs(doc);
+  const masked = new Set<Node>();
+  const names = new Set<Node>();
+  visit(doc, {
+    Pair(_, pair, path) {
+      if (!isNode(pair.value)) return;
+      const key = pairKey(pair);
+      const value = isAlias(pair.value) ? pair.value.resolve(doc) : pair.value;
+      if (!value) return;
+      if (scoped.has(pair) && key === 'name') names.add(value);
+      const proxyUrl = key === 'url' && (
+        path.some((ancestor) => isPair(ancestor) && isProxyBlock(pairKey(ancestor))) ||
+        (scoped.has(pair) && (maskInheritedHealthCheckUrls ||
+          !path.some((ancestor) => isPair(ancestor) && pairKey(ancestor) === 'health-check')))
+      );
+      if (
+        SENSITIVE_KEY.test(key) ||
+        proxyUrl ||
+        (scoped.has(pair) && PROXY_CONNECTION_KEY.test(key.replace(/[-_]/g, '')))
+      ) {
+        masked.add(value);
+      }
+    },
+  });
+  for (const value of masked) {
+    visit(value, {
+      Alias(_, alias) {
+        const target = alias.resolve(doc);
+        if (target) masked.add(target);
+      },
+    });
+  }
+
   let changed = false;
   const scrub = (n: Commentable) => {
     const before = scrubComment(n.commentBefore);
@@ -108,26 +167,24 @@ export function redactDocument(doc: Document): boolean {
     }
   };
   visit(doc, {
-    Map: (_, n) => scrub(n),
-    Seq: (_, n) => scrub(n),
-    Scalar(_, n) {
+    Node(_, n) {
       scrub(n);
-      // Mask token-like segments in any URL value (e.g. self-hosted rule-set
-      // URLs on a tokenised host). Fully-masked scalars no longer contain '://'.
-      if (typeof n.value === 'string' && n.value.includes('://')) {
-        const masked = scrubUrlTokens(n.value);
-        if (masked !== n.value) {
-          n.value = masked;
+      if (masked.has(n)) {
+        if (isScalar(n)) {
+          if (n.value !== REDACTED) changed = true;
+          n.value = REDACTED;
+        } else {
+          changed = true;
+          const replacement = new Scalar(REDACTED);
+          replacement.anchor = n.anchor;
+          return replacement;
+        }
+      } else if (isScalar(n) && !names.has(n) && typeof n.value === 'string' && n.value.includes('://')) {
+        const safeUrl = scrubUrlTokens(n.value);
+        if (safeUrl !== n.value) {
+          n.value = safeUrl;
           changed = true;
         }
-      }
-    },
-    Pair(_, pair, path) {
-      const key = isScalar(pair.key) ? String(pair.key.value) : '';
-      const sensitive = SENSITIVE_KEY.test(key) || (key === 'url' && inSecretUrlScope(path));
-      if (sensitive && isScalar(pair.value) && pair.value.value !== REDACTED) {
-        pair.value.value = REDACTED;
-        changed = true;
       }
     },
   });
@@ -137,41 +194,22 @@ export function redactDocument(doc: Document): boolean {
 
 /** The whole base.yaml as redacted YAML — for holistic review (get_config_full). */
 export function fullRedactedYaml(content: string): string {
-  const doc = parseDocument(content);
-  if (doc.errors.length > 0) {
-    throw ProblemDetailsError.unprocessable(`base.yaml 解析失败：${doc.errors[0].message}`);
-  }
+  const doc = parseConfig(content);
   redactDocument(doc);
   return doc.toString().trimEnd();
 }
 
 /* ─── effective-config redaction (outline / section) ────────────────── */
 
-/** Recursively mask credentials on a plain (merge-resolved) object. */
-function redact(value: unknown, inProxyProviders = false): unknown {
-  if (Array.isArray(value)) return value.map((v) => redact(v, inProxyProviders));
-  if (isObj(value)) {
-    const out: Obj = {};
-    for (const [k, v] of Object.entries(value)) {
-      if (SENSITIVE_KEY.test(k) || (inProxyProviders && k === 'url')) {
-        out[k] = REDACTED;
-      } else {
-        out[k] = redact(v, inProxyProviders);
-      }
-    }
-    return out;
+function parseConfig(content: string, merge = false): Document {
+  const doc = parseDocument(content, { merge });
+  if (doc.errors.length > 0) {
+    throw ProblemDetailsError.unprocessable('base.yaml 解析失败。');
   }
-  // Mask token-like segments in any URL string (e.g. self-hosted rule-set URLs).
-  if (typeof value === 'string' && value.includes('://')) return scrubUrlTokens(value);
-  return value;
+  return doc;
 }
 
-/** base.yaml as a merge-resolved plain object (effective config). */
-function effectiveConfig(content: string): Obj {
-  const doc = parseDocument(content, { merge: true });
-  if (doc.errors.length > 0) {
-    throw ProblemDetailsError.unprocessable(`base.yaml 解析失败：${doc.errors[0].message}`);
-  }
+function effectiveConfig(doc: Document): Obj {
   const js = doc.toJS();
   return isObj(js) ? js : {};
 }
@@ -184,7 +222,9 @@ export type OutlineEntry =
 
 /** A redacted table-of-contents: top-level blocks + their child keys/names. */
 export function buildOutline(content: string): OutlineEntry[] {
-  const root = effectiveConfig(content);
+  const doc = parseConfig(content, true);
+  redactDocument(doc);
+  const root = effectiveConfig(doc);
   const entries: OutlineEntry[] = [];
   for (const [key, val] of Object.entries(root)) {
     if (Array.isArray(val)) {
@@ -228,18 +268,12 @@ export interface SectionResult {
 }
 
 export function getConfigSection(content: string, path: string): SectionResult {
-  const root = effectiveConfig(content);
+  const doc = parseConfig(content, true);
   const segs = parsePath(path);
-  const value = navigate(root, segs);
+  const value = navigate(effectiveConfig(doc), segs);
   if (value === undefined) return { found: false };
-  const inProxyProviders = segs[0]?.key === 'proxy-providers';
-  const lastKey = segs[segs.length - 1].key;
-  let red = redact(value, inProxyProviders);
-  // Scalar leaves carry no key context inside `redact`; mask here when the
-  // path itself points at a credential (e.g. `secret`, `proxies[x].password`).
-  if (!isObj(red) && !Array.isArray(red)) {
-    if (SENSITIVE_KEY.test(lastKey) || (inProxyProviders && lastKey === 'url')) red = REDACTED;
-  }
+  const projected = redactDocument(doc, true) ? navigate(effectiveConfig(doc), segs) : value;
+  const red = projected === undefined ? REDACTED : projected;
   const redacted = JSON.stringify(red) !== JSON.stringify(value);
   const yaml = isObj(red) || Array.isArray(red) ? stringify(red).trimEnd() : String(red);
   return { found: true, yaml, redacted };

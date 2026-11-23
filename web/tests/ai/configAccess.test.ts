@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { parse } from 'yaml';
 import {
   buildOutline,
   fullRedactedYaml,
@@ -41,6 +42,27 @@ proxy-providers:
 rule-providers:
   openai_classic: {type: http, behavior: classical, url: https://example.com/openai.yaml}
   selfhost: {type: http, behavior: domain, url: https://my.host/AbC123def456GHI789xyz/rules.yaml}
+`;
+
+const PROXY_YAML = `port: 7891
+x-endpoint: &endpoint edge.example.invalid
+x-transport-key: &transport-key fixture-transport-key
+x-node: &node
+  name: 'https://name.example/display?tag=01'
+  type: vless
+  server: *endpoint
+  port: 48443
+  sni: tls.example.invalid
+  servername: alias.example.invalid
+  uid: proxy-user
+  token: proxy-token
+  uuid: proxy-uuid
+  ws-opts:
+    path: /private/transport
+    headers: {Host: ws.example.invalid, Authorization: proxy-auth, X-Transport: *transport-key}
+  url-params: {token: query-token}
+proxies:
+  - <<: *node
 `;
 
 describe('buildOutline', () => {
@@ -90,6 +112,23 @@ describe('getConfigSection redaction', () => {
     expect(getConfigSection(YAML, 'secret').yaml).toBe('***');
     expect(getConfigSection(YAML, 'proxies[HK-1].password').yaml).toBe('***');
   });
+
+  it('masks inherited node connections and nested connection paths, but preserves the name', () => {
+    const name = 'https://name.example/display?tag=01';
+    for (const path of [
+      'x-endpoint', 'x-transport-key', 'x-node.server', 'x-node.ws-opts.headers.Host',
+      'x-node.url-params.token',
+    ]) {
+      expect(getConfigSection(PROXY_YAML, path)).toEqual({
+        found: true, redacted: true, yaml: '***',
+      });
+    }
+    expect(parse(getConfigSection(PROXY_YAML, 'proxies').yaml!)[0]).toMatchObject({
+      name, type: 'vless', server: '***', port: '***', sni: '***', servername: '***',
+    });
+    expect(getConfigSection(YAML, 'proxies[HK-1].server').yaml).toBe('***');
+    expect(getConfigSection(PROXY_YAML, 'port').yaml).toBe('7891');
+  });
 });
 
 describe('getConfigSection navigation', () => {
@@ -117,6 +156,30 @@ describe('fullRedactedYaml', () => {
     expect(yaml).not.toContain('p@ssw0rd');
     expect(yaml).not.toContain('SECRETTOKEN');
     expect(yaml).not.toContain('super-secret-controller-key');
+  });
+
+  it('masks node connection values at their anchors without masking names or listener ports', () => {
+    const yaml = fullRedactedYaml(PROXY_YAML);
+    expect(yaml).toContain('&endpoint');
+    expect(yaml).toContain('server: *endpoint');
+    expect(yaml).toContain('<<: *node');
+    expect(parse(yaml, { merge: true })).toMatchObject({
+      port: 7891,
+      proxies: [{
+        name: 'https://name.example/display?tag=01',
+        type: 'vless',
+        server: '***',
+        port: '***',
+        sni: '***',
+        servername: '***',
+        uid: '***',
+        token: '***',
+        uuid: '***',
+        'ws-opts': { path: '***', headers: '***' },
+        'url-params': '***',
+      }],
+    });
+    expect(yaml).not.toMatch(/edge\.example|tls\.example|alias\.example|ws\.example|48443|proxy-(?:user|token|uuid|auth)|query-token|private\/transport|fixture-transport-key/);
   });
 
   it('scrubs secrets out of commented-out subscriptions too', () => {
