@@ -50,19 +50,23 @@ const NOTICE = /(?:流量重置|重置(?:时间|日期|流量)?|距离(?:下次)
 const SIZE = String.raw`(\d+(?:\.\d+)?)\s*([KMGTPE](?:i?B)?|B)(?![a-z])`;
 
 function labelPattern(keyword: RegExp, value = ''): RegExp {
-  return new RegExp(`(?:^|[^\\p{L}\\p{N}])${keyword.source}\\s*(?:[:：=]\\s*)?${value}`, 'iu');
+  return new RegExp(`^${keyword.source}\\s*(?:[:：=]\\s*)?${value}`, 'iu');
 }
 
-const TRAFFIC_VALUE = `${SIZE}(?:\\s*/\\s*${SIZE})?`;
+const TRAFFIC_VALUE = `${SIZE}(?:\\s*/\\s*${SIZE})?\\s*$`;
 const USED_LABEL = labelPattern(USED, TRAFFIC_VALUE);
 const REMAINING_LABEL = labelPattern(REMAINING, TRAFFIC_VALUE);
 const EXPIRY_LABEL = labelPattern(EXPIRY);
 const EXPIRY_DATE = labelPattern(EXPIRY, '(\\d{4})[-/.年](\\d{1,2})[-/.月](\\d{1,2})(?!\\d)');
 const NOTICE_LABEL = labelPattern(NOTICE);
 
+function subscriptionLabel(name: string): string {
+  return name.normalize('NFKC').replace(/^[^\p{L}\p{N}]*(?:[a-z]{1,32}_[^\p{L}\p{N}]*)?/iu, '');
+}
+
 export function isSubscriptionInfoNodeName(name: string): boolean {
   if (name.length > MAX_PROXY_NAME_LENGTH) return false;
-  const label = name.normalize('NFKC');
+  const label = subscriptionLabel(name);
   return !!(
     USED_LABEL.test(label) ||
     REMAINING_LABEL.test(label) ||
@@ -84,7 +88,7 @@ export function subscriptionTrafficFromNodes(names: readonly string[]): Subscrip
   let expire: number | undefined;
   for (const name of names) {
     if (name.length > MAX_PROXY_NAME_LENGTH) continue;
-    const label = name.normalize('NFKC');
+    const label = subscriptionLabel(name);
     const usage = label.match(USED_LABEL);
     const available = label.match(REMAINING_LABEL);
     const date = label.match(EXPIRY_DATE);
