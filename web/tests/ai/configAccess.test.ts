@@ -222,6 +222,27 @@ rules:
     expect(parse(getConfigSection(source, 'proxy-groups[Auto].proxies').yaml!)).toEqual([masked, 'Manual']);
   });
 
+  it.each([
+    ['EXAMPLE.COM.', 'example.com:443'],
+    ['example.com', 'EXAMPLE.COM.:443'],
+    ['xn--bcher-kva.example', 'BÜCHER.example.:443'],
+    ['bücher.example.', 'xn--bcher-kva.example:443'],
+    ['2001:db8::1', '[2001:0DB8:0:0::1]:443'],
+    ['[2001:0db8::1]', '2001:DB8:0:0::1'],
+  ])('masks equivalent endpoint hosts (%s, %s)', (server, endpoint) => {
+    const name = `HK ${endpoint} + label.example`;
+    const masked = 'HK *** + label.example';
+    const source = stringify({
+      proxies: [{ name, server, port: 443 }],
+      'proxy-groups': [{ name: 'Auto', proxies: [name] }],
+    });
+    expect(parse(fullRedactedYaml(source))).toMatchObject({
+      proxies: [{ name: masked }],
+      'proxy-groups': [{ proxies: [masked] }],
+    });
+    expect(getConfigSection(source, `proxies[${masked}].name`).yaml).toBe(masked);
+  });
+
   it('keeps masked selectors distinct from each other and from literal names', () => {
     const source = `proxies:
   - {name: host-a, server: host-a, type: ss}

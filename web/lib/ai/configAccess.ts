@@ -18,6 +18,7 @@
  * config-section scenario.
  */
 
+import { domainToASCII } from 'node:url';
 import {
   isAlias, isMap, isNode, isPair, isScalar, isSeq, parseDocument, Scalar, stringify, visit,
   type Document, type Node, type Pair, type YAMLMap,
@@ -75,6 +76,27 @@ function proxyPairs(doc: Document): Set<Pair> {
   return pairs;
 }
 
+function normalizeEndpointHost(host: string): string {
+  const bracketed = host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
+  return domainToASCII(bracketed).replace(/\.$/u, '');
+}
+
+const ENDPOINT_IN_NAME =
+  /\[[\da-f:.]+\](?::\d+)?|[\da-f]*:[\da-f:.]*:(?:[\da-f:.]*[\da-f:])?|[\p{L}\p{M}\p{N}_-]+(?:[.。．｡][\p{L}\p{M}\p{N}_-]+)*[.。．｡]?(?::\d+)?/giu;
+
+function maskNormalizedEndpoint(name: string, server: unknown, port: unknown): string {
+  if (typeof server !== 'string') return name;
+  const normalized = normalizeEndpointHost(server.trim());
+  const portText = String(port ?? '');
+  const projected = normalized ? name.replace(ENDPOINT_IN_NAME, (candidate) => {
+    if (normalizeEndpointHost(candidate) === normalized) return REDACTED;
+    const split = /^(.*):(\d+)$/u.exec(candidate);
+    if (!split || normalizeEndpointHost(split[1]) !== normalized) return candidate;
+    return split[2] === portText ? REDACTED : `${REDACTED}:${split[2]}`;
+  }) : name;
+  return maskProxyEndpoint(projected, { server, port });
+}
+
 function proxyNameProjection(doc: Document, scoped: Set<Pair>) {
   const resolve = (node: unknown) => isAlias(node) ? node.resolve(doc) : node;
   function property(map: YAMLMap, key: string, seen = new Set<YAMLMap>()): unknown {
@@ -103,10 +125,11 @@ function proxyNameProjection(doc: Document, scoped: Set<Pair>) {
       definitions.set(name, name.value);
       const server = property(map, 'server');
       const port = property(map, 'port');
-      names.set(name.value, maskProxyEndpoint(names.get(name.value) ?? scrubUrlTokens(name.value), {
-        server: isScalar(server) ? server.value : undefined,
-        port: isScalar(port) ? port.value : undefined,
-      }));
+      names.set(name.value, maskNormalizedEndpoint(
+        names.get(name.value) ?? scrubUrlTokens(name.value),
+        isScalar(server) ? server.value : undefined,
+        isScalar(port) ? port.value : undefined,
+      ));
     },
   });
   for (const [original, masked] of names) {
