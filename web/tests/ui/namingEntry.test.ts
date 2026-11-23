@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { StoredOperator } from '@/ui/data/types';
 import { guardNamingNavigation, NamingLink, NamingSetupPrompt } from '@/ui/features/sources/naming-entry';
 import * as feedback from '@/ui/primitives/feedback';
+import { PageHeader } from '@/ui/shell/page';
 
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }));
 
@@ -29,6 +30,12 @@ describe('naming navigation with an unsaved pipeline draft', () => {
     expect(navigate).not.toHaveBeenCalled();
     confirm.mockRestore();
   });
+});
+
+it('constrains the wrapping header action row to the available width', () => {
+  const html = renderToStaticMarkup(createElement(PageHeader, { title: '订阅源',
+    actions: createElement(NamingLink, { href: '/sources/entity-id/naming' }) }));
+  expect(html).toContain('flex max-w-full shrink-0 flex-wrap items-center gap-2');
 });
 
 describe.each(['sources', 'pools'])('naming entry for %s', (path) => {
