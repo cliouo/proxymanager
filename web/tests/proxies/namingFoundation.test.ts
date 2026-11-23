@@ -10,6 +10,7 @@ import {
   type RenameTemplateConfig,
 } from '@/lib/proxies/naming';
 import { applyOperators } from '@/lib/proxies/operators';
+import { mergeEnvelope } from '@/lib/proxies/provenance';
 import { NodeFactsSchema } from '@/schemas/nodeFacts';
 import { OperatorSchema, StoredOperatorListSchema } from '@/schemas/operator';
 
@@ -46,6 +47,15 @@ describe('info nodes and data-size units', () => {
       template: '${region_code} ${rate}',
       nodeFacts: { [nodeFingerprint(original)!]: { info: false } },
     }).proxies.map((p) => p.name)).toEqual(['GB 2x']);
+  });
+
+  it('honors an explicit info exclusion even when the subscription keeps notices', () => {
+    const notice = mergeEnvelope(node('剩余流量：88 GB'), { subscriptionInfo: true });
+    expect(applyRenameTemplate([notice], config).proxies).toEqual([notice]);
+    expect(applyRenameTemplate([notice], {
+      ...config,
+      nodeFacts: { [nodeFingerprint(notice)!]: { info: true } },
+    })).toMatchObject({ proxies: [], infoFiltered: 1 });
   });
 
   it.each(['我的订阅', '官网合集'])('does not classify a generated alias %s as upstream info', (label) => {

@@ -1364,7 +1364,7 @@ export function applyRenameTemplate(
     const envelope = envelopeOf(p);
     const savedInfo = effectiveNodeRecognition(p, config.recognitionRules, config.nodeFacts).facts?.info;
     const rawName = envelope?.rawName ?? (typeof p.name === 'string' ? p.name : '');
-    if (!envelope?.subscriptionInfo && (savedInfo === true || (savedInfo !== false && isInfoNodeName(rawName)))) {
+    if (savedInfo === true || (savedInfo !== false && !envelope?.subscriptionInfo && isInfoNodeName(rawName))) {
       infoFiltered += 1;
       return false;
     }
