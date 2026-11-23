@@ -11,6 +11,7 @@ import { Badge, Button, Card, EmptyState, Menu, Monogram, notify, Skeleton, TabP
 import { Page, PageHeader } from '@/ui/shell/page';
 import { HealthPill, sourceHealth, TrafficMeter, trafficOf } from '@/ui/viz/health';
 import { PipelineEditor } from '@/ui/pipeline/pipeline-editor';
+import { NamingLink, NamingSetupPrompt } from './naming-entry';
 import { deleteSource, patchSource, refreshSource, setSourceEnabled } from './actions';
 import { ManualImportDialog } from './manual-import';
 import { canServerRefresh, msToMinutes, sourceLink, sourceMode, sourceTitle, type Source } from './model';
@@ -158,6 +159,7 @@ export function SourceDetail() {
         }
         actions={
           <>
+            <NamingLink href={`/sources/${source.id}/naming`} />
             {canServerRefresh(source) && (
               <Button
                 icon={RefreshCw}
@@ -222,6 +224,7 @@ export function SourceDetail() {
             )}
             {visited.has('pipeline') && (
               <TabPanel value="pipeline" forceMount className="outline-none data-[state=inactive]:hidden">
+                <NamingSetupPrompt href={`/sources/${source.id}/naming`} operators={source.operators} />
                 <PipelineEditor
                   target={{ kind: 'subscription', id: source.id }}
                   operators={source.operators}

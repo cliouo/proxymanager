@@ -248,6 +248,33 @@ export function CommandPalette() {
           </Command.Group>
         ) : null}
 
+        {(sources?.length || pools?.length) ? (
+          <Command.Group heading="智能命名" className={groupClass}>
+            {sources?.map((source) => (
+              <Item
+                key={`naming-source-${source.id}`}
+                value={`naming source ${source.id} ${source.name} ${source.display_name ?? ''} 智能命名`}
+                icon={<Sparkles size={13} />}
+                hint="订阅源"
+                onSelect={() => go(`/sources/${source.id}/naming`)}
+              >
+                智能命名 · {source.display_name || source.name}
+              </Item>
+            ))}
+            {pools?.map((pool) => (
+              <Item
+                key={`naming-pool-${pool.id}`}
+                value={`naming pool ${pool.id} ${pool.name} ${pool.slug ?? ''} 智能命名`}
+                icon={<Sparkles size={13} />}
+                hint="聚合订阅"
+                onSelect={() => go(`/pools/${pool.id}/naming`)}
+              >
+                智能命名 · {pool.name}
+              </Item>
+            ))}
+          </Command.Group>
+        ) : null}
+
         {devices && devices.length > 0 && (
           <Command.Group heading="设备" className={groupClass}>
             {devices.map((device) => (

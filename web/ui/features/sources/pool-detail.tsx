@@ -34,6 +34,7 @@ import { useHotkey } from '@/ui/shell/hotkeys';
 import { Page, PageHeader, SaveBar } from '@/ui/shell/page';
 import { HealthPill, sourceHealth } from '@/ui/viz/health';
 import { PipelineEditor } from '@/ui/pipeline/pipeline-editor';
+import { NamingLink, NamingSetupPrompt } from './naming-entry';
 import { deletePool, patchPool, setPoolEnabled } from './actions';
 import { activeMembers, knownNodeCount, poolLink, poolLinkKey, resolvePoolMembers, sourceTitle, stableKey, validateTag, type Pool, type Source } from './model';
 import { DistributionPanel, NodesPanel, TAB_SCROLL, UsagePanel, useSubBase, useTabParam } from './shared';
@@ -408,6 +409,7 @@ export function PoolDetail() {
         }
         actions={
           <>
+            <NamingLink href={`/pools/${pool.id}/naming`} />
             <Button icon={copied ? Check : Link2} disabled={!link} onClick={() => link && void copy(link, '已复制分发链接')}>
               复制链接
             </Button>
@@ -454,6 +456,7 @@ export function PoolDetail() {
           )}
           {visited.has('pipeline') && (
             <TabPanel value="pipeline" forceMount className="outline-none data-[state=inactive]:hidden">
+              <NamingSetupPrompt href={`/pools/${pool.id}/naming`} operators={pool.operators} />
               <PipelineEditor
                 target={{ kind: 'collection', id: pool.id }}
                 operators={pool.operators}
