@@ -1,4 +1,5 @@
 import type { SubscriptionTraffic } from '@/schemas/subscription';
+import { MAX_PROXY_NAME_LENGTH } from './mihomoProxyTypes';
 
 /** Built-in junk patterns shared with the 去除无用节点 operator. */
 export const USELESS_PATTERNS = [
@@ -60,6 +61,7 @@ const EXPIRY_DATE = labelPattern(EXPIRY, '(\\d{4})[-/.年](\\d{1,2})[-/.月](\\d
 const NOTICE_LABEL = labelPattern(NOTICE);
 
 export function isSubscriptionInfoNodeName(name: string): boolean {
+  if (name.length > MAX_PROXY_NAME_LENGTH) return false;
   const label = name.normalize('NFKC');
   return !!(
     USED_LABEL.test(label) ||
@@ -81,6 +83,7 @@ export function subscriptionTrafficFromNodes(names: readonly string[]): Subscrip
   let remaining: number | undefined;
   let expire: number | undefined;
   for (const name of names) {
+    if (name.length > MAX_PROXY_NAME_LENGTH) continue;
     const label = name.normalize('NFKC');
     const usage = label.match(USED_LABEL);
     const available = label.match(REMAINING_LABEL);

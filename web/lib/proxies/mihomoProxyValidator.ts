@@ -2,8 +2,8 @@ import { createPrivateKey, createPublicKey } from 'node:crypto';
 import { isIP } from 'node:net';
 import { PROBLEM_BASE_URL, ProblemDetailsError } from '@/lib/http/problem';
 import { isCanonicalUuid, normalizeMihomoUserId } from '@/lib/proxies/mihomoUserId';
-import { FIXED_MIHOMO_PROXY_TYPES } from './mihomoProxyTypes';
-export { FIXED_MIHOMO_PROXY_TYPES } from './mihomoProxyTypes';
+import { FIXED_MIHOMO_PROXY_TYPES, MAX_PROXY_NAME_LENGTH } from './mihomoProxyTypes';
+export { FIXED_MIHOMO_PROXY_TYPES, MAX_PROXY_NAME_LENGTH } from './mihomoProxyTypes';
 
 const ENDPOINT_FREE_PROXY_TYPES = new Set(['direct', 'dns', 'reject', 'rematch', 'tailscale']);
 
@@ -1022,7 +1022,6 @@ export class MihomoProxyLimitError extends ProblemDetailsError {
 }
 
 export const MAX_PROXY_NODES = 50_000;
-export const MAX_PROXY_NAME_LENGTH = 512;
 export const MAX_HYSTERIA_PORT_CANDIDATES = 65_536;
 
 /**
