@@ -196,6 +196,7 @@ describe('object pipeline ≡ string pipeline', () => {
       download: Math.round(1.91 * 1024 ** 3),
       total: 500 * 1024 ** 3,
       expire: Date.UTC(2027, 5, 24) / 1000,
+      from_node_labels: true,
     });
     const keep = { ...source, keep_info_nodes: true };
     const raw = await resolveSubscriptionProxiesRaw(keep, options);

@@ -117,6 +117,7 @@ export function subscriptionTrafficFromNodes(names: readonly string[]): Subscrip
     download: used ?? 0,
     total: total ?? 0,
     expire: expire ?? 0,
+    from_node_labels: true,
     ...(used === undefined && remaining !== undefined ? { remaining } : {}),
     ...(used === undefined && remaining === undefined ? { expiry_only: true } : {}),
     ...(used !== undefined && total === undefined ? { total_unknown: true } : {}),

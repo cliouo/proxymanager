@@ -71,6 +71,7 @@ export const SubscriptionTrafficSchema = z.object({
   download: z.number().nonnegative(),
   total: z.number().nonnegative(),
   expire: z.number().int(),
+  from_node_labels: z.literal(true).optional(),
   remaining: z.number().nonnegative().optional(),
   expiry_only: z.literal(true).optional(),
   total_unknown: z.literal(true).optional(),

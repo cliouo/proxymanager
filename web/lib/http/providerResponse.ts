@@ -77,8 +77,16 @@ export function nodeExportResponse(
   }
   if (result.traffic) {
     const t = result.traffic;
-    headers['Subscription-Userinfo'] =
-      `upload=${t.upload}; download=${t.download}; total=${t.total}; expire=${t.expire}`;
+    const fromLabels = t.from_node_labels || t.expiry_only || t.total_unknown || t.remaining !== undefined;
+    const fields = fromLabels
+      ? [
+          !t.expiry_only && t.remaining === undefined ? `download=${t.download}` : undefined,
+          !t.expiry_only && !t.total_unknown && (t.remaining === undefined || t.total !== 0)
+            ? `total=${t.total}` : undefined,
+          t.expire !== 0 ? `expire=${t.expire}` : undefined,
+        ].filter(Boolean)
+      : [`upload=${t.upload}`, `download=${t.download}`, `total=${t.total}`, `expire=${t.expire}`];
+    if (fields.length) headers['Subscription-Userinfo'] = fields.join('; ');
   }
 
   const ifNoneMatch = request.headers.get('if-none-match');
