@@ -401,6 +401,25 @@ describe('GET /api/v1/naming/[type]/[id]', () => {
     expect(collection.status).toBe(200);
   });
 
+  it('projects generated-group names from persisted Undo history without exposing group records', async () => {
+    bucket(REDIS_KEYS.namingHistory).set('subscription:' + SUB_ID, { hadManaged: false, profileChanges: [{
+      profileId: PROFILE_ID, groups: [], rules: [], createdGroups: [
+        { id: COL_ID, name: '🇯🇵 日本', kind: 'filter', type: 'select', rank: 0, updated_at: 1, 'include-all-proxies': true, filter: '日本' },
+        { id: SUB_ID, name: 'https://private.invalid/secret-value', kind: 'manual', type: 'select', rank: 1, updated_at: 1, proxies: ['DIRECT'] },
+      ],
+    }] });
+    const response = await call(GET, 'subscription', SUB_ID);
+    expect(response.status).toBe(200);
+    const prior = (await response.json()).data.priorPlan;
+    expect(prior.createdGroups).toHaveLength(2);
+    expect(prior.createdGroups[0]).toBe('🇯🇵 日本');
+    expect(typeof prior.createdGroups[1]).toBe('string');
+    expect(JSON.stringify(prior)).not.toContain('private.invalid');
+    expect(prior).not.toHaveProperty('profileChanges');
+    bucket(REDIS_KEYS.namingHistory).set('subscription:' + SUB_ID, { hadManaged: false });
+    expect((await (await call(GET, 'subscription', SUB_ID)).json()).data.priorPlan.createdGroups).toEqual([]);
+  });
+
   it('returns managed state, recommended template, health (per-node facts) and diagnostics', async () => {
     const res = await call(GET, 'subscription', SUB_ID);
     expect(res.status).toBe(200);

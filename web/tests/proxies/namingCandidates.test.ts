@@ -3,7 +3,7 @@ import { parse, stringify } from 'yaml';
 import { materializeDynamicProxyGroups } from '@/lib/engine/materializeProxyGroups';
 import { analyzeNamingCandidate, groupNodeMembers, inferNamingTemplates, rankNamingCandidates,
   type CandidateGroup, type CandidateNode, type CandidateProfile } from '@/lib/proxies/namingCandidates';
-import { applyRenameTemplate, formatNodeName, withRawIdentity } from '@/lib/proxies/naming';
+import { applyRenameTemplate, formatNodeName, recognizeName, withRawIdentity } from '@/lib/proxies/naming';
 
 const node = (identity: string, name: string, scoped = true, type = 'ss'): CandidateNode => ({ identity, name, scoped, type, sourceKey: scoped ? 'airport' : 'other' });
 const before = [node('hk', 'HK IEPL x2 01'), node('jp', 'JP IPLC 02'), node('other', 'HK IEPL existing', false)];
@@ -13,6 +13,54 @@ const profile = (groups = [group()]): CandidateProfile => ({ id: 'p', name: 'Pro
 const template = { id: 'test', title: 'Test', template: '${region}' };
 
 describe('policy-aware candidate inference and membership', () => {
+  it('renders alias-bearing residual probes as real proxies, not subscription info nodes', () => {
+    const before = [{ ...node('a', 'HK 01 · 我的订阅'), sourceLabel: '我的订阅',
+      namingTemplate: '${region_code} ${index} · ${source}' }];
+    const naming = '${region} ${index} · ${source}';
+    const after = [{ ...before[0], name: '香港 01 · 我的订阅', namingTemplate: naming }];
+    const result = analyzeNamingCandidate({ ...template, template: naming }, [{ ...profile([group({ filter: 'HK' })]), before, after }], []);
+    expect(result.groups[0].migration?.filter).toContain('香港');
+    expect(result.groups[0].migration?.after).toBe(1);
+    expect(result.groups[0].broken).toBeFalsy();
+  });
+
+  it.each([
+    ['HK', 'HK IEPL 0.5x 01', '香港'],
+    ['家庭宽带', 'HK 家庭宽带 0.5x 01', '家宽'],
+    ['×0\\.5', 'HK IEPL ×0.5 01', '0\\.5x'],
+  ])('recovers %s despite an info-like source alias in rendered names', (filter, name, token) => {
+    const before = [{ ...node('a', name), sourceLabel: '我的订阅' }];
+    const naming = '${region} ${tags} ${rate} ${source} ${index}';
+    const after = before.map((n) => ({ ...n, name: formatNodeName({ name: n.name,
+      source: { key: n.sourceKey!, label: n.sourceLabel }, config: { template: naming } }) }));
+    const input = group({ filter });
+    const result = analyzeNamingCandidate({ ...template, template: naming }, [{ ...profile([input]), before, after }], []);
+    expect(result.groups[0].migration?.filter).toContain(token);
+    expect(result.groups[0].migration?.after).toBe(1);
+    expect(result.groups[0].broken).toBeFalsy();
+  });
+
+  it('uses captured renderer facts rather than a conflicting displayed region in field recovery', () => {
+    const before = [node('a', 'JP IEPL 01')];
+    const after = [{ ...before[0], name: '日本 IEPL 01 · 香港', sourceLabel: '香港',
+      facts: { region: 'JP', tags: recognizeName(before[0].name).tags } }];
+    const input = group({ filter: 'JP' });
+    const naming = '${region} ${tags} ${index} · ${source}';
+    const result = analyzeNamingCandidate({ ...template, template: naming }, [{ ...profile([input]), before, after }], []);
+    expect(result.groups[0].migration?.filter).toContain('日本');
+    expect(result.groups[0].migration?.after).toBe(1);
+  });
+
+  it('refuses region-only recovery when the old filter also requires residual Premium text', () => {
+    const before = [node('a', 'HK Premium 01')];
+    const after = [node('a', '香港 01')];
+    const input = group({ filter: 'HK.*Premium' });
+    const result = analyzeNamingCandidate({ ...template, template: '${region} ${index}' }, [{ ...profile([input]), before, after }], []);
+    expect(result.groups[0].migration).toBeUndefined();
+    expect(result.groups[0].broken).toBe(true);
+    expect(groupNodeMembers(input, [node('basic', 'HK Basic 02')]).nodes).toEqual([]);
+  });
+
   it.each([undefined, '${region_code} ${tags} ${index}'])('preserves region and tag constraints when all current HK nodes have IEPL (old template: %s)', (namingTemplate) => {
     const before = [node('a', 'HK IEPL BGP 01'), node('b', 'HK IEPL 02')].map((n) => ({ ...n, namingTemplate }));
     const naming = '${region} ${tags} ${index}';

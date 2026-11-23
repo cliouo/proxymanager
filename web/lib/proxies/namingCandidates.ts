@@ -106,7 +106,7 @@ function selectorDependencies(nodes: CandidateNode[], groups: CandidateGroup[]) 
   const selectors = groups.flatMap((g) => [g.values.filter, g.values['exclude-filter']])
     .filter((s): s is string => typeof s === 'string').join(' ');
   const has = (value: string) => value !== '' && selectors.toLowerCase().includes(value.toLowerCase());
-  const recognized = nodes.map((node) => recognizeName(node.name));
+  const recognized = nodes.map((node) => probeState(node).facts);
   const region = REGIONS.some((r) => [r.zh, r.emoji].some(has) ||
     [r.code, r.alpha3].some((code) => new RegExp(`(?:^|[^a-z])${code}(?:$|[^a-z])`, 'i').test(selectors)));
   const tags = /IEPL|IPLC|专线|家宽|家庭宽带|BGP|原生|native/i.test(selectors);
@@ -145,7 +145,7 @@ const escapeRegex = (name: string) => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
 type SelectorField = keyof ReturnType<typeof selectorDependencies>;
 
 function fieldValues(node: CandidateNode) {
-  const recognized = recognizeName(node.name);
+  const recognized = probeState(node).facts;
   const region = recognized.region ? regionByCode(recognized.region) : undefined;
   return {
     region: region ? [region.zh, region.code, region.emoji] : [],
@@ -172,10 +172,10 @@ function probeState(node: CandidateNode) {
 
 type ProbeState = ReturnType<typeof probeState>;
 
-function renderProbe(node: CandidateNode, state: ProbeState, template: string) {
-  const facts: NodeRecognitionFacts = { ...state.facts, region: state.facts.region ?? undefined,
+function renderProbe(node: CandidateNode, state: ProbeState, template: string, name = 'fresh-node') {
+  const facts: NodeRecognitionFacts = { ...state.facts, info: false, region: state.facts.region ?? undefined,
     rate: state.facts.rate ?? undefined, vendor: state.facts.vendor ?? undefined };
-  return formatNodeName({ name: 'fresh-node', index: 999, type: node.type, facts,
+  return formatNodeName({ name, index: 999, type: node.type, facts,
     source: { key: 'fresh-source', label: state.sourceLabel },
     config: { template } });
 }
@@ -214,6 +214,16 @@ export function renderRawNamingProbe(node: CandidateNode, field: SelectorField, 
   return before ? node.name.replace(new RegExp(escapeRegex(before), 'gi'), () => after ?? '') : node.name;
 }
 
+function residualProbeNames(node: CandidateNode) {
+  const state = probeState(node);
+  const withoutTags = renderRawNamingProbe(node, 'tags', { ...state, facts: { ...state.facts, tags: [] } });
+  let residual = recognizeName(withoutTags, undefined, { detectInfo: false }).base;
+  if (state.sourceLabel) residual = residual.replace(new RegExp(escapeRegex(state.sourceLabel), 'gi'), ' ');
+  const tokens = [...new Set(residual.match(/[\p{L}\p{N}_]+/gu) ?? [])];
+  return tokens.flatMap((token) => ['', 'probe-other-node'].map((replacement) =>
+    node.name.replace(new RegExp(`(?<![A-Za-z0-9_])${escapeRegex(token)}(?![A-Za-z0-9_])`, 'gi'), () => replacement)));
+}
+
 function selectorProbes(before: CandidateNode[], recovered: CandidateNode[], template: string) {
   const pairs: Array<{ before: string; after: string }> = [];
   for (const node of recovered.filter((n) => n.scoped)) {
@@ -222,6 +232,10 @@ function selectorProbes(before: CandidateNode[], recovered: CandidateNode[], tem
     const newState = probeState(node);
     pairs.push({ before: original.namingTemplate ? renderProbe(original, oldState, original.namingTemplate) : original.name,
       after: renderProbe(node, newState, template) });
+    for (const name of residualProbeNames(original)) {
+      pairs.push({ before: original.namingTemplate ? renderProbe(original, oldState, original.namingTemplate, name) : name,
+        after: renderProbe(node, newState, template, name) });
+    }
     const changes: Array<{ field: SelectorField; facts?: Partial<ProbeState['facts']>; sourceLabel?: string }> = [
       ...REGIONS.map((region) => ({ field: 'region' as const, facts: { region: region.code } })),
       { field: 'region', facts: { region: null } },
