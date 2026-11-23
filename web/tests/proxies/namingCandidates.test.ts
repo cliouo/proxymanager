@@ -13,6 +13,19 @@ const profile = (groups = [group()]): CandidateProfile => ({ id: 'p', name: 'Pro
 const template = { id: 'test', title: 'Test', template: '${region}' };
 
 describe('policy-aware candidate inference and membership', () => {
+  it('migrates Taiwan selectors without admitting China nodes sharing the CN flag', () => {
+    const before = [node('tw', '🇨🇳 TW01 0.20x'), node('cn', '🇨🇳 上海 01')];
+    const naming = '${emoji} ${region} · ${index}${?rate: · ${rate}}';
+    const after = before.map((n, i) => ({ ...n, name: formatNodeName({ name: n.name, index: i + 1, config: { template: naming } }) }));
+    const input = group({ filter: 'TW' });
+    const result = analyzeNamingCandidate({ ...template, template: naming }, [{ ...profile([input]), before, after }], []);
+    const migration = result.groups[0].migration;
+    expect(migration).toBeDefined();
+    expect(migration!.filter).toContain('台湾');
+    const fresh = [node('fresh-tw', '🇨🇳 台湾 · 03'), node('fresh-cn', '🇨🇳 中国 · 04')];
+    expect(groupNodeMembers(input, fresh, migration!.filter).nodes.map((n) => n.identity)).toEqual(['fresh-tw']);
+  });
+
   it('renders alias-bearing residual probes as real proxies, not subscription info nodes', () => {
     const before = [{ ...node('a', 'HK 01 · 我的订阅'), sourceLabel: '我的订阅',
       namingTemplate: '${region_code} ${index} · ${source}' }];

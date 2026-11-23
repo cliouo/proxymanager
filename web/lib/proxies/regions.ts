@@ -91,6 +91,13 @@ export const REGIONS: Region[] = [
     patterns: [/台湾|台灣|臺灣|台北|新北|彰化/i, /Taiwan/i, code2('TW')],
   },
   {
+    code: 'MO',
+    alpha3: 'MAC',
+    emoji: '🇲🇴',
+    zh: '澳门',
+    patterns: [/澳门|澳門/i, /Macau|Macao/i, code2('MO')],
+  },
+  {
     code: 'JP',
     alpha3: 'JPN',
     emoji: '🇯🇵',

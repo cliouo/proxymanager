@@ -30,6 +30,29 @@ const AGG_TEMPLATE = DEFAULT_NAMING_TEMPLATE;
 /* ─── recognition ──────────────────────────────────────────────────── */
 
 describe('recognizeName', () => {
+  it.each([
+    ['🇨🇳 TW01 0.20x', 'TW'], ['🇨🇳 TW02', 'TW'],
+    ['🇨🇳 HK 02', 'HK'], ['🇨🇳 MO 03', 'MO'],
+    ['🇨🇳 台湾 01', 'TW'], ['🇨🇳 台灣 01', 'TW'], ['🇨🇳 Taiwan 01', 'TW'],
+    ['🇨🇳 香港 02', 'HK'], ['🇨🇳 Hong Kong 02', 'HK'],
+    ['🇨🇳 澳门 03', 'MO'], ['🇨🇳 澳門 03', 'MO'], ['🇨🇳 Macau 03', 'MO'], ['🇨🇳 Macao 03', 'MO'],
+    ['🇨🇳 上海 01', 'CN'], ['🇨🇳 JP 01', 'CN'], ['🇯🇵 TW01', 'JP'],
+  ])('recognizes %s as %s without changing other flag precedence', (name, region) => {
+    expect(recognizeName(name).region).toBe(region);
+  });
+
+  it.each([
+    ['🇨🇳 TW01 0.20x', '台湾', '01', ' · 0.2x'],
+    ['🇨🇳 HK 02', '香港', '02', ''], ['🇨🇳 MO 03', '澳门', '03', ''], ['🇨🇳 上海 01', '中国', '01', ''],
+  ])('preserves the upstream CN flag when rendering %s', (name, region, index, rate) => {
+    const options = { name, index: 1, indexWidth: 2, config: config(DEFAULT_NAMING_TEMPLATE) };
+    const rendered = formatNodeName(options);
+    expect(rendered).toBe(`🇨🇳 ${region} · ${index}${rate}`);
+    expect(formatNodeName({ ...options, name: rendered })).toBe(rendered);
+    expect(formatNodeName({ ...options, config: { ...options.config, tw2cn: true } })).toBe(rendered);
+    if (rate) expect(recognizeName(name).rate).toBe(0.2);
+  });
+
   it('region from explicit flag emoji wins, keyword removed from base', () => {
     const r = recognizeName('🇭🇰 香港 01');
     expect(r.region).toBe('HK');
