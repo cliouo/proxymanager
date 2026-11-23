@@ -27,7 +27,7 @@ type Ctx = RouteContext<'/api/v1/collections/[id]/preview'>;
  * editing; we merge the enabled members' processed nodes (each member's own
  * pipeline already ran at fetch), run the posted collection pipeline over the
  * union, and return before/after node names, a per-step trace, and structured
- * credential-free issues. `before` here = the merged member union (collection
+ * issues. `before` here = the merged member union (collection
  * operators not yet applied).
  *
  * Read-only dry-run: member fetches never write the fetch cache

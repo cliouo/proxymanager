@@ -589,14 +589,14 @@ describe('shared operator-list contract in AI actions (Delivery finding 7)', () 
     expect(storedSubOps()).toHaveLength(1);
   });
 
-  it('preview names are REDACTED before re-entering the assistant loop', async () => {
+  it('assistant preview preserves node names but omits connection fields', async () => {
     seedSub([]);
     const fetcher = await import('@/lib/services/subscriptionFetcher');
     (
       fetcher.resolveSubscriptionProxiesRaw as unknown as ReturnType<typeof vi.fn>
     ).mockResolvedValueOnce({
       proxies: [
-        { name: '🇭🇰 香港 https://evil.example/sub?token=abc123 ::1', type: 'ss' },
+        { name: '🇭🇰 香港 https://evil.example/sub?token=abc123 ::1', type: 'ss', server: 'fixture.invalid', password: 'fixture-password' },
         { name: '🇯🇵 JP-1', type: 'ss' },
       ],
       proxyCount: 2,
@@ -610,10 +610,9 @@ describe('shared operator-list contract in AI actions (Delivery finding 7)', () 
     });
     const data = env.data as { before: { names: string[] }; source: string };
     const serialized = JSON.stringify(data);
-    // credential-like content never re-enters the assistant loop
-    expect(serialized).not.toContain('evil.example');
-    expect(serialized).not.toContain('token=abc123');
-    expect(serialized).not.toContain('::1');
+    expect(data.before.names[0]).toBe('🇭🇰 香港 https://evil.example/sub?token=abc123 ::1');
+    expect(serialized).not.toContain('fixture.invalid');
+    expect(serialized).not.toContain('fixture-password');
     // benign content stays readable
     expect(JSON.stringify(data)).toContain('JP-1');
     expect(data.source.length).toBeLessThanOrEqual(48);
@@ -621,7 +620,7 @@ describe('shared operator-list contract in AI actions (Delivery finding 7)', () 
 });
 
 describe('AI-facing privacy injections (finding 5)', () => {
-  it('preview cannot return injected host/IP/token via steps, collisions, samples, or references', async () => {
+  it('preview preserves step and reference node names but strips non-name reference data', async () => {
     seedSub([]);
     const fetcher = await import('@/lib/services/subscriptionFetcher');
     (
@@ -659,9 +658,11 @@ describe('AI-facing privacy injections (finding 5)', () => {
       ],
     });
     const serialized = JSON.stringify(env);
-    for (const needle of ['evil.example', 'token=abc123', '::1', '2001:db8', 'airport.moe']) {
-      expect(serialized, needle).not.toContain(needle);
-    }
+    expect(serialized).not.toContain('airport.moe');
+    expect(env.data).toMatchObject({
+      orphanedReferences: [{ node: '🇭🇰 香港 https://evil.example/sub?token=abc123 ::1' }],
+      steps: [{ samples: [{ before: '🇭🇰 香港 https://evil.example/sub?token=abc123 ::1' }, { before: '日本 2001:db8:: 01' }] }],
+    });
     // benign structure still present
     expect(serialized).toContain('orphanedReferences');
     expect(serialized).toContain('samples');

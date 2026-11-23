@@ -19,8 +19,8 @@
  * VALUE between preview_naming_target and save_naming_plan — no server-side
  * draft state exists, so an abandoned candidate can never affect serving.
  *
- * Privacy (criterion 10): every string that re-enters the loop is projected
- * through redaction + bounds (names, labels, fragments, errors). Node handles
+ * Privacy: original node names are display data; derived fragments, source
+ * labels and errors are redacted and bounded. Node handles
  * are keyed HMAC-SHA256 opaque tokens. Raw operator rows, subscription URLs, server/IP/
  * port, credentials, SNI, headers and fingerprints never appear; templates
  * and bounded recognition rules are the managed config itself and are safe.
@@ -29,6 +29,7 @@
 import { z } from '@/lib/openapi/zod';
 import { ExternalSourceAliasesSchema } from '@/schemas/externalAliases';
 import {
+  boundedNodeName,
   buildNodeSnapshotScope,
   nodeIdentityOf,
   sanitizeDisplayText,
@@ -533,7 +534,7 @@ function clusterGroupKey(sig: ClusterSignature): string {
 const inspectSourceNameClusters = defineAction({
   name: 'inspect_source_name_clusters',
   description:
-    '检查一个来源的「名称形态簇」：把节点按识别出的语义签名(地区/路由/服务商/倍率/入口 + 残片首词)分组，返回每组数量与 2 条脱敏残片样本(分层、有界)。用 more_samples_for 可再取某一簇的额外样本(≤20 条)。用于判断上游命名规律、识别是否有规律可循。只读。',
+    '检查一个来源的「名称形态簇」：把节点按识别出的语义签名(地区/路由/服务商/倍率/入口 + 残片首词)分组，返回每组数量与 2 条原始名称样本(分层、有界)。用 more_samples_for 可再取某一簇的额外样本(≤20 条)。用于判断上游命名规律、识别是否有规律可循。只读。',
   input: ClusterInput,
   risk: 'read',
   async run(ctx, input) {
@@ -573,11 +574,11 @@ const inspectSourceNameClusters = defineAction({
       const count = clusterCounts.get(key) ?? 0;
       const extra = extraIndex === i ? entries.slice(2, 22) : [];
       // round-1: samples carry the OPAQUE node handle (projected through the
-      // complete-domain scope) PLUS the bounded sanitized ORIGINAL display
+      // complete-domain scope) PLUS the bounded original display
       // name — useful recognition content, credential-free.
       const project = (e: { name: string; identity: string }) => ({
         handle: nodeScope.project(e.identity),
-        name: sanitizeDisplayText(e.name),
+        name: boundedNodeName(e.name),
       });
       // STRUCTURED signature (pass-4 finding): every field is projected
       // individually — sanitized display text (rule-authored values are
@@ -998,8 +999,7 @@ const inspectNamingCollisions = defineAction({
     const collisionsCapped = capList(collisionsAll, MAX_COLLISIONS);
     const orphanedCapped = capList(
       orphaned.map((ref) => ({
-        // referenced config names are raw text — opaque tokens only
-        node: safeText(ref.node, '(已脱敏)'),
+        node: boundedNodeName(ref.node, 64),
         kind: ref.kind,
         via: safeText(ref.via, '(已脱敏)'),
       })),
@@ -1036,7 +1036,7 @@ const inspectNamingCollisions = defineAction({
 const previewNamingTarget = defineAction({
   name: 'preview_naming_target',
   description:
-    '试算一个完整的命名方案(模板 + tw2cn + 来源别名 + 识别规则)作用到真实节点的效果：前/后名称样本(脱敏、有界)、重名消歧、真去重、占位符覆盖率、引用影响。读工具可反复迭代；最终方案原样传给 save_naming_plan 一次确认落地。只读、无渲染副作用。',
+    '试算一个完整的命名方案(模板 + tw2cn + 来源别名 + 识别规则)作用到真实节点的效果：前/后真实名称样本(有长度上限)、重名消歧、真去重、占位符覆盖率、引用影响。读工具可反复迭代；最终方案原样传给 save_naming_plan 一次确认落地。只读、无渲染副作用。',
   input: NamingCandidateSchema,
   risk: 'read',
   async run(ctx, input) {
@@ -1071,7 +1071,7 @@ const previewNamingTarget = defineAction({
     const usedFields = reports.flatMap((r) => r.fields);
     // round-1: Opaque handles for the raw + final lists — discovery for
     // inspect_node_parse. ONE collision-checked scope over EACH COMPLETE
-    // list BEFORE the cap; samples carry the bounded sanitized ORIGINAL
+    // list BEFORE the cap; samples carry the bounded original
     // display names too (useful recognition content). TRUE totals: the
     // sample cap is never reported as the node count (pass-1 finding).
     const { scope: beforeScope, identities: beforeIdentities } = buildNodeSnapshotScope(
@@ -1082,7 +1082,7 @@ const previewNamingTarget = defineAction({
     const beforeCapped = capList(
       beforeIdentities.map((identity, i) => ({
         handle: beforeScope.project(identity),
-        name: sanitizeDisplayText(
+        name: boundedNodeName(
           typeof source.proxies[i].name === 'string' ? (source.proxies[i].name as string) : '',
         ),
       })),
@@ -1099,7 +1099,7 @@ const previewNamingTarget = defineAction({
     const afterCapped = capList(
       afterIdentities.map((identity, i) => ({
         handle: afterScope.project(identity),
-        name: sanitizeDisplayText(
+        name: boundedNodeName(
           typeof result.proxies[i].name === 'string' ? (result.proxies[i].name as string) : '',
         ),
       })),
@@ -1134,7 +1134,7 @@ const previewNamingTarget = defineAction({
         ],
         orphanedReferences: capList(
           orphaned.map((ref) => ({
-            node: safeText(ref.node, '(已脱敏)'),
+            node: boundedNodeName(ref.node, 64),
             kind: ref.kind,
             via: safeText(ref.via, '(已脱敏)'),
           })),

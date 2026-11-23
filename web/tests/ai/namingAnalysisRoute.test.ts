@@ -236,7 +236,7 @@ describe('POST /api/v1/assistant/naming-analysis', () => {
     expect(JSON.parse(init.body).model).toBe('custom-model-7b');
   });
 
-  it('round-1: sanitized names + labels reach the model bounded; credentials/stable keys never do', async () => {
+  it('bounded names and sanitized labels reach the model; connection fields and stable keys do not', async () => {
     scalars.set(REDIS_KEYS.assistantConfig, {
       baseUrl: 'https://api.deepseek.com',
       model: 'deepseek-v4-pro',
@@ -270,7 +270,7 @@ describe('POST /api/v1/assistant/naming-analysis', () => {
     const raw = fetcher.resolveSubscriptionProxiesRaw as unknown as ReturnType<typeof vi.fn>;
     raw.mockResolvedValueOnce({
       proxies: [
-        { name: 'BenignUniqueNodeName', type: 'ss', server: 'n1.invalid', port: 443 },
+        { name: 'BenignUniqueNodeName [HK-01]', type: 'ss', server: 'n1.invalid', port: 443 },
         { name: '机场甲 专线A', type: 'vmess', server: 'n2.invalid', port: 8443 },
         { name: '香港 01', type: 'trojan', server: 'n3.invalid', port: 443 },
       ],
@@ -294,7 +294,7 @@ describe('POST /api/v1/assistant/naming-analysis', () => {
       // round-1: the returned privacy payload KEEPS the sanitized original
       // names (useful display content) and stays free of connection fields
       const returned = JSON.stringify(payload);
-      for (const seed of ['BenignUniqueNodeName', '机场甲', '专线A', '香港 01']) {
+      for (const seed of ['BenignUniqueNodeName [HK-01]', '机场甲', '专线A', '香港 01']) {
         expect(returned, `returned payload should keep ${seed}`).toContain(seed);
       }
       for (const seed of ['n1.invalid', '8443', 'n2.invalid', 'n3.invalid']) {
@@ -305,7 +305,7 @@ describe('POST /api/v1/assistant/naming-analysis', () => {
       // the MODEL MESSAGE keeps the useful names and is free of the seeds
       const [, init] = fetchMock.mock.calls[0] as [string, { body: string }];
       const sent = init.body;
-      for (const seed of ['BenignUniqueNodeName', '机场甲', '专线A', '香港 01']) {
+      for (const seed of ['BenignUniqueNodeName [HK-01]', '机场甲', '专线A', '香港 01']) {
         expect(sent, `model message should keep ${seed}`).toContain(seed);
       }
       for (const seed of ['n1.invalid', '8443', 'n2.invalid', 'n3.invalid']) {

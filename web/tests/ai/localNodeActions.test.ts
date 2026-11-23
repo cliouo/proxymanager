@@ -198,7 +198,7 @@ describe('registration', () => {
 });
 
 describe('list_local_nodes', () => {
-  it('returns opaque node handles + bounded display + allowlisted type only — never raw names or credentials', async () => {
+  it('returns opaque node handles + bounded display + allowlisted type only — never connection fields', async () => {
     seedLocal();
     const action = getAction('list_local_nodes');
     if (action.risk !== 'read') throw new Error('expected read');
@@ -211,8 +211,7 @@ describe('list_local_nodes', () => {
     expect(data.nodes).toEqual([
       {
         node: nodeHandleOf('xiagangbgp-hk-disx', 0),
-        // round-1 (invariant 6): the display is the bounded SANITIZED
-        // original name — useful recognition content, credential-free
+        // The display is the bounded original name.
         display: 'xiagangbgp-hk-disx',
         type: 'ss',
         referencedBy: [],
@@ -281,7 +280,7 @@ describe('list_local_nodes', () => {
     }
   });
 
-  it('pass-8: credential-shaped node names project as redacted bounded display', async () => {
+  it('preserves the node name in bounded display without leaking connection fields', async () => {
     seedLocal(
       `proxies:
   - name: "香港 https://evil.example/sub?token=abc123 ::1"
@@ -296,10 +295,9 @@ describe('list_local_nodes', () => {
     if (action.risk !== 'read') throw new Error('expected read');
     const env = await action.run(ctx, { ref: localRef() });
     const data = env.data as { nodes: Array<{ display: string }> };
-    expect(data.nodes[0].display).not.toContain('evil.example');
-    expect(data.nodes[0].display).not.toContain('token=');
-    expect(data.nodes[0].display).not.toContain('::1');
-    expect(data.nodes[0].display.length).toBeLessThanOrEqual(25);
+    expect(data.nodes[0].display).toBe('香港 https://evil.example/sub?token=abc123 ::1');
+    expect(JSON.stringify(data)).not.toContain('1.2.3.4');
+    expect(JSON.stringify(data)).not.toHaveProperty('password');
   });
 
   it('pass-8: a forced node-handle MAC collision fails the list closed (bounded)', async () => {
@@ -348,9 +346,7 @@ describe('list_local_nodes', () => {
     };
     const pinned = data.nodes.find((n) => n.node === nodeHandleOf('xiagangbgp-hk-disx', 0));
     expect(pinned?.referencedBy).toEqual([
-      // pass-9 blocker 4: referencing-entity names project as bounded
-      // category ordinals — never the raw name (chain names embed node names)
-      { kind: 'chain-backend', via: '引用 1' },
+      { kind: 'chain-backend', via: 'chain:F-to-xiagangbgp-hk-disx' },
     ]);
     // The unreferenced node stays empty.
     expect(
@@ -371,7 +367,7 @@ describe('rename_local_node', () => {
       to: '香港-1',
     });
     const d = diff as { beforeYaml: string; afterYaml: string };
-    // round-1: the OLD name projects as a bounded sanitized display name;
+    // The OLD name projects as a bounded original display name;
     // the NEW name is the model's own bounded input — never credentials
     expect(d.beforeYaml).toBe('name: xiagangbgp-hk-disx');
     expect(d.afterYaml).toBe('name: 香港-1');

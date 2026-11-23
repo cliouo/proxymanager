@@ -17,7 +17,7 @@ const node = (name: string, port = 443) => ({
 const reply = (nodes: unknown[]) => vi.fn(async () => ({ content: JSON.stringify({ nodes }) }));
 
 describe('bounded AI node fact proposals', () => {
-  it('sends only scrubbed names and opaque indexes, returns validated fingerprint-keyed proposals', async () => {
+  it('sends only names and opaque indexes, returns validated fingerprint-keyed proposals', async () => {
     const proxy = node('mystery 专线 https://secret.example/token?key=123 203.0.113.1');
     const chat = reply([{ i: 0, facts: { region: 'HK', tags: ['IEPL'], rate: 2, info: false } }]);
     const result = await runNodeFactAnalysis({ proxies: [proxy], chat });
@@ -28,12 +28,11 @@ describe('bounded AI node fact proposals', () => {
     const messages = (chat.mock.calls as unknown as [ChatMessage[]][])[0][0];
     const payload = JSON.parse(messages[1].content!);
     expect(Object.keys(payload[0]).sort()).toEqual(['i', 'name']);
+    expect(payload[0].name).toBe(proxy.name);
     const sent = JSON.stringify(messages);
     for (const secret of [
       'private.example',
       'never-send-this',
-      'secret.example',
-      '203.0.113.1',
       nodeFingerprint(proxy)!,
     ])
       expect(sent).not.toContain(secret);

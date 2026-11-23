@@ -97,7 +97,7 @@ interface NodeReference {
 
 ### B. 本地源直接改名路径 → `list_local_nodes`
 
-`list_local_nodes` 列本地源（`kind=local`）节点，**仅不透明节点句柄（`node`，nd- 开头）+ 有界脱敏显示名（`display`，即原始节点名经结构化脱敏后的可见文本）+ 白名单协议类型（`type`，未知统一 `unknown`），凭证与稳定键一律不出**；每个节点带 `referencedBy`（名称有界脱敏）：
+`list_local_nodes` 列本地源（`kind=local`）节点，**仅不透明节点句柄（`node`，nd- 开头）+ 原始显示名（`display`，有长度上限）+ 白名单协议类型（`type`，未知统一 `unknown`），凭证与稳定键一律不出**；每个节点带 `referencedBy`（引用名称可见，规则文本有界脱敏）：
 
 ```jsonc
 { "ref": "ref-…", "count": N,

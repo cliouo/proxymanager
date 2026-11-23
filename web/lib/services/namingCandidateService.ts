@@ -213,7 +213,8 @@ export async function loadNamingCandidateContext(type: 'subscription' | 'collect
 
 export function publicGroupingPreview(preview: GroupingPreview): GroupingPreview {
   return { ...preview, profiles: preview.profiles.map((p) => ({ name: safeSampleName(p.name), groups: p.groups.map((g) => ({
-    name: safeSampleName(g.name), kind: g.kind, type: g.type, count: g.count, sample: g.sample.map(safeSampleName),
+    name: safeSampleName(g.name), kind: g.kind, type: g.type, count: g.count,
+    sample: g.sample,
     ...(g.filter ? { filter: redactSensitiveText(g.filter).slice(0, 4096), 'include-all-proxies': true } : {}),
     ...(g.proxies ? { proxies: g.proxies.map(safeSampleName) } : {}),
   })) })), warnings: preview.warnings.map((w) => redactSensitiveText(w).slice(0, 256)) };
@@ -225,10 +226,9 @@ export function publicNamingCandidate(candidate: NamingCandidate): NamingCandida
     ...(g.error ? { error: safeSampleName(g.error) } : {}),
     ...(g.migration ? { migration: { ...g.migration, filter: redactSensitiveText(g.migration.filter).slice(0, 512) } } : {}),
   });
-  return { ...candidate, sample: candidate.sample.map(safeSampleName),
+  return { ...candidate,
     references: candidate.references.map((r) => ({ ...r,
-      owner: r.owner.startsWith('node:') || r.owner.startsWith('base:') ? 'node' : r.owner,
-      before: safeSampleName(r.before), after: r.after === undefined ? undefined : safeSampleName(r.after) })),
+      owner: r.owner.startsWith('node:') || r.owner.startsWith('base:') ? 'node' : r.owner })),
     warnings: candidate.warnings.map((w) => redactSensitiveText(w).slice(0, 256)),
     groups: candidate.groups.map(groupPublic), emptiedGroups: candidate.emptiedGroups.map(groupPublic) };
 }

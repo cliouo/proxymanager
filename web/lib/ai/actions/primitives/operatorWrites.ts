@@ -30,6 +30,7 @@ import { z } from '@/lib/openapi/zod';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { applyOperators, type ClashProxy } from '@/lib/proxies/operators';
 import { redactSensitiveText } from '@/lib/proxies/namingSanitize';
+import { namesPayload } from '@/lib/services/pipelinePreview';
 import { mergeCollectionMemberProxies } from '@/lib/services/nodeExportService';
 import {
   createOrdinalPlanningSession,
@@ -306,26 +307,7 @@ async function sourceRawProxies(
   return { proxies: merged as ClashProxy[], memberErrors, ordinalPlanningSession };
 }
 
-/**
- * AI-action name payload: node names can embed credential-like text and these
- * results re-enter the assistant loop, so every name is REDACTED + bounded
- * (the authenticated workbench preview keeps its raw names via
- * lib/services/pipelinePreview).
- */
-function redactedNamesPayload(proxies: ClashProxy[]): {
-  count: number;
-  names: string[];
-  truncated: boolean;
-} {
-  const names = proxies.slice(0, NAME_CAP).map((p) => {
-    const raw = typeof p.name === 'string' ? p.name : '';
-    const redacted = redactSensitiveText(raw).replace(/\s+/g, ' ').trim();
-    return (redacted === '' ? '(已脱敏)' : redacted).slice(0, 64);
-  });
-  return { count: proxies.length, names, truncated: proxies.length > NAME_CAP };
-}
-
-/** Redact + bound ANY string for AI-facing outputs. */
+/** Redact + bound non-name text for AI-facing outputs. */
 function safeText(text: string, fallback = '(未命名)'): string {
   const redacted = redactSensitiveText(text).replace(/\s+/g, ' ').trim();
   return (redacted === '' ? fallback : redacted).slice(0, 64);
@@ -336,10 +318,17 @@ function safeLabel(label: string): string {
   return safeText(label, '(未命名)').slice(0, 48);
 }
 
+function previewNodeName(name: string): string {
+  return name.slice(0, 64);
+}
+
+function previewNamesPayload(proxies: ClashProxy[]) {
+  const payload = namesPayload(proxies, NAME_CAP);
+  return { ...payload, names: payload.names.map(previewNodeName) };
+}
+
 /**
- * AI-safe step projection: engine steps carry redacted samples already, but
- * collision names are raw — every string field is re-projected through
- * safeText instead of spreading the raw step object.
+ * AI step projection: node names are display data; source keys stay opaque.
  */
 function safeStep(
   stepsSourceScope: TypedHandleScope<string>,
@@ -365,13 +354,13 @@ function safeStep(
     dropped: step.dropped,
     changed: step.changed,
     ...(step.collisions && step.collisions.length > 0
-      ? { collisions: step.collisions.map((c) => safeText(c, '(已脱敏)')) }
+      ? { collisions: step.collisions.map(previewNodeName) }
       : {}),
     ...(step.deduped && step.deduped.length > 0
       ? {
           deduped: step.deduped.map((d) => ({
-            kept: safeText(d.kept, '(已脱敏)'),
-            dropped: safeText(d.dropped, '(已脱敏)'),
+            kept: previewNodeName(d.kept),
+            dropped: previewNodeName(d.dropped),
             // pass-7 blocker 1: stable source keys never reach the model —
             // keyed src handles only, projected through ONE complete-domain
             // source scope over every step's source keys (round-2)
@@ -383,19 +372,19 @@ function safeStep(
       : {}),
     ...(step.samples && step.samples.length > 0
       ? {
-          samples: step.samples.map((sample) => ({
-            before: safeText(sample.before, '(已脱敏)'),
-            after: safeText(sample.after, '(已脱敏)'),
+          samples: step.samples.map(({ before, after }) => ({
+            before: previewNodeName(before),
+            after: previewNodeName(after),
           })),
         }
       : {}),
   };
 }
 
-/** AI-safe reference projection — node + via can carry user/sensitive text. */
+/** Keep the node name; redact the referrer label or rule text. */
 function safeReference(ref: { node: string; kind: string; via: string }): unknown {
   return {
-    node: safeText(ref.node, '(已脱敏)'),
+    node: previewNodeName(ref.node),
     kind: ref.kind,
     via: safeText(ref.via, '(已脱敏)'),
   };
@@ -636,8 +625,8 @@ const previewOperators = defineAction({
       data: {
         source: safeLabel(handle.label),
         sourceType: handle.type,
-        before: redactedNamesPayload(before),
-        after: redactedNamesPayload(after),
+        before: previewNamesPayload(before),
+        after: previewNamesPayload(after),
         steps: steps.map((step) => safeStep(stepsSourceScope, step)),
         ...(memberErrors && memberErrors.length
           ? { memberErrors: memberErrors.map(safeMemberError) }

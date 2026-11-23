@@ -25,7 +25,7 @@ type Ctx = RouteContext<'/api/v1/subscriptions/[id]/preview'>;
  * operator) proxies, WITHOUT saving. The workbench posts the operators it's
  * currently editing; we fetch the sub's cached raw proxies, run the pipeline,
  * and return before/after node names, a per-step trace, and structured
- * credential-free issues (duplicate final names, resolved rename-template
+ * issues (duplicate final names, resolved rename-template
  * collisions, true-duplicate drops, references a rename/filter would orphan).
  *
  * Preview is a read-only dry-run: fresh upstream fetches are NOT persisted

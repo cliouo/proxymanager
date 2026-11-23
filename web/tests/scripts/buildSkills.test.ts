@@ -80,7 +80,7 @@ describe('canonical docs match the registered action schemas (semantic contract)
   it('tool-map describes list_local_nodes by its real output keys (node/display/type/referencedBy)', async () => {
     const { references } = loadSkills() as unknown as { references: Record<string, string> };
     const toolMap = references['managing-clash-config/tool-map'];
-    expect(toolMap).toContain('node 句柄 + 有界脱敏显示名 display + type + referencedBy');
+    expect(toolMap).toContain('node 句柄 + 原始显示名 display（有长度上限） + type + referencedBy');
     expect(toolMap).toMatch(/`list_node_sources`/);
     expect(toolMap).toContain('profile-bound 不透明 ref');
   });

@@ -56,8 +56,8 @@ export interface OperatorStep {
   deduped?: Array<{ kept: string; dropped: string; sourceKey?: string }>;
   /**
    * Bounded representative name samples: up to {@link STEP_SAMPLE_CAP} names
-   * from the step's input head and its output head (deterministic, privacy-
-   * safe — display names only). The workbench shows these per step so users
+   * from the step's input head and its output head (display names only).
+   * The workbench shows these per step so users
    * see what each operator actually produced, not just counts.
    */
   samples?: { before: string; after: string }[];
@@ -65,16 +65,6 @@ export interface OperatorStep {
 
 /** Cap on per-step name samples. */
 export const STEP_SAMPLE_CAP = 3;
-
-/**
- * Node names can embed credential-like text, and step traces flow into AI
- * action results — samples are therefore REDACTED (same sanitizer as the AI
- * payload) and bounded at creation, never raw display names.
- */
-function safeSampleName(name: string): string {
-  const redacted = redactSensitiveText(name).replace(/\s+/g, ' ').trim();
-  return (redacted === '' ? '(已脱敏)' : redacted).slice(0, 64);
-}
 
 /** Bounded, redacted source-key projection for trace diagnostics. */
 function safeLabel(text: string): string {
@@ -93,7 +83,7 @@ function stepSamples(
     const b = typeof before[i].name === 'string' ? (before[i].name as string) : '';
     const a = typeof after[i].name === 'string' ? (after[i].name as string) : '';
     if (b === '' && a === '') continue;
-    out.push({ before: safeSampleName(b), after: safeSampleName(a) });
+    out.push({ before: b, after: a });
   }
   return out;
 }
@@ -293,16 +283,10 @@ function runOne(
         dropped: proxies.length - res.proxies.length,
         changed: res.changed,
         infoFiltered: res.infoFiltered,
-        // Collision names can embed raw residual text — bounded + redacted
-        // at creation so every consumer (workbench, AI, preview) sees the
-        // same projected shape (C10).
-        collisions: res.collisions.map((c) => safeSampleName(c)),
-        // Diagnostic provenance, projected through the same bounded
-        // redaction as step samples (these entries flow into preview
-        // responses and AI action results).
+        collisions: res.collisions,
         deduped: res.deduped.map((d) => ({
-          kept: safeSampleName(d.kept),
-          dropped: safeSampleName(d.dropped),
+          kept: d.kept,
+          dropped: d.dropped,
           ...(d.sourceKey !== undefined ? { sourceKey: safeLabel(d.sourceKey) } : {}),
         })),
       };

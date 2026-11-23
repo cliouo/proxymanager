@@ -1,10 +1,9 @@
 /**
  * namingPreviewService — the shared zero-write naming preview path.
  *
- * Workspace UI preview, assistant confirmation preview and the generic
- * preview routes all derive their managed candidate from the SAME builder
- * (namingManagedCandidate) and run the SAME zero-write pipeline preview
- * functions (pipelinePreview.ts). Preview never saves: no fetch-cache
+ * Workspace UI and assistant confirmation share the managed candidate builder.
+ * The workspace uses the same zero-write projection as the admin preview
+ * routes. Preview never saves: no fetch-cache
  * writes, no ordinal persistence, no CAS, no audit.
  */
 

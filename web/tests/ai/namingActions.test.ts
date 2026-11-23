@@ -625,11 +625,14 @@ describe('preview_naming_target (round-trip candidate)', () => {
 
   it('previews the full target without render effects', async () => {
     const env = await readAction('preview_naming_target').run(ctx, candidate);
-    const data = env.data as { changed: number; beforeSamples: string[]; afterSamples: string[] };
+    const data = env.data as {
+      changed: number;
+      beforeSamples: Array<{ name: string }>;
+      afterSamples: Array<{ name: string }>;
+    };
     expect(data.changed).toBeGreaterThan(0);
     expect(data.afterSamples.length).toBeGreaterThan(0);
-    // never secrets
-    expect(JSON.stringify(env)).not.toContain('evil.example');
+    expect(JSON.stringify(data.beforeSamples)).toContain('evil.example');
     expect(JSON.stringify(env)).not.toContain('example.com');
     // the round-trip candidate did NOT touch the stored pipeline
     expect(storedSubOps(SUB_ID)).toHaveLength(1);
@@ -2593,9 +2596,10 @@ describe('assistant projections never leak credential-shaped literals (finding 9
       sourceAliases: {},
       recognitionRules: [],
     });
-    const serialized = JSON.stringify(env);
-    expect(serialized).not.toContain('evil.example');
-    expect(serialized).not.toContain('token=abc123');
+    const data = env.data as { templateSummary: unknown; afterSamples: Array<{ name: string }> };
+    expect(JSON.stringify(data.templateSummary)).not.toContain('evil.example');
+    expect(JSON.stringify(data.templateSummary)).not.toContain('token=abc123');
+    expect(JSON.stringify(data.afterSamples)).toContain('evil.example');
   });
 
   it('list_naming_targets sanitizes the stored template echo', async () => {

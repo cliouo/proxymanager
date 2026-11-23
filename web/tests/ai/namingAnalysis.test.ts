@@ -33,23 +33,20 @@ beforeAll(() => {
 });
 
 describe('buildScrubbedPayload', () => {
-  it('extracts bounded features + sanitized display names, never credentials', () => {
+  it('extracts bounded features and literal display names, not connection fields', () => {
+    const name = '香港 01 user@example.com token=sk-abc123456789 https://evil.example/x?k=v';
     const proxies = [
       withSource(
-        { ...node('香港 01 user@example.com token=sk-abc123456789 https://evil.example/x?k=v') },
+        { ...node(name) },
         { key: 'a', label: '机场A' },
       ),
       { ...node('日本 2x'), server: '203.0.113.7', port: 443 },
     ];
     const payload = buildScrubbedPayload(proxies);
     const serialized = JSON.stringify(payload);
-    expect(serialized).not.toContain('user@example.com');
-    expect(serialized).not.toContain('sk-abc123');
-    expect(serialized).not.toContain('evil.example');
+    expect(payload.nodes[0].name).toBe(name.slice(0, 48));
     expect(serialized).not.toContain('203.0.113.7');
     expect(serialized).not.toContain('edge.invalid');
-    // features survive; the sanitized ORIGINAL display name survives
-    // (round-1: useful names are authorized after structural redaction)
     expect(payload.nodes[0]).toMatchObject({ region: 'HK' });
     expect(payload.nodes[0].name).toContain('香港');
     expect(payload.nodes[1]).toMatchObject({ region: 'JP', rate: 2 });
@@ -377,13 +374,14 @@ describe('strict nested AI output (finding 4)', () => {
 });
 
 describe('payload leak closure (finding 3)', () => {
-  it('buildScrubbedPayload never carries hostnames or trailing-:: forms', () => {
+  it('keeps hostname-like and trailing-:: text in name fields only', () => {
     const proxies = [
       { ...node('edge.airport.ai 香港 2001:db8:: ::192.0.2.1') },
       { ...node('edge.airport.moe fe80:: 出口') },
     ];
     const payload = buildScrubbedPayload(proxies);
-    const serialized = JSON.stringify(payload);
+    expect(payload.nodes.map((node) => node.name)).toEqual(proxies.map((proxy) => proxy.name));
+    const serialized = JSON.stringify(payload.nodes.map((node) => ({ ...node, name: null })));
     for (const needle of ['airport.ai', 'airport.moe', '2001:db8', 'fe80', '192.0.2.1', '::']) {
       expect(serialized).not.toContain(needle);
     }
