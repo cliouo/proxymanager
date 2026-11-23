@@ -27,7 +27,7 @@ import { z } from '@/lib/openapi/zod';
 import { NodeRecognitionFactsSchema } from '@/schemas/nodeFacts';
 import { containsSensitivePattern, redactSensitiveText } from '@/lib/proxies/namingSanitize';
 import { buildSourceAliasScope, type TypedHandleScope } from '@/lib/proxies/handleScopes';
-import { assertModelPayloadSafe, projectNodeSnapshot } from '@/lib/ai/namingContextProjection';
+import { assertModelPayloadSafe, projectNodeSnapshot, projectProxyName } from '@/lib/ai/namingContextProjection';
 import { sourceOf, type SourceIdentity } from '@/lib/proxies/provenance';
 // The ONE shared strict contract (schemas/namingAnalysis.ts): the opaque
 // { ref } request, the exact scrubbed payload and the suggestion shape.
@@ -107,7 +107,7 @@ export async function runNodeFactAnalysis(options: RunNamingAnalysisOptions): Pr
     )
       continue;
     seen.add(fingerprint);
-    selected.push({ i: selected.length, name: name.slice(0, 120), fingerprint });
+    selected.push({ i: selected.length, name: projectProxyName(proxy, 120)!, fingerprint });
     if (selected.length > FACT_ANALYSIS_NODE_CAP) break;
   }
   const candidates = selected.slice(0, FACT_ANALYSIS_NODE_CAP);

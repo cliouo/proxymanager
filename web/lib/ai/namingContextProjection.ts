@@ -7,15 +7,15 @@
  * recognition — sampled original node display names, sampled before/after
  * names, safe source display labels, canonical protocol, inferred facts,
  * counts, confidence, and safe current/candidate recognition-rule text.
- * Node names are taken from the name field, not reconstructed from any
- * connection fields. Other display text is structurally redacted.
+ * Node names are taken from the name field, with occurrences of the node's
+ * own endpoint masked. Other display text is structurally redacted.
  *
  * The projector:
  *   - builds ONE collision-checked node scope over the COMPLETE authorized
  *     raw snapshot (rows beyond samples included) and ONE source-alias scope
  *     over the complete source-key set BEFORE any cap/projection — every
  *     forward/reverse operation then goes through those indexes;
- *   - bounds node name strings without changing their contents;
+ *   - bounds projected node names;
  *   - allows only the shared production protocol enum (canonicalProxyType);
  *   - reports truthful totals + truncation (the sample cap is never the
  *     true total).
@@ -35,6 +35,7 @@ import {
 import {
   canonicalProxyType,
   containsSensitivePattern,
+  maskProxyEndpoint,
   redactSensitiveText,
 } from '@/lib/proxies/namingSanitize';
 import { envelopeOf, fingerprintOf, sourceOf, type SourceIdentity } from '@/lib/proxies/provenance';
@@ -63,6 +64,24 @@ export function boundedNodeName(name: string, bound: number = DISPLAY_TEXT_MAX):
   return name === '' ? null : name.slice(0, bound);
 }
 
+export function projectProxyName(proxy: unknown, bound: number = DISPLAY_TEXT_MAX): string | null {
+  const node = proxy as { name?: unknown; server?: unknown; port?: unknown };
+  return typeof node.name === 'string'
+    ? boundedNodeName(maskProxyEndpoint(node.name, node), bound)
+    : null;
+}
+
+export function indexProjectedNodeNames(proxies: readonly unknown[], bound?: number): Map<string, string | null> {
+  const names = new Map<string, string>();
+  for (const value of proxies) {
+    const proxy = value as { name?: unknown; server?: unknown; port?: unknown };
+    if (typeof proxy.name === 'string') {
+      names.set(proxy.name, maskProxyEndpoint(names.get(proxy.name) ?? proxy.name, proxy));
+    }
+  }
+  return new Map([...names].map(([name, value]) => [name, boundedNodeName(value, bound)]));
+}
+
 /** Sanitized user-facing display label for a source identity. The stable key
  * is never a model-facing fallback: internal provenance commonly stores the
  * slug as `label` when display_name is absent, so equality means there is no
@@ -75,7 +94,7 @@ export function safeSourceLabel(identity: SourceIdentity | undefined, key: strin
 export interface ProjectedNode {
   /** Opaque node ref (nd-…) — the ONLY identity the model may reuse. */
   handle: string;
-  /** Bounded original display name; null when absent. */
+  /** Bounded display name with its own endpoint masked; null when absent. */
   name: string | null;
   /** Canonical protocol (shared production enum) or null. */
   protocol: string | null;
@@ -147,14 +166,10 @@ export function projectNodeSnapshot(
   const sourceOfProxy = options.sourceOfProxy ?? sourceOf;
   const { scope, identities } = buildNodeSnapshotScope(proxies);
   const nodes: ProjectedNode[] = proxies.map((proxy, i) => {
-    const name =
-      typeof (proxy as { name?: unknown }).name === 'string'
-        ? ((proxy as { name: string }).name as string)
-        : '';
     const type = (proxy as { type?: unknown }).type;
     return {
       handle: scope.project(identities[i]),
-      name: boundedNodeName(name),
+      name: projectProxyName(proxy),
       protocol: typeof type === 'string' && type !== '' ? canonicalProxyType(type) : null,
     };
   });

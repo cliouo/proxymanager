@@ -29,8 +29,8 @@ import type { ActionContext } from '../types';
 import { z } from '@/lib/openapi/zod';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { applyOperators, type ClashProxy } from '@/lib/proxies/operators';
-import { redactSensitiveText } from '@/lib/proxies/namingSanitize';
-import { namesPayload } from '@/lib/services/pipelinePreview';
+import { maskProxyEndpoint, redactSensitiveText } from '@/lib/proxies/namingSanitize';
+import { indexProjectedNodeNames, projectProxyName } from '@/lib/ai/namingContextProjection';
 import { mergeCollectionMemberProxies } from '@/lib/services/nodeExportService';
 import {
   createOrdinalPlanningSession,
@@ -323,8 +323,11 @@ function previewNodeName(name: string): string {
 }
 
 function previewNamesPayload(proxies: ClashProxy[]) {
-  const payload = namesPayload(proxies, NAME_CAP);
-  return { ...payload, names: payload.names.map(previewNodeName) };
+  return {
+    count: proxies.length,
+    names: proxies.slice(0, NAME_CAP).map((proxy) => projectProxyName(proxy, 64) ?? '(无名)'),
+    truncated: proxies.length > NAME_CAP,
+  };
 }
 
 /**
@@ -382,9 +385,9 @@ function safeStep(
 }
 
 /** Keep the node name; redact the referrer label or rule text. */
-function safeReference(ref: { node: string; kind: string; via: string }): unknown {
+function safeReference(ref: { node: string; kind: string; via: string }, names: Map<string, string | null>): unknown {
   return {
-    node: previewNodeName(ref.node),
+    node: names.get(ref.node) ?? previewNodeName(ref.node),
     kind: ref.kind,
     via: safeText(ref.via, '(已脱敏)'),
   };
@@ -603,7 +606,7 @@ const previewOperators = defineAction({
       planningSession: ordinalPlanningSession,
       domainRegistry: ordinalPlanningSession,
     });
-    const { proxies: after, steps } = applyOperators(before, ops, ordinals);
+    const { proxies: after, steps } = applyOperators(before, ops, ordinals, maskProxyEndpoint);
 
     // Names present before but gone after = renamed-or-dropped. If any was
     // pinned by a chain backend / proxy-group member / rule, the pipeline would
@@ -620,6 +623,7 @@ const previewOperators = defineAction({
         (step.deduped ?? []).flatMap((d) => (d.sourceKey !== undefined ? [d.sourceKey] : [])),
       ),
     );
+    const projectedNames = indexProjectedNodeNames(before, 64);
     return {
       kind: 'node-operators-preview',
       data: {
@@ -631,7 +635,7 @@ const previewOperators = defineAction({
         ...(memberErrors && memberErrors.length
           ? { memberErrors: memberErrors.map(safeMemberError) }
           : {}),
-        orphanedReferences: orphanedReferences.map(safeReference),
+        orphanedReferences: orphanedReferences.map((ref) => safeReference(ref, projectedNames)),
         ...(orphanedReferences.length
           ? {
               orphanWarning:

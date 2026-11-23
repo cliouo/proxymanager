@@ -597,7 +597,7 @@ describe('shared operator-list contract in AI actions (Delivery finding 7)', () 
     ).mockResolvedValueOnce({
       proxies: [
         { name: '🇭🇰 香港 https://evil.example/sub?token=abc123 ::1', type: 'ss', server: 'fixture.invalid', password: 'fixture-password' },
-        { name: '🇯🇵 JP-1', type: 'ss' },
+        { name: '🇯🇵 JP-1', type: 'ss', server: 'fixture.invalid', port: 443 },
       ],
       proxyCount: 2,
     });
@@ -606,7 +606,7 @@ describe('shared operator-list contract in AI actions (Delivery finding 7)', () 
     const env = await action.run(ctx, {
       source_type: 'subscription',
       ref: refOf('subscription', SUB_ID),
-      operators: [],
+      operators: [{ kind: 'rename-regex', pattern: 'JP-1', replacement: 'JP-1 fixture.invalid:443' }],
     });
     const data = env.data as { before: { names: string[] }; source: string };
     const serialized = JSON.stringify(data);
@@ -615,6 +615,7 @@ describe('shared operator-list contract in AI actions (Delivery finding 7)', () 
     expect(serialized).not.toContain('fixture-password');
     // benign content stays readable
     expect(JSON.stringify(data)).toContain('JP-1');
+    expect(serialized).toContain('JP-1 ***');
     expect(data.source.length).toBeLessThanOrEqual(48);
   });
 });

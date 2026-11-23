@@ -179,6 +179,15 @@ merged: {<<: *nested, kept: true}
     expect(getConfigSection(source, 'header-copy').yaml).toBe('***');
   });
 
+  it('masks a node endpoint embedded in its YAML name, including on name-selected reads', () => {
+    const source = `x-node: &node {server: local, port: 443}
+proxies:
+  - {<<: *node, name: "HK local:443"}
+`;
+    expect(parse(fullRedactedYaml(source), { merge: true }).proxies[0].name).toBe('HK ***');
+    expect(getConfigSection(source, 'proxies[HK local:443].name').yaml).toBe('HK ***');
+  });
+
   it('masks all credentials across the whole config', () => {
     expect(yaml).not.toContain('p@ssw0rd');
     expect(yaml).not.toContain('SECRETTOKEN');

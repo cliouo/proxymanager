@@ -31,7 +31,9 @@ import { ExternalSourceAliasesSchema } from '@/schemas/externalAliases';
 import {
   boundedNodeName,
   buildNodeSnapshotScope,
+  indexProjectedNodeNames,
   nodeIdentityOf,
+  projectProxyName,
   sanitizeDisplayText,
 } from '@/lib/ai/namingContextProjection';
 import {
@@ -560,7 +562,7 @@ const inspectSourceNameClusters = defineAction({
       const list = clusters.get(key) ?? [];
       if (list.length < 200) {
         const { identity } = nodeIdentityOf(p, occurrences);
-        list.push({ name, identity }); // bounded sample store
+        list.push({ name: projectProxyName(p)!, identity }); // bounded sample store
       }
       clusters.set(key, list);
     }
@@ -578,7 +580,7 @@ const inspectSourceNameClusters = defineAction({
       // name — useful recognition content, credential-free.
       const project = (e: { name: string; identity: string }) => ({
         handle: nodeScope.project(e.identity),
-        name: boundedNodeName(e.name),
+        name: e.name,
       });
       // STRUCTURED signature (pass-4 finding): every field is projected
       // individually — sanitized display text (rule-authored values are
@@ -997,9 +999,10 @@ const inspectNamingCollisions = defineAction({
       };
     });
     const collisionsCapped = capList(collisionsAll, MAX_COLLISIONS);
+    const projectedNames = indexProjectedNodeNames(source.proxies, 64);
     const orphanedCapped = capList(
       orphaned.map((ref) => ({
-        node: boundedNodeName(ref.node, 64),
+        node: projectedNames.get(ref.node) ?? boundedNodeName(ref.node, 64),
         kind: ref.kind,
         via: safeText(ref.via, '(已脱敏)'),
       })),
@@ -1082,9 +1085,7 @@ const previewNamingTarget = defineAction({
     const beforeCapped = capList(
       beforeIdentities.map((identity, i) => ({
         handle: beforeScope.project(identity),
-        name: boundedNodeName(
-          typeof source.proxies[i].name === 'string' ? (source.proxies[i].name as string) : '',
-        ),
+        name: projectProxyName(source.proxies[i]),
       })),
       3,
     );
@@ -1099,14 +1100,13 @@ const previewNamingTarget = defineAction({
     const afterCapped = capList(
       afterIdentities.map((identity, i) => ({
         handle: afterScope.project(identity),
-        name: boundedNodeName(
-          typeof result.proxies[i].name === 'string' ? (result.proxies[i].name as string) : '',
-        ),
+        name: projectProxyName(result.proxies[i]),
       })),
       8,
     );
     const afterEntries = afterCapped.items;
 
+    const projectedNames = indexProjectedNodeNames(source.proxies, 64);
     return {
       kind: 'naming-target-preview',
       data: {
@@ -1134,7 +1134,7 @@ const previewNamingTarget = defineAction({
         ],
         orphanedReferences: capList(
           orphaned.map((ref) => ({
-            node: boundedNodeName(ref.node, 64),
+            node: projectedNames.get(ref.node) ?? boundedNodeName(ref.node, 64),
             kind: ref.kind,
             via: safeText(ref.via, '(已脱敏)'),
           })),

@@ -27,7 +27,7 @@ import {
   resolveRefInVisibleSet,
 } from '@/lib/services/namingTargetScope';
 import { buildNodeScope } from '@/lib/proxies/handleScopes';
-import { boundedNodeName, sanitizeDisplayText } from '@/lib/ai/namingContextProjection';
+import { boundedNodeName, projectProxyName, sanitizeDisplayText } from '@/lib/ai/namingContextProjection';
 import { canonicalProxyType, redactSensitiveText } from '@/lib/proxies/namingSanitize';
 import type { ActionContext } from '../types';
 import type { Subscription } from '@/schemas';
@@ -77,10 +77,6 @@ async function mustLocalSub(ctx: ActionContext, ref: string): Promise<Subscripti
 
 function nodeName(p: Record<string, unknown>): string {
   return typeof p.name === 'string' ? p.name : '(无名)';
-}
-
-function nodeDisplayName(name: string): string {
-  return boundedNodeName(name) ?? '(未命名)';
 }
 
 /** Bounded redacted echo for MODEL-SUPPLIED text (the `to` name) — the
@@ -161,7 +157,7 @@ const listLocalNodes = defineAction({
         // projected through the ONE collision-checked index over the
         // COMPLETE parsed local source (round-1 typed HandleScopes)
         node: scope.project(`${i}\x00${name}`),
-        display: nodeDisplayName(name),
+        display: projectProxyName(p) ?? '(未命名)',
         type: canonicalProxyType(p.type) ?? 'unknown',
         referencedBy: (byNode.get(name) ?? []).map((r, ri) => ({
           kind: r.kind,
@@ -212,7 +208,7 @@ const renameLocalNode = defineWriteAction({
       diff: {
         op: 'update',
         path: 'subscriptions[该本地订阅源].proxies',
-        beforeYaml: `name: ${nodeDisplayName(nodeName(proxies[idx]))}`,
+        beforeYaml: `name: ${projectProxyName(proxies[idx]) ?? '(未命名)'}`,
         afterYaml: `name: ${safeInputLabel(input.to)}`,
       },
     };

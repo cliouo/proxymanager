@@ -283,7 +283,7 @@ describe('list_local_nodes', () => {
   it('preserves the node name in bounded display without leaking connection fields', async () => {
     seedLocal(
       `proxies:
-  - name: "香港 https://evil.example/sub?token=abc123 ::1"
+  - name: "1.2.3.4:443 香港 https://evil.example/sub?token=abc123 ::1"
     type: ss
     server: 1.2.3.4
     port: 443
@@ -295,7 +295,7 @@ describe('list_local_nodes', () => {
     if (action.risk !== 'read') throw new Error('expected read');
     const env = await action.run(ctx, { ref: localRef() });
     const data = env.data as { nodes: Array<{ display: string }> };
-    expect(data.nodes[0].display).toBe('香港 https://evil.example/sub?token=abc123 ::1');
+    expect(data.nodes[0].display).toBe('*** 香港 https://evil.example/sub?token=abc123 ::1');
     expect(JSON.stringify(data)).not.toContain('1.2.3.4');
     expect(JSON.stringify(data)).not.toHaveProperty('password');
   });

@@ -9,6 +9,7 @@ import {
   sanitizeDisplayText,
 } from '@/lib/ai/namingContextProjection';
 import { withSource } from '@/lib/proxies/provenance';
+import { parseProxyUriList } from '@/lib/proxies/uriToClash';
 
 /**
  * Round-1 AiSafeNamingContext tests (invariant 6/7/9): AI receives useful
@@ -66,6 +67,18 @@ describe('sanitizeDisplayText', () => {
 });
 
 describe('projectNodeSnapshot', () => {
+  it('masks the node endpoint used as the fallback for unlabelled URI imports', () => {
+    const { proxies } = parseProxyUriList('trojan://fixture-password@edge.example:443');
+    expect(proxies[0].name).toBe('edge.example:443');
+    expect(projectNodeSnapshot(proxies).nodes[0].name).toBe('***');
+    expect(projectNodeSnapshot([
+      { ...node('HK [2001:DB8::1]:443 + unrelated.example'), server: '2001:db8::1' },
+      node('edge.invalid + EDGE.INVALID:443 + HK'),
+    ]).nodes.map((entry) => entry.name)).toEqual([
+      'HK *** + unrelated.example',
+      '*** + *** + HK',
+    ]);
+  });
   it('emits opaque refs, original names, canonical protocol and safe source labels', () => {
     const proxies = [
       withSource(node('HK-01 2x IPLC'), { key: 'us-home', label: 'US-Home' }),

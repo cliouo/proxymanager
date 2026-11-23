@@ -19,11 +19,12 @@
  */
 
 import {
-  isAlias, isNode, isPair, isScalar, isSeq, parseDocument, Scalar, stringify, visit,
-  type Document, type Node, type Pair,
+  isAlias, isMap, isNode, isPair, isScalar, isSeq, parseDocument, Scalar, stringify, visit,
+  type Document, type Node, type Pair, type YAMLMap,
 } from 'yaml';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { getBase } from '@/lib/repos/baseRepo';
+import { maskProxyEndpoint } from '@/lib/proxies/namingSanitize';
 import { parsePath, SENSITIVE_KEY } from './configPath';
 
 export const REDACTED = '***';
@@ -71,6 +72,39 @@ function proxyPairs(doc: Document): Set<Pair> {
     },
   });
   return pairs;
+}
+
+function proxyNameValues(doc: Document, scoped: Set<Pair>): Map<Node, string> {
+  const resolve = (node: unknown) => isAlias(node) ? node.resolve(doc) : node;
+  function property(map: YAMLMap, key: string, seen = new Set<YAMLMap>()): unknown {
+    if (seen.has(map)) return undefined;
+    seen.add(map);
+    const own = map.items.find((pair) => pairKey(doc, pair) === key);
+    if (own) return resolve(own.value);
+    const merge = resolve(map.items.find((pair) => pairKey(doc, pair) === '<<')?.value);
+    for (const entry of isSeq(merge) ? merge.items : [merge]) {
+      const source = resolve(entry);
+      const value = isMap(source) ? property(source, key, seen) : undefined;
+      if (value !== undefined) return value;
+    }
+    return undefined;
+  }
+
+  const names = new Map<Node, string>();
+  visit(doc, {
+    Map(_, map) {
+      if (!map.items.some((pair) => scoped.has(pair))) return;
+      const name = property(map, 'name');
+      if (!isScalar(name) || typeof name.value !== 'string') return;
+      const server = property(map, 'server');
+      const port = property(map, 'port');
+      names.set(name, maskProxyEndpoint(names.get(name) ?? name.value, {
+        server: isScalar(server) ? server.value : undefined,
+        port: isScalar(port) ? port.value : undefined,
+      }));
+    },
+  });
+  return names;
 }
 
 // There is no reliable way to distinguish a public path/query value from a
@@ -123,6 +157,7 @@ interface Commentable {
  */
 export function redactDocument(doc: Document, maskInheritedHealthCheckUrls = false): boolean {
   const scoped = proxyPairs(doc);
+  const proxyNames = proxyNameValues(doc, scoped);
   const masked = new Set<Node>();
   const names = new Set<Node>();
   visit(doc, {
@@ -213,10 +248,11 @@ export function redactDocument(doc: Document, maskInheritedHealthCheckUrls = fal
           replacement.anchor = n.anchor;
           return replacement;
         }
-      } else if (isScalar(n) && !names.has(n) && typeof n.value === 'string' && n.value.includes('://')) {
-        const safeUrl = scrubUrlTokens(n.value);
-        if (safeUrl !== n.value) {
-          n.value = safeUrl;
+      } else if (isScalar(n) && typeof n.value === 'string') {
+        const projected = proxyNames.get(n) ??
+          (names.has(n) ? n.value : scrubUrlTokens(n.value));
+        if (projected !== n.value) {
+          n.value = projected;
           changed = true;
         }
       }
@@ -279,14 +315,18 @@ export function buildOutline(content: string): OutlineEntry[] {
   return entries;
 }
 
-function navigate(root: Obj, segs: ReturnType<typeof parsePath>): unknown {
+function navigate(root: Obj, segs: ReturnType<typeof parsePath>, selectorRoot = root): unknown {
   let cur: unknown = root;
+  let original: unknown = selectorRoot;
   for (const s of segs) {
-    if (!isObj(cur)) return undefined;
+    if (!isObj(cur) || !isObj(original)) return undefined;
     cur = cur[s.key];
+    original = original[s.key];
     if (s.selector !== undefined) {
-      if (!Array.isArray(cur)) return undefined;
-      cur = cur.find((it) => isObj(it) && it.name === s.selector);
+      if (!Array.isArray(cur) || !Array.isArray(original)) return undefined;
+      const index = original.findIndex((it) => isObj(it) && it.name === s.selector);
+      cur = cur[index];
+      original = original[index];
     }
     if (cur === undefined) return undefined;
   }
@@ -304,9 +344,10 @@ export interface SectionResult {
 export function getConfigSection(content: string, path: string): SectionResult {
   const doc = parseConfig(content, true);
   const segs = parsePath(path);
-  const value = navigate(effectiveConfig(doc), segs);
+  const original = effectiveConfig(doc);
+  const value = navigate(original, segs);
   if (value === undefined) return { found: false };
-  const projected = redactDocument(doc, true) ? navigate(effectiveConfig(doc), segs) : value;
+  const projected = redactDocument(doc, true) ? navigate(effectiveConfig(doc), segs, original) : value;
   const red = projected === undefined ? REDACTED : projected;
   const redacted = JSON.stringify(red) !== JSON.stringify(value);
   const yaml = isObj(red) || Array.isArray(red) ? stringify(red).trimEnd() : String(red);
