@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
+import { navigateWithGuard } from '@/ui/features/groups/guard';
 import { Dialog as RDialog } from 'radix-ui';
 import { AnimatePresence, motion } from 'motion/react';
 import { Menu as MenuIcon, Search, Sparkles } from 'lucide-react';
@@ -53,16 +54,17 @@ function GlobalHotkeys() {
   const router = useRouter();
   const profile = useActiveProfile();
   const p = (sub?: string) => (profile ? profilePath(profile.name, sub) : '/');
+  const go = (href: string) => void navigateWithGuard(() => router.push(href));
   useHotkey('mod+k', () => setUi((s) => ({ paletteOpen: !s.paletteOpen })));
   useHotkey('mod+j', () => setUi((s) => ({ assistantOpen: !s.assistantOpen })));
   useHotkey('mod+\\', () => setUi((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })));
-  useHotkey('g o', () => router.push(p()));
-  useHotkey('g g', () => router.push(p('groups')));
-  useHotkey('g r', () => router.push(p('rules')));
-  useHotkey('g d', () => router.push(p('devices')));
-  useHotkey('g b', () => router.push(p('base')));
-  useHotkey('g s', () => router.push('/sources'));
-  useHotkey('g h', () => router.push('/history'));
+  useHotkey('g o', () => go(p()));
+  useHotkey('g g', () => go(p('groups')));
+  useHotkey('g r', () => go(p('rules')));
+  useHotkey('g d', () => go(p('devices')));
+  useHotkey('g b', () => go(p('base')));
+  useHotkey('g s', () => go('/sources'));
+  useHotkey('g h', () => go('/history'));
   return null;
 }
 

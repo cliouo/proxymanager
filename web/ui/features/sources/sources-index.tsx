@@ -143,7 +143,7 @@ function SourceCard({ source, subBase }: { source: Source; subBase: string | nul
   );
 }
 
-function PoolCard({ pool, sources, subBase }: { pool: Pool; sources: Source[]; subBase: string | null }) {
+export function PoolCard({ pool, sources, subBase }: { pool: Pool; sources: Source[]; subBase: string | null }) {
   const [busy, setBusy] = useState(false);
   const members = resolvePoolMembers(pool, sources);
   const active = activeMembers(members);
@@ -151,7 +151,7 @@ function PoolCard({ pool, sources, subBase }: { pool: Pool; sources: Source[]; s
   return (
     <article
       className={cn(
-        'group relative flex flex-col gap-3.5 rounded-xl border border-line bg-surface p-4 shadow-xs transition-[border-color,box-shadow] hover:border-line-strong hover:shadow-md',
+        'group relative flex min-w-0 flex-col gap-3.5 rounded-xl border border-line bg-surface p-4 shadow-xs transition-[border-color,box-shadow] hover:border-line-strong hover:shadow-md',
         !pool.enabled && 'bg-surface-2/40',
       )}
     >

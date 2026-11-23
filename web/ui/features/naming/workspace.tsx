@@ -11,7 +11,8 @@ import { refreshShared } from '@/ui/data/hooks';
 import { useHotkey } from '@/ui/shell/hotkeys';
 import { Block, Page, PageHeader, SaveBar } from '@/ui/shell/page';
 import { profilePath } from '@/ui/shell/scope';
-import { Badge, Button, Card, Code, confirmAction, EmptyState, Monogram, notify, Skeleton } from '@/ui/primitives';
+import { Badge, Button, Card, Code, confirmAction, EmptyState, notify, Skeleton } from '@/ui/primitives';
+import { NamingHeaderMeta } from './header-meta';
 import { TemplateComposer } from './composer';
 import { NamingCandidates, applyNamingCandidate } from './candidates';
 import type { GroupingPurpose } from '@/lib/proxies/namingGroupGeneration';
@@ -289,15 +290,8 @@ function Workspace({
         back={back}
         documentTitle={`智能命名 · ${data.entity.label}`}
         eyebrow={
-          <>
-            <Monogram name={data.entity.label} size={18} />
-            <span className="font-medium text-ink-2">{data.entity.label}</span>
-            <span className="text-ink-4">·</span>
-            <span>{KIND_LABEL[type]}</span>
-            <span className="text-ink-4">·</span>
-            <span className="tnum">输入 {data.diagnostics.nodeCount} 个节点</span>
-            {data.diagnostics.infoFiltered > 0 && <span>· {data.diagnostics.infoFiltered} 个信息节点（剩余流量、到期等）已过滤</span>}
-          </>
+          <NamingHeaderMeta label={data.entity.label} kindLabel={KIND_LABEL[type]}
+            nodeCount={data.diagnostics.nodeCount} infoFiltered={data.diagnostics.infoFiltered} />
         }
         title={
           <span className="flex items-center gap-3">

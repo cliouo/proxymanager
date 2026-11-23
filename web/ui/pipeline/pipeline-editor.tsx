@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   closestCenter,
   DndContext,
@@ -23,9 +24,11 @@ import { keys, refreshShared } from '@/ui/data/hooks';
 import { setQueryData } from '@/ui/data/query';
 import type { Operator, OperatorStepTrace, StoredOperator } from '@/ui/data/types';
 import { stableKey } from '@/ui/features/sources/model';
+import { navigateWithGuard, registerDirtyCheck } from '@/ui/features/groups/guard';
 import { Button, Menu, notify, Tooltip } from '@/ui/primitives';
 import { useHotkey } from '@/ui/shell/hotkeys';
 import { SaveBar } from '@/ui/shell/page';
+import { setUi } from '@/ui/shell/state';
 import { Connector, FlowTerminal, StepCard, addStepItems } from './flow';
 import {
   appendIndex,
@@ -45,6 +48,15 @@ import { PreviewPanel } from './preview-panel';
 import { usePipelinePreview, type PipelineTarget } from './use-preview';
 
 const verticalOnly: Modifier = ({ transform }) => ({ ...transform, x: 0 });
+
+export async function navigateFromPipeline(navigate: () => void) {
+  await navigateWithGuard(() => {
+    if (typeof window === 'undefined' || !window.matchMedia('(min-width: 1280px)').matches) {
+      setUi({ assistantOpen: false });
+    }
+    navigate();
+  });
+}
 
 /** Map server validation issues (`path: [index, field]`) back to step ids. */
 function issuesByStep(error: unknown, sent: Operator[]): Record<string, string> {
@@ -87,6 +99,7 @@ export function PipelineEditor({
   active?: boolean;
   originHint?: string;
 }) {
+  const router = useRouter();
   const incomingKey = snapshotKey(operators, updatedAt);
   const [snapshot, setSnapshot] = useState<Snapshot>({
     key: incomingKey,
@@ -100,6 +113,29 @@ export function PipelineEditor({
   const [dragging, setDragging] = useState(false);
 
   const dirty = stableKey(draft) !== stableKey(snapshot.base);
+  useEffect(() => registerDirtyCheck(() => dirty, '处理流程有未保存的修改，离开后会丢失。'), [dirty]);
+  useEffect(() => {
+    if (!dirty) return;
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    const onClick = (event: MouseEvent) => {
+      if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      const anchor = (event.target as HTMLElement | null)?.closest?.('a[href]') as HTMLAnchorElement | null;
+      if (!anchor || anchor.target === '_blank' || anchor.hasAttribute('download') || anchor.origin !== window.location.origin) return;
+      if (anchor.pathname === window.location.pathname && anchor.search === window.location.search) return;
+      event.preventDefault();
+      event.stopPropagation();
+      void navigateFromPipeline(() => router.push(anchor.pathname + anchor.search + anchor.hash));
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    document.addEventListener('click', onClick, true);
+    return () => {
+      window.removeEventListener('beforeunload', onBeforeUnload);
+      document.removeEventListener('click', onClick, true);
+    };
+  }, [dirty, router]);
   useEffect(() => {
     onDirtyChange?.(dirty);
     return () => onDirtyChange?.(false);
