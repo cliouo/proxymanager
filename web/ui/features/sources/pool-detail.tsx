@@ -332,6 +332,7 @@ export function PoolDetail() {
   const subBase = useSubBase();
   const { tab, setTab, visited } = useTabParam(TABS, 'members');
   const { copied, copy } = useCopy();
+  const [pipelineDirty, setPipelineDirty] = useState(false);
 
   if (!pool) {
     if (detail.error) {
@@ -409,7 +410,7 @@ export function PoolDetail() {
         }
         actions={
           <>
-            <NamingLink href={`/pools/${pool.id}/naming`} />
+            <NamingLink href={`/pools/${pool.id}/naming`} dirty={pipelineDirty} />
             <Button icon={copied ? Check : Link2} disabled={!link} onClick={() => link && void copy(link, '已复制分发链接')}>
               复制链接
             </Button>
@@ -456,12 +457,13 @@ export function PoolDetail() {
           )}
           {visited.has('pipeline') && (
             <TabPanel value="pipeline" forceMount className="outline-none data-[state=inactive]:hidden">
-              <NamingSetupPrompt href={`/pools/${pool.id}/naming`} operators={pool.operators} />
+              <NamingSetupPrompt href={`/pools/${pool.id}/naming`} operators={pool.operators} dirty={pipelineDirty} />
               <PipelineEditor
                 target={{ kind: 'collection', id: pool.id }}
                 operators={pool.operators}
                 updatedAt={pool.updated_at}
                 namingHref={`/pools/${pool.id}/naming`}
+                onDirtyChange={setPipelineDirty}
                 active={tab === 'pipeline'}
                 originHint={`${live.length} 个成员订阅源各自处理后合并`}
               />
