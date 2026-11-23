@@ -188,6 +188,43 @@ proxies:
     expect(getConfigSection(source, 'proxies[HK local:443].name').yaml).toBe('HK ***');
   });
 
+  it('uses the same masked names in definitions, group members, dialers, rules and section selectors', () => {
+    const source = `members: &members ["[HK.Backup] edge.example:443", Manual]
+proxies:
+  - {name: "[HK.Backup] edge.example:443", server: edge.example, port: 443}
+  - {name: Manual, server: other.example, port: 443, dialer-proxy: "[HK.Backup] edge.example:443"}
+proxy-groups:
+  - {name: Auto, type: select, proxies: *members}
+rules:
+  - "IP-CIDR,10.0.0.0/8,[HK.Backup] edge.example:443,no-resolve"
+  - "MATCH,[HK.Backup] edge.example:443"
+`;
+    const masked = '[HK.Backup] ***';
+    const result = fullRedactedYaml(source);
+    const resolved = parse(result, { merge: true });
+    expect(result).not.toContain('edge.example');
+    expect(resolved.proxies).toMatchObject([{ name: masked }, { name: 'Manual', 'dialer-proxy': masked }]);
+    expect(resolved['proxy-groups'][0].proxies).toEqual([masked, 'Manual']);
+    expect(resolved.rules).toEqual([`IP-CIDR,10.0.0.0/8,${masked},no-resolve`, `MATCH,${masked}`]);
+    expect(buildOutline(source)).toContainEqual({
+      key: 'proxies', kind: 'list-named', count: 2, names: [masked, 'Manual'],
+    });
+    expect(getConfigSection(source, `proxies[${masked}].name`).yaml).toBe(masked);
+    expect(getConfigSection(source, 'proxies[[HK.Backup] edge.example:443].port').yaml).toBe('***');
+    expect(parse(getConfigSection(source, 'proxy-groups[Auto].proxies').yaml!)).toEqual([masked, 'Manual']);
+  });
+
+  it('keeps masked selectors distinct from each other and from literal names', () => {
+    const source = `proxies:
+  - {name: host-a, server: host-a, type: ss}
+  - {name: host-b, server: host-b, type: vmess}
+  - {name: '***', server: host-c, type: trojan}
+`;
+    expect(getConfigSection(source, 'proxies[*** #2].type').yaml).toBe('ss');
+    expect(getConfigSection(source, 'proxies[*** #3].type').yaml).toBe('vmess');
+    expect(getConfigSection(source, 'proxies[***].type').yaml).toBe('trojan');
+  });
+
   it('masks all credentials across the whole config', () => {
     expect(yaml).not.toContain('p@ssw0rd');
     expect(yaml).not.toContain('SECRETTOKEN');

@@ -23,6 +23,7 @@ import {
   type Document, type Node, type Pair, type YAMLMap,
 } from 'yaml';
 import { ProblemDetailsError } from '@/lib/http/problem';
+import { parseAndValidateFinalRule } from '@/lib/engine/resolve';
 import { getBase } from '@/lib/repos/baseRepo';
 import { maskProxyEndpoint } from '@/lib/proxies/namingSanitize';
 import { parsePath, SENSITIVE_KEY } from './configPath';
@@ -74,7 +75,7 @@ function proxyPairs(doc: Document): Set<Pair> {
   return pairs;
 }
 
-function proxyNameValues(doc: Document, scoped: Set<Pair>): Map<Node, string> {
+function proxyNameProjection(doc: Document, scoped: Set<Pair>) {
   const resolve = (node: unknown) => isAlias(node) ? node.resolve(doc) : node;
   function property(map: YAMLMap, key: string, seen = new Set<YAMLMap>()): unknown {
     if (seen.has(map)) return undefined;
@@ -90,21 +91,76 @@ function proxyNameValues(doc: Document, scoped: Set<Pair>): Map<Node, string> {
     return undefined;
   }
 
-  const names = new Map<Node, string>();
+  const definitions = new Map<Node, string>();
+  const names = new Map<string, string>();
+  const reserved = new Set<string>();
   visit(doc, {
     Map(_, map) {
-      if (!map.items.some((pair) => scoped.has(pair))) return;
       const name = property(map, 'name');
       if (!isScalar(name) || typeof name.value !== 'string') return;
+      reserved.add(name.value);
+      if (!map.items.some((pair) => scoped.has(pair))) return;
+      definitions.set(name, name.value);
       const server = property(map, 'server');
       const port = property(map, 'port');
-      names.set(name, maskProxyEndpoint(names.get(name) ?? name.value, {
+      names.set(name.value, maskProxyEndpoint(names.get(name.value) ?? name.value, {
         server: isScalar(server) ? server.value : undefined,
         port: isScalar(port) ? port.value : undefined,
       }));
     },
   });
-  return names;
+  for (const [original, masked] of names) {
+    if (original === masked) continue;
+    let name = masked;
+    for (let suffix = 2; reserved.has(name); suffix += 1) name = `${masked} #${suffix}`;
+    reserved.add(name);
+    names.set(original, name);
+  }
+  const values = new Map<Node, string>();
+  for (const [node, name] of definitions) values.set(node, names.get(name) ?? name);
+
+  const project = (node: unknown, rule = false) => {
+    const value = resolve(node);
+    if (!isScalar(value) || typeof value.value !== 'string') return;
+    const name = rule ? projectRulePolicy(value.value, names) : names.get(value.value);
+    if (name !== undefined) values.set(value, name);
+  };
+  const projectList = (node: unknown, rule = false) => {
+    const seq = resolve(node);
+    if (isSeq(seq)) for (const item of seq.items) project(item, rule);
+  };
+  visit(doc, {
+    Pair(_, pair) {
+      switch (pairKey(doc, pair)) {
+        case 'dialer-proxy': project(pair.value); break;
+        case 'proxies': projectList(pair.value); break;
+        case 'rules': projectList(pair.value, true); break;
+        case 'sub-rules': {
+          const map = resolve(pair.value);
+          if (isMap(map)) for (const entry of map.items) projectList(entry.value, true);
+          break;
+        }
+      }
+    },
+  });
+  return { values, names };
+}
+
+function projectRulePolicy(raw: string, names: ReadonlyMap<string, string>): string | undefined {
+  try {
+    const { type, target, params } = parseAndValidateFinalRule(raw);
+    const projected = names.get(target);
+    if (type === 'SUB-RULE' || projected === undefined) return undefined;
+    const parts = raw.split(',');
+    const i = parts.length - 1 - params.length;
+    const field = parts[i];
+    for (let j = 0; j < parts.length; j += 1) {
+      parts[j] = j === i ? field.replace(target, () => projected) : scrubUrlTokens(parts[j]);
+    }
+    return parts.join(',');
+  } catch {
+    return undefined;
+  }
 }
 
 // There is no reliable way to distinguish a public path/query value from a
@@ -155,9 +211,9 @@ interface Commentable {
  * Mask sensitive values at their definitions, including values reached through
  * aliases, so neither the anchor definition nor a section drill-down leaks.
  */
-export function redactDocument(doc: Document, maskInheritedHealthCheckUrls = false): boolean {
+function redactDocument(doc: Document, maskInheritedHealthCheckUrls = false) {
   const scoped = proxyPairs(doc);
-  const proxyNames = proxyNameValues(doc, scoped);
+  const { values: proxyNames, names: projectedNames } = proxyNameProjection(doc, scoped);
   const masked = new Set<Node>();
   const names = new Set<Node>();
   visit(doc, {
@@ -259,7 +315,7 @@ export function redactDocument(doc: Document, maskInheritedHealthCheckUrls = fal
     },
   });
   scrub(doc as Commentable);
-  return changed;
+  return { changed, projectedNames };
 }
 
 /** The whole base.yaml as redacted YAML — for holistic review (get_config_full). */
@@ -315,7 +371,12 @@ export function buildOutline(content: string): OutlineEntry[] {
   return entries;
 }
 
-function navigate(root: Obj, segs: ReturnType<typeof parsePath>, selectorRoot = root): unknown {
+function navigate(
+  root: Obj,
+  segs: ReturnType<typeof parsePath>,
+  selectorRoot: Obj,
+  projectedNames: ReadonlyMap<string, string>,
+): unknown {
   let cur: unknown = root;
   let original: unknown = selectorRoot;
   for (const s of segs) {
@@ -324,7 +385,9 @@ function navigate(root: Obj, segs: ReturnType<typeof parsePath>, selectorRoot = 
     original = original[s.key];
     if (s.selector !== undefined) {
       if (!Array.isArray(cur) || !Array.isArray(original)) return undefined;
-      const index = original.findIndex((it) => isObj(it) && it.name === s.selector);
+      const index = original.findIndex((it) => isObj(it) &&
+        (it.name === s.selector ||
+          (s.key === 'proxies' && typeof it.name === 'string' && projectedNames.get(it.name) === s.selector)));
       cur = cur[index];
       original = original[index];
     }
@@ -345,9 +408,10 @@ export function getConfigSection(content: string, path: string): SectionResult {
   const doc = parseConfig(content, true);
   const segs = parsePath(path);
   const original = effectiveConfig(doc);
-  const value = navigate(original, segs);
+  const { changed, projectedNames } = redactDocument(doc, true);
+  const value = navigate(original, segs, original, projectedNames);
   if (value === undefined) return { found: false };
-  const projected = redactDocument(doc, true) ? navigate(effectiveConfig(doc), segs, original) : value;
+  const projected = changed ? navigate(effectiveConfig(doc), segs, original, projectedNames) : value;
   const red = projected === undefined ? REDACTED : projected;
   const redacted = JSON.stringify(red) !== JSON.stringify(value);
   const yaml = isObj(red) || Array.isArray(red) ? stringify(red).trimEnd() : String(red);

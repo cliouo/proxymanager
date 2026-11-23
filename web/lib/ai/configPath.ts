@@ -36,13 +36,32 @@ export interface Segment {
 }
 
 export function parsePath(path: string): Segment[] {
-  const parts = path
-    .split('.')
-    .map((p) => p.trim())
-    .filter(Boolean);
-  if (parts.length === 0) throw ProblemDetailsError.badRequest('路径不能为空。');
-  return parts.map((part) => {
-    const m = /^([^[\]]+)(?:\[([^\]]+)\])?$/.exec(part);
+  const parts: string[] = [];
+  let start = 0;
+  let depth = 0;
+  let closed = false;
+  for (let i = 0; i < path.length; i += 1) {
+    const char = path[i];
+    if (char === '.' && depth === 0) {
+      parts.push(path.slice(start, i).trim());
+      start = i + 1;
+      closed = false;
+    } else if (closed && char.trim() !== '') {
+      throw ProblemDetailsError.badRequest('路径选择器后必须是点或路径末尾。');
+    } else if (char === '[') {
+      depth += 1;
+    } else if (char === ']') {
+      depth -= 1;
+      if (depth < 0) throw ProblemDetailsError.badRequest('路径选择器括号不匹配。');
+      closed = depth === 0;
+    }
+  }
+  if (depth !== 0) throw ProblemDetailsError.badRequest('路径选择器括号不匹配。');
+  parts.push(path.slice(start).trim());
+  const segments = parts.filter(Boolean);
+  if (segments.length === 0) throw ProblemDetailsError.badRequest('路径不能为空。');
+  return segments.map((part) => {
+    const m = /^([^[\]]+)(?:\[(.+)\])?$/.exec(part);
     if (!m) throw ProblemDetailsError.badRequest(`无效路径段："${part}"。`);
     return { key: m[1], selector: m[2] };
   });
