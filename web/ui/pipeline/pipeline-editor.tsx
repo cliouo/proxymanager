@@ -28,6 +28,7 @@ import { navigateWithGuard, registerDirtyCheck } from '@/ui/features/groups/guar
 import { Button, Menu, notify, Tooltip } from '@/ui/primitives';
 import { useHotkey } from '@/ui/shell/hotkeys';
 import { SaveBar } from '@/ui/shell/page';
+import { setUi } from '@/ui/shell/state';
 import { Connector, FlowTerminal, StepCard, addStepItems } from './flow';
 import {
   appendIndex,
@@ -47,6 +48,15 @@ import { PreviewPanel } from './preview-panel';
 import { usePipelinePreview, type PipelineTarget } from './use-preview';
 
 const verticalOnly: Modifier = ({ transform }) => ({ ...transform, x: 0 });
+
+export async function navigateFromPipeline(navigate: () => void) {
+  await navigateWithGuard(() => {
+    if (typeof window === 'undefined' || !window.matchMedia('(min-width: 1280px)').matches) {
+      setUi({ assistantOpen: false });
+    }
+    navigate();
+  });
+}
 
 /** Map server validation issues (`path: [index, field]`) back to step ids. */
 function issuesByStep(error: unknown, sent: Operator[]): Record<string, string> {
@@ -117,7 +127,7 @@ export function PipelineEditor({
       if (anchor.pathname === window.location.pathname && anchor.search === window.location.search) return;
       event.preventDefault();
       event.stopPropagation();
-      void navigateWithGuard(() => router.push(anchor.pathname + anchor.search + anchor.hash));
+      void navigateFromPipeline(() => router.push(anchor.pathname + anchor.search + anchor.hash));
     };
     window.addEventListener('beforeunload', onBeforeUnload);
     document.addEventListener('click', onClick, true);
