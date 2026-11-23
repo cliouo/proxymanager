@@ -11,11 +11,24 @@ import {
   type NodeFacts,
 } from '@/lib/proxies/naming';
 import type { SourceHealthReport } from '@/lib/proxies/namingHealth';
+import type { NamingCandidate } from '@/lib/proxies/namingCandidates';
 import { flagFromCode, regionByCode } from '@/lib/proxies/regions';
 import type { NamesPayload, PreviewIssue } from '@/ui/data/types';
 
 export type TargetType = 'subscription' | 'collection';
 export type RuleField = 'route' | 'vendor' | 'region' | 'entry' | 'tag';
+
+export function candidateRationale(candidate: NamingCandidate): string {
+  const changed = candidate.groups.filter((g) => g.broken || g.error || g.before !== (g.migration?.after ?? g.after)).length;
+  const migrated = candidate.groups.filter((g) => g.migration).length;
+  const blocked = candidate.references.filter((ref) => ref.blocked).length;
+  const reason = !candidate.groups.length ? '没有策略组，无需迁移筛选'
+    : changed ? `${changed} 个策略组的成员或匹配数会变化，需核对`
+      : migrated ? `${migrated} 个筛选将迁移，所有策略组匹配数不变`
+        : '无需改写任何筛选，所有策略组匹配数不变';
+  return reason + (blocked ? `；${blocked} 处精确引用无法自动迁移`
+    : candidate.references.length ? `；${candidate.references.length} 处精确引用将同步改写` : '');
+}
 
 export interface RecognitionRule {
   pattern: string;
@@ -60,6 +73,7 @@ export interface NamingWorkspaceData {
   diagnostics: {
     memberWarnings?: Array<{ memberId: string; message: string }>;
     nodeCount: number;
+    infoFiltered: number;
     changed: number;
     collisions: string[];
     deduped: Array<{ kept: string; dropped: string; sourceKey?: string }>;
@@ -74,6 +88,7 @@ export interface NamingWorkspaceData {
 }
 
 export interface NamingPreviewData {
+  infoFiltered: number;
   after: NamesPayload;
   issues: PreviewIssue[];
   candidate: { id: string; index: number; mode: 'added' | 'replaced' | 'kept' };

@@ -306,6 +306,18 @@ async function call(
 }
 
 describe('GET /api/v1/naming/[type]/[id]', () => {
+  it('counts filtered information nodes in workspace diagnostics and live preview', async () => {
+    const { resolveSubscriptionProxiesRaw } = await import('@/lib/services/subscriptionFetcher');
+    const proxies = ['剩余流量：88 GB', '到期时间：2027-01-01', '香港 01'].map((name, i) => ({ name, type: 'ss', server: 'edge.example', port: 440 + i }));
+    vi.mocked(resolveSubscriptionProxiesRaw).mockResolvedValueOnce({ proxies, proxyCount: 3 });
+    const workspace = await call(GET, 'subscription', SUB_ID);
+    expect(workspace.status).toBe(200);
+    expect((await workspace.json()).data.diagnostics).toMatchObject({ nodeCount: 3, infoFiltered: 2 });
+    vi.mocked(resolveSubscriptionProxiesRaw).mockResolvedValueOnce({ proxies, proxyCount: 3 });
+    const preview = await call(POST, 'subscription', SUB_ID, { preview: { template: '${region} ${index}' } });
+    expect(preview.status).toBe(200);
+    expect((await preview.json()).data).toMatchObject({ infoFiltered: 2, after: { count: 1 } });
+  });
   it('returns read-only policy candidates and rejects stale analysis versions', async () => {
     seedSub();
     const before = JSON.stringify([...stores].map(([key, entries]) => [key, [...entries]]));

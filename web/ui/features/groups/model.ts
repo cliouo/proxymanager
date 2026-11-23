@@ -410,6 +410,12 @@ export function adapterOfYaml(yaml: string): string | undefined {
   return ADAPTER_TYPES.find((t) => t.yaml === yaml.toLowerCase())?.value;
 }
 
+export function manualMembersEmptyHint(dynamic: boolean, matched: number | null): string {
+  if (!dynamic) return '还没有成员。点「添加成员」挑选节点、其他策略组，或直连 DIRECT。';
+  if (matched === null) return '手动成员为空；动态成员正在加载或暂不可用。';
+  return matched > 0 ? `手动成员为空；已有 ${matched} 个节点来自筛选。` : '手动成员为空；当前筛选没有匹配节点。';
+}
+
 /** Character ranges of `label` matched by any backtick-separated pattern (best effort, for highlighting). */
 export function highlightRanges(label: string, filter: string): Array<[number, number]> {
   if (!filter.trim()) return [];

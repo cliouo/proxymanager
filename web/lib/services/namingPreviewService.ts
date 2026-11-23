@@ -43,6 +43,7 @@ import { enabledCollectionMemberSubs } from '@/lib/engine/resolve';
 import type { Operator, StoredOperator } from '@/schemas';
 
 export interface NamingPreviewResult {
+  infoFiltered: number;
   after: NamesPayload;
   issues: PreviewIssue[];
   candidate: { id: string; index: number; mode: 'added' | 'replaced' | 'kept' };
@@ -83,7 +84,7 @@ export function decodeCandidate(candidateOperators: readonly unknown[]): StoredO
 export async function previewNamingSubscription(
   id: string,
   candidateOperators: readonly unknown[],
-): Promise<{ before: NamesPayload; after: NamesPayload; issues: PreviewIssue[] }> {
+): Promise<{ before: NamesPayload; after: NamesPayload; issues: PreviewIssue[]; infoFiltered: number }> {
   const sub = await getSubscription(id);
   if (!sub) throw ProblemDetailsError.notFound('目标不存在或不在当前配置文件的来源范围内。');
   // the candidate may preserve parked/primitive raw rows — decode once and
@@ -112,7 +113,7 @@ export async function previewNamingSubscription(
 export async function previewNamingCollection(
   id: string,
   candidateOperators: readonly unknown[],
-): Promise<{ before: NamesPayload; after: NamesPayload; issues: PreviewIssue[] }> {
+): Promise<{ before: NamesPayload; after: NamesPayload; issues: PreviewIssue[]; infoFiltered: number }> {
   const collection = await getCollection(id);
   if (!collection) throw ProblemDetailsError.notFound('目标不存在或不在当前配置文件的来源范围内。');
   const subs = await listSubscriptions();
@@ -156,7 +157,7 @@ async function runCandidatePreview(
   managedPredicate: (item: unknown) => boolean,
   identityOf: (proxy: unknown) => { key: string; label: string } | undefined,
   planningSession: OrdinalPlanningSession,
-): Promise<{ before: NamesPayload; after: NamesPayload; issues: PreviewIssue[] }> {
+): Promise<{ before: NamesPayload; after: NamesPayload; issues: PreviewIssue[]; infoFiltered: number }> {
   const managedOp = decoded.find(isActiveCurrentRenameTemplateOperator);
   const ordinals = await resolveOrdinalsFor(before, identityOf, {
     persist: false,
@@ -168,6 +169,7 @@ async function runCandidatePreview(
   const final = dedupExportProxies(after, managedPredicate);
   const dedupIssues = dedupMachineIssues(final);
   return {
+    infoFiltered: steps.reduce((sum, step) => sum + (step.infoFiltered ?? 0), 0),
     before: namesPayload(before),
     after: namesPayload(final.proxies),
     issues: [...(await buildPreviewIssues(before, final.proxies, steps)), ...dedupIssues],

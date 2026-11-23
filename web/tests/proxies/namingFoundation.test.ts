@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   applyRenameTemplate,
+  defaultTemplateFor,
   formatNodeName,
   nodeFingerprint,
   recognizeName,
@@ -15,6 +16,15 @@ import { OperatorSchema, StoredOperatorListSchema } from '@/schemas/operator';
 const node = (name: string, port = 443) => ({ name, type: 'ss', server: 'edge.example', port });
 const format = (name: string, template: string) =>
   formatNodeName({ name, index: 1, config: { template } });
+
+describe('rate tokens adjacent to ordinals', () => {
+  it.each([['倍率2', 2], ['倍率:2', 2], ['2倍', 2], ['x2', 2], ['×2', 2], ['0.5x', 0.5]])('recognizes %s without consuming the ordinal', (token, rate) => {
+    const name = `🇯🇵 Tokyo 04 ${token}`;
+    expect(recognizeName(name).rate).toBe(rate);
+    expect(format(name, '${region_code} ${index} ${rate}')).toBe(`JP 04 ${rate}x`);
+    expect(applyRenameTemplate([node(name)], { template: defaultTemplateFor(true) }).proxies[0].name).toContain(`${rate}x`);
+  });
+});
 
 describe('info nodes and data-size units', () => {
   const config = { template: '${emoji} ${region} ${index}${?note: · ${note}}' };
@@ -292,9 +302,10 @@ describe('saved raw-fingerprint facts', () => {
       ]);
       expect(result.proxies.map((p) => p.name)).toEqual(['到期时间', '香港']);
       expect(result.steps[0].dropped).toBe(1);
+      expect(result.steps[0].infoFiltered).toBe(1);
       expect(fetch).not.toHaveBeenCalled();
-      expect(applyRenameTemplate([], { template: '${tags}', nodeFacts }).proxies).toEqual([]);
-      expect(applyRenameTemplate(nodes, { template: '${note}' }).proxies).toHaveLength(1);
+      expect(applyRenameTemplate([], { template: '${tags}', nodeFacts }).infoFiltered).toBe(0);
+      expect(applyRenameTemplate(nodes, { template: '${note}' }).infoFiltered).toBe(2);
     } finally {
       vi.unstubAllGlobals();
     }

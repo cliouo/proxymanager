@@ -1,6 +1,6 @@
 import { matchFilter } from './filterMatch';
-import { defaultTemplateFor, recognizeName } from './naming';
-import { REGIONS } from './regions';
+import { defaultTemplateFor, formatNodeName, formatRate, LINE_TAGS, recognizeName, type NodeRecognitionFacts } from './naming';
+import { REGIONS, regionByCode } from './regions';
 
 export interface CandidateNode {
   identity: string;
@@ -8,6 +8,8 @@ export interface CandidateNode {
   type: string;
   scoped: boolean;
   sourceKey?: string;
+  sourceLabel?: string;
+  namingTemplate?: string;
   dialer?: string;
 }
 
@@ -36,6 +38,7 @@ export interface CandidateGroupImpact {
   before: number;
   after: number;
   emptied: boolean;
+  broken?: boolean;
   error?: string;
   migration?: { filter: string; after: number };
 }
@@ -96,7 +99,7 @@ export function groupNodeMembers(group: CandidateGroup, nodes: CandidateNode[], 
   };
 }
 
-export function inferNamingTemplates(nodes: CandidateNode[], groups: CandidateGroup[], aggregate: boolean) {
+function selectorDependencies(nodes: CandidateNode[], groups: CandidateGroup[]) {
   const selectors = groups.flatMap((g) => [g.values.filter, g.values['exclude-filter']])
     .filter((s): s is string => typeof s === 'string').join(' ');
   const has = (value: string) => value !== '' && selectors.toLowerCase().includes(value.toLowerCase());
@@ -105,16 +108,25 @@ export function inferNamingTemplates(nodes: CandidateNode[], groups: CandidateGr
     [r.code, r.alpha3].some((code) => new RegExp(`(?:^|[^a-z])${code}(?:$|[^a-z])`, 'i').test(selectors)));
   const tags = /IEPL|IPLC|专线|家宽|家庭宽带|BGP|原生|native/i.test(selectors);
   const rate = /倍率|倍|rate|[x×].*(?:\d|\\d)|(?:\d|\\d).*[x×]/i.test(selectors);
-  const source = nodes.some((n) => has(n.sourceKey ?? '')) || /source|来源|机场/i.test(selectors);
+  const source = nodes.some((n) => [n.sourceKey, n.sourceLabel].some((value) => has(value ?? ''))) || /source|来源|机场/i.test(selectors);
   const vendor = /vendor|商家/i.test(selectors) || recognized.some((r) => has(r.vendor ?? ''));
-  const fields = [region || !selectors ? '${emoji} ${region} ${region_code}' : '${region}',
-    tags ? '${?tags: · ${tags}}' : '', rate ? '${?rate: · ${rate}}' : '',
-    source ? '${?source: · ${source}}' : '', vendor ? '${?vendor: · ${vendor}}' : '',
+  return { region, tags, rate, source, vendor };
+}
+
+export function inferNamingTemplates(nodes: CandidateNode[], groups: CandidateGroup[], aggregate: boolean) {
+  const { region, tags, rate, source, vendor } = selectorDependencies(nodes, groups);
+  const rateField = rate ? '${?rate: · ${rate:include1x}}' : '';
+  const sourceField = source ? '${?source: · ${source}}' : '';
+  const vendorField = vendor ? '${?vendor: · ${vendor}}' : '';
+  const regionField = region ? ' ${region_code}' : '';
+  const fields = [region || !groups.some((g) => g.values.filter || g.values['exclude-filter']) ? '${emoji} ${region} ${region_code}' : '${region}',
+    tags ? '${?tags: · ${tags}}' : '', rateField,
+    sourceField, vendorField,
     '${?note: · ${note}}', ' · ${index}'];
   const templates = [
     { id: 'preserve', title: '保持策略组可用', template: fields.join('') },
-    { id: 'recommended', title: '推荐命名 · 线路标签', template: `${defaultTemplateFor(aggregate)}${'${?tags: · ${tags}}'}` },
-    { id: 'compact', title: '精简命名', template: '${region_code} ${index}${?tags: · ${tags}}' },
+    { id: 'recommended', title: '推荐命名 · 线路标签', template: defaultTemplateFor(aggregate).replace('${rate}', rate ? '${rate:include1x}' : '${rate}') + regionField + '${?tags: · ${tags}}' + vendorField + (!aggregate ? sourceField : '') },
+    { id: 'compact', title: '精简命名', template: '${region_code} ${index}${?tags: · ${tags}}' + rateField + sourceField + vendorField },
   ];
   return templates.filter((item, i) => templates.findIndex((other) => other.template === item.template) === i);
 }
@@ -126,6 +138,134 @@ function sameSet(a: CandidateNode[], b: CandidateNode[]) {
 }
 
 const escapeRegex = (name: string) => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+type SelectorField = keyof ReturnType<typeof selectorDependencies>;
+
+function fieldValues(node: CandidateNode) {
+  const recognized = recognizeName(node.name);
+  const region = recognized.region ? regionByCode(recognized.region) : undefined;
+  return {
+    region: region ? [region.zh, region.code, region.emoji] : [],
+    tags: recognized.tags,
+    rate: recognized.rate === null ? [] : [formatRate(recognized.rate)],
+    source: [node.sourceLabel ?? node.sourceKey].filter((s): s is string => !!s),
+    vendor: recognized.vendor ? [recognized.vendor] : [],
+  };
+}
+
+function tokenSelector(token: string) {
+  return `${/^[A-Za-z0-9.]/.test(token) ? '(?<![A-Za-z0-9.])' : ''}${escapeRegex(token)}${/[A-Za-z0-9.]$/.test(token) ? '(?![A-Za-z0-9.])' : ''}`;
+}
+
+function probeState(node: CandidateNode) {
+  const recognized = recognizeName(node.name);
+  return { facts: { region: recognized.region, tags: recognized.tags, rate: recognized.rate, vendor: recognized.vendor },
+    sourceLabel: node.sourceLabel ?? node.sourceKey ?? '' };
+}
+
+type ProbeState = ReturnType<typeof probeState>;
+
+function renderProbe(node: CandidateNode, state: ProbeState, template: string) {
+  const facts: NodeRecognitionFacts = { ...state.facts, region: state.facts.region ?? undefined,
+    rate: state.facts.rate ?? undefined, vendor: state.facts.vendor ?? undefined };
+  return formatNodeName({ name: 'fresh-node', index: 999, type: node.type, facts,
+    source: { key: 'fresh-source', label: state.sourceLabel },
+    config: { template } });
+}
+
+function rawProbe(node: CandidateNode, field: SelectorField, state: ProbeState) {
+  const original = probeState(node);
+  const facts = state.facts;
+  if (field === 'region') {
+    if (facts.region === original.facts.region) return node.name;
+    const region = original.facts.region && regionByCode(original.facts.region);
+    const next = facts.region && regionByCode(facts.region);
+    if (!region) return node.name;
+    let name = node.name.replaceAll(region.emoji, next ? next.emoji : '');
+    for (const pattern of region.patterns) name = name.replace(new RegExp(pattern.source, `${pattern.flags}g`), next ? next.code : '');
+    return name;
+  }
+  if (field === 'tags') {
+    if (facts.tags.join('|') === original.facts.tags.join('|')) return node.name;
+    const added = facts.tags.filter((tag) => !original.facts.tags.includes(tag));
+    const name = node.name.replace(/IEPL|IPLC|专线|專線|家庭宽带|家庭寬帶|家宽|家寬|BGP|原生|native/gi, (raw) => {
+      const tags = recognizeName(raw, undefined, { detectInfo: false }).tags;
+      if (tags.some((tag) => facts.tags.includes(tag))) return raw;
+      const value = added.join(' ');
+      added.length = 0;
+      return value;
+    });
+    return name + (added.length ? ` ${added.join(' ')}` : '');
+  }
+  if (field === 'rate') {
+    if (facts.rate === original.facts.rate) return node.name;
+    return node.name.replace(/(?<![A-Za-z0-9.])(?:(倍率\s*[:：]?\s*|[x×]\s*)\d{1,3}(?:\.\d{1,2})?|(\d{1,3}(?:\.\d{1,2})?)\s*([x×]|倍(?!率)))(?![A-Za-z0-9.])/g,
+      (_match, prefix: string | undefined, _number: string | undefined, suffix: string | undefined) => facts.rate === null ? '' : prefix ? `${prefix}${facts.rate}` : `${facts.rate}${suffix}`);
+  }
+  const before = field === 'source' ? original.sourceLabel : original.facts.vendor;
+  const after = field === 'source' ? state.sourceLabel : facts.vendor;
+  return before ? node.name.replace(new RegExp(escapeRegex(before), 'gi'), () => after ?? '') : node.name;
+}
+
+function selectorProbes(before: CandidateNode[], recovered: CandidateNode[], template: string) {
+  const pairs: Array<{ before: string; after: string }> = [];
+  for (const node of recovered.filter((n) => n.scoped)) {
+    const original = before.find((n) => n.identity === node.identity)!;
+    const oldState = probeState(original);
+    const newState = probeState(node);
+    pairs.push({ before: original.namingTemplate ? renderProbe(original, oldState, original.namingTemplate) : original.name,
+      after: renderProbe(node, newState, template) });
+    const changes: Array<{ field: SelectorField; facts?: Partial<ProbeState['facts']>; sourceLabel?: string }> = [
+      ...REGIONS.map((region) => ({ field: 'region' as const, facts: { region: region.code } })),
+      { field: 'region', facts: { region: null } },
+      { field: 'tags', facts: { tags: [] } },
+      ...oldState.facts.tags.map((tag) => ({ field: 'tags' as const, facts: { tags: oldState.facts.tags.filter((t) => t !== tag) } })),
+      ...LINE_TAGS.map((tag) => ({ field: 'tags' as const, facts: { tags: [tag] } })),
+      ...[null, 0.5, 1, 2].map((rate) => ({ field: 'rate' as const, facts: { rate } })),
+      { field: 'source', sourceLabel: 'probe-other-provider' },
+      { field: 'vendor', facts: { vendor: 'probe-other-vendor' } },
+    ];
+    for (const change of changes) {
+      const oldVariant = { facts: { ...oldState.facts, ...change.facts }, sourceLabel: change.sourceLabel ?? oldState.sourceLabel };
+      const newVariant = { facts: { ...newState.facts, ...change.facts }, sourceLabel: change.sourceLabel ?? newState.sourceLabel };
+      pairs.push({ before: original.namingTemplate ? renderProbe(original, oldVariant, original.namingTemplate) : rawProbe(original, change.field, oldVariant),
+        after: renderProbe(node, newVariant, template) });
+    }
+  }
+  return pairs;
+}
+
+function migratedSelector(group: CandidateGroup, before: CandidateNode[], after: CandidateNode[], recovered: CandidateNode[], template: string) {
+  const dependencies = selectorDependencies(before, [group]);
+  const fields = (Object.keys(dependencies) as SelectorField[]).filter((field) => dependencies[field]);
+  const selectors = fields.flatMap((field) => {
+    let values = [...new Set(recovered.flatMap((node) => fieldValues(node)[field]
+      .filter((value) => matchFilter([node.name], tokenSelector(value)).matched.length > 0)))];
+    if (field === 'tags') {
+      const constrained = recognizeName(String(group.values.filter), undefined, { detectInfo: false }).tags;
+      const retained = values.filter((value) => constrained.some((tag) => tag === value));
+      if (retained.length) values = retained;
+    }
+    return values.length ? [{ field, selector: `(?:${values.map(tokenSelector).join('|')})` }] : [];
+  });
+  const probes = selectorProbes(before, recovered, template);
+  const exclude = typeof group.values['exclude-filter'] === 'string' ? group.values['exclude-filter'] : undefined;
+  const oldMatches = new Set(matchFilter(probes.map((p) => p.before), String(group.values.filter), exclude).matched);
+  for (let size = selectors.length; size >= 1; size -= 1) {
+    for (let mask = 1; mask < 2 ** selectors.length; mask += 1) {
+      const selected = selectors.filter((_, i) => mask & (1 << i));
+      if (selected.length !== size) continue;
+      const filter = selected.length === 1 ? selected[0].selector : selected.map((s) => `(?=.*${s.selector})`).join('');
+      if (filter.length > 4096 || filter.includes('`')) continue;
+      const migrated = groupNodeMembers(group, after, filter);
+      if (migrated.error || !sameSet(recovered, migrated.selectedNodes)) continue;
+      const newMatches = new Set(matchFilter(probes.map((p) => p.after), filter, exclude).matched);
+      if (probes.every((p) => oldMatches.has(p.before) === newMatches.has(p.after))) {
+        return { filter, after: migrated.nodes.length };
+      }
+    }
+  }
+}
 
 export function analyzeNamingCandidate(
   template: { id: string; title: string; template: string },
@@ -182,13 +322,11 @@ export function analyzeNamingCandidate(
       if (beforeScoped.some((n) => !afterIdentities.has(n.identity)) && !providerBacked && !impact.error && typeof group.values.filter === 'string') {
         const recovered = before.selectedNodes.map((n) => afterNode(n.identity));
         if (recovered.every((n): n is CandidateNode => n !== undefined)) {
-          const filter = `^(?:${[...new Set(recovered.map((n) => n.name))].map(escapeRegex).join('|')})$`;
-          if (filter.length <= 4096 && !filter.includes('`')) {
-            const migrated = groupNodeMembers(group, profile.after, filter);
-            if (!migrated.error && sameSet(before.selectedNodes, migrated.selectedNodes)) impact.migration = { filter, after: migrated.nodes.length };
-          }
+          impact.migration = migratedSelector(group, before.selectedNodes, profile.after, recovered, template.template);
         }
+        impact.broken = !impact.migration;
       }
+      impact.emptied = impact.before > 0 && (impact.migration?.after ?? impact.after) === 0;
       groups.push(impact);
     }
     for (const rule of profile.rules) {
@@ -208,7 +346,7 @@ export function analyzeNamingCandidate(
 }
 
 export function rankNamingCandidates(candidates: NamingCandidate[]): NamingCandidate[] {
-  const score = (c: NamingCandidate) => [c.groups.filter((g) => g.before !== g.after || g.emptied).length,
-    c.emptiedGroups.length, c.references.length];
-  return [...candidates].sort((a, b) => score(a)[0] - score(b)[0] || score(a)[1] - score(b)[1] || score(a)[2] - score(b)[2]);
+  const score = (c: NamingCandidate) => [c.groups.filter((g) => g.broken || g.before !== (g.migration?.after ?? g.after)).length,
+    c.emptiedGroups.length, c.groups.filter((g) => g.migration).length, c.references.length];
+  return [...candidates].sort((a, b) => score(a)[0] - score(b)[0] || score(a)[1] - score(b)[1] || score(a)[2] - score(b)[2] || score(a)[3] - score(b)[3]);
 }

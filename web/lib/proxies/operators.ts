@@ -31,6 +31,7 @@ export interface ClashProxy {
 }
 
 export interface OperatorStep {
+  infoFiltered?: number;
   id: string;
   kind: Operator['kind'];
   /** Whether the step ran (false when `disabled`). */
@@ -146,6 +147,7 @@ function runOne(
   proxies: ClashProxy[];
   dropped: number;
   changed: number;
+  infoFiltered?: number;
   collisions?: string[];
   deduped?: Array<{ kept: string; dropped: string; sourceKey?: string }>;
 } {
@@ -290,6 +292,7 @@ function runOne(
         // True duplicates are REMOVED nodes — the trace must report them.
         dropped: proxies.length - res.proxies.length,
         changed: res.changed,
+        infoFiltered: res.infoFiltered,
         // Collision names can embed raw residual text — bounded + redacted
         // at creation so every consumer (workbench, AI, preview) sees the
         // same projected shape (C10).
@@ -381,6 +384,7 @@ export function applyOperators(
       after: res.proxies.length,
       dropped: res.dropped,
       changed: res.changed,
+      ...(res.infoFiltered ? { infoFiltered: res.infoFiltered } : {}),
       ...(res.collisions && res.collisions.length > 0 ? { collisions: res.collisions } : {}),
       ...(res.deduped && res.deduped.length > 0 ? { deduped: res.deduped } : {}),
       samples: stepSamples(proxies, res.proxies),

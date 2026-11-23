@@ -2,7 +2,7 @@ import { parse } from 'yaml';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { enabledCollectionMemberSubs } from '@/lib/engine/resolve';
 import { nodeFingerprint } from '@/lib/proxies/naming';
-import { fingerprintOf, sourceOf } from '@/lib/proxies/provenance';
+import { envelopeOf, fingerprintOf, sourceOf } from '@/lib/proxies/provenance';
 import { safeIssueText as safeSampleName } from './pipelinePreview';
 import { redactSensitiveText } from '@/lib/proxies/namingSanitize';
 import {
@@ -65,12 +65,18 @@ export async function loadNamingCandidateContext(type: 'subscription' | 'collect
     resolveSubscriptionForPreflight(sub, { subscriptionSnapshot, ordinalPlanningSession, managedCollection: options?.managedCollection });
   const exportOptions = { writeCache: false, preserveEnvelope: true, ordinalPlanningSession, resolveSubscription: resolver };
   const scope = (node: Record<string, unknown>) => type === 'collection' || sourceOf(node)?.key === (entity as Subscription).name;
-  const nodeOf = (node: Record<string, unknown>, scoped: boolean): CandidateNode => ({
-    identity: fingerprintOf(node) ?? nodeFingerprint(node) ?? `name:${String(node.name)}`,
-    name: String(node.name ?? ''), type: String(node.type ?? ''), scoped,
-    sourceKey: sourceOf(node)?.key,
-    ...(typeof node['dialer-proxy'] === 'string' ? { dialer: node['dialer-proxy'] } : {}),
-  });
+  const nodeOf = (node: Record<string, unknown>, scoped: boolean, namingEntity = entity): CandidateNode => {
+    const managed = buildOperatorSnapshot(namingEntity).managed?.decoded;
+    return {
+      identity: fingerprintOf(node) ?? nodeFingerprint(node) ?? `name:${String(node.name)}`,
+      name: String(node.name ?? ''), type: String(node.type ?? ''), scoped,
+      sourceKey: sourceOf(node)?.key,
+      namingTemplate: managed?.kind === 'rename-template' && !managed.disabled ? managed.template : undefined,
+      sourceLabel: (managed?.kind === 'rename-template' ? managed.sourceAliases?.[sourceOf(node)?.key ?? ''] : undefined)
+        ?? envelopeOf(node)?.memberNaming?.sourceAlias ?? sourceOf(node)?.label,
+      ...(typeof node['dialer-proxy'] === 'string' ? { dialer: node['dialer-proxy'] } : {}),
+    };
+  };
   const pool = async (input: ProfileInput, next?: Subscription | Collection) => {
     const { profile } = input;
     const profileOptions = { ...exportOptions, baseProxyNames: new Set(input.baseNodes.map((node) => String(node.name))) };
@@ -80,12 +86,12 @@ export async function loadNamingCandidateContext(type: 'subscription' | 'collect
     if (source.type === 'subscription') {
       const sub = subs.find((s) => s.id === source.id);
       if (!sub) throw ProblemDetailsError.preconditionFailed('配置文件的订阅源不存在。');
-      return (await exportSubscriptionNodes(sub, profileOptions)).proxies.map((n) => nodeOf(n, scope(n)));
+      return (await exportSubscriptionNodes(sub, profileOptions)).proxies.map((n) => nodeOf(n, scope(n), sub));
     }
     if (source.type === 'collection') {
       const col = cols.find((c) => c.id === source.id);
       if (!col) throw ProblemDetailsError.preconditionFailed('配置文件的聚合订阅不存在。');
-      return (await exportCollectionNodes(col, subs, profileOptions)).proxies.map((n) => nodeOf(n, scope(n)));
+      return (await exportCollectionNodes(col, subs, profileOptions)).proxies.map((n) => nodeOf(n, scope(n), col));
     }
     return [];
   };
