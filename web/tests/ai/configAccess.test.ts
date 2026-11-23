@@ -121,7 +121,7 @@ describe('getConfigSection redaction', () => {
   });
 
   it('masks inherited node connections and nested connection paths, but preserves the name', () => {
-    const name = 'https://name.example/display?tag=01';
+    const name = 'https://name.example/***';
     for (const path of [
       'x-endpoint', 'x-transport-key', 'x-node.server', 'x-node.ws-opts.headers.Host',
       'x-node.url-params.token',
@@ -225,6 +225,27 @@ rules:
     expect(getConfigSection(source, 'proxies[***].type').yaml).toBe('trojan');
   });
 
+  it('scrubs URL credentials in node definitions and every reference using the projected name', () => {
+    const name = 'HK https://user:fixture-password@label.example/fixture-secret?token=fixture-token';
+    const projected = 'HK https://label.example/***';
+    const source = `proxies:
+  - {name: "${name}", server: edge.example, type: ss}
+  - {name: Manual, server: other.example, dialer-proxy: "${name}"}
+proxy-groups:
+  - {name: Auto, type: select, proxies: ["${name}"]}
+rules:
+  - "MATCH,${name}"
+`;
+    const yaml = fullRedactedYaml(source);
+    expect(yaml).not.toMatch(/fixture-(?:password|secret|token)/);
+    expect(parse(yaml)).toMatchObject({
+      proxies: [{ name: projected }, { 'dialer-proxy': projected }],
+      'proxy-groups': [{ proxies: [projected] }],
+      rules: [`MATCH,${projected}`],
+    });
+    expect(getConfigSection(source, `proxies[${projected}].type`).yaml).toBe('ss');
+  });
+
   it('masks all credentials across the whole config', () => {
     expect(yaml).not.toContain('p@ssw0rd');
     expect(yaml).not.toContain('SECRETTOKEN');
@@ -239,7 +260,7 @@ rules:
     expect(parse(yaml, { merge: true })).toMatchObject({
       port: 7891,
       proxies: [{
-        name: 'https://name.example/display?tag=01',
+        name: 'https://name.example/***',
         type: 'vless',
         server: '***',
         port: '***',

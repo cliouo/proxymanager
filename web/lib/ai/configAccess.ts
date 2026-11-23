@@ -103,7 +103,7 @@ function proxyNameProjection(doc: Document, scoped: Set<Pair>) {
       definitions.set(name, name.value);
       const server = property(map, 'server');
       const port = property(map, 'port');
-      names.set(name.value, maskProxyEndpoint(names.get(name.value) ?? name.value, {
+      names.set(name.value, maskProxyEndpoint(names.get(name.value) ?? scrubUrlTokens(name.value), {
         server: isScalar(server) ? server.value : undefined,
         port: isScalar(port) ? port.value : undefined,
       }));
