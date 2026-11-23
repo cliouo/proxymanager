@@ -38,25 +38,33 @@ export interface Segment {
 export function parsePath(path: string): Segment[] {
   const parts: string[] = [];
   let start = 0;
-  let depth = 0;
-  let closed = false;
   for (let i = 0; i < path.length; i += 1) {
     const char = path[i];
-    if (char === '.' && depth === 0) {
+    if (char === '.') {
       parts.push(path.slice(start, i).trim());
       start = i + 1;
-      closed = false;
-    } else if (closed && char.trim() !== '') {
-      throw ProblemDetailsError.badRequest('路径选择器后必须是点或路径末尾。');
     } else if (char === '[') {
-      depth += 1;
+      let close = -1;
+      let depth = 1;
+      for (let j = i + 1; j < path.length; j += 1) {
+        if (path[j] === '[') depth += 1;
+        if (path[j] !== ']') continue;
+        depth -= 1;
+        let next = j + 1;
+        while (next < path.length && path[next].trim() === '') next += 1;
+        if (next !== path.length && path[next] !== '.') continue;
+        if (close === -1) close = j;
+        if (depth === 0) {
+          close = j;
+          break;
+        }
+      }
+      if (close === -1) throw ProblemDetailsError.badRequest('路径选择器括号不匹配。');
+      i = close;
     } else if (char === ']') {
-      depth -= 1;
-      if (depth < 0) throw ProblemDetailsError.badRequest('路径选择器括号不匹配。');
-      closed = depth === 0;
+      throw ProblemDetailsError.badRequest('路径选择器括号不匹配。');
     }
   }
-  if (depth !== 0) throw ProblemDetailsError.badRequest('路径选择器括号不匹配。');
   parts.push(path.slice(start).trim());
   const segments = parts.filter(Boolean);
   if (segments.length === 0) throw ProblemDetailsError.badRequest('路径不能为空。');

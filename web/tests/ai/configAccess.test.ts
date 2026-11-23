@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parse } from 'yaml';
+import { parse, stringify } from 'yaml';
 import {
   buildOutline,
   fullRedactedYaml,
@@ -149,6 +149,14 @@ describe('getConfigSection navigation', () => {
   it('reads scalar leaves via map paths', () => {
     expect(getConfigSection(YAML, 'dns.enhanced-mode').yaml).toBe('fake-ip');
   });
+
+  it.each(['HK [Backup', 'HK ]Backup', '[HK].Backup'])(
+    'resolves a selector with literal brackets in the name: %s',
+    (name) => {
+      const source = stringify({ proxies: [{ name, type: 'ss' }] });
+      expect(getConfigSection(source, `proxies[${name}].type`).yaml).toBe('ss');
+    },
+  );
 
   it('reports not-found for missing paths', () => {
     expect(getConfigSection(YAML, 'does.not.exist').found).toBe(false);
