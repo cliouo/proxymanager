@@ -45,11 +45,15 @@ describe('subscription info labels', () => {
     ['2027-06-24T18:23:35.123Z', '2027-06-24T18:23:35Z'],
     ['2027/06/24 21:15-0400', '2027-06-25T01:15:00Z'],
     ['2027年6月24日 18:23', '2027-06-24T18:23:00Z'],
+    ['2027-06-24 18:00 (UTC+8)', '2027-06-24T10:00:00Z'],
+    ['2027-06-24 18:00（GMT+8）', '2027-06-24T10:00:00Z'],
+    ['2027-06-24 18:00 UTC+8', '2027-06-24T10:00:00Z'],
+    ['2027-06-24 18:00 GMT-3:30 (renews monthly)', '2027-06-24T21:30:00Z'],
   ])('preserves the time and zone on the expiry label %s', (labelDate, expected) => {
     expect(subscriptionTrafficFromNodes([`有效期至：${labelDate}`])?.expire).toBe(Date.parse(expected) / 1000);
   });
 
-  it.each(['2027-02-30 12:00', '2027-06-24 24:00', '2027-06-24 18:23+08:90'])(
+  it.each(['2027-02-30 12:00', '2027-06-24 24:00', '2027-06-24 18:23+08:90', '2027-06-24 18:23 (UTC+25)'])(
     'does not fall back to midnight for invalid expiry %s',
     (labelDate) => {
       expect(subscriptionTrafficFromNodes([`到期时间：${labelDate}`])).toBeUndefined();

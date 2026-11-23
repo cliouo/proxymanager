@@ -58,7 +58,8 @@ const TRAFFIC_VALUE = `${SIZE}(?:\\s*/\\s*${SIZE})?${VALUE_SUFFIX}`;
 const USED_LABEL = labelPattern(USED, TRAFFIC_VALUE);
 const REMAINING_LABEL = labelPattern(REMAINING, TRAFFIC_VALUE);
 const EXPIRY_LABEL = labelPattern(EXPIRY);
-const EXPIRY_DATE = labelPattern(EXPIRY, String.raw`(\d{4})[-/.年](\d{1,2})[-/.月](\d{1,2})日?(?:[T\s]+(\d{1,2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(?:\s*(Z|[+-]\d{2}:?\d{2}))?)?${VALUE_SUFFIX}`);
+const NAMED_OFFSET = String.raw`(?:UTC|GMT)[+-]\d{1,2}(?::\d{2})?`;
+const EXPIRY_DATE = labelPattern(EXPIRY, String.raw`(\d{4})[-/.年](\d{1,2})[-/.月](\d{1,2})日?(?:[T\s]+(\d{1,2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(?:\s*(Z|[+-]\d{2}:?\d{2}|${NAMED_OFFSET}|\(${NAMED_OFFSET}\)))?)?${VALUE_SUFFIX}`);
 const NOTICE_LABEL = labelPattern(NOTICE);
 
 function subscriptionLabel(name: string): string {
@@ -90,10 +91,11 @@ function expirySeconds(date: RegExpMatchArray): number | undefined {
     +hours > 23 || +minutes > 59 || +seconds > 59
   ) return;
   if (!zone || zone.toUpperCase() === 'Z') return utc.getTime() / 1000;
-  const offsetHours = Number(zone.slice(1, 3));
-  const offsetMinutes = Number(zone.slice(-2));
-  if (offsetHours > 23 || offsetMinutes > 59) return;
-  const offset = (offsetHours * 60 + offsetMinutes) * (zone.startsWith('-') ? -1 : 1);
+  const offsetParts = zone.match(/([+-])(\d{1,2})(?::?(\d{2}))?\)?$/u);
+  if (!offsetParts) return;
+  const [, sign, offsetHours, offsetMinutes = '0'] = offsetParts;
+  if (+offsetHours > 23 || +offsetMinutes > 59) return;
+  const offset = (+offsetHours * 60 + +offsetMinutes) * (sign === '-' ? -1 : 1);
   return utc.getTime() / 1000 - offset * 60;
 }
 
