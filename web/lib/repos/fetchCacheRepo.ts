@@ -47,6 +47,8 @@ const MAX_CACHE_CLOCK_SKEW_MS = 5 * 60 * 1000;
  * part of the cache identity. Bump this whenever those semantics change; an
  * unversioned key is treated as epoch 1.
  *
+ * 18 → recognize decorated traffic and expiry labels.
+ *
  * 17 → preserve label expiry timestamps and inferred traffic provenance.
  *
  * 16 → preserve real nodes with an informational suffix.
@@ -67,7 +69,7 @@ const MAX_CACHE_CLOCK_SKEW_MS = 5 * 60 * 1000;
  *       cached normalized lists with duplicate names are only legal under the
  *       new semantics.
  */
-export const FETCH_CACHE_EPOCH = 17;
+export const FETCH_CACHE_EPOCH = 18;
 
 export function buildCacheKey({ url, userAgent, headers, keepInfoNodes }: CacheKeyParts): string {
   const headerStr = headers ? JSON.stringify(sortRecord(headers)) : '';

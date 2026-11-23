@@ -28,6 +28,18 @@ describe('subscription info labels', () => {
   });
 
   it.each([
+    ['剩余流量：1.91G 🚀', { remaining: Math.round(1.91 * 1024 ** 3) }],
+    ['当前流量：1 GB / 5 GB (renews monthly) ✅', { download: 1024 ** 3, total: 5 * 1024 ** 3 }],
+    ['到期时间：2027-06-24（请及时续费）', { expire: Date.UTC(2027, 5, 24) / 1000 }],
+    ['到期时间：2027-06-24T18:23:35+08:00【请及时续费】', { expire: Date.UTC(2027, 5, 24, 10, 23, 35) / 1000 }],
+  ])('detects and parses a notice followed by decoration: %s', (name, traffic) => {
+    expect({
+      detected: isSubscriptionInfoNodeName(name),
+      traffic: subscriptionTrafficFromNodes([name]),
+    }).toMatchObject({ detected: true, traffic });
+  });
+
+  it.each([
     ['2027-06-24', '2027-06-24T00:00:00Z'],
     ['2027-06-24 18:23:35+08:00', '2027-06-24T10:23:35Z'],
     ['2027-06-24T18:23:35.123Z', '2027-06-24T18:23:35Z'],

@@ -48,16 +48,17 @@ const REMAINING = /(?:剩余流量|可用流量|流量剩余|(?:remaining|availa
 const EXPIRY = /(?:到期(?:时间|日期)?|(?:套餐|订阅|有效期)\s*(?:到期|截止)|有效期至|expir(?:es?|y|ation)(?:\s+(?:date|time|on))?|valid\s+until)(?=\s*[:：=]|\s*\d{4}[-/.年]|\s*$)/iu;
 const NOTICE = /(?:流量重置|重置(?:时间|日期|流量)?|距离(?:下次)?重置|套餐(?=\s*[:：=])|官网(?:地址)?|官方网站|订阅链接|续费(?:地址|链接)?|客服(?:地址|链接)?|(?:official\s+)?website|(?:traffic|data)\s+reset|reset\s+(?:date|time))(?=\s*[:：=]|\s*https?:\/\/|\s*$)/iu;
 const SIZE = String.raw`(\d+(?:\.\d+)?)\s*([KMGTPE](?:i?B)?|B)(?![a-z])`;
+const VALUE_SUFFIX = String.raw`(?:[\s\p{Extended_Pictographic}\p{Emoji_Modifier}\p{Regional_Indicator}\p{M}\u200d!?,.;~。…]|\([^()\r\n]*\)|\[[^\[\]\r\n]*\]|【[^【】\r\n]*】)*$`;
 
 function labelPattern(keyword: RegExp, value = ''): RegExp {
   return new RegExp(`^${keyword.source}\\s*(?:[:：=]\\s*)?${value}`, 'iu');
 }
 
-const TRAFFIC_VALUE = `${SIZE}(?:\\s*/\\s*${SIZE})?\\s*$`;
+const TRAFFIC_VALUE = `${SIZE}(?:\\s*/\\s*${SIZE})?${VALUE_SUFFIX}`;
 const USED_LABEL = labelPattern(USED, TRAFFIC_VALUE);
 const REMAINING_LABEL = labelPattern(REMAINING, TRAFFIC_VALUE);
 const EXPIRY_LABEL = labelPattern(EXPIRY);
-const EXPIRY_DATE = labelPattern(EXPIRY, String.raw`(\d{4})[-/.年](\d{1,2})[-/.月](\d{1,2})日?(?:[T\s]+(\d{1,2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?\s*(Z|[+-]\d{2}:?\d{2})?)?\s*$`);
+const EXPIRY_DATE = labelPattern(EXPIRY, String.raw`(\d{4})[-/.年](\d{1,2})[-/.月](\d{1,2})日?(?:[T\s]+(\d{1,2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(?:\s*(Z|[+-]\d{2}:?\d{2}))?)?${VALUE_SUFFIX}`);
 const NOTICE_LABEL = labelPattern(NOTICE);
 
 function subscriptionLabel(name: string): string {
