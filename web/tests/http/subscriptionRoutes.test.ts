@@ -11,6 +11,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ConfigValidationError } from '@/lib/config/errors';
 import { checkNativeFetchCompatibility } from '@/ui/data/local-fetch';
+import type { StoredSubscriptionInfo } from '@/lib/repos/subscriptionsRepo';
 import { SubscriptionSchema } from '@/schemas';
 import type { Collection, Profile, Subscription, SubscriptionFetchHealth } from '@/schemas';
 
@@ -88,7 +89,12 @@ const gate = vi.hoisted(() => ({
 
 vi.mock('@/lib/repos/subscriptionsRepo', () => ({
   ...repo,
-  listSubscriptionSummaries: repo.listSubscriptions,
+  listSubscriptionSummaries: async (readStoredInfo?: (sub: Subscription) => Promise<StoredSubscriptionInfo | undefined>) =>
+    Promise.all((await repo.listSubscriptions()).map(async (sub) => {
+      const summary = { ...sub, storedInfo: await readStoredInfo?.(sub) };
+      delete summary.content;
+      return summary;
+    })),
 }));
 vi.mock('@/lib/repos/profilesRepo', () => ({ listProfiles: consumerRepos.listProfiles }));
 vi.mock('@/lib/repos/collectionsRepo', () => ({
@@ -331,6 +337,45 @@ describe('GET /api/v1/subscriptions — admin view projection', () => {
     expect(manualSnapshot.readVerifiedSubscriptionManualSnapshot).toHaveBeenCalledWith(sub);
     expect(healthRepo.getSubscriptionFetchHealth).not.toHaveBeenCalled();
     expect(repo.commitSubscriptionChange).not.toHaveBeenCalled();
+  });
+
+  it('includes local and legacy manual traffic in the list without exposing subscription bodies', async () => {
+    const content = `proxies:
+  - { name: 'HK', type: trojan, server: hk.example, port: 443, password: 'private-body-sentinel' }
+  - { name: '当前流量：1.91G / 500G', type: direct }
+  - { name: '到期时间：2027-06-24', type: direct }
+`;
+    const manual = remoteSub({
+      refresh_mode: 'manual',
+      manual_snapshot_meta: {
+        updated_at: 1,
+        proxy_count: 3,
+        origin: 'web',
+        fetch_identity_revision: 0,
+        content_sha256: 'a'.repeat(64),
+      },
+    });
+    repo.listSubscriptions.mockResolvedValue([localSub({ content }), manual]);
+    manualSnapshot.readVerifiedSubscriptionManualSnapshot.mockResolvedValue(content);
+
+    const result = await listGET();
+    expect(result.status).toBe(200);
+    const { data } = (await json(result)) as { data: SubscriptionAdminView[] };
+    const traffic = {
+      upload: 0,
+      download: Math.round(1.91 * 1024 ** 3),
+      total: 500 * 1024 ** 3,
+      expire: Date.UTC(2027, 5, 24) / 1000,
+    };
+    expect(data).toMatchObject([
+      { id: LOCAL_ID, traffic },
+      { id: REMOTE_ID, manual_snapshot: { proxy_count: 1, traffic } },
+    ]);
+    expect(data[0]).not.toHaveProperty('content');
+    expect(data[0]).not.toHaveProperty('storedInfo');
+    expect(data[1]).not.toHaveProperty('storedInfo');
+    expect(JSON.stringify(data)).not.toContain('private-body-sentinel');
+    expect(healthRepo.getSubscriptionFetchHealthMany).not.toHaveBeenCalled();
   });
 });
 

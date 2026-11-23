@@ -11,6 +11,7 @@ import {
   getSubscription,
   getSubscriptionByName,
   listSubscriptions,
+  type StoredSubscriptionInfo,
   type SubscriptionManualSnapshotAction,
 } from '@/lib/repos/subscriptionsRepo';
 import { listProfiles } from '@/lib/repos/profilesRepo';
@@ -160,6 +161,7 @@ function assertRefreshModeAllowedForKind(kind: Subscription['kind'], refreshMode
 export function projectSubscriptionAdminView(
   subscription: Subscription,
   health?: SubscriptionFetchHealth | null,
+  storedInfo?: StoredSubscriptionInfo,
 ): SubscriptionAdminView {
   const view = { ...subscription } as SubscriptionAdminView & Partial<Subscription>;
   delete view.fetch_identity_revision;
@@ -170,12 +172,14 @@ export function projectSubscriptionAdminView(
     delete view.fetch_failure_policy;
     delete view.fetch_health;
     delete view.refresh_mode;
+    if (storedInfo?.traffic) view.traffic = storedInfo.traffic;
     return view;
   }
   delete view.content;
 
   const refreshMode = effectiveSubscriptionRefreshMode(subscription);
   const meta = parseSubscriptionManualSnapshotMeta(subscription);
+  const snapshotTraffic = storedInfo?.traffic ?? meta?.traffic;
   return {
     ...view,
     fetch_failure_policy: effectiveFetchFailurePolicy(subscription),
@@ -187,8 +191,8 @@ export function projectSubscriptionAdminView(
     manual_snapshot: meta
       ? {
           updated_at: meta.updated_at,
-          proxy_count: meta.proxy_count - (subscription.keep_info_nodes ? 0 : meta.info_proxy_count ?? 0),
-          ...(meta.traffic ? { traffic: meta.traffic } : {}),
+          proxy_count: storedInfo?.proxyCount ?? meta.proxy_count - (subscription.keep_info_nodes ? 0 : meta.info_proxy_count ?? 0),
+          ...(snapshotTraffic ? { traffic: snapshotTraffic } : {}),
           origin: meta.origin,
           source_changed:
             meta.fetch_identity_revision !== effectiveFetchIdentityRevision(subscription),
@@ -199,7 +203,7 @@ export function projectSubscriptionAdminView(
 
 /** Admin views for the whole library (one MGET for all remote healths). */
 export async function listSubscriptionAdminViews(): Promise<SubscriptionAdminView[]> {
-  const subs = await listSubscriptionSummaries();
+  const subs = await listSubscriptionSummaries(readStoredSubscriptionInfo);
   const remoteIds = subs
     .filter((s) => s.kind === 'remote' && effectiveSubscriptionRefreshMode(s) === 'server-auto')
     .map((s) => s.id);
@@ -207,36 +211,32 @@ export async function listSubscriptionAdminViews(): Promise<SubscriptionAdminVie
   // not even with an empty key list.
   const healths = remoteIds.length === 0 ? [] : await getSubscriptionFetchHealthMany(remoteIds);
   const healthById = new Map(remoteIds.map((id, index) => [id, healths[index] ?? null]));
-  return subs.map((sub) => projectSubscriptionAdminView(sub, healthById.get(sub.id)));
+  return subs.map(({ storedInfo, ...sub }) => projectSubscriptionAdminView(sub, healthById.get(sub.id), storedInfo));
+}
+
+async function readStoredSubscriptionInfo(sub: Subscription): Promise<StoredSubscriptionInfo | undefined> {
+  if (sub.kind !== 'local') {
+    if (effectiveSubscriptionRefreshMode(sub) !== 'manual') return;
+    const meta = parseSubscriptionManualSnapshotMeta(sub);
+    if (!meta || meta.info_proxy_count !== undefined) return;
+  }
+  try {
+    const { traffic, proxyCount } = await resolveSubscriptionProxiesRaw(sub, { writeCache: false });
+    return { traffic, proxyCount };
+  } catch (error) {
+    if (!(error instanceof SubscriptionResolutionValidationError)) throw error;
+  }
 }
 
 /** Admin view of one subscription (or null when unknown). */
 export async function getSubscriptionAdminView(id: string): Promise<SubscriptionAdminView | null> {
   const sub = await getSubscription(id);
   if (!sub) return null;
-  const storedContent = sub.kind === 'local' || effectiveSubscriptionRefreshMode(sub) === 'manual';
-  if (storedContent) {
-    const view = projectSubscriptionAdminView(sub);
-    const snapshot = view.manual_snapshot;
-    const needsMetadata = sub.kind === 'local' ||
-      (snapshot && parseSubscriptionManualSnapshotMeta(sub)?.info_proxy_count === undefined);
-    if (needsMetadata) {
-      try {
-        const { traffic, proxyCount } = await resolveSubscriptionProxiesRaw(sub, { writeCache: false });
-        if (sub.kind === 'local') {
-          if (traffic) view.traffic = traffic;
-        } else if (snapshot) {
-          snapshot.proxy_count = proxyCount;
-          if (traffic) snapshot.traffic = traffic;
-        }
-      } catch (error) {
-        if (!(error instanceof SubscriptionResolutionValidationError)) throw error;
-      }
-    }
-    return view;
-  }
   // P-FFP v1 invariant 1: LOCAL sources never consult health storage — the
   // health read happens only on the remote branch.
+  if (sub.kind === 'local' || effectiveSubscriptionRefreshMode(sub) === 'manual') {
+    return projectSubscriptionAdminView(sub, undefined, await readStoredSubscriptionInfo(sub));
+  }
   return projectSubscriptionAdminView(sub, await getSubscriptionFetchHealth(id));
 }
 

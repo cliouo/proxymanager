@@ -60,11 +60,11 @@ async function copyLink(url: string | null, label: string) {
   else notify.error(new Error('复制失败，请手动复制'));
 }
 
-function SourceCard({ source, subBase }: { source: Source; subBase: string | null }) {
+export function SourceCard({ source, subBase }: { source: Source; subBase: string | null }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const health = sourceHealth(source);
-  const traffic = trafficOf(source.fetch_health) ?? source.manual_snapshot?.traffic;
+  const traffic = source.traffic ?? trafficOf(source.fetch_health) ?? source.manual_snapshot?.traffic;
   const title = sourceTitle(source);
   const refreshable = canServerRefresh(source);
   return (
