@@ -70,7 +70,7 @@ mihomo 写法。这些 load-bearing 部分由服务端强制。
 - **远程源**：节点来自上游、不可直接编辑，用 `rename-regex` 算子。对远程源调用
   `rename_local_node` 会被服务端拒绝（返回 422）——远程源没有可直接编辑的本地节点。
 - **本地源**（kind=local，内容用户自填）：可直接改源内容——`list_local_nodes` 列其节点
-  （只给不透明 `node` 句柄（nd-）+ 有界脱敏显示名 `display`（原始节点名经结构化脱敏）+ 白名单 `type` + `referencedBy`，**凭证与稳定键一律不出**）、
+  （只给不透明 `node` 句柄（nd-）+ 原始显示名 `display`（有长度上限）+ 白名单 `type` + `referencedBy`，**凭证与稳定键一律不出**）、
   `rename_local_node` 用 `node` 句柄改某节点名（永久生效，仅动 name 字段、其它配置与密码原样保留，需确认）。
   本地源要批量 / 按正则改名也可用 `rename-regex` 算子。
 

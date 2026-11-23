@@ -12,9 +12,9 @@
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import type { Operator } from '@/schemas/operator';
 import { USELESS_PATTERNS } from './infoNodes';
-import { applyRenameTemplate, type OrdinalResolver } from './naming';
+import { applyRenameTemplate, nodeFingerprint, type OrdinalResolver } from './naming';
 import { redactSensitiveText } from './namingSanitize';
-import { envelopeOf, mergeEnvelope, sourceOf } from './provenance';
+import { envelopeOf, fingerprintOf, mergeEnvelope, sourceOf } from './provenance';
 import { detectRegion, flagFromCode, regionByCode, stripFlags } from './regions';
 import { assertSafeRuntimeRegexInput, compileSafeRuntimeRegex } from './regexSafety';
 
@@ -56,8 +56,8 @@ export interface OperatorStep {
   deduped?: Array<{ kept: string; dropped: string; sourceKey?: string }>;
   /**
    * Bounded representative name samples: up to {@link STEP_SAMPLE_CAP} names
-   * from the step's input head and its output head (deterministic, privacy-
-   * safe — display names only). The workbench shows these per step so users
+   * from the step's input head and its output head (display names only).
+   * The workbench shows these per step so users
    * see what each operator actually produced, not just counts.
    */
   samples?: { before: string; after: string }[];
@@ -65,16 +65,6 @@ export interface OperatorStep {
 
 /** Cap on per-step name samples. */
 export const STEP_SAMPLE_CAP = 3;
-
-/**
- * Node names can embed credential-like text, and step traces flow into AI
- * action results — samples are therefore REDACTED (same sanitizer as the AI
- * payload) and bounded at creation, never raw display names.
- */
-function safeSampleName(name: string): string {
-  const redacted = redactSensitiveText(name).replace(/\s+/g, ' ').trim();
-  return (redacted === '' ? '(已脱敏)' : redacted).slice(0, 64);
-}
 
 /** Bounded, redacted source-key projection for trace diagnostics. */
 function safeLabel(text: string): string {
@@ -86,6 +76,7 @@ function safeLabel(text: string): string {
 function stepSamples(
   before: ClashProxy[],
   after: ClashProxy[],
+  projectName: TraceNameProjection,
 ): { before: string; after: string }[] {
   const n = Math.min(STEP_SAMPLE_CAP, before.length, after.length);
   const out: { before: string; after: string }[] = [];
@@ -93,7 +84,7 @@ function stepSamples(
     const b = typeof before[i].name === 'string' ? (before[i].name as string) : '';
     const a = typeof after[i].name === 'string' ? (after[i].name as string) : '';
     if (b === '' && a === '') continue;
-    out.push({ before: safeSampleName(b), after: safeSampleName(a) });
+    out.push({ before: projectName(b, before[i]), after: projectName(a, after[i]) });
   }
   return out;
 }
@@ -139,10 +130,13 @@ function compileTest(pattern: string, flags?: string): RegExp {
 
 /* ─── per-operator transforms ──────────────────────────────────────── */
 
+type TraceNameProjection = (name: string, proxy: ClashProxy) => string;
+
 function runOne(
   proxies: ClashProxy[],
   op: Operator,
   ordinalResolver?: OrdinalResolver,
+  projectTraceName?: TraceNameProjection,
 ): {
   proxies: ClashProxy[];
   dropped: number;
@@ -287,22 +281,33 @@ function runOne(
       // attached by the collection/single-sub caller) feeds the source +
       // per-source index placeholders. Never depends on a live AI call.
       const res = applyRenameTemplate(proxies, op, sourceOf, ordinalResolver);
+      const byFingerprint = new Map<string, ClashProxy>();
+      if (projectTraceName && (res.collisions.length || res.deduped.length)) {
+        for (const proxy of proxies) {
+          const fp = fingerprintOf(proxy) ?? nodeFingerprint(proxy);
+          if (fp) byFingerprint.set(fp, proxy);
+        }
+      }
+      const traceName = (name: string, fp?: string) => {
+        const proxy = fp ? byFingerprint.get(fp) : undefined;
+        return proxy && projectTraceName ? projectTraceName(name, proxy) : name;
+      };
+      const collisionParticipants = new Map(res.collisionNodes.map((entry) => [entry.name, entry.participants]));
       return {
         proxies: res.proxies,
         // True duplicates are REMOVED nodes — the trace must report them.
         dropped: proxies.length - res.proxies.length,
         changed: res.changed,
         infoFiltered: res.infoFiltered,
-        // Collision names can embed raw residual text — bounded + redacted
-        // at creation so every consumer (workbench, AI, preview) sees the
-        // same projected shape (C10).
-        collisions: res.collisions.map((c) => safeSampleName(c)),
-        // Diagnostic provenance, projected through the same bounded
-        // redaction as step samples (these entries flow into preview
-        // responses and AI action results).
+        collisions: projectTraceName
+          ? res.collisions.map((name) => (collisionParticipants.get(name) ?? []).reduce(
+              (text, participant) => traceName(text, participant.fingerprint),
+              name,
+            ))
+          : res.collisions,
         deduped: res.deduped.map((d) => ({
-          kept: safeSampleName(d.kept),
-          dropped: safeSampleName(d.dropped),
+          kept: traceName(d.kept, d.keptFingerprint),
+          dropped: traceName(d.dropped, d.droppedFingerprint),
           ...(d.sourceKey !== undefined ? { sourceKey: safeLabel(d.sourceKey) } : {}),
         })),
       };
@@ -358,6 +363,7 @@ export function applyOperators(
   input: ClashProxy[],
   operators: Operator[],
   ordinalResolver?: OrdinalResolver,
+  projectTraceName?: TraceNameProjection,
 ): ApplyResult {
   let proxies = input;
   const steps: OperatorStep[] = [];
@@ -377,7 +383,7 @@ export function applyOperators(
     }
     const priorNames = op.kind !== 'rename-template' && op.kind !== 'dedup'
       ? new Map(proxies.map((p) => [envelopeOf(p)?.renderedNaming, nameOf(p)])) : undefined;
-    const res = runOne(proxies, op, ordinalResolver);
+    const res = runOne(proxies, op, ordinalResolver, projectTraceName);
     if (priorNames && res.changed) {
       res.proxies = res.proxies.map((p) => {
         const rendered = envelopeOf(p)?.renderedNaming;
@@ -396,7 +402,7 @@ export function applyOperators(
       ...(res.infoFiltered ? { infoFiltered: res.infoFiltered } : {}),
       ...(res.collisions && res.collisions.length > 0 ? { collisions: res.collisions } : {}),
       ...(res.deduped && res.deduped.length > 0 ? { deduped: res.deduped } : {}),
-      samples: stepSamples(proxies, res.proxies),
+      samples: stepSamples(proxies, res.proxies, projectTraceName ?? ((name) => name)),
     });
     proxies = res.proxies;
   }

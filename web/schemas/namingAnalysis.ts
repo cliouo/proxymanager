@@ -12,8 +12,8 @@
  * reject unknown keys so raw fields can never ride along silently.
  *
  * Privacy contract: the payload sent to the model contains bounded,
- * structurally redacted ORIGINAL display names (credentials/URLs/endpoints/
- * internal ids removed) and safe source display labels; source references
+ * original display names, no connection fields, and sanitized source
+ * display labels; source references
  * are opaque `src-` handles, never stable keys.
  */
 
@@ -48,7 +48,7 @@ export function namingAnalysisRequest(entityRef: string): NamingAnalysisRef {
   return { ref: entityRef };
 }
 
-/** One sanitized node feature the model may see (bounded name or null). */
+/** One model-visible node: bounded original name and sanitized features. */
 export const NameFeatureSchema = z
   .object({
     i: z.number().int().nonnegative(),

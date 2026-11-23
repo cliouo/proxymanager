@@ -94,11 +94,10 @@ describe('buildPreviewIssues', () => {
     );
     const dedup = issues.filter((i) => i.code === 'true-dedup');
     expect(dedup).toHaveLength(2);
-    // diagnostic provenance + scrubbing, end to end
+    // Literal names only; source keys do not enter issue strings.
     const serialized = JSON.stringify(issues);
-    expect(serialized).not.toContain('evil.example');
-    expect(serialized).not.toContain('token=abc123');
-    expect(serialized).not.toContain('::1');
+    expect(serialized).toContain('🇭🇰 香港 https://evil.example/sub?token=abc123 ::1');
+    expect(serialized).not.toContain('airport-a');
   });
 
   it('reports orphaned references for names that disappeared, across profiles', async () => {
@@ -162,33 +161,26 @@ describe('adversarial credential-free issues (final repair group 3)', () => {
     name: '🇭🇰 香港 https://evil.example/sub?token=abc123 ::1 2001:db8:: edge.airport.ai',
   };
 
-  it('duplicate-final-name issues scrub credential-shaped names', async () => {
+  it('duplicate-final-name issues preserve literal node names', async () => {
     const issues = await buildPreviewIssues([HOSTILE, HOSTILE], [HOSTILE, HOSTILE], []);
-    const serialized = JSON.stringify(issues);
-    for (const needle of ['evil.example', 'token=abc123', '::1', '2001:db8', 'airport.ai']) {
-      expect(serialized, needle).not.toContain(needle);
-    }
     const dup = issues.find((i) => i.code === 'duplicate-final-name');
     expect(dup).toBeDefined();
     if (dup && dup.code === 'duplicate-final-name') {
       expect(dup.count).toBe(2);
-      expect(dup.name).toContain('香港');
+      expect(dup.name).toBe(HOSTILE.name);
     }
   });
 
-  it('rename-collision-resolved issues scrub collision names', async () => {
+  it('rename-collision-resolved issues preserve collision names', async () => {
     const issues = await buildPreviewIssues(
       [],
       [],
       [step({ collisions: ['🇭🇰 香港 https://evil.example/sub?token=abc123 ::1'] })],
     );
-    const serialized = JSON.stringify(issues);
-    expect(serialized).not.toContain('evil.example');
-    expect(serialized).not.toContain('token=abc123');
-    expect(serialized).not.toContain('::1');
+    expect(issues).toContainEqual({ code: 'rename-collision-resolved', name: '🇭🇰 香港 https://evil.example/sub?token=abc123 ::1' });
   });
 
-  it('orphaned-reference node + via scrub host/IP/token material', async () => {
+  it('orphaned-reference keeps the node name but scrubs via', async () => {
     refsMock.mockResolvedValue([
       {
         node: '🇭🇰 香港 https://evil.example/sub?token=abc123 ::1',
@@ -198,14 +190,14 @@ describe('adversarial credential-free issues (final repair group 3)', () => {
     ]);
     const issues = await buildPreviewIssues([HOSTILE], [node('A')], []);
     const serialized = JSON.stringify(issues);
-    for (const needle of ['evil.example', 'token=abc123', '::1', 'airport.moe', '8443']) {
+    for (const needle of ['airport.moe', '8443']) {
       expect(serialized, needle).not.toContain(needle);
     }
     expect(serialized).toContain('chain-backend');
-    expect(serialized).toContain('香港');
+    expect(serialized).toContain('🇭🇰 香港 https://evil.example/sub?token=abc123 ::1');
   });
 
-  it('representative step samples in traces never carry credentials', async () => {
+  it('representative step samples are not issue strings', async () => {
     const issues = await buildPreviewIssues(
       [],
       [],
@@ -220,8 +212,6 @@ describe('adversarial credential-free issues (final repair group 3)', () => {
         }),
       ],
     );
-    // samples are not issue strings; the engine redacts them at creation —
-    // this guards the boundary contract end to end
     expect(issues).toEqual([]);
   });
 });

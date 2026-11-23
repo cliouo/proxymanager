@@ -1,5 +1,5 @@
 /**
- * Node-processing preview payloads + structured, credential-free issues.
+ * Node-processing preview payloads + structured issues.
  *
  * Both preview endpoints (subscription + collection) share this so the
  * workbench sees one issue vocabulary:
@@ -11,8 +11,7 @@
  *   - orphaned references — nodes a proxy-group member / chain backend /
  *     rule policy pins by name that a rename or filter would drop.
  *
- * Issues contain node/group/rule handles only — never credentials, URLs or
- * raw proxy fields.
+ * Previews can include literal node names, but never other raw proxy fields.
  */
 
 import { findNodeReferences, type NodeReference } from '@/lib/services/nodeReferenceService';
@@ -53,12 +52,9 @@ function nameOf(proxy: unknown): string {
   return '';
 }
 
-export function namesPayload(proxies: unknown[]): NamesPayload {
-  // Credential-shaped spans (URLs, hosts, IPs, tokens…) are redacted from
-  // EVERY management projection — the workbench and workspace previews must
-  // never echo them verbatim; bounded semantic text survives.
-  const names = proxies.slice(0, NAME_CAP).map((p) => safeIssueText(nameOf(p) || '(无名)'));
-  return { count: proxies.length, names, truncated: proxies.length > NAME_CAP };
+export function namesPayload(proxies: unknown[], cap = NAME_CAP): NamesPayload {
+  const names = proxies.slice(0, cap).map((p) => nameOf(p) || '(无名)');
+  return { count: proxies.length, names, truncated: proxies.length > cap };
 }
 
 export type PreviewIssue =
@@ -84,7 +80,7 @@ export type PreviewIssue =
       via: string;
     };
 
-/** Duplicate names in the FINAL list (post-pipeline) — scrubbed for issues. */
+/** Duplicate names in the FINAL list (post-pipeline). */
 export function duplicateFinalNames(after: unknown[]): Array<{ name: string; count: number }> {
   const counts = new Map<string, number>();
   for (const p of after) {
@@ -96,10 +92,10 @@ export function duplicateFinalNames(after: unknown[]): Array<{ name: string; cou
     .filter(([, count]) => count > 1)
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     .slice(0, ISSUE_CAP)
-    .map(([name, count]) => ({ name: safeIssueText(name), count }));
+    .map(([name, count]) => ({ name, count }));
 }
 
-/** Formatted-name collisions the rename-template step resolved — scrubbed. */
+/** Formatted-name collisions the rename-template step resolved. */
 export function renameTemplateCollisions(steps: OperatorStep[]): string[] {
   const out: string[] = [];
   for (const step of steps) {
@@ -107,14 +103,13 @@ export function renameTemplateCollisions(steps: OperatorStep[]): string[] {
       out.push(...step.collisions);
     }
   }
-  return [...new Set(out)].slice(0, ISSUE_CAP).map(safeIssueText);
+  return [...new Set(out)].slice(0, ISSUE_CAP);
 }
 
 /**
  * TRUE duplicates the rename-template step removed by node identity (same
  * node config, different display names) — the source-priority dedup policy in
- * action. Entries are already bounded+redacted at creation in the engine;
- * safeIssueText is defense-in-depth.
+ * action.
  */
 function trueDedupIssues(steps: OperatorStep[]): PreviewIssue[] {
   const out: PreviewIssue[] = [];
@@ -123,8 +118,8 @@ function trueDedupIssues(steps: OperatorStep[]): PreviewIssue[] {
     for (const d of step.deduped) {
       out.push({
         code: 'true-dedup',
-        kept: safeIssueText(d.kept),
-        dropped: safeIssueText(d.dropped),
+        kept: d.kept,
+        dropped: d.dropped,
       });
       if (out.length >= ISSUE_CAP) return out;
     }
@@ -136,24 +131,23 @@ function trueDedupIssues(steps: OperatorStep[]): PreviewIssue[] {
  * Dedup diagnostics from the SHARED final dedup state machine
  * (lib/proxies/nodeDedup) that the preview routes run after their operator
  * pipelines — the same machine render/single-export/collection-export use.
- * Each entry is scrubbed + bounded (ISSUE_CAP); huge previews report at most
+ * Huge previews report at most
  * ISSUE_CAP of each kind, exactly like every other issue class.
  */
-export function dedupMachineIssues(diagnostics: {
-  deduped: Array<{ kept: string; dropped: string }>;
-  resolved: Array<{ from: string; to: string }>;
-}): PreviewIssue[] {
+export function dedupMachineIssues(
+  diagnostics: { deduped: Array<{ kept: string; dropped: string }>; resolved: Array<{ from: string; to: string }> },
+): PreviewIssue[] {
   const out: PreviewIssue[] = [];
   for (const d of diagnostics.deduped) {
     out.push({
       code: 'true-dedup',
-      kept: safeIssueText(d.kept),
-      dropped: safeIssueText(d.dropped),
+      kept: d.kept,
+      dropped: d.dropped,
     });
     if (out.length >= ISSUE_CAP) return out;
   }
   for (const r of diagnostics.resolved) {
-    out.push({ code: 'rename-collision-resolved', name: safeIssueText(r.from) });
+    out.push({ code: 'rename-collision-resolved', name: r.from });
     if (out.length >= ISSUE_CAP) return out;
   }
   return out;
@@ -192,7 +186,7 @@ export async function orphanedReferenceIssues(
       issues.push({
         code: 'orphaned-reference',
         kind: ref.kind,
-        node: safeIssueText(ref.node),
+        node: ref.node,
         via: safeIssueText(ref.via),
       });
       if (issues.length >= ISSUE_CAP) return issues;

@@ -573,25 +573,26 @@ describe('GET /api/v1/naming/[type]/[id]', () => {
     expect(badType.status).toBe(422);
   });
 
-  it('diagnostics names are structurally redacted — credential-shaped nodes never echo', async () => {
+  it('admin workspace diagnostics return exact node names without proxy fields', async () => {
+    const name = '香港 [HK-01]';
     const fetcher = await import('@/lib/services/subscriptionFetcher');
     (
       fetcher.resolveSubscriptionProxiesRaw as unknown as ReturnType<typeof vi.fn>
     ).mockResolvedValueOnce({
       proxies: [
         {
-          // a raw name carrying credential-shaped text; its duplicate below
-          // is a TRUE duplicate, so deduped diagnostics echo raw names
-          name: '香港 https://sensitive.example/sub?token=abc123',
+          name,
           type: 'ss',
           server: 'h.example',
           port: 443,
+          password: 'fixture-private-password',
         },
         {
-          name: '香港 https://sensitive.example/sub?token=abc123',
+          name,
           type: 'ss',
           server: 'h.example',
           port: 443,
+          password: 'fixture-private-password',
         },
         { name: '日本 01', type: 'ss', server: 'j.example', port: 443 },
       ],
@@ -608,14 +609,12 @@ describe('GET /api/v1/naming/[type]/[id]', () => {
         };
       };
     };
-    // collisions + deduped ride the same structural redaction
+    expect(body.data.diagnostics.beforeNames).toEqual([name, name, '日本 01']);
     expect(body.data.diagnostics.deduped).toHaveLength(1);
-    expect(body.data.diagnostics.deduped[0].kept).not.toContain('sensitive.example');
-    expect(body.data.diagnostics.deduped[0].dropped).not.toContain('sensitive.example');
+    expect(body.data.diagnostics.deduped[0]).toMatchObject({ kept: name, dropped: name });
     const serialized = JSON.stringify(body.data.diagnostics);
-    expect(serialized).not.toContain('sensitive.example');
-    expect(serialized).not.toContain('token=abc123');
-    // useful bounded semantics survive
+    expect(serialized).not.toContain('h.example');
+    expect(serialized).not.toContain('fixture-private-password');
     expect(serialized).toContain('香港');
     expect(serialized).toContain('日本');
   });
@@ -2219,6 +2218,13 @@ describe('pass-11: workspace preview mode + first-use / re-enable apply-through'
       recognitionRules: [],
     },
   };
+
+  it('keeps literal node names in the naming preview', async () => {
+    const res = await call(POST, 'subscription', SUB_ID, { preview: { template: '[${region}]' } });
+    expect(res.status).toBe(200);
+    const { data } = await res.json();
+    expect(data.after.names).toContain('[香港]');
+  });
 
   it('preview with absent managed returns the deterministic naming-plan candidate (index 0, added) + zero-write preview', async () => {
     const before = JSON.stringify([...stores.entries()]);

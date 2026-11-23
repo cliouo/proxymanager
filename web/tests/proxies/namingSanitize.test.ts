@@ -269,7 +269,7 @@ describe('IDN / punycode / underscore hostnames (final repair pass group 2)', ()
     expect(redactSensitiveText('v1::beta 节点')).toBe('v1::beta 节点');
   });
 
-  it('no residue in buildScrubbedPayload for the new forms', async () => {
+  it('IDN text in names does not leak into derived recognition fields', async () => {
     const { buildScrubbedPayload } = await import('@/lib/ai/namingAnalysis');
     const payload = buildScrubbedPayload([
       { name: 'example.xn--fiqs8s 香港 _svc._tcp.example.com 01', type: 'ss' },
@@ -279,7 +279,7 @@ describe('IDN / punycode / underscore hostnames (final repair pass group 2)', ()
       // reach the payload.
       { name: '节点 例子.中国 出口', type: 'ss' },
     ]);
-    const serialized = JSON.stringify(payload);
+    const serialized = JSON.stringify(payload.nodes.map((node) => ({ ...node, name: null })));
     for (const needle of ['fiqs8s', 'example', 'svc', 'tcp', '例子', '中国']) {
       expect(serialized, needle).not.toContain(needle);
     }

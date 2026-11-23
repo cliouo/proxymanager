@@ -5,9 +5,9 @@
  * Privacy: the client sends ONE opaque { ref } — never type/id. The server
  * resolves either a global administrator-workspace ref or a profile-scoped
  * assistant ref. The configured model receives only the
- * bounded sanitized node-name features plus sanitized source labels / opaque
- * ids built by lib/ai/namingAnalysis — never credentials, endpoints,
- * subscription URLs, raw identity, or unsanitized source data. The response
+ * bounded node names and features plus sanitized source labels / opaque
+ * ids built by lib/ai/namingAnalysis. No node connection fields, subscription
+ * URLs, raw identity, or unsanitized source data are included. The response
  * includes the exact scrubbed payload so the workbench can show the user
  * what was sent. Neither the raw node data nor the AI payload are logged.
  * The result is a *suggestion* — the deterministic rename-template config

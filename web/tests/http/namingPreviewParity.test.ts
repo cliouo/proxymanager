@@ -224,7 +224,7 @@ async function subPreview(
   after: { count: number; names: string[] };
   issues: unknown[];
   status: number;
-  steps: Array<{ deduped?: Array<{ sourceKey?: string }> }>;
+  steps: Array<{ deduped?: Array<{ sourceKey?: string }>; samples?: Array<{ before: string; after: string }> }>;
 }> {
   const res = await subPreviewPOST(
     new Request(`http://localhost/api/v1/subscriptions/${id}/preview`, {
@@ -235,13 +235,13 @@ async function subPreview(
     { params: Promise.resolve({ id }) } as never,
   );
   const body = (await res.json()) as {
-    data: { after: { count: number; names: string[] }; issues: unknown[]; steps: unknown[] };
+    data: { after: { count: number; names: string[] }; issues: unknown[]; steps: Awaited<ReturnType<typeof subPreview>>['steps'] };
   };
   return {
     after: body.data.after,
     issues: body.data.issues,
     status: res.status,
-    steps: body.data.steps as Array<{ deduped?: Array<{ sourceKey?: string }> }>,
+    steps: body.data.steps,
   };
 }
 
@@ -443,6 +443,26 @@ describe('route-level preview vs export parity (pass-1 finding)', () => {
     const preview = await collectionPreview(COL, []);
     expect(preview.status).toBe(200);
     expect(preview.after.names).toEqual(namesOf(exportResult));
+  });
+
+  it('returns literal node names and step samples for both admin preview routes, without proxy fields', async () => {
+    const name = '[HK-01]';
+    const renamed = 'HK.Backup';
+    rawBySub.set(SUB_B, [{
+      ...node(name, 'private-server.example'),
+      password: 'fixture-private-password',
+    }]);
+    await setCollectionMembers([SUB_B]);
+    const operators = [{ id: 'rename', kind: 'rename-regex', pattern: 'HK-01', replacement: renamed }];
+    const subscription = await subPreview(SUB_B, operators);
+    const collection = await collectionPreview(COL, operators);
+    expect(subscription.after.names).toEqual([`[${renamed}]`]);
+    expect(collection.after.names).toEqual(subscription.after.names);
+    expect(subscription.steps[0].samples).toEqual([{ before: name, after: `[${renamed}]` }]);
+    for (const preview of [subscription, collection]) {
+      expect(preview.status).toBe(200);
+      expect(JSON.stringify(preview)).not.toMatch(/private-server\.example|fixture-private-password/);
+    }
   });
 
   it('preview diagnostics are bounded and privacy-safe; previews stay zero-write', async () => {

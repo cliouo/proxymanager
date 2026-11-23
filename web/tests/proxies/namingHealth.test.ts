@@ -166,11 +166,11 @@ describe('analyzeSourceFacts', () => {
     }
     // the deterministic node IDENTITY (raw name + fingerprint + occurrence)
     // is INTERNAL analysis text — the external boundary (typed node scope +
-    // projector) never serializes it: the projected snapshot is credential-free
-    const projected = JSON.stringify(projectNodeSnapshot(proxies));
-    expect(projected).not.toContain('evil.example');
-    expect(projected).not.toContain('token=abc123');
-    expect(projected).toContain('香港');
+    // projector) never serializes the fingerprint; the literal name is a
+    // separate display field.
+    const projected = projectNodeSnapshot(proxies);
+    expect(projected.nodes[0].name).toBe(proxies[0].name);
+    expect(JSON.stringify(projected)).not.toContain(nodeFingerprint(proxies[0])!);
   });
 
   it('per-source matrix for collections: one report per member source', () => {

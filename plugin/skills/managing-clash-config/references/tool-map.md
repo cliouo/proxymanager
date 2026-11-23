@@ -36,12 +36,12 @@
 | `list_proxy_groups`                   | hub / synthesizing | 全部策略组 + 模板（含 id / kind / 绑定源）                                         |
 | `list_rule_providers`                 | hub                | 规则集库列表                                                                       |
 | `list_node_sources`                   | editing            | 各订阅/聚合源及其算子（含 profile-bound 不透明 ref 与算子 handle，不含正则等原文） |
-| `list_local_nodes`                    | editing            | 本地源节点（node 句柄 + 有界脱敏显示名 display + type + referencedBy）             |
+| `list_local_nodes`                    | editing            | 本地源节点（node 句柄 + 原始显示名 display（有长度上限） + type + referencedBy）             |
 | `preview_proxy_group_members`         | synthesizing       | filter/exclude 对真实节点试算（**改 filter 前必做**）                              |
 | `preview_node_operators`              | editing            | 整条算子管线对真实节点试算（**改正则前必做**）                                     |
 | `list_naming_targets`                 | editing            | 命名目标清单 + 托管状态 + 确定性推荐模板                                           |
 | `inspect_naming_fields`               | editing            | 字段目录 + 逐来源覆盖率矩阵（intrinsic/derived/ai-rule/assigned）                  |
-| `inspect_source_name_clusters`        | editing            | 语义签名簇 + 脱敏样本（可再取单簇额外样本）                                        |
+| `inspect_source_name_clusters`        | editing            | 语义签名簇 + 原始节点名样本（可再取单簇额外样本）                                  |
 | `inspect_naming_collisions`           | editing            | 重名消歧 / 真去重 / 按名引用影响（链后端悬空警告）                                 |
 | `inspect_node_parse`                  | editing            | 一个不透明节点（`nd-` 句柄）的类型化解析                                           |
 | `preview_naming_recognition`          | editing            | 识别规则候选对全部节点的命中与产出（只读试算）                                     |

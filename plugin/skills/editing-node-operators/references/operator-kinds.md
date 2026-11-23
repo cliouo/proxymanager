@@ -224,7 +224,7 @@ add 流程:`detectRegion(name)` → 命中地区码 → 取 emoji → `"<emoji> 
 
 - 标签识别支持 `iepl`、`IPLC专线`、`家庭宽带`、`Native` 等变体，拉丁词有单词边界；只有模板使用 `tags` 才从 `${note}` 中移除标签，旧备注模板不变。规则 `field: "tag"` 添加一个规范标签；每个字段首条命中的规则生效。
 - 倍率还支持 `2倍`、`倍率2`、`倍率:2`、`倍率：2`、`x2`、`×2`，均有数字/单词边界。
-- 可选 `nodeFacts` 是服务端按原始节点指纹保存的事实映射（最多 2000 条，值为部分 `{region,tags,rate,route,vendor,info}`）。事实覆盖内置识别与规则，`info: true` 才在模板阶段移除信息节点。工作区「AI 识别节点」只把脱敏名称与不透明序号分批送模型；提议须预览并通过原有保存校验才落地，渲染永不调用模型。上游改名不改变指纹；助手不得猜测指纹。
+- 可选 `nodeFacts` 是服务端按原始节点指纹保存的事实映射（最多 2000 条，值为部分 `{region,tags,rate,route,vendor,info}`）。事实覆盖内置识别与规则，`info: true` 才在模板阶段移除信息节点。工作区「AI 识别节点」只把原始节点名（有长度上限）与不透明序号分批送模型；提议须预览并通过原有保存校验才落地，渲染永不调用模型。上游改名不改变指纹；助手不得猜测指纹。
 
 - **国旗 + 地区是一个视觉块**，用普通空格：`${emoji} ${region}` → `🇭🇰 香港`。
 - 分隔符是**模板里的字面文本**，不是全局设置；写在可选片段内部，字段缺失时**整段（含分隔符）消失**，不留悬空分隔符。默认推荐模板：
@@ -242,7 +242,7 @@ add 流程:`detectRegion(name)` → 命中地区码 → 取 emoji → `"<emoji> 
 
 旧版兼容：存量 preset / components / regionLabel / rateDisplay / separator 行**只读解码**，确定性投影为等价模板（国旗+地区合并为一个空格视觉块、legacy 分隔符保留在可选片段内、residual 映射到 `${?note: …}`）；原始字节在用户显式保存前**原样保留**（restoreRawOperators）。当前写接口**拒绝**模板与旧成分同时提交（ambiguous dual configuration）。
 
-智能命名（**可选、辅助**，不是前置条件也不是算子替代）：工作台 /「智能命名」页可用 AI **组合式**命名循环——`list_naming_targets` → `inspect_naming_fields` / `inspect_source_name_clusters` / `inspect_naming_collisions` / `inspect_node_parse` / `preview_naming_recognition` / `inspect_naming_drift` → `preview_naming_target`（同一方案原样往返）→ `save_naming_plan`（**一张确认卡**、CAS 保存）。AI 只读迭代无需打断；**任何渲染相关写入都要确认卡**。所有 AI 载荷都过**有界脱敏投影**：原始节点名经结构化脱敏后可作为有界显示文本（`HK-01`、`IPLC`、`Nexitally`、`2x`、`家宽` 等安全标签保留），来源显示标签、规范协议、识别事实/规则/计数/置信度同样可见；**不发**订阅 URL / 内容、服务器 / 主机 / IP / 端口 / SNI、UUID / 密码 / 密钥、头 / Cookie / 会话、完整 proxy 对象、原始指纹、原始数据库 id、稳定存储键、无关配置或未限界诊断。节点用不透明句柄（`nd-` 前缀的 keyed HMAC-SHA256 令牌，服务端密钥签名，不可离线反推）。无 AI 配置时「智能命名」页照常工作（确定性推荐模板 + 手动编辑 + 预览）。
+智能命名（**可选、辅助**，不是前置条件也不是算子替代）：工作台 /「智能命名」页可用 AI **组合式**命名循环——`list_naming_targets` → `inspect_naming_fields` / `inspect_source_name_clusters` / `inspect_naming_collisions` / `inspect_node_parse` / `preview_naming_recognition` / `inspect_naming_drift` → `preview_naming_target`（同一方案原样往返）→ `save_naming_plan`（**一张确认卡**、CAS 保存）。AI 只读迭代无需打断；**任何渲染相关写入都要确认卡**。AI 载荷按字段投影：原始节点名作为有界显示文本发送，来源显示标签、规范协议、识别事实/规则/计数/置信度同样可见；**不发**订阅 URL / 内容、服务器 / 主机 / IP / 端口 / SNI、UUID / 密码 / 密钥、头 / Cookie / 会话、完整 proxy 对象、原始指纹、原始数据库 id、稳定存储键、无关配置或未限界诊断。节点用不透明句柄（`nd-` 前缀的 keyed HMAC-SHA256 令牌，服务端密钥签名，不可离线反推）。无 AI 配置时「智能命名」页照常工作（确定性推荐模板 + 手动编辑 + 预览）。
 
 位置与顺序：rename-template 读的是**当前**名字，所以排在它前面的 rename-regex / 其它改名步骤会改变它看到的名字，排在它后面的识别类算子（flag-emoji / filter-region / sort by region）会看到重组后的名字——顺序影响规则对它同样成立。与 rename-regex 可并存（如先 rename-regex 清前缀、再 rename-template 统一命名）。
 

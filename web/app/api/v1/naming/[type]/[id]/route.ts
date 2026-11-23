@@ -389,16 +389,16 @@ async function loadWorkspace(
         nodeCount: withProvenance.length,
         infoFiltered: result.infoFiltered,
         changed: result.changed,
-        collisions: result.collisions.map(safeIssueText),
+        collisions: result.collisions,
         deduped: result.deduped.map((d) => ({
-          kept: safeIssueText(d.kept),
-          dropped: safeIssueText(d.dropped),
+          kept: d.kept,
+          dropped: d.dropped,
           // pass-7: stable source keys never leave storage — keyed src
           // handles projected through the complete-domain source scope
           ...(d.sourceKey !== undefined ? { sourceKey: sourceScope.project(d.sourceKey) } : {}),
         })),
-        beforeNames: before.slice(0, 50).map(safeIssueText),
-        afterNames: after.slice(0, 50).map(safeIssueText),
+        beforeNames: before.slice(0, 50),
+        afterNames: after.slice(0, 50),
         truncated: before.length > 50,
       },
       references: {
@@ -484,14 +484,14 @@ async function loadWorkspace(
       infoFiltered: result.infoFiltered,
       memberWarnings: collectionMemberNamingWarnings(enabledCollectionMemberSubs(collection, subs), true),
       changed: result.changed,
-      collisions: result.collisions.map(safeIssueText),
+      collisions: result.collisions,
       deduped: result.deduped.map((d) => ({
-        kept: safeIssueText(d.kept),
-        dropped: safeIssueText(d.dropped),
+        kept: d.kept,
+        dropped: d.dropped,
         ...(d.sourceKey !== undefined ? { sourceKey: sourceScope.project(d.sourceKey) } : {}),
       })),
-      beforeNames: before.slice(0, 50).map(safeIssueText),
-      afterNames: after.slice(0, 50).map(safeIssueText),
+      beforeNames: before.slice(0, 50),
+      afterNames: after.slice(0, 50),
       truncated: before.length > 50,
     },
     references: {

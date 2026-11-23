@@ -9,6 +9,7 @@ import {
   sanitizeDisplayText,
 } from '@/lib/ai/namingContextProjection';
 import { withSource } from '@/lib/proxies/provenance';
+import { parseProxyUriList } from '@/lib/proxies/uriToClash';
 
 /**
  * Round-1 AiSafeNamingContext tests (invariant 6/7/9): AI receives useful
@@ -66,7 +67,19 @@ describe('sanitizeDisplayText', () => {
 });
 
 describe('projectNodeSnapshot', () => {
-  it('emits opaque refs + sanitized names + canonical protocol + safe source labels', () => {
+  it('masks the node endpoint used as the fallback for unlabelled URI imports', () => {
+    const { proxies } = parseProxyUriList('trojan://fixture-password@edge.example:443');
+    expect(proxies[0].name).toBe('edge.example:443');
+    expect(projectNodeSnapshot(proxies).nodes[0].name).toBe('***');
+    expect(projectNodeSnapshot([
+      { ...node('HK [2001:DB8::1]:443 + unrelated.example'), server: '2001:db8::1' },
+      node('edge.invalid + EDGE.INVALID:443 + HK'),
+    ]).nodes.map((entry) => entry.name)).toEqual([
+      'HK *** + unrelated.example',
+      '*** + *** + HK',
+    ]);
+  });
+  it('emits opaque refs, original names, canonical protocol and safe source labels', () => {
     const proxies = [
       withSource(node('HK-01 2x IPLC'), { key: 'us-home', label: 'US-Home' }),
       withSource(node('家宽 香港'), { key: 'us-home', label: 'US-Home' }),
@@ -88,12 +101,12 @@ describe('projectNodeSnapshot', () => {
     expect(blob).not.toContain('pw');
   });
 
-  it('hostile names project name=null (nothing safe) while the handle still round-trips', () => {
+  it('retains the node name while the handle round-trips and the unknown protocol is omitted', () => {
     const proxies = [
       { ...node('https://evil.example/sub?token=abc123'), type: 'BenignProtocolSecret' },
     ];
     const projection = projectNodeSnapshot(proxies);
-    expect(projection.nodes[0].name).toBeNull();
+    expect(projection.nodes[0].name).toBe(proxies[0].name);
     expect(projection.nodes[0].protocol).toBeNull();
     expect(projection.nodes[0].handle).toMatch(/^nd-[0-9a-f]{16}$/);
     const { scope } = buildNodeSnapshotScope(proxies);
@@ -124,15 +137,14 @@ describe('projectNodeSnapshot', () => {
 });
 
 describe('nameSamplesPayload', () => {
-  it('caps with truthful totals and truncation; sanitizes each name', () => {
+  it('caps with truthful totals and truncation without changing names', () => {
     const names = ['香港 01', 'https://evil.example/x', '日本 2x', 'US-01'];
     const payload = nameSamplesPayload(names, 3);
     expect(payload.total).toBe(4);
     expect(payload.truncated).toBe(true);
     expect(payload.sampled).toBe(3);
     expect(payload.names[0]).toBe('香港 01');
-    expect(payload.names[1]).toBeNull();
-    expect(JSON.stringify(payload)).not.toContain('evil.example');
+    expect(payload.names[1]).toBe('https://evil.example/x');
   });
 });
 

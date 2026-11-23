@@ -36,13 +36,40 @@ export interface Segment {
 }
 
 export function parsePath(path: string): Segment[] {
-  const parts = path
-    .split('.')
-    .map((p) => p.trim())
-    .filter(Boolean);
-  if (parts.length === 0) throw ProblemDetailsError.badRequest('路径不能为空。');
-  return parts.map((part) => {
-    const m = /^([^[\]]+)(?:\[([^\]]+)\])?$/.exec(part);
+  const parts: string[] = [];
+  let start = 0;
+  for (let i = 0; i < path.length; i += 1) {
+    const char = path[i];
+    if (char === '.') {
+      parts.push(path.slice(start, i).trim());
+      start = i + 1;
+    } else if (char === '[') {
+      let close = -1;
+      let depth = 1;
+      for (let j = i + 1; j < path.length; j += 1) {
+        if (path[j] === '[') depth += 1;
+        if (path[j] !== ']') continue;
+        depth -= 1;
+        let next = j + 1;
+        while (next < path.length && path[next].trim() === '') next += 1;
+        if (next !== path.length && path[next] !== '.') continue;
+        if (close === -1) close = j;
+        if (depth === 0) {
+          close = j;
+          break;
+        }
+      }
+      if (close === -1) throw ProblemDetailsError.badRequest('路径选择器括号不匹配。');
+      i = close;
+    } else if (char === ']') {
+      throw ProblemDetailsError.badRequest('路径选择器括号不匹配。');
+    }
+  }
+  parts.push(path.slice(start).trim());
+  const segments = parts.filter(Boolean);
+  if (segments.length === 0) throw ProblemDetailsError.badRequest('路径不能为空。');
+  return segments.map((part) => {
+    const m = /^([^[\]]+)(?:\[(.+)\])?$/.exec(part);
     if (!m) throw ProblemDetailsError.badRequest(`无效路径段："${part}"。`);
     return { key: m[1], selector: m[2] };
   });

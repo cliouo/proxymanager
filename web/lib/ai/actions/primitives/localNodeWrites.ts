@@ -6,9 +6,9 @@
  *
  * pass-8 blocker 4: the model surface is fully OPAQUE and profile-bound —
  * nodes are identified by keyed `nd-` handles minted under
- * (profileId, sourceId, position, name); raw node names, the raw source
- * label, server info, raw unknown protocol types and unbounded diagnostic
- * text never serialize. The name shown is a bounded redacted display used
+ * (profileId, sourceId, position, name); the raw source label, connection
+ * fields and unknown protocol types never serialize. The name shown is a
+ * bounded display of the original name, used
  * only to tell nodes apart; selection/rename round-trips through the handle.
  * The full content (with secrets) is parsed, mutated, and re-serialised
  * entirely server-side. Editing normalises the stored content to a Clash
@@ -27,7 +27,7 @@ import {
   resolveRefInVisibleSet,
 } from '@/lib/services/namingTargetScope';
 import { buildNodeScope } from '@/lib/proxies/handleScopes';
-import { sanitizeDisplayText } from '@/lib/ai/namingContextProjection';
+import { boundedNodeName, projectProxyName, sanitizeDisplayText } from '@/lib/ai/namingContextProjection';
 import { canonicalProxyType, redactSensitiveText } from '@/lib/proxies/namingSanitize';
 import type { ActionContext } from '../types';
 import type { Subscription } from '@/schemas';
@@ -77,17 +77,6 @@ async function mustLocalSub(ctx: ActionContext, ref: string): Promise<Subscripti
 
 function nodeName(p: Record<string, unknown>): string {
   return typeof p.name === 'string' ? p.name : '(无名)';
-}
-
-/**
- * round-1 (invariant 6): the list shows a BOUNDED SANITIZED display name —
- * the original node name after structural credential redaction (useful
- * recognition content; credentials never reach the loop). The AI identifies
- * nodes by the profile-bound opaque node handle; the display is only for
- * telling nodes apart.
- */
-function nodeDisplayName(name: string): string {
-  return sanitizeDisplayText(name) ?? '(未命名)';
 }
 
 /** Bounded redacted echo for MODEL-SUPPLIED text (the `to` name) — the
@@ -142,7 +131,7 @@ function resolveNodeHandle(
 const listLocalNodes = defineAction({
   name: 'list_local_nodes',
   description:
-    '列出一个本地订阅源(kind=local，节点内容是用户自填的)的原始节点——只返回每个节点的**不透明节点句柄(nd-开头)**、有界脱敏显示名与协议类型(未知类型统一为 unknown)，**不含密码 / uuid / 服务器等任何凭证，不含原始节点名 / 原始来源名 / 服务器信息**(已脱敏)。每个节点还带 referencedBy(它被哪些链式代理后端 / 策略组成员 / 规则按名引用，名称有界脱敏)——**改名前若某节点 referencedBy 非空，务必提醒用户改名会断这些引用(尤其 chain-backend 会让整份配置加载失败)、并提议一并更新**。要用 rename_local_node 改名前先调用它拿节点句柄。远程源没有可直接编辑的原始内容，对远程源调用会报错并提示改用 rename-regex 算子。先用 list_node_sources 拿订阅源 ref 并确认其 kind。',
+    '列出一个本地订阅源(kind=local，节点内容是用户自填的)的原始节点——只返回每个节点的**不透明节点句柄(nd-开头)**、原始显示名（有长度上限）与协议类型(未知类型统一为 unknown)，**不含密码 / uuid / 服务器等连接字段**。每个节点还带 referencedBy(它被哪些链式代理后端 / 策略组成员 / 规则按名引用，规则文本有界脱敏)——**改名前若某节点 referencedBy 非空，务必提醒用户改名会断这些引用(尤其 chain-backend 会让整份配置加载失败)、并提议一并更新**。要用 rename_local_node 改名前先调用它拿节点句柄。远程源没有可直接编辑的原始内容，对远程源调用会报错并提示改用 rename-regex 算子。先用 list_node_sources 拿订阅源 ref 并确认其 kind。',
   input: SourceRefInput,
   risk: 'read',
   async run(ctx, input) {
@@ -168,15 +157,11 @@ const listLocalNodes = defineAction({
         // projected through the ONE collision-checked index over the
         // COMPLETE parsed local source (round-1 typed HandleScopes)
         node: scope.project(`${i}\x00${name}`),
-        // pass-9 blocker 4: NON-REVERSIBLE ordinal label — the raw name
-        // (even one character) never appears here
-        display: nodeDisplayName(name),
+        display: projectProxyName(p) ?? '(未命名)',
         type: canonicalProxyType(p.type) ?? 'unknown',
         referencedBy: (byNode.get(name) ?? []).map((r, ri) => ({
           kind: r.kind,
-          // referencing-entity names (chain backends embed node names)
-          // project as bounded category ordinals — never the raw name
-          via: `引用 ${ri + 1}`,
+          via: (r.kind === 'rule-policy' ? sanitizeDisplayText(r.via) : boundedNodeName(r.via)) ?? `引用 ${ri + 1}`,
         })),
       };
     });
@@ -218,14 +203,12 @@ const renameLocalNode = defineWriteAction({
         `本地源里已存在名为「${safeInputLabel(input.to)}」的节点。`,
       );
     }
-    // Name-only diff — round-1: the OLD name projects as a bounded
-    // SANITIZED display name (useful, credential-free); the NEW name is the
-    // model's own bounded input. Never echoes credentials.
+    // Name-only diff.
     return {
       diff: {
         op: 'update',
         path: 'subscriptions[该本地订阅源].proxies',
-        beforeYaml: `name: ${nodeDisplayName(nodeName(proxies[idx]))}`,
+        beforeYaml: `name: ${projectProxyName(proxies[idx]) ?? '(未命名)'}`,
         afterYaml: `name: ${safeInputLabel(input.to)}`,
       },
     };

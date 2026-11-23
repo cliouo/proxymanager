@@ -439,7 +439,7 @@ describe('applyOperators · rename-template', () => {
 });
 
 describe('applyOperators · per-step samples', () => {
-  it('captures bounded redacted before/after name samples per applied step', () => {
+  it('captures bounded before/after name samples per applied step', () => {
     const input: ClashProxy[] = [
       { name: '🇭🇰 香港 01', type: 'ss' },
       { name: '日本 Tokyo 01', type: 'ss' },
@@ -459,9 +459,9 @@ describe('applyOperators · per-step samples', () => {
     });
   });
 
-  it('samples are REDACTED — credential-like names never reach the trace raw', () => {
+  it('preserves exact name text without returning connection fields in samples', () => {
     const input: ClashProxy[] = [
-      { name: '香港 https://evil.example/sub?token=abc123', type: 'ss' },
+      { name: '香港 https://evil.example/sub?token=abc123', type: 'ss', server: 'fixture.invalid' },
       { name: '日本 ::1', type: 'ss' },
     ];
     const { steps } = applyOperators(input, [
@@ -470,8 +470,7 @@ describe('applyOperators · per-step samples', () => {
       }),
     ]);
     const serialized = JSON.stringify(steps[0].samples ?? []);
-    expect(serialized).not.toContain('evil.example');
-    expect(serialized).not.toContain('token=abc123');
-    expect(serialized).not.toContain('::1');
+    expect(steps[0].samples?.map((sample) => sample.before)).toEqual(input.map((node) => node.name));
+    expect(serialized).not.toContain('fixture.invalid');
   });
 });
