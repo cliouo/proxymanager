@@ -11,6 +11,40 @@ const nodes: CandidateNode[] = raw.map((name, i) => ({ identity: `node-${i}`, na
 const members = (filter: string, pool = nodes) => groupNodeMembers({ id: 'g', name: 'g', values: { 'include-all-proxies': true, filter } }, pool).nodes;
 
 describe('purpose-based naming and group generation', () => {
+  it('allows a flag-only Hong Kong selector without inventing signal-free CN probes', () => {
+    const naming = '${emoji} ${index}';
+    const pool = [{ ...nodes[0], identity: 'hk', name: '🇭🇰 01', facts: { region: 'HK', tags: [] }, namingTemplate: naming }];
+    const generated = generateNamingGroups(pool, naming, ['region']);
+    expect(generated.blocked).toBe(false);
+    const hongKong = generated.groups.find((g) => g.name === '🇭🇰 香港')!;
+    expect(hongKong).toBeDefined();
+    expect(members(hongKong.filter!, pool).map((n) => n.identity)).toEqual(['hk']);
+    expect(members(hongKong.filter!, [{ ...pool[0], name: '🇨🇳 01' }])).toEqual([]);
+  });
+  it('refuses mainland groups when only the shared CN flag is rendered', () => {
+    const naming = '${emoji} ${index}';
+    const pool = [{ ...nodes[0], identity: 'cn', name: '🇨🇳 03', facts: { region: 'CN', tags: [] }, namingTemplate: naming }];
+    expect(generateNamingGroups(pool, naming, ['region']).blocked).toBe(true);
+  });
+  it('groups CN-flagged Taiwan, Hong Kong and Macau by text region, not their shared flag', () => {
+    const pool: CandidateNode[] = ['🇨🇳 TW01 0.20x', '🇨🇳 HK 02', '🇨🇳 MO 03', '🇨🇳 上海 01'].map((name, i) => {
+      let facts: CandidateNode['facts'];
+      const rendered = formatNodeName({ name, index: i + 1, config: { template }, onRecognized: (value) => { facts = value; } });
+      return { ...nodes[0], identity: `cn-${i}`, name: rendered, facts, namingTemplate: template };
+    });
+    expect(pool.map((node) => node.facts?.region)).toEqual(['TW', 'HK', 'MO', 'CN']);
+    expect(pool.every((node) => node.name.startsWith('🇨🇳'))).toBe(true);
+    expect(groupingCounts(pool).find((p) => p.id === 'low-rate')?.count).toBe(1);
+    const generated = generateNamingGroups(pool, template, ['region', 'low-rate']);
+    expect(generated.blocked).toBe(false);
+    expect(generateNamingGroups(pool.map((node) => ({ ...node, facts: undefined })), template, ['region', 'low-rate'])).toEqual(generated);
+    for (const [i, name] of ['🇹🇼 台湾', '🇭🇰 香港', '🇲🇴 澳门', '🇨🇳 中国'].entries()) {
+      const group = generated.groups.find((g) => g.name === name)!;
+      expect(group).toBeDefined();
+      expect(members(group.filter!, pool).map((n) => n.identity)).toEqual([`cn-${i}`]);
+    }
+  });
+
   it('uses the same non-info facts for counts and membership when a rendered source alias contains 订阅', () => {
     const name = formatNodeName({ name: 'HK 家宽 IEPL 0.5x 01', index: 1, source: { key: 'a', label: '我的订阅' }, config: { template } });
     const pool = [{ ...nodes[0], name, sourceLabel: '我的订阅' }];

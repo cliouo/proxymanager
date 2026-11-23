@@ -1,7 +1,7 @@
 import { compileTemplate, formatNodeName, LINE_TAGS, recognizeName, type NodeRecognitionFacts } from './naming';
 import { fieldValueSelector, renderRawNamingProbe, type CandidateNode } from './namingCandidates';
 import { matchFilter } from './filterMatch';
-import { REGIONS } from './regions';
+import { cnFlagTextRegion, REGIONS, stripFlags } from './regions';
 
 export const GROUPING_PURPOSES = ['region', 'source', 'low-rate', 'dedicated', 'residential'] as const;
 export type GroupingPurpose = typeof GROUPING_PURPOSES[number];
@@ -114,10 +114,15 @@ export function generateNamingGroups(nodes: CandidateNode[], template: string, p
   for (const purpose of GROUPING_PURPOSES.filter((p) => purposes.includes(p))) {
     if (purpose === 'region') for (const region of REGIONS) {
       const intended = nodes.filter((n) => factsOf(n).region === region.code);
-      const tokens = [region.zh, region.code, region.emoji].filter((token) => intended.some((n) => matchFilter([n.name], fieldValueSelector([token])).matched.length));
+      const tokens = [region.zh, region.code, ...(region.code === 'CN' ? [] : [region.emoji])].filter((token) => intended.some((n) => matchFilter([n.name], fieldValueSelector([token])).matched.length));
       const selectors = [tokens.filter((t) => t !== region.emoji), ...tokens.map((t) => [t]),
         ...tokens.map((_, i) => tokens.filter((_, j) => i !== j)), tokens].filter((values) => values.length).map(fieldValueSelector);
-      add(`${region.emoji} ${region.zh}`, intended, [...new Set(selectors)], (n) => REGIONS.map((other) => ({ name: freshName(n, template, { region: other.code }), expected: other.code === region.code })));
+      add(`${region.emoji} ${region.zh}`, intended, [...new Set(selectors)], (n) => REGIONS.flatMap((other) => {
+        const name = freshName(n, template, { region: other.code });
+        const expected = other.code === region.code;
+        const cnName = `🇨🇳 ${stripFlags(name)}`;
+        return [{ name, expected }, ...(cnFlagTextRegion(cnName)?.code === other.code ? [{ name: cnName, expected }] : [])];
+      }));
     } else if (purpose === 'source') for (const key of [...new Set(nodes.flatMap((n) => n.sourceKey ? [n.sourceKey] : []))]) {
       const intended = nodes.filter((n) => n.sourceKey === key);
       const tokens = intended.map((n) => n.sourceLabel ?? key);

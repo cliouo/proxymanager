@@ -44,6 +44,7 @@
  */
 
 import {
+  cnFlagTextRegion,
   codeFromFlag,
   flagFromCode,
   maskDataSizeUnits,
@@ -674,9 +675,10 @@ function firstTokenHit(
 }
 
 /** First region-table pattern hit — same iteration order as detectRegion. */
-function firstRegionHit(text: string): { code: string; start: number; end: number } | null {
+function firstRegionHit(text: string, codes?: readonly string[]): { code: string; start: number; end: number } | null {
   text = maskDataSizeUnits(text);
   for (const region of REGIONS) {
+    if (codes && !codes.includes(region.code)) continue;
     for (const pattern of region.patterns) {
       const m = pattern.exec(text);
       if (m) return { code: region.code, start: m.index, end: m.index + m[0].length };
@@ -828,9 +830,10 @@ export function recognizeName(
   let base = stripFlags(name);
 
   let region: string | null = flagCode;
-  const hit = firstRegionHit(base);
+  const cnRegion = cnFlagTextRegion(name, flagCode);
+  const hit = (cnRegion ? firstRegionHit(base, [cnRegion.code]) : null) ?? firstRegionHit(base);
   if (hit) {
-    if (region === null) region = hit.code;
+    if (region === null || cnRegion?.code === hit.code) region = hit.code;
     base = `${base.slice(0, hit.start)} ${base.slice(hit.end)}`;
   }
 
@@ -1086,7 +1089,8 @@ export function formatNodeName(opts: FormatNodeOptions): string {
     ? recognizeName(recognitionName, config.recognitionRules, { detectInfo: false })
     : recognizedBase;
   const recognized = applyNodeRecognitionFacts(
-    { ...recognizedBase, region: recognizedBase.region ?? recognizedRaw.region },
+    { ...recognizedBase, region: recognizedBase.region === 'CN' && cnFlagTextRegion(recognitionName)
+      ? recognizedRaw.region : recognizedBase.region ?? recognizedRaw.region },
     opts.facts,
   );
   opts.onRecognized?.({ region: recognized.region ?? undefined, tags: [...recognized.tags], rate: recognized.rate ?? undefined,
@@ -1109,7 +1113,8 @@ export function formatNodeName(opts: FormatNodeOptions): string {
 
   const flagCode =
     recognized.region && templateUsesField(tokens, 'emoji')
-      ? config.tw2cn && recognized.region === 'TW'
+      ? (config.tw2cn && recognized.region === 'TW') ||
+        (codeFromFlag(recognitionName) === 'CN' && ['TW', 'HK', 'MO'].includes(recognized.region))
         ? 'CN'
         : recognized.region
       : null;
