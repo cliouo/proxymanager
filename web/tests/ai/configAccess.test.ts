@@ -159,6 +159,26 @@ describe('getConfigSection navigation', () => {
 describe('fullRedactedYaml', () => {
   const yaml = fullRedactedYaml(YAML);
 
+  it('masks surviving aliases to anchors inside redacted connection data', () => {
+    const source = `proxy-providers:
+  provider:
+    headers:
+      X-Key: &header [private-header]
+      X-Nested: &nested {label: private-label}
+header-copy: *header
+merged: {<<: *nested, kept: true}
+`;
+    const full = fullRedactedYaml(source);
+    expect(full).not.toMatch(/private-header|private-label|\*header|\*nested/);
+    expect(parse(full, { merge: true })).toMatchObject({
+      'header-copy': '***', merged: { kept: true },
+    });
+    expect(buildOutline(source)).toContainEqual({
+      key: 'header-copy', kind: 'scalar', value: '***',
+    });
+    expect(getConfigSection(source, 'header-copy').yaml).toBe('***');
+  });
+
   it('masks all credentials across the whole config', () => {
     expect(yaml).not.toContain('p@ssw0rd');
     expect(yaml).not.toContain('SECRETTOKEN');

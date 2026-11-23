@@ -19,7 +19,7 @@
  */
 
 import {
-  isAlias, isNode, isPair, isScalar, parseDocument, Scalar, stringify, visit,
+  isAlias, isNode, isPair, isScalar, isSeq, parseDocument, Scalar, stringify, visit,
   type Document, type Node, type Pair,
 } from 'yaml';
 import { ProblemDetailsError } from '@/lib/http/problem';
@@ -38,7 +38,8 @@ function isObj(v: unknown): v is Obj {
 
 function pairKey(doc: Document, pair: Pair): string {
   const key = isAlias(pair.key) ? pair.key.resolve(doc) : pair.key;
-  return isScalar(key) ? String(key.value) : '';
+  if (!isScalar(key)) return '';
+  return typeof key.value === 'symbol' && key.value.description === '<<' ? '<<' : String(key.value);
 }
 
 function isProxyBlock(key: string): boolean {
@@ -154,6 +155,34 @@ export function redactDocument(doc: Document, maskInheritedHealthCheckUrls = fal
     });
   }
 
+  const removedAnchors = new Set<Node>();
+  for (const value of masked) {
+    if (isScalar(value)) continue;
+    visit(value, {
+      Node(_, node) {
+        if (node !== value && node.anchor) removedAnchors.add(node);
+      },
+    });
+  }
+  const orphanedAliases = new Set<Node>();
+  const maskedMerges = new Set<Node>();
+  visit(doc, {
+    Alias(_, alias, path) {
+      const target = alias.resolve(doc);
+      if (!target) return;
+      if (removedAnchors.has(target)) orphanedAliases.add(alias);
+      const parent = path.at(-1);
+      const pair = isSeq(parent) ? path.at(-2) : parent;
+      if (
+        !isScalar(target) &&
+        (removedAnchors.has(target) || masked.has(target)) &&
+        isPair(pair) && pairKey(doc, pair) === '<<' && pair.value === (isSeq(parent) ? parent : alias)
+      ) {
+        maskedMerges.add(alias);
+      }
+    },
+  });
+
   let changed = false;
   const scrub = (n: Commentable) => {
     const before = scrubComment(n.commentBefore);
@@ -170,6 +199,10 @@ export function redactDocument(doc: Document, maskInheritedHealthCheckUrls = fal
   visit(doc, {
     Node(_, n) {
       scrub(n);
+      if (maskedMerges.has(n) || orphanedAliases.has(n)) {
+        changed = true;
+        return maskedMerges.has(n) ? doc.createNode({}) : new Scalar(REDACTED);
+      }
       if (masked.has(n)) {
         if (isScalar(n)) {
           if (n.value !== REDACTED) changed = true;
