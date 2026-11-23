@@ -320,6 +320,7 @@ const StoredSubscriptionFields = {
   content: z.string().max(MAX_SUBSCRIPTION_CONTENT, '订阅内容过大').optional(),
   /** Tags used by Collections for `subscription_tags` auto-inclusion. */
   tags: z.array(z.string()).default([]),
+  keep_info_nodes: z.boolean().optional(),
   /**
    * Ordered node-processing pipeline (界面「节点处理」). Applied to this
    * sub's parsed proxies after fetch/normalise; see lib/proxies/operators.ts.
@@ -352,7 +353,6 @@ export const SubscriptionSchema: z.ZodType<Subscription> = z
       ...StoredSubscriptionFields,
       kind: z.literal('remote'),
       fetch_failure_policy: SubscriptionFetchFailurePolicySchema.optional(),
-      keep_info_nodes: z.boolean().optional(),
       refresh_mode: SubscriptionRefreshModeSchema.optional(),
       fetch_identity_revision: z.number().int().nonnegative().optional(),
       // Preserve malformed legacy/corrupt metadata so a manual source reaches
@@ -369,7 +369,6 @@ export const SubscriptionSchema: z.ZodType<Subscription> = z
       ...StoredSubscriptionFields,
       kind: SubscriptionKindSchema.default('remote'),
       fetch_failure_policy: SubscriptionFetchFailurePolicySchema.optional(),
-      keep_info_nodes: z.boolean().optional(),
       refresh_mode: SubscriptionRefreshModeSchema.optional(),
       fetch_identity_revision: z.number().int().nonnegative().optional(),
       manual_snapshot_meta: z.unknown().optional(),
@@ -447,7 +446,6 @@ export const SubscriptionAdminViewSchema: z.ZodType<SubscriptionAdminView> = z.d
       ...StoredSubscriptionFields,
       kind: z.literal('remote'),
       fetch_failure_policy: SubscriptionFetchFailurePolicySchema,
-      keep_info_nodes: z.boolean().optional(),
       fetch_health: SubscriptionFetchHealthSchema.nullable(),
       refresh_mode: SubscriptionRefreshModeSchema,
       manual_snapshot: SubscriptionManualSnapshotSchema.nullable(),
@@ -455,6 +453,7 @@ export const SubscriptionAdminViewSchema: z.ZodType<SubscriptionAdminView> = z.d
     z.object({
       ...StoredSubscriptionFields,
       kind: z.literal('local'),
+      traffic: SubscriptionTrafficSchema.optional(),
     }),
   ],
 );
@@ -484,6 +483,7 @@ export interface SubscriptionAdminView {
   fetch_failure_policy?: SubscriptionFetchFailurePolicy;
   keep_info_nodes?: boolean;
   fetch_health?: SubscriptionFetchHealth | null;
+  traffic?: SubscriptionTraffic;
   refresh_mode?: SubscriptionRefreshMode;
   manual_snapshot?: SubscriptionManualSnapshot | null;
 }

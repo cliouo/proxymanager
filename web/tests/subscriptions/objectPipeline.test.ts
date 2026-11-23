@@ -89,7 +89,7 @@ afterEach(() => {
 
 describe('object pipeline ≡ string pipeline', () => {
   it('local sub without operators: proxies equal parse(contentRaw.yaml).proxies', async () => {
-    const sub = makeSub();
+    const sub = makeSub({ keep_info_nodes: true });
     const obj = await resolveSubscriptionProxies(sub);
     const str = await resolveSubscriptionContentRaw(sub);
 
@@ -99,7 +99,7 @@ describe('object pipeline ≡ string pipeline', () => {
   });
 
   it('local sub with operators: both pipelines produce identical processed proxies', async () => {
-    const sub = makeSub({ operators: OPERATORS });
+    const sub = makeSub({ operators: OPERATORS, keep_info_nodes: true });
     const obj = await resolveSubscriptionProxies(sub);
     const str = await resolveSubscriptionContent(sub);
 
@@ -179,6 +179,35 @@ describe('object pipeline ≡ string pipeline', () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+
+  it('filters local airport info before dedup and prefers imm_HKG 01 when keeping info', async () => {
+    const text = `proxies:
+  - { name: 'imm_当前流量：1.91G / 500.00G', type: trojan, server: hk.invalid, port: 443, password: p }
+  - { name: 'imm_到期时间：2027-06-24', type: trojan, server: jp.invalid, port: 443, password: p }
+  - { name: 'imm_HKG 01', type: trojan, server: hk.invalid, port: 443, password: p }`;
+    const source = makeSub({ name: 'immtele', content: text });
+    const options = { writeCache: false };
+    const defaultResult = await resolveSubscriptionProxies(source, options);
+    expect(defaultResult.proxyCount).toBe(1);
+    expect(defaultResult.proxies.map((p) => p.name)).toEqual(['imm_HKG 01']);
+    expect(defaultResult.traffic).toEqual({
+      upload: 0,
+      download: Math.round(1.91 * 1024 ** 3),
+      total: 500 * 1024 ** 3,
+      expire: Date.UTC(2027, 5, 24) / 1000,
+    });
+    const keep = { ...source, keep_info_nodes: true };
+    const raw = await resolveSubscriptionProxiesRaw(keep, options);
+    expect(raw.proxyCount).toBe(3);
+    expect(raw.traffic).toEqual(defaultResult.traffic);
+    const keepWithDedup = await resolveSubscriptionProxies({
+      ...keep,
+      operators: [{ id: 'dedup', kind: 'dedup', by: 'server-port', action: 'drop' }],
+    }, options);
+    expect(keepWithDedup.proxies.map((p) => p.name)).toEqual(['imm_到期时间：2027-06-24', 'imm_HKG 01']);
+    const exported = dedupExportProxies((await resolveSubscriptionProxies(keep, options)).proxies, () => false);
+    expect(exported.deduped).toEqual([{ kept: 'imm_HKG 01', dropped: 'imm_当前流量：1.91G / 500.00G' }]);
   });
 
   it('derives the cache-hit count from validated YAML instead of untrusted metadata', async () => {
@@ -273,7 +302,7 @@ describe('object pipeline ≡ string pipeline', () => {
 
   it('raw object path ≡ raw string path: same proxies, operators NOT applied (preview endpoint contract)', async () => {
     // operators 设上但 raw 路径必须无视 —— 预览端点拿原始 proxies 自己跑未保存管线。
-    const sub = makeSub({ operators: OPERATORS });
+    const sub = makeSub({ operators: OPERATORS, keep_info_nodes: true });
     const obj = await resolveSubscriptionProxiesRaw(sub);
     const str = await resolveSubscriptionContentRaw(sub);
 

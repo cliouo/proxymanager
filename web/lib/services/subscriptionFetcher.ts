@@ -533,7 +533,7 @@ function withoutInfoNodes(proxies: unknown[]): unknown[] {
   });
 }
 
-function projectRemoteText(raw: RawResolved, keepInfoNodes: boolean, deferUniqueNames: boolean): RawResolved {
+function projectStoredText(raw: RawResolved, keepInfoNodes: boolean, deferUniqueNames: boolean): RawResolved {
   const all = raw.getProxies();
   const traffic = subscriptionTrafficFromNodes(proxyNames(all));
   const proxies = keepInfoNodes ? all : withoutInfoNodes(all);
@@ -543,7 +543,7 @@ function projectRemoteText(raw: RawResolved, keepInfoNodes: boolean, deferUnique
 /**
  * Core raw resolver (dual-view result, see {@link RawResolved}).
  *
- *   - kind=local → returns the inline content verbatim, normalised
+ *   - kind=local → returns the normalised inline content after info-node selection
  *   - kind=remote + !noCache + cache fresh (within ttl_ms) → returns cache
  *   - kind=remote + (noCache OR stale) → HTTP fetch; on failure with a
  *     cached entry still present, falls back to that entry tagged
@@ -559,7 +559,7 @@ async function resolveSubscriptionRaw(
   options: SubscriptionResolveOptions = {},
 ): Promise<RawResolved> {
   const raw = await resolveUnmarkedSubscriptionRaw(sub, options);
-  if (sub.kind !== 'remote' || !sub.keep_info_nodes) return raw;
+  if (!sub.keep_info_nodes) return raw;
   let marked: Record<string, unknown>[] | undefined;
   return {
     ...raw,
@@ -594,7 +594,7 @@ async function resolveUnmarkedSubscriptionRaw(
         );
       }
     }
-    return sub.kind === 'remote' ? projectRemoteText(raw, sub.keep_info_nodes === true, deferUniqueNames) : raw;
+    return projectStoredText(raw, sub.keep_info_nodes === true, deferUniqueNames);
   }
 
   if (sub.kind === 'local') {
@@ -606,7 +606,8 @@ async function resolveUnmarkedSubscriptionRaw(
         'A local subscription has no content.',
       );
     }
-    return resolveRawText(sub.content, deferUniqueNames, false);
+    const raw = resolveRawText(sub.content, deferUniqueNames, false);
+    return projectStoredText(raw, sub.keep_info_nodes === true, deferUniqueNames);
   }
 
   if (effectiveSubscriptionRefreshMode(sub) === 'manual') {
@@ -632,7 +633,7 @@ async function resolveUnmarkedSubscriptionRaw(
         'Manual subscription snapshot metadata is invalid.',
       );
     }
-    return projectRemoteText(raw, sub.keep_info_nodes === true, deferUniqueNames);
+    return projectStoredText(raw, sub.keep_info_nodes === true, deferUniqueNames);
   }
 
   if (!sub.url) {

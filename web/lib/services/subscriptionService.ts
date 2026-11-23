@@ -49,6 +49,7 @@ import {
 } from '@/schemas';
 import {
   resolveSubscriptionContentRaw,
+  resolveSubscriptionProxiesRaw,
   validateManualSubscriptionContent,
 } from '@/lib/services/subscriptionFetcher';
 import { isActiveCurrentRenameTemplateOperator } from '@/schemas/operator';
@@ -143,12 +144,6 @@ function assertPolicyAllowedForKind(kind: Subscription['kind'], policy: unknown)
   }
 }
 
-function assertInfoSettingAllowed(kind: Subscription['kind'], keepInfoNodes: boolean | undefined): void {
-  if (kind === 'local' && keepInfoNodes !== undefined) {
-    throw ProblemDetailsError.unprocessable('本地订阅不支持 keep_info_nodes。');
-  }
-}
-
 /** 422: refresh mode and imported snapshots are remote-source concepts. */
 function assertRefreshModeAllowedForKind(kind: Subscription['kind'], refreshMode: unknown): void {
   if (kind === 'local' && refreshMode !== undefined) {
@@ -219,12 +214,29 @@ export async function listSubscriptionAdminViews(): Promise<SubscriptionAdminVie
 export async function getSubscriptionAdminView(id: string): Promise<SubscriptionAdminView | null> {
   const sub = await getSubscription(id);
   if (!sub) return null;
+  const storedContent = sub.kind === 'local' || effectiveSubscriptionRefreshMode(sub) === 'manual';
+  if (storedContent) {
+    const view = projectSubscriptionAdminView(sub);
+    const snapshot = view.manual_snapshot;
+    const needsMetadata = sub.kind === 'local' ||
+      (snapshot && parseSubscriptionManualSnapshotMeta(sub)?.info_proxy_count === undefined);
+    if (needsMetadata) {
+      try {
+        const { traffic, proxyCount } = await resolveSubscriptionProxiesRaw(sub, { writeCache: false });
+        if (sub.kind === 'local') {
+          if (traffic) view.traffic = traffic;
+        } else if (snapshot) {
+          snapshot.proxy_count = proxyCount;
+          if (traffic) snapshot.traffic = traffic;
+        }
+      } catch (error) {
+        if (!(error instanceof SubscriptionResolutionValidationError)) throw error;
+      }
+    }
+    return view;
+  }
   // P-FFP v1 invariant 1: LOCAL sources never consult health storage — the
   // health read happens only on the remote branch.
-  if (sub.kind === 'local') return projectSubscriptionAdminView(sub);
-  if (effectiveSubscriptionRefreshMode(sub) === 'manual') {
-    return projectSubscriptionAdminView(sub);
-  }
   return projectSubscriptionAdminView(sub, await getSubscriptionFetchHealth(id));
 }
 
@@ -238,7 +250,6 @@ export function generateSubscriptionId(): string {
 
 export async function createSubscription(input: SubscriptionCreate): Promise<Subscription> {
   assertPolicyAllowedForKind(input.kind, input.fetch_failure_policy);
-  assertInfoSettingAllowed(input.kind, input.keep_info_nodes);
   const planningVersion = await getConfigVersion();
   const dup = await getSubscriptionByName(input.name);
   if (dup) {
@@ -284,7 +295,6 @@ export async function replaceSubscription(
   input: SubscriptionCreate,
 ): Promise<Subscription> {
   assertPolicyAllowedForKind(input.kind, input.fetch_failure_policy);
-  assertInfoSettingAllowed(input.kind, input.keep_info_nodes);
   const planningVersion = await getConfigVersion();
   const current = await getSubscription(id);
   if (!current) {
@@ -379,7 +389,6 @@ export async function patchSubscription(
   }
   if (Object.keys(patch).length === 0) return current;
 
-  assertInfoSettingAllowed(patch.kind ?? current.kind, patch.keep_info_nodes);
   let next: Subscription = {
     ...current,
     ...patch,
@@ -396,7 +405,6 @@ export async function patchSubscription(
       throw ProblemDetailsError.unprocessable('本地订阅不支持 refresh_mode。');
     }
     delete next.fetch_failure_policy;
-    delete next.keep_info_nodes;
     delete next.refresh_mode;
     delete next.manual_snapshot_meta;
   } else {
@@ -551,7 +559,7 @@ export async function importManualSubscriptionContent(
     manual_snapshot_meta: {
       updated_at: importedAt,
       proxy_count: validated.proxyCount,
-      ...(validated.infoProxyCount ? { info_proxy_count: validated.infoProxyCount } : {}),
+      info_proxy_count: validated.infoProxyCount,
       ...(validated.traffic ? { traffic: validated.traffic } : {}),
       origin,
       fetch_identity_revision: effectiveFetchIdentityRevision(current),
