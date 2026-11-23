@@ -1,7 +1,7 @@
 import { compileTemplate, formatNodeName, LINE_TAGS, recognizeName, type NodeRecognitionFacts } from './naming';
 import { fieldValueSelector, renderRawNamingProbe, type CandidateNode } from './namingCandidates';
 import { matchFilter } from './filterMatch';
-import { REGIONS, stripFlags } from './regions';
+import { cnFlagTextRegion, REGIONS, stripFlags } from './regions';
 
 export const GROUPING_PURPOSES = ['region', 'source', 'low-rate', 'dedicated', 'residential'] as const;
 export type GroupingPurpose = typeof GROUPING_PURPOSES[number];
@@ -120,7 +120,8 @@ export function generateNamingGroups(nodes: CandidateNode[], template: string, p
       add(`${region.emoji} ${region.zh}`, intended, [...new Set(selectors)], (n) => REGIONS.flatMap((other) => {
         const name = freshName(n, template, { region: other.code });
         const expected = other.code === region.code;
-        return [{ name, expected }, ...(['TW', 'HK', 'MO'].includes(other.code) ? [{ name: `🇨🇳 ${stripFlags(name)}`, expected }] : [])];
+        const cnName = `🇨🇳 ${stripFlags(name)}`;
+        return [{ name, expected }, ...(cnFlagTextRegion(cnName)?.code === other.code ? [{ name: cnName, expected }] : [])];
       }));
     } else if (purpose === 'source') for (const key of [...new Set(nodes.flatMap((n) => n.sourceKey ? [n.sourceKey] : []))]) {
       const intended = nodes.filter((n) => n.sourceKey === key);

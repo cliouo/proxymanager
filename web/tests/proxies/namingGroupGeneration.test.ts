@@ -11,6 +11,16 @@ const nodes: CandidateNode[] = raw.map((name, i) => ({ identity: `node-${i}`, na
 const members = (filter: string, pool = nodes) => groupNodeMembers({ id: 'g', name: 'g', values: { 'include-all-proxies': true, filter } }, pool).nodes;
 
 describe('purpose-based naming and group generation', () => {
+  it('allows a flag-only Hong Kong selector without inventing signal-free CN probes', () => {
+    const naming = '${emoji} ${index}';
+    const pool = [{ ...nodes[0], identity: 'hk', name: '🇭🇰 01', facts: { region: 'HK', tags: [] }, namingTemplate: naming }];
+    const generated = generateNamingGroups(pool, naming, ['region']);
+    expect(generated.blocked).toBe(false);
+    const hongKong = generated.groups.find((g) => g.name === '🇭🇰 香港')!;
+    expect(hongKong).toBeDefined();
+    expect(members(hongKong.filter!, pool).map((n) => n.identity)).toEqual(['hk']);
+    expect(members(hongKong.filter!, [{ ...pool[0], name: '🇨🇳 01' }])).toEqual([]);
+  });
   it('refuses mainland groups when only the shared CN flag is rendered', () => {
     const naming = '${emoji} ${index}';
     const pool = [{ ...nodes[0], identity: 'cn', name: '🇨🇳 03', facts: { region: 'CN', tags: [] }, namingTemplate: naming }];
