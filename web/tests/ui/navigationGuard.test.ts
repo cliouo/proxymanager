@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { confirmLeave, hasUnsavedEdits, navigateWithGuard, registerDirtyCheck } from '@/ui/features/groups/guard';
+import { confirmLeave, hasUnsavedEdits, navigateWithGuard, PIPELINE_LEAVE_CONFIRMATION, registerDirtyCheck } from '@/ui/features/groups/guard';
 import * as feedback from '@/ui/primitives/feedback';
 
 let unregister = () => {};
@@ -11,13 +11,14 @@ afterEach(() => {
 
 describe('shared editor navigation guard', () => {
   it.each([true, false])('honors the dirty pipeline confirmation (leave: %s)', async (leave) => {
-    unregister = registerDirtyCheck(() => true, '处理流程有未保存的修改，离开后会丢失。');
+    unregister = registerDirtyCheck(() => true, PIPELINE_LEAVE_CONFIRMATION);
     const confirm = vi.spyOn(feedback, 'confirmAction').mockResolvedValueOnce(leave);
     const navigate = vi.fn();
     const pending = navigateWithGuard(navigate);
     expect(navigate).not.toHaveBeenCalled();
     await pending;
-    expect(confirm).toHaveBeenCalledWith(expect.objectContaining({ description: expect.stringContaining('处理流程') }));
+    expect(confirm).toHaveBeenCalledWith(PIPELINE_LEAVE_CONFIRMATION);
+    expect(confirm).toHaveBeenCalledWith(expect.objectContaining({ confirmText: '放弃修改并离开', cancelText: '留下' }));
     expect(navigate).toHaveBeenCalledTimes(leave ? 1 : 0);
   });
 
@@ -39,7 +40,7 @@ describe('shared editor navigation guard', () => {
     expect(hasUnsavedEdits()).toBe(true);
     const confirm = vi.spyOn(feedback, 'confirmAction').mockResolvedValueOnce(false);
     await confirmLeave();
-    expect(confirm).toHaveBeenCalledWith(expect.objectContaining({ description: expect.stringContaining('当前策略组') }));
+    expect(confirm).toHaveBeenCalledWith(expect.objectContaining({ description: expect.stringContaining('当前策略组'), confirmText: '放弃修改' }));
   });
 
   it('does not navigate if confirmation fails', async () => {
