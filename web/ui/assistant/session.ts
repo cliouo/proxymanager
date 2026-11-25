@@ -54,6 +54,7 @@ export interface NoticeItem {
   tone: 'error' | 'info';
   text: string;
   retry?: boolean;
+  continue?: boolean;
   settings?: boolean;
 }
 export type Item = UserItem | AssistantItem | ToolItem | NoticeItem;
@@ -165,7 +166,7 @@ async function run(context: AssistantRuntimeContext, userText?: string) {
           ? [...messages.slice(0, -1), { role: 'user', content: `${last.content ?? ''}\n\n${userText}` }]
           : [...messages, { role: 'user', content: userText }];
     }
-    const items = c.items.filter((item) => !(item.type === 'notice' && item.retry));
+    const items = c.items.filter((item) => !(item.type === 'notice' && (item.retry || item.continue)));
     if (userText) items.push({ id: uid(), type: 'user', text: userText });
     return { ...c, items, messages, running: true };
   });
@@ -297,7 +298,8 @@ async function run(context: AssistantRuntimeContext, userText?: string) {
           id: uid(),
           type: 'notice',
           tone: 'info',
-          text: `已连续调用 ${MAX_ROUNDS} 轮工具，先停在这里；回复「继续」可以接着做。`,
+          text: `已连续调用 ${MAX_ROUNDS} 轮工具，先停在这里`,
+          continue: true,
         });
       }
     }
