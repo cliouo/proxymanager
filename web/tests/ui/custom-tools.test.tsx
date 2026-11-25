@@ -147,6 +147,34 @@ describe('shared customTools for WebMCP and in-site AI', () => {
     }
   });
 
+  test('WebMCP unmount swallows AbortError rejections from native registerTool Promises', async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+
+    Object.assign(document, {
+      modelContext: {
+        registerTool: (_tool: unknown, options?: { signal?: AbortSignal }) =>
+          new Promise<void>((_resolve, reject) => {
+            options?.signal?.addEventListener(
+              'abort',
+              () => reject(new DOMException('signal is aborted without reason', 'AbortError')),
+              { once: true },
+            );
+          }),
+      },
+    });
+
+    try {
+      const { unmount } = render(<AgentHost agent={agent} />);
+      unmount();
+      await new Promise((r) => setTimeout(r, 20));
+      expect(unhandled).toHaveLength(0);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
+
   test('wait_for wakes up immediately when target DOM renders via MutationObserver', async () => {
     const main = document.createElement('main');
     main.id = 'main';

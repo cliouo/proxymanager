@@ -250,15 +250,17 @@ export function AssistantPanel({ onClose }: { onClose: () => void }) {
           </div>
         </div>
         {configured && (
-          <Tooltip content="新对话">
+          <Tooltip content={hasConversation ? '新对话' : '当前还没有对话'}>
             <Button
               variant="ghost"
               size="sm"
               iconOnly
               icon={SquarePen}
               aria-label="新对话"
-              disabled={!hasConversation}
+              aria-disabled={!hasConversation || undefined}
+              className={cn(!hasConversation && 'cursor-not-allowed text-ink-4 opacity-50 hover:bg-transparent hover:text-ink-4')}
               onClick={() => {
+                if (!hasConversation) return;
                 clearConversation();
                 composerRef.current?.focus();
               }}

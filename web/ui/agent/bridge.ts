@@ -70,21 +70,34 @@ export function registerAppWebMcp(target: AppAgent = getAgent()): () => void {
   const cleanups: Array<() => void> = [];
   if (modelContext?.registerTool) {
     for (const tool of customTools) {
-      const registration = modelContext.registerTool(
-        {
-          name: tool.name,
-          description: tool.description,
-          inputSchema: tool.inputSchema,
-          execute: (input) => executeCustomTool(tool.name, input, { source: 'webmcp', agent: target }),
-        },
-        { signal: controller.signal },
-      );
+      let registration: unknown;
+      try {
+        registration = modelContext.registerTool(
+          {
+            name: tool.name,
+            description: tool.description,
+            inputSchema: tool.inputSchema,
+            execute: (input) => executeCustomTool(tool.name, input, { source: 'webmcp', agent: target }),
+          },
+          { signal: controller.signal },
+        );
+      } catch {
+        continue;
+      }
+      if (registration && typeof (registration as PromiseLike<unknown>).then === 'function') {
+        // Chrome's native WebMCP registerTool rejects with AbortError when signal aborts on unmount/HMR.
+        Promise.resolve(registration).catch(() => undefined);
+      }
       if (typeof registration === 'function') {
         cleanups.push(registration as () => void);
       } else if (typeof modelContext.unregisterTool === 'function') {
         const unregisterTool = modelContext.unregisterTool.bind(modelContext);
         cleanups.push(() => {
-          void unregisterTool(tool.name);
+          try {
+            Promise.resolve(unregisterTool(tool.name)).catch(() => undefined);
+          } catch {
+            /* ignore unregister failure on unmount */
+          }
         });
       }
     }

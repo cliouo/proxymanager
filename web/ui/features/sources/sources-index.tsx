@@ -269,7 +269,11 @@ export function SourcesIndex() {
   const router = useRouter();
   const pathname = usePathname();
   const params = useSearchParams();
-  const tab = params.get('tab') === 'pools' ? 'pools' : 'sources';
+  const urlTab: 'sources' | 'pools' = params.get('tab') === 'pools' ? 'pools' : 'sources';
+  const [optimisticTab, setOptimisticTab] = useState<{ from: 'sources' | 'pools'; to: 'sources' | 'pools' } | null>(
+    null,
+  );
+  const tab = optimisticTab && optimisticTab.from === urlTab ? optimisticTab.to : urlTab;
   const creating = params.get('new') === '1';
   const sources = useSources();
   const pools = usePools();
@@ -278,8 +282,12 @@ export function SourcesIndex() {
   const [refreshingAll, setRefreshingAll] = useState(false);
 
   const go = (next: { tab?: string; create?: boolean }) => {
+    const targetTab: 'sources' | 'pools' = (next.tab ?? tab) === 'pools' ? 'pools' : 'sources';
+    if (next.tab !== undefined) {
+      setOptimisticTab(targetTab === urlTab ? null : { from: urlTab, to: targetTab });
+    }
     const q = new URLSearchParams();
-    if ((next.tab ?? tab) === 'pools') q.set('tab', 'pools');
+    if (targetTab === 'pools') q.set('tab', 'pools');
     if (next.create) q.set('new', '1');
     const qs = q.toString();
     router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
