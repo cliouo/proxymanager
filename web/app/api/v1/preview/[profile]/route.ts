@@ -1,5 +1,6 @@
 import { resolveScopeProfile } from '@/lib/profileScope';
 import { renderProfileConfig } from '@/lib/engine/renderCache';
+import { extractStructured } from '@/lib/engine/structured';
 import { withProblemDetails } from '@/lib/http/handler';
 
 export const dynamic = 'force-dynamic';
@@ -29,6 +30,9 @@ export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
   });
 
   const contentOnly = new URL(request.url).searchParams.get('view') === 'content';
+  const nodeTypes = contentOnly
+    ? undefined
+    : Object.fromEntries(extractStructured(resolved.content).proxies.map((proxy) => [proxy.name, proxy.type]));
   return Response.json(
     {
       data: {
@@ -43,6 +47,7 @@ export const GET = withProblemDetails(async (request: Request, ctx: Ctx) => {
           ? {
               node_names: resolved.nodeNames,
               nodes_by_sub: resolved.nodesBySub,
+              node_types: nodeTypes,
               collisions: resolved.collisions,
               subscriptions: resolved.subscriptions,
             }

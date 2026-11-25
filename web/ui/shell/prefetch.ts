@@ -20,14 +20,12 @@ function profileSection(section: string, profile: Profile): Plan {
   const id = profile.id;
   switch (section) {
     case '':
-      return [queries.dashboard(id), queries.preview(profile), queries.groups(id), queries.devices(id), queries.allRules(id)];
+      return [queries.dashboard(id), queries.groups(id), queries.devices(id)];
     case 'groups':
       return [
         { key: groupBookKey(id), fetcher: () => fetchBook(id) },
         queries.templates(),
         queries.ruleSummary(id),
-        queries.preview(profile),
-        queries.parsed(id),
       ];
     case 'rules':
       return [
@@ -40,11 +38,11 @@ function profileSection(section: string, profile: Profile): Plan {
     case 'devices':
       return [queries.devices(id), queries.dashboard(id)];
     case 'chains':
-      return [queries.chains(id), queries.groups(id), queries.parsed(id), queries.ruleSummary(id)];
+      return [queries.chains(id), queries.groups(id), queries.ruleSummary(id)];
     case 'base':
-      return [queries.base(id), queries.groups(id), queries.ruleSummary(id), queries.allRules(id)];
+      return [queries.base(id), queries.groups(id), queries.ruleSummary(id)];
     case 'output':
-      return [queries.preview(profile)];
+      return [];
     default:
       return [];
   }
@@ -71,7 +69,7 @@ function planFor(href: string, active: Profile | null): Plan {
       return [queries.sources(), queries.pools(), ...(active ? [queries.meta(active.id)] : [])];
     case '/rule-sets':
       return active
-        ? [queries.ruleSets(active.id), queries.meta(active.id), queries.policies(active.id), queries.allRules(active.id)]
+        ? [queries.ruleSets(active.id), queries.meta(active.id), queries.policies(active.id)]
         : [];
     case '/history':
       return [{ key: LEDGER_KEY, fetcher: () => fetchLedgerHead() }];
@@ -97,7 +95,7 @@ export function intentProps(href: string, active: Profile | null = null) {
   };
   return {
     onPointerEnter: () => {
-      if (!timer) timer = setTimeout(now, 90);
+      if (!timer) timer = setTimeout(now, 180);
     },
     onPointerLeave: () => {
       if (timer) clearTimeout(timer);

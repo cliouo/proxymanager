@@ -2,7 +2,7 @@
 
 import { useMemo } from 'react';
 import { api, ApiError, request } from '@/ui/data/api';
-import { keys, refreshProfile, refreshShared, usePools, usePreview, useParsed, useSources } from '@/ui/data/hooks';
+import { keys, refreshProfile, refreshShared, usePools, usePreview, useSources } from '@/ui/data/hooks';
 import { getQueryData, invalidate, setQueryData, useQuery } from '@/ui/data/query';
 import type { Profile, ProxyGroup, ProxyGroupTemplate, SubscriptionAdminView } from '@/ui/data/types';
 import { profileSourceIds, type CatalogLike } from './model';
@@ -119,11 +119,10 @@ export interface NodeCatalog extends CatalogLike {
 
 export function useNodeCatalog(profile: Profile): NodeCatalog {
   const preview = usePreview(profile);
-  const parsed = useParsed(profile.id);
   const sources = useSources();
   const pools = usePools();
   return useMemo(() => {
-    const types = parsed.data ? new Map(parsed.data.proxies.map((p) => [p.name, p.type])) : null;
+    const types = preview.data?.node_types ? new Map(Object.entries(preview.data.node_types)) : null;
     return {
       names: preview.data?.node_names ?? null,
       bySub: preview.data?.nodes_by_sub ?? null,
@@ -134,7 +133,7 @@ export function useNodeCatalog(profile: Profile): NodeCatalog {
       subsById: new Map((sources.data ?? []).map((s) => [s.id, s])),
       profileSubIds: profileSourceIds(profile, sources.data, pools.data),
     };
-  }, [preview.data, preview.error, preview.isLoading, parsed.data, sources.data, pools.data, profile]);
+  }, [preview.data, preview.error, preview.isLoading, sources.data, pools.data, profile]);
 }
 
 /** Readable reason for a failed render (first issue, else the message). */

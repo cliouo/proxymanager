@@ -36,12 +36,39 @@ function redisType(key: string): string {
   return 'none';
 }
 
+let pipelineExecCount = 0;
+
 const fakeRedis = {
   type: async (key: string) => redisType(key),
   get: async (key: string) => kv.get(key) ?? null,
   hgetall: async (key: string) => {
     const value = hash(key);
     return value.size > 0 ? Object.fromEntries(value) : null;
+  },
+  pipeline: () => {
+    const ops: Array<() => unknown> = [];
+    const pipe = {
+      type: (key: string) => {
+        ops.push(() => redisType(key));
+        return pipe;
+      },
+      get: (key: string) => {
+        ops.push(() => kv.get(key) ?? null);
+        return pipe;
+      },
+      hgetall: (key: string) => {
+        ops.push(() => {
+          const value = hash(key);
+          return value.size > 0 ? Object.fromEntries(value) : null;
+        });
+        return pipe;
+      },
+      exec: async () => {
+        pipelineExecCount += 1;
+        return ops.map((op) => op());
+      },
+    };
+    return pipe;
   },
   eval: vi.fn(async (_script: string, keys: string[], args: string[]) => {
     if (failEval) throw new Error('injected eval failure');
@@ -150,14 +177,16 @@ describe('setupRepo raw inspection', () => {
     zsets.clear();
     forcedTypes.clear();
     failEval = false;
+    pipelineExecCount = 0;
     fakeRedis.eval.mockClear();
   });
 
-  it('returns raw profile count inputs and a valid missing revision', async () => {
+  it('returns raw profile count inputs and a valid missing revision via at most 2 pipeline calls', async () => {
     hash(REDIS_KEYS.profiles).set('broken', { legacy: true });
 
     const root = await inspectSetupRoot();
 
+    expect(pipelineExecCount).toBe(2);
     expect(root).toMatchObject({
       revision: 0,
       revisionValid: true,
