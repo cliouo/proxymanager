@@ -75,7 +75,7 @@ export function registerAppWebMcp(target: AppAgent = getAgent()): () => void {
           name: tool.name,
           description: tool.description,
           inputSchema: tool.inputSchema,
-          execute: (input) => executeCustomTool(tool.name, input, { source: 'webmcp' }),
+          execute: (input) => executeCustomTool(tool.name, input, { source: 'webmcp', agent: target }),
         },
         { signal: controller.signal },
       );

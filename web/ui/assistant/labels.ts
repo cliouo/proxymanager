@@ -2,6 +2,7 @@ const TOOL_LABELS: Record<string, string> = {
   snapshot: '查看当前页面',
   query: '查询页面内容',
   act: '操作页面',
+  wait_for: '等待页面内容就绪',
   search_mihomo_docs: '查询 Mihomo 文档',
   fetch_url: '抓取外部链接',
   preview_direct_alias_migration: '预检直连别名迁移',
@@ -57,6 +58,12 @@ export function describeInput(name: string, input: unknown): string | null {
     return head ? clip(`${head} 等 ${args.steps.length} 步`) : `${args.steps.length} 步`;
   }
 
+  if (name === 'wait_for') {
+    const parts: string[] = [];
+    if (typeof args.text === 'string' && args.text.trim()) parts.push(`“${args.text.trim()}”`);
+    if (typeof args.component === 'string' && args.component.trim()) parts.push(args.component.trim());
+    return parts.length ? clip(parts.join(' · ')) : '骨架屏加载完成';
+  }
   if (name === 'search_mihomo_docs' && typeof args.question === 'string') {
     return clip(args.question);
   }
@@ -104,6 +111,10 @@ export function describeResult(kind: string, data: unknown): string | null {
   }
   if (kind === 'custom') {
     const record = asRecord(data);
+    if (typeof record?.found === 'boolean') {
+      const ms = typeof record.waitedMs === 'number' ? `（${record.waitedMs}ms）` : '';
+      return record.found ? `已就绪${ms}` : '等待超时';
+    }
     if (record?.unavailable === true) return '文档服务暂不可用';
     if (typeof record?.bytes === 'number') return `${record.bytes} 字节`;
     if (typeof record?.newVersion === 'number') return `版本 v${record.newVersion}`;

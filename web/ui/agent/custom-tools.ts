@@ -3,11 +3,14 @@
 import { errorMessage, request, withRequestSource } from '@/ui/data/api';
 import { refreshShared } from '@/ui/data/hooks';
 import { lastProfileName } from '@/ui/shell/scope';
+import type { AppAgent } from './bridge';
 import { requestAgentConfirm } from './confirm';
+import { waitForMainTarget } from './wait';
 
 export interface CustomToolContext {
   signal?: AbortSignal;
   source: 'ai_chat' | 'webmcp';
+  agent?: AppAgent;
 }
 
 export interface CustomAgentTool {
@@ -99,6 +102,40 @@ const STALE_CHAIN_SCHEMA = {
 };
 
 export const customTools: readonly CustomAgentTool[] = [
+  {
+    name: 'wait_for',
+    label: '等待页面内容就绪',
+    description:
+      '等待主区域出现指定文案/控件或骨架屏加载完成（基于 DOM 变化实时唤醒，不等无关后台请求）。当页面跳转后 snapshot 提示 loading: true 且目标列表或内容尚未出现时调用；如果目标按钮已经可见，直接用 act 操作即可，无需等待。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        text: {
+          type: 'string',
+          description: '可选：等待主区域出现包含该文案的控件或页面内容（不区分大小写）',
+        },
+        component: {
+          type: 'string',
+          description: '可选：等待某类控件出现在页面中（如 data-view、button、input）',
+        },
+        timeout_ms: {
+          type: 'integer',
+          minimum: 200,
+          maximum: 15000,
+          default: 8000,
+          description: '可选：最长等待毫秒数（默认 8000，上限 15000）',
+        },
+      },
+    },
+    run: (input, ctx) =>
+      waitForMainTarget({
+        text: typeof input.text === 'string' ? input.text : undefined,
+        component: typeof input.component === 'string' ? input.component : undefined,
+        timeoutMs: typeof input.timeout_ms === 'number' ? input.timeout_ms : undefined,
+        signal: ctx.signal,
+        agent: ctx.agent,
+      }),
+  },
   {
     name: 'search_mihomo_docs',
     label: '查询 Mihomo 文档',

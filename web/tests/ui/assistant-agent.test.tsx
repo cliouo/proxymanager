@@ -254,4 +254,25 @@ describe('In-site assistant agentTools loop', () => {
     expect(events.some((e) => e.type === 'tool-result' && e.name === 'act' && e.result.kind === 'act')).toBe(true);
     expect(events.some((e) => e.type === 'content' && e.text.includes('已经帮你提交规则'))).toBe(true);
   });
+
+  test('snapshot stays non-blocking and appends loading hint only when #main has skeletons', async () => {
+    const agent = createAgent({ allow: createAppAllow() });
+    const { container } = render(
+      <main id="main">
+        <UiButton onClick={() => undefined}>新建配置文件</UiButton>
+        <div className="skeleton" />
+      </main>,
+    );
+
+    const loadingSnap = await dispatchAgentTool('snapshot', {}, { agent });
+    expect(loadingSnap.kind).toBe('snapshot');
+    expect(Array.isArray(loadingSnap.data)).toBe(true);
+    const parsedLoading = JSON.parse(loadingSnap.modelContent) as { loading?: boolean; components?: unknown[] };
+    expect(parsedLoading.loading).toBe(true);
+    expect(Array.isArray(parsedLoading.components)).toBe(true);
+
+    container.querySelector('.skeleton')?.remove();
+    const readySnap = await dispatchAgentTool('snapshot', {}, { agent });
+    expect(Array.isArray(JSON.parse(readySnap.modelContent))).toBe(true);
+  });
 });

@@ -6,7 +6,9 @@ import {
   executeCustomTool,
   findCustomTool,
   getAgent,
+  hasMainSkeletons,
   runAgentAct,
+  settleRouteCommit,
   type AgentStep,
   type AppAgent,
 } from '@/ui/agent';
@@ -375,24 +377,6 @@ function errorResult(message: string): ToolDispatchResult {
   return { kind: 'error', data, modelContent: JSON.stringify(data) };
 }
 
-function settleNavigation(signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve) => {
-    if (signal?.aborted) {
-      resolve();
-      return;
-    }
-    const timer = setTimeout(() => {
-      signal?.removeEventListener('abort', onAbort);
-      resolve();
-    }, 60);
-    const onAbort = () => {
-      clearTimeout(timer);
-      resolve();
-    };
-    signal?.addEventListener('abort', onAbort, { once: true });
-  });
-}
-
 export async function dispatchAgentTool(
   name: string,
   input: unknown,
@@ -403,7 +387,16 @@ export async function dispatchAgentTool(
   try {
     if (name === 'snapshot') {
       const data = target.snapshot();
-      return { kind: 'snapshot', data, modelContent: JSON.stringify(data) };
+      const loading = hasMainSkeletons();
+      const modelContent = loading
+        ? JSON.stringify({
+            components: data,
+            route: typeof window !== 'undefined' ? window.location.pathname : '',
+            loading: true,
+            hint: '主区域仍有部分骨架屏在加载；已可见的按钮可直接用 act 操作，若目标数据或列表尚未出现，可调用 wait_for 等待其渲染。',
+          })
+        : JSON.stringify(data);
+      return { kind: 'snapshot', data, modelContent };
     }
     if (name === 'query') {
       const args = isRecord(input) ? input : {};
@@ -422,7 +415,7 @@ export async function dispatchAgentTool(
       });
       if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
       if (typeof window !== 'undefined' && window.location.pathname !== beforePath) {
-        await settleNavigation(signal);
+        await settleRouteCommit(signal);
       }
       if (isRecord(data) && data.ok === false) {
         return { kind: 'error', data, modelContent: JSON.stringify(data) };
@@ -431,7 +424,7 @@ export async function dispatchAgentTool(
     }
     const custom = findCustomTool(name);
     if (custom) {
-      const data = await executeCustomTool(name, input, { signal, source: 'ai_chat' });
+      const data = await executeCustomTool(name, input, { signal, source: 'ai_chat', agent: target });
       if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
       if (isRecord(data) && data.ok === false) {
         return { kind: 'error', data, modelContent: JSON.stringify(data) };

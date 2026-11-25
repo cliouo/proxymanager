@@ -29,3 +29,10 @@ export {
   type CustomAgentTool,
   type CustomToolContext,
 } from './custom-tools';
+export {
+  hasMainSkeletons,
+  settleRouteCommit,
+  waitForMainTarget,
+  type WaitForTargetOptions,
+  type WaitForTargetResult,
+} from './wait';

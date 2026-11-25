@@ -21,6 +21,7 @@ describe('shared customTools for WebMCP and in-site AI', () => {
         'snapshot',
         'query',
         'act',
+        'wait_for',
         'search_mihomo_docs',
         'fetch_url',
         'preview_direct_alias_migration',
@@ -143,6 +144,33 @@ describe('shared customTools for WebMCP and in-site AI', () => {
     unmount();
     for (const tool of customTools) {
       expect(tools.has(tool.name)).toBe(false);
+    }
+  });
+
+  test('wait_for wakes up immediately when target DOM renders via MutationObserver', async () => {
+    const main = document.createElement('main');
+    main.id = 'main';
+    main.innerHTML = '<div class="skeleton"></div>';
+    document.body.appendChild(main);
+    try {
+      const waitPromise = dispatchAgentTool(
+        'wait_for',
+        { text: '主力配置', timeout_ms: 2000 },
+        { agent },
+      );
+
+      setTimeout(() => {
+        const card = document.createElement('div');
+        card.textContent = '主力配置';
+        main.appendChild(card);
+      }, 30);
+
+      const res = await waitPromise;
+      expect(res.kind).toBe('custom');
+      expect(res.data).toMatchObject({ found: true, loading: true });
+      expect((res.data as { waitedMs: number }).waitedMs).toBeLessThan(1000);
+    } finally {
+      main.remove();
     }
   });
 });
