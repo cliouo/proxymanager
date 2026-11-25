@@ -1,20 +1,35 @@
 'use client';
 
-import { useMemo, useState, type ReactNode } from 'react';
-import { Command } from 'cmdk';
+import { isValidElement, useMemo, useState, type ReactNode } from 'react';
+import { Button as UiButton } from '@ui-sdk/react/button';
+import {
+  Combobox as UiCombobox,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxGroup,
+  ComboboxGroupLabel,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxItemIndicator,
+  ComboboxList,
+  ComboboxTrigger,
+} from '@ui-sdk/react/combobox';
+import { Input as UiInput } from '@ui-sdk/react/input';
 import { Check, ChevronsUpDown, Plus, X } from 'lucide-react';
 import { cn } from '@/ui/lib/cn';
-import { Popover } from './overlay';
 
 export interface ComboOption {
   value: string;
   label?: ReactNode;
-  /** Extra text matched by search (aliases, descriptions). */
   keywords?: string[];
   group?: string;
   description?: ReactNode;
   icon?: ReactNode;
   disabled?: boolean;
+}
+
+function optionText(option: ComboOption): string {
+  return typeof option.label === 'string' && option.label ? option.label : option.value;
 }
 
 function groupOptions(options: ComboOption[]) {
@@ -28,13 +43,10 @@ function groupOptions(options: ComboOption[]) {
   return [...groups.entries()];
 }
 
-const listGroupClass =
-  '[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:pb-1 [&_[cmdk-group-heading]]:pt-2 [&_[cmdk-group-heading]]:text-[11px] [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-ink-3';
-
 const triggerClass = cn(
   'inline-flex w-full items-center justify-between gap-2 rounded-md border border-line bg-surface px-2.5 text-left text-sm text-ink shadow-xs',
   'transition-[border-color,box-shadow] hover:border-line-strong focus-visible:border-accent focus-visible:shadow-[var(--ring)] focus-visible:outline-none',
-  'disabled:cursor-not-allowed disabled:bg-surface-2 disabled:text-ink-3 data-[state=open]:border-accent data-[state=open]:shadow-[var(--ring)]',
+  'disabled:cursor-not-allowed disabled:bg-surface-2 disabled:text-ink-3 data-open:border-accent data-open:shadow-[var(--ring)]',
 );
 
 export interface ComboboxProps {
@@ -44,7 +56,6 @@ export interface ComboboxProps {
   placeholder?: string;
   searchPlaceholder?: string;
   emptyText?: string;
-  /** Offer "use '<query>'" when nothing matches exactly. */
   allowCustom?: boolean;
   customLabel?: (query: string) => ReactNode;
   renderValue?: (value: string, option?: ComboOption) => ReactNode;
@@ -55,8 +66,9 @@ export interface ComboboxProps {
   align?: 'start' | 'center' | 'end';
   width?: number;
   id?: string;
-  /** Replace the default trigger entirely. */
   trigger?: ReactNode;
+  label?: string;
+  'aria-label'?: string;
 }
 
 export function Combobox({
@@ -77,92 +89,157 @@ export function Combobox({
   width,
   id,
   trigger,
+  label,
+  'aria-label': ariaLabel,
 }: ComboboxProps) {
-  const [open, setOpen] = useState(false);
+  const [button, setButton] = useState<HTMLButtonElement | null>(null);
   const [query, setQuery] = useState('');
   const selected = options.find((o) => o.value === value);
   const grouped = useMemo(() => groupOptions(options), [options]);
   const trimmed = query.trim();
-  const showCustom = allowCustom && trimmed && !options.some((o) => o.value === trimmed);
+  const showCustom = Boolean(allowCustom && trimmed && !options.some((o) => o.value === trimmed));
 
-  const pick = (next: string) => {
-    onChange(next);
-    setOpen(false);
-    setQuery('');
-  };
+  const dataItems = useMemo(
+    () =>
+      options.map((o) => ({
+        value: o.value,
+        label: optionText(o),
+        keywords: o.keywords,
+        disabled: o.disabled,
+      })),
+    [options],
+  );
 
   return (
-    <Popover
-      open={open}
-      onOpenChange={(next) => {
-        setOpen(next);
-        if (!next) setQuery('');
+    <UiCombobox
+      items={dataItems}
+      value={value ?? null}
+      onValueChange={(next) => {
+        if (next !== null) onChange(next);
       }}
-      align={align}
-      className="p-0"
-      trigger={
-        trigger ?? (
-          <button
-            id={id}
-            type="button"
-            disabled={disabled}
-            data-invalid={invalid || undefined}
-            className={cn(triggerClass, size === 'sm' ? 'h-7 text-xs' : 'h-8', invalid && 'border-bad', className)}
-          >
-            <span className={cn('min-w-0 flex-1 truncate', !value && 'text-ink-4')}>
-              {value ? (renderValue ? renderValue(value, selected) : (selected?.label ?? value)) : placeholder}
-            </span>
-            <ChevronsUpDown size={13} className="shrink-0 text-ink-3" />
-          </button>
-        )
-      }
+      itemToLabel={(v) => {
+        const match = options.find((o) => o.value === v);
+        return match ? optionText(match) : v;
+      }}
+      allowCustomValue={allowCustom}
+      disabled={disabled}
+      loop
+      query={query}
+      onQueryChange={(next) => setQuery(next)}
+      onOpenChange={(next) => {
+        if (next) setQuery('');
+      }}
+      onOpenChangeComplete={(next) => {
+        if (!next) button?.focus();
+      }}
     >
-      <Command loop className="flex flex-col" style={{ width: width ?? 'max(var(--radix-popover-trigger-width), 240px)' }}>
+      {trigger && isValidElement<{ children?: ReactNode }>(trigger) ? (
+        <ComboboxTrigger ref={setButton} render={trigger} disabled={disabled}>
+          {trigger.props.children}
+        </ComboboxTrigger>
+      ) : (
+        <ComboboxTrigger
+          id={id}
+          ref={setButton}
+          disabled={disabled}
+          aria-label={ariaLabel ?? label}
+          data-invalid={invalid || undefined}
+          className={cn(triggerClass, size === 'sm' ? 'h-7 text-xs' : 'h-8', invalid && 'border-bad', className)}
+        >
+          <span className={cn('min-w-0 flex-1 truncate', !value && 'text-ink-4')}>
+            {value ? (renderValue ? renderValue(value, selected) : (selected?.label ?? value)) : placeholder}
+          </span>
+          <ChevronsUpDown size={13} className="shrink-0 text-ink-3" aria-hidden="true" />
+        </ComboboxTrigger>
+      )}
+      <ComboboxContent
+        anchor={button}
+        align={align}
+        sideOffset={6}
+        collisionPadding={12}
+        style={{ width: width ?? 'max(var(--anchor-width), 240px)' }}
+        className={cn(
+          'z-50 m-0 flex max-h-[var(--available-height)] flex-col overflow-hidden rounded-xl border border-line bg-surface p-0 text-ink shadow-lg outline-none',
+          'origin-[var(--transform-origin)] data-ending-style:animate-[sink_0.12s_ease-in_both] data-open:animate-pop',
+        )}
+      >
         <div className="border-b border-line p-1.5">
-          <Command.Input
+          <ComboboxInput
             autoFocus
-            value={query}
-            onValueChange={setQuery}
+            aria-label={ariaLabel ?? label ?? searchPlaceholder}
             placeholder={searchPlaceholder}
             className="h-8 w-full bg-transparent px-2 text-sm text-ink outline-none placeholder:text-ink-4"
           />
         </div>
-        <Command.List className="max-h-[300px] overflow-y-auto p-1">
-          {!showCustom && <Command.Empty className="px-2 py-6 text-center text-xs text-ink-3">{emptyText}</Command.Empty>}
+        {!showCustom && (
+          <ComboboxEmpty className="px-2 py-6 text-center text-xs text-ink-3">{emptyText}</ComboboxEmpty>
+        )}
+        <ComboboxList className="max-h-[300px] overflow-y-auto p-1">
           {showCustom && (
-            <Command.Item
-              value={`__custom__ ${trimmed}`}
-              onSelect={() => pick(trimmed)}
-              className="flex h-8 cursor-default items-center gap-2 rounded-md px-2 text-sm text-ink data-[selected=true]:bg-surface-2"
+            <ComboboxItem
+              value={trimmed}
+              label={trimmed}
+              className="flex h-8 cursor-default items-center gap-2 rounded-md px-2 text-sm text-ink data-highlighted:bg-surface-2"
             >
               <Plus size={14} className="text-ink-3" />
               {customLabel ? customLabel(trimmed) : <>使用「{trimmed}」</>}
-            </Command.Item>
+            </ComboboxItem>
           )}
-          {grouped.map(([group, items]) => (
-            <Command.Group key={group || 'default'} heading={group || undefined} className={listGroupClass}>
-              {items.map((option) => (
-                <Command.Item
+          {grouped.map(([group, items]) =>
+            group ? (
+              <ComboboxGroup key={group}>
+                <ComboboxGroupLabel className="px-2 pb-1 pt-2 text-[11px] font-medium text-ink-3">
+                  {group}
+                </ComboboxGroupLabel>
+                {items.map((option) => (
+                  <ComboboxItem
+                    key={option.value}
+                    value={option.value}
+                    label={optionText(option)}
+                    keywords={option.keywords}
+                    disabled={option.disabled}
+                    className="flex min-h-8 cursor-default items-center gap-2 rounded-md px-2 py-1 text-sm text-ink data-disabled:text-ink-4 data-highlighted:bg-surface-2"
+                  >
+                    {option.icon}
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate">{option.label ?? option.value}</span>
+                      {option.description && (
+                        <span className="block truncate text-[11px] text-ink-3">{option.description}</span>
+                      )}
+                    </span>
+                    <ComboboxItemIndicator className="shrink-0 text-accent">
+                      <Check size={14} aria-hidden="true" />
+                    </ComboboxItemIndicator>
+                  </ComboboxItem>
+                ))}
+              </ComboboxGroup>
+            ) : (
+              items.map((option) => (
+                <ComboboxItem
                   key={option.value}
                   value={option.value}
-                  keywords={[typeof option.label === 'string' ? option.label : '', ...(option.keywords ?? [])]}
+                  label={optionText(option)}
+                  keywords={option.keywords}
                   disabled={option.disabled}
-                  onSelect={() => pick(option.value)}
-                  className="flex min-h-8 cursor-default items-center gap-2 rounded-md px-2 py-1 text-sm text-ink data-[disabled=true]:text-ink-4 data-[selected=true]:bg-surface-2"
+                  className="flex min-h-8 cursor-default items-center gap-2 rounded-md px-2 py-1 text-sm text-ink data-disabled:text-ink-4 data-highlighted:bg-surface-2"
                 >
                   {option.icon}
                   <span className="min-w-0 flex-1">
                     <span className="block truncate">{option.label ?? option.value}</span>
-                    {option.description && <span className="block truncate text-[11px] text-ink-3">{option.description}</span>}
+                    {option.description && (
+                      <span className="block truncate text-[11px] text-ink-3">{option.description}</span>
+                    )}
                   </span>
-                  {option.value === value && <Check size={14} className="shrink-0 text-accent" />}
-                </Command.Item>
-              ))}
-            </Command.Group>
-          ))}
-        </Command.List>
-      </Command>
-    </Popover>
+                  <ComboboxItemIndicator className="shrink-0 text-accent">
+                    <Check size={14} aria-hidden="true" />
+                  </ComboboxItemIndicator>
+                </ComboboxItem>
+              ))
+            ),
+          )}
+        </ComboboxList>
+      </ComboboxContent>
+    </UiCombobox>
   );
 }
 
@@ -180,9 +257,10 @@ export interface MultiComboboxProps {
   width?: number;
   trigger?: ReactNode;
   align?: 'start' | 'center' | 'end';
+  label?: string;
+  'aria-label'?: string;
 }
 
-/** Multi-select with search; selected values render as removable chips. */
 export function MultiCombobox({
   value,
   onChange,
@@ -197,16 +275,31 @@ export function MultiCombobox({
   width,
   trigger,
   align = 'start',
+  label,
+  'aria-label': ariaLabel,
 }: MultiComboboxProps) {
-  const [open, setOpen] = useState(false);
+  const [button, setButton] = useState<HTMLButtonElement | null>(null);
   const [query, setQuery] = useState('');
   const grouped = useMemo(() => groupOptions(options), [options]);
   const selected = new Set(value);
   const trimmed = query.trim();
-  const showCustom = allowCustom && trimmed && !options.some((o) => o.value === trimmed) && !selected.has(trimmed);
+  const showCustom = Boolean(
+    allowCustom && trimmed && !options.some((o) => o.value === trimmed) && !selected.has(trimmed),
+  );
 
-  const toggle = (next: string) => {
-    onChange(selected.has(next) ? value.filter((v) => v !== next) : [...value, next]);
+  const dataItems = useMemo(
+    () =>
+      options.map((o) => ({
+        value: o.value,
+        label: optionText(o),
+        keywords: o.keywords,
+        disabled: o.disabled,
+      })),
+    [options],
+  );
+
+  const remove = (target: string) => {
+    onChange(value.filter((v) => v !== target));
   };
 
   return (
@@ -214,79 +307,141 @@ export function MultiCombobox({
       {value.map((item) => {
         const option = options.find((o) => o.value === item);
         return (
-          <span key={item} className="group inline-flex max-w-full items-center gap-1 rounded-full border border-line bg-surface py-0.5 pl-2 pr-1 text-xs text-ink shadow-xs">
-            <span className="min-w-0 truncate">{renderChip ? renderChip(item, option) : (option?.label ?? item)}</span>
+          <span
+            key={item}
+            className="group inline-flex max-w-full items-center gap-1 rounded-full border border-line bg-surface py-0.5 pl-2 pr-1 text-xs text-ink shadow-xs"
+          >
+            <span className="min-w-0 truncate">
+              {renderChip ? renderChip(item, option) : (option?.label ?? item)}
+            </span>
             {!disabled && (
-              <button
+              <UiButton
                 type="button"
                 aria-label={`移除 ${item}`}
-                onClick={() => toggle(item)}
+                onClick={() => remove(item)}
                 className="flex size-4 items-center justify-center rounded-full text-ink-4 hover:bg-surface-3 hover:text-ink"
               >
                 <X size={10} strokeWidth={2.5} />
-              </button>
+              </UiButton>
             )}
           </span>
         );
       })}
       {!disabled && (
-        <Popover
-          open={open}
-          onOpenChange={(next) => {
-            setOpen(next);
-            if (!next) setQuery('');
+        <UiCombobox
+          multiple
+          items={dataItems}
+          value={value}
+          onValueChange={(next) => onChange(next)}
+          itemToLabel={(v) => {
+            const match = options.find((o) => o.value === v);
+            return match ? optionText(match) : v;
           }}
-          align={align}
-          className="p-0"
-          trigger={
-            trigger ?? (
-              <button
-                type="button"
-                className="inline-flex h-6 items-center gap-1 rounded-full border border-dashed border-line-strong px-2 text-xs text-ink-3 transition hover:border-ink-3 hover:text-ink"
-              >
-                <Plus size={12} />
-                {placeholder}
-              </button>
-            )
-          }
+          allowCustomValue={allowCustom}
+          loop
+          query={query}
+          onQueryChange={(next) => setQuery(next)}
+          onOpenChange={(next) => {
+            if (next) setQuery('');
+          }}
+          onOpenChangeComplete={(next) => {
+            if (!next) button?.focus();
+          }}
         >
-          <Command loop className="flex flex-col" style={{ width: width ?? 280 }}>
+          {trigger && isValidElement<{ children?: ReactNode }>(trigger) ? (
+            <ComboboxTrigger ref={setButton} render={trigger}>
+              {trigger.props.children}
+            </ComboboxTrigger>
+          ) : (
+            <ComboboxTrigger
+              ref={setButton}
+              aria-label={ariaLabel ?? label}
+              className="inline-flex h-6 items-center gap-1 rounded-full border border-dashed border-line-strong px-2 text-xs text-ink-3 transition hover:border-ink-3 hover:text-ink"
+            >
+              <Plus size={12} aria-hidden="true" />
+              {placeholder}
+            </ComboboxTrigger>
+          )}
+          <ComboboxContent
+            anchor={button}
+            align={align}
+            sideOffset={6}
+            collisionPadding={12}
+            style={{ width: width ?? 280 }}
+            className={cn(
+              'z-50 m-0 flex max-h-[var(--available-height)] flex-col overflow-hidden rounded-xl border border-line bg-surface p-0 text-ink shadow-lg outline-none',
+              'origin-[var(--transform-origin)] data-ending-style:animate-[sink_0.12s_ease-in_both] data-open:animate-pop',
+            )}
+          >
             <div className="border-b border-line p-1.5">
-              <Command.Input
+              <ComboboxInput
                 autoFocus
-                value={query}
-                onValueChange={setQuery}
+                aria-label={ariaLabel ?? label ?? searchPlaceholder}
                 placeholder={searchPlaceholder}
                 className="h-8 w-full bg-transparent px-2 text-sm text-ink outline-none placeholder:text-ink-4"
               />
             </div>
-            <Command.List className="max-h-[300px] overflow-y-auto p-1">
-              {!showCustom && <Command.Empty className="px-2 py-6 text-center text-xs text-ink-3">{emptyText}</Command.Empty>}
+            {!showCustom && (
+              <ComboboxEmpty className="px-2 py-6 text-center text-xs text-ink-3">{emptyText}</ComboboxEmpty>
+            )}
+            <ComboboxList className="max-h-[300px] overflow-y-auto p-1">
               {showCustom && (
-                <Command.Item
-                  value={`__custom__ ${trimmed}`}
-                  onSelect={() => {
-                    toggle(trimmed);
-                    setQuery('');
-                  }}
-                  className="flex h-8 cursor-default items-center gap-2 rounded-md px-2 text-sm text-ink data-[selected=true]:bg-surface-2"
+                <ComboboxItem
+                  value={trimmed}
+                  label={trimmed}
+                  className="flex h-8 cursor-default items-center gap-2 rounded-md px-2 text-sm text-ink data-highlighted:bg-surface-2"
                 >
                   <Plus size={14} className="text-ink-3" />
                   添加「{trimmed}」
-                </Command.Item>
+                </ComboboxItem>
               )}
-              {grouped.map(([group, items]) => (
-                <Command.Group key={group || 'default'} heading={group || undefined} className={listGroupClass}>
-                  {items.map((option) => {
+              {grouped.map(([group, items]) =>
+                group ? (
+                  <ComboboxGroup key={group}>
+                    <ComboboxGroupLabel className="px-2 pb-1 pt-2 text-[11px] font-medium text-ink-3">
+                      {group}
+                    </ComboboxGroupLabel>
+                    {items.map((option) => {
+                      const checked = selected.has(option.value);
+                      return (
+                        <ComboboxItem
+                          key={option.value}
+                          value={option.value}
+                          label={optionText(option)}
+                          keywords={option.keywords}
+                          disabled={option.disabled}
+                          className="flex min-h-8 cursor-default items-center gap-2 rounded-md px-2 py-1 text-sm text-ink data-disabled:text-ink-4 data-highlighted:bg-surface-2"
+                        >
+                          <span
+                            className={cn(
+                              'flex size-4 shrink-0 items-center justify-center rounded-[5px] border',
+                              checked ? 'border-accent bg-accent text-accent-ink' : 'border-line-strong bg-surface',
+                            )}
+                          >
+                            {checked && <Check size={11} strokeWidth={3} />}
+                          </span>
+                          {option.icon}
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate">{option.label ?? option.value}</span>
+                            {option.description && (
+                              <span className="block truncate text-[11px] text-ink-3">{option.description}</span>
+                            )}
+                          </span>
+                        </ComboboxItem>
+                      );
+                    })}
+                  </ComboboxGroup>
+                ) : (
+                  items.map((option) => {
                     const checked = selected.has(option.value);
                     return (
-                      <Command.Item
+                      <ComboboxItem
                         key={option.value}
                         value={option.value}
-                        keywords={[typeof option.label === 'string' ? option.label : '', ...(option.keywords ?? [])]}
+                        label={optionText(option)}
+                        keywords={option.keywords}
                         disabled={option.disabled}
-                        onSelect={() => toggle(option.value)}
-                        className="flex min-h-8 cursor-default items-center gap-2 rounded-md px-2 py-1 text-sm text-ink data-[disabled=true]:text-ink-4 data-[selected=true]:bg-surface-2"
+                        className="flex min-h-8 cursor-default items-center gap-2 rounded-md px-2 py-1 text-sm text-ink data-disabled:text-ink-4 data-highlighted:bg-surface-2"
                       >
                         <span
                           className={cn(
@@ -299,22 +454,23 @@ export function MultiCombobox({
                         {option.icon}
                         <span className="min-w-0 flex-1">
                           <span className="block truncate">{option.label ?? option.value}</span>
-                          {option.description && <span className="block truncate text-[11px] text-ink-3">{option.description}</span>}
+                          {option.description && (
+                            <span className="block truncate text-[11px] text-ink-3">{option.description}</span>
+                          )}
                         </span>
-                      </Command.Item>
+                      </ComboboxItem>
                     );
-                  })}
-                </Command.Group>
-              ))}
-            </Command.List>
-          </Command>
-        </Popover>
+                  })
+                ),
+              )}
+            </ComboboxList>
+          </ComboboxContent>
+        </UiCombobox>
       )}
     </div>
   );
 }
 
-/** Free-text chips (tags, CIDRs, regex fragments). Enter or comma adds. */
 export function TagInput({
   value,
   onChange,
@@ -323,20 +479,22 @@ export function TagInput({
   mono,
   className,
   disabled,
+  'aria-label': ariaLabel,
 }: {
   value: string[];
   onChange: (value: string[]) => void;
   placeholder?: string;
-  /** Return an error message to reject a value. */
   validate?: (value: string) => string | null;
   mono?: boolean;
   className?: string;
   disabled?: boolean;
+  'aria-label'?: string;
 }) {
   const [draft, setDraft] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const commit = () => {
-    const next = draft.trim();
+
+  const commitText = (raw: string) => {
+    const next = raw.trim();
     if (!next) return;
     if (value.includes(next)) {
       setError('已存在');
@@ -351,6 +509,7 @@ export function TagInput({
     setDraft('');
     setError(null);
   };
+
   return (
     <div className={cn('flex flex-col gap-1', className)}>
       <div
@@ -371,22 +530,23 @@ export function TagInput({
           >
             <span className="truncate">{item}</span>
             {!disabled && (
-              <button
+              <UiButton
                 type="button"
                 aria-label={`移除 ${item}`}
                 onClick={() => onChange(value.filter((v) => v !== item))}
                 className="flex size-4 items-center justify-center rounded text-ink-4 hover:bg-surface-3 hover:text-ink"
               >
                 <X size={10} strokeWidth={2.5} />
-              </button>
+              </UiButton>
             )}
           </span>
         ))}
-        <input
+        <UiInput
           value={draft}
           disabled={disabled}
-          onChange={(event) => {
-            setDraft(event.target.value);
+          aria-label={ariaLabel ?? placeholder}
+          onValueChange={(next) => {
+            setDraft(next);
             if (error) setError(null);
           }}
           onKeyDown={(event) => {
@@ -395,15 +555,28 @@ export function TagInput({
             if (event.nativeEvent.isComposing || event.keyCode === 229) return;
             if (event.key === 'Enter' || event.key === ',' || event.key === '，') {
               event.preventDefault();
-              commit();
+              commitText(draft);
             } else if (event.key === 'Backspace' && !draft && value.length) {
               onChange(value.slice(0, -1));
             }
           }}
-          onBlur={commit}
+          onBlur={() => commitText(draft)}
           placeholder={value.length ? '' : placeholder}
-          className={cn('h-6 min-w-[120px] flex-1 bg-transparent px-1 text-sm text-ink outline-none placeholder:text-ink-4', mono && 'font-mono text-[12.5px]')}
+          className={cn(
+            'h-6 min-w-[120px] flex-1 bg-transparent px-1 text-sm text-ink outline-none placeholder:text-ink-4',
+            mono && 'font-mono text-[12.5px]',
+          )}
         />
+        {!disabled && draft.trim() && (
+          <UiButton
+            type="button"
+            aria-label="添加标签"
+            onClick={() => commitText(draft)}
+            className="inline-flex h-5 items-center rounded px-1.5 text-xs font-medium text-accent hover:bg-accent-soft"
+          >
+            添加
+          </UiButton>
+        )}
       </div>
       {error && <span className="text-xs text-bad">{error}</span>}
     </div>

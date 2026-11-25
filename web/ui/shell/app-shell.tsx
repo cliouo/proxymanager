@@ -2,11 +2,20 @@
 
 import { useEffect, useState, type ReactNode } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { navigateWithGuard } from '@/ui/features/groups/guard';
-import { Dialog as RDialog } from 'radix-ui';
+import { Button as UiButton } from '@ui-sdk/react/button';
+import {
+  Dialog as UiDialog,
+  DialogBackdrop,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+  DialogTrigger,
+} from '@ui-sdk/react/dialog';
 import { AnimatePresence, motion } from 'motion/react';
 import { Menu as MenuIcon, Search, Sparkles } from 'lucide-react';
+import { AgentHost } from '@/ui/agent';
 import { AssistantPanel } from '@/ui/assistant/panel';
+import { navigateWithGuard } from '@/ui/features/groups/guard';
 import { FeedbackHost } from '@/ui/primitives';
 import { LogoMark } from '@/ui/viz/logo';
 import { ActivityBar } from './activity-bar';
@@ -23,29 +32,38 @@ function MobileBar() {
   useEffect(() => setOpen(false), [pathname]);
   return (
     <div className="sticky top-0 z-40 flex h-12 items-center gap-2 border-b border-line bg-canvas/85 px-3 backdrop-blur lg:hidden">
-      <RDialog.Root open={open} onOpenChange={setOpen}>
-        <RDialog.Trigger asChild>
-          <button type="button" aria-label="打开导航" className="flex size-8 items-center justify-center rounded-md text-ink-2 hover:bg-surface">
-            <MenuIcon size={18} />
-          </button>
-        </RDialog.Trigger>
-        <RDialog.Portal>
-          <RDialog.Overlay className="fixed inset-0 z-50 bg-overlay data-[state=open]:animate-fade-in" />
-          <RDialog.Content className="fixed inset-y-0 left-0 z-50 w-[280px] max-w-[85vw] border-r border-line bg-canvas shadow-xl data-[state=open]:animate-[slide-in-left_0.3s_var(--ease-out-expo)_both]">
-            <RDialog.Title className="sr-only">导航</RDialog.Title>
-            <RDialog.Description className="sr-only">在页面之间切换</RDialog.Description>
-            <SidebarContent collapsed={false} onNavigate={() => setOpen(false)} />
-          </RDialog.Content>
-        </RDialog.Portal>
-      </RDialog.Root>
+      <UiDialog open={open} onOpenChange={(next) => setOpen(next)}>
+        <DialogTrigger
+          aria-label="打开导航"
+          className="flex size-8 items-center justify-center rounded-md text-ink-2 hover:bg-surface"
+        >
+          <MenuIcon size={18} />
+        </DialogTrigger>
+        <DialogBackdrop className="fixed inset-0 z-50 bg-overlay data-open:animate-fade-in" />
+        <DialogContent className="fixed inset-y-0 left-0 z-50 m-0 w-[280px] max-w-[85vw] border-r border-line bg-canvas p-0 text-ink shadow-xl outline-none data-open:animate-[slide-in-left_0.3s_var(--ease-out-expo)_both]">
+          <DialogTitle className="sr-only">导航</DialogTitle>
+          <DialogDescription className="sr-only">在页面之间切换</DialogDescription>
+          <SidebarContent collapsed={false} onNavigate={() => setOpen(false)} />
+        </DialogContent>
+      </UiDialog>
       <LogoMark size={20} />
       <div className="flex-1" />
-      <button type="button" aria-label="搜索" onClick={openPalette} className="flex size-8 items-center justify-center rounded-md text-ink-2 hover:bg-surface">
+      <UiButton
+        type="button"
+        aria-label="搜索"
+        onClick={openPalette}
+        className="flex size-8 items-center justify-center rounded-md text-ink-2 hover:bg-surface"
+      >
         <Search size={17} />
-      </button>
-      <button type="button" aria-label="AI 助手" onClick={() => openAssistant()} className="flex size-8 items-center justify-center rounded-md text-accent hover:bg-surface">
+      </UiButton>
+      <UiButton
+        type="button"
+        aria-label="AI 助手"
+        onClick={() => openAssistant()}
+        className="flex size-8 items-center justify-center rounded-md text-accent hover:bg-surface"
+      >
         <Sparkles size={17} />
-      </button>
+      </UiButton>
     </div>
   );
 }
@@ -103,6 +121,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               {docked && (
                 <motion.aside
                   key="assistant-dock"
+                  data-agent-hidden
                   initial={{ width: 0, opacity: 0 }}
                   animate={{ width: 420, opacity: 1 }}
                   exit={{ width: 0, opacity: 0 }}
@@ -118,20 +137,24 @@ export function AppShell({ children }: { children: ReactNode }) {
           </div>
         </div>
         {!wide && (
-          <RDialog.Root open={assistantOpen} onOpenChange={(open) => setUi({ assistantOpen: open })}>
-            <RDialog.Portal>
-              <RDialog.Overlay className="fixed inset-0 z-50 bg-overlay data-[state=open]:animate-fade-in" />
-              <RDialog.Content className="fixed bottom-2 right-2 top-2 z-50 w-[min(440px,calc(100vw-16px))] overflow-hidden rounded-2xl border border-line bg-surface shadow-xl data-[state=open]:animate-[slide-in-right_0.38s_var(--ease-out-expo)_both]">
-                <RDialog.Title className="sr-only">AI 助手</RDialog.Title>
-                <RDialog.Description className="sr-only">用自然语言查看和修改配置</RDialog.Description>
+          <div data-agent-hidden>
+            <UiDialog open={assistantOpen} onOpenChange={(open) => setUi({ assistantOpen: open })}>
+              <DialogBackdrop className="fixed inset-0 z-50 bg-overlay data-open:animate-fade-in" />
+              <DialogContent
+                data-agent-hidden
+                className="fixed bottom-2 right-2 top-2 z-50 m-0 w-[min(440px,calc(100vw-16px))] overflow-hidden rounded-2xl border border-line bg-surface p-0 text-ink shadow-xl outline-none data-open:animate-[slide-in-right_0.38s_var(--ease-out-expo)_both]"
+              >
+                <DialogTitle className="sr-only">AI 助手</DialogTitle>
+                <DialogDescription className="sr-only">用自然语言查看和修改配置</DialogDescription>
                 <AssistantPanel onClose={() => setUi({ assistantOpen: false })} />
-              </RDialog.Content>
-            </RDialog.Portal>
-          </RDialog.Root>
+              </DialogContent>
+            </UiDialog>
+          </div>
         )}
         <CommandPalette />
         <ShareDialog />
         <FeedbackHost />
+        <AgentHost />
         <GlobalHotkeys />
       </div>
     </ActiveLineColors>
