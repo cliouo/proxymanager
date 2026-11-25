@@ -44,7 +44,7 @@ export interface ToolDispatchResult {
   modelContent: string;
 }
 
-export const MAX_ROUNDS = 16;
+export const MAX_ROUNDS = 40;
 
 export function toOpenAiTools(): OpenAiTool[] {
   return [...agentTools, ...customTools].map(({ name, description, inputSchema }) => ({

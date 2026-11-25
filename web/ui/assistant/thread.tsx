@@ -2,7 +2,7 @@
 
 import { memo, useState, type ReactNode } from 'react';
 import Link from 'next/link';
-import { Brain, Check, ChevronRight, CircleAlert, RotateCcw, Settings2, X } from 'lucide-react';
+import { Brain, Check, ChevronRight, CircleAlert, Play, RotateCcw, Settings2, X } from 'lucide-react';
 import { cn } from '@/ui/lib/cn';
 import { Button, CopyButton, Spinner } from '@/ui/primitives';
 import { formatSeconds, toYamlish } from './format';
@@ -153,10 +153,17 @@ function ToolGroup({ items }: { items: ToolItem[] }) {
 function Notice({ item, onRetry, canRetry }: { item: NoticeItem; onRetry: () => void; canRetry: boolean }) {
   if (item.tone === 'info') {
     return (
-      <div className="flex items-center gap-3 text-2xs text-ink-3">
-        <span className="h-px flex-1 bg-line" />
-        {item.text}
-        <span className="h-px flex-1 bg-line" />
+      <div className="flex flex-col items-center gap-2">
+        <div className="flex w-full items-center gap-3 text-2xs text-ink-3">
+          <span className="h-px flex-1 bg-line" />
+          {item.text}
+          <span className="h-px flex-1 bg-line" />
+        </div>
+        {item.continue && canRetry && (
+          <Button size="xs" variant="secondary" icon={Play} onClick={onRetry}>
+            继续执行
+          </Button>
+        )}
       </div>
     );
   }
