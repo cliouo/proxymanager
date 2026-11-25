@@ -86,7 +86,13 @@ export function EditProfileSheet({
           <Button variant="ghost" onClick={() => onOpenChange(false)}>
             取消
           </Button>
-          <Button variant="primary" loading={busy} disabled={!dirty} onClick={() => void save()}>
+          <Button
+            variant="primary"
+            loading={busy}
+            disabled={!dirty}
+            data-agent-confirm={`保存配置文件「${profileTitle(profile)}」的修改`}
+            onClick={() => void save()}
+          >
             保存
           </Button>
         </>

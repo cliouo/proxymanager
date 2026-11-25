@@ -2,6 +2,7 @@
 
 import { useMemo, useState, type ReactNode } from 'react';
 import Link from 'next/link';
+import { Button as UiButton } from '@ui-sdk/react/button';
 import {
   ArrowUpRight,
   CircleAlert,
@@ -12,6 +13,7 @@ import {
   TriangleAlert,
   WandSparkles,
 } from 'lucide-react';
+import { DataView } from '@/ui/agent';
 import type { ConfigIssue } from '@/ui/data/api';
 import { errorMessage } from '@/ui/data/api';
 import type { Rule, RuleSummary } from '@/ui/data/types';
@@ -100,9 +102,9 @@ function RuleList({ rules }: { rules: Array<{ id: string; rule?: Rule }> }) {
       ))}
       {rules.length > 3 && (
         <li>
-          <button type="button" onClick={() => setOpen((v) => !v)} className="text-2xs font-medium text-accent hover:underline">
+          <UiButton type="button" onClick={() => setOpen((v) => !v)} className="text-2xs font-medium text-accent hover:underline">
             {open ? '收起' : `还有 ${rules.length - 3} 条`}
-          </button>
+          </UiButton>
         </li>
       )}
     </ul>
@@ -140,20 +142,57 @@ export function ValidationSection({
 }: ValidationSectionProps) {
   const { status } = validation;
   const checking = status === 'checking';
+  const validationSummary =
+    status === 'valid' && groups.length === 0 && !missingGroupsMarker
+      ? '结构有效'
+      : status === 'syntax' && validation.syntax
+        ? `第 ${validation.syntax.line} 行语法错误：${validation.syntax.message}`
+        : status === 'invalid' && validation.issue
+          ? `校验失败：${validation.issue.message}`
+          : `${groups.length + (missingGroupsMarker ? 1 : 0)} 个问题`;
+  const validationItems = [
+    ...(status === 'syntax' && validation.syntax
+      ? [{ value: 'syntax', label: `第 ${validation.syntax.line} 行：${validation.syntax.message}` }]
+      : []),
+    ...(status === 'invalid' && validation.issue ? [{ value: 'invalid', label: validation.issue.message }] : []),
+    ...groups.map((g, i) => ({
+      value: `orphan-${i}`,
+      label:
+        g.kind === 'anchor'
+          ? `缺失锚点 ${g.name}（影响 ${g.rules.length} 条规则）`
+          : g.kind === 'policy'
+            ? `缺失策略 ${g.name}（影响 ${g.rules.length} 条规则）`
+            : g.kind === 'rule-set'
+              ? `缺失规则集 ${g.name}（影响 ${g.rules.length} 条规则）`
+              : g.kind === 'literal-rule'
+                ? `第 ${g.line} 行手写规则`
+                : g.kind === 'literal-provider'
+                  ? `手写规则集 ${g.name}`
+                  : g.kind === 'providers-marker'
+                    ? '缺少 RULE-PROVIDERS 标记'
+                    : 'reason' in g
+                      ? g.reason
+                      : g.kind,
+    })),
+    ...(missingGroupsMarker > 0 ? [{ value: 'missing-groups', label: `缺少 PROXY-GROUPS 标记（${missingGroupsMarker} 个策略组）` }] : []),
+    ...(saveIssues ?? []).map((issue, i) => ({ value: `save-${i}`, label: issue.message })),
+  ];
+
   return (
-    <InspectorSection
-      id="base-validation"
-      title="校验"
-      meta={
-        checking ? (
-          <>
-            <Spinner size={11} /> 校验中
-          </>
-        ) : (
-          '随输入实时校验'
-        )
-      }
-    >
+    <DataView label="基础配置校验" summary={validationSummary} items={validationItems}>
+      <InspectorSection
+        id="base-validation"
+        title="校验"
+        meta={
+          checking ? (
+            <>
+              <Spinner size={11} /> 校验中
+            </>
+          ) : (
+            '随输入实时校验'
+          )
+        }
+      >
       {status === 'syntax' && validation.syntax && (
         <IssueCard
           title={`第 ${validation.syntax.line} 行：${validation.syntax.message}`}
@@ -261,7 +300,8 @@ export function ValidationSection({
           </ul>
         </IssueCard>
       )}
-    </InspectorSection>
+      </InspectorSection>
+    </DataView>
   );
 }
 
@@ -415,8 +455,25 @@ export function MarkersSection({
     setName('');
   };
 
+  const markerItems = [
+    { value: 'marker:proxy-groups', label: `PROXY-GROUPS：${groupsMarker ? `第 ${groupsMarker.line} 行` : '未放置'}` },
+    { value: 'marker:rule-providers', label: `RULE-PROVIDERS：${providersMarker ? `第 ${providersMarker.line} 行` : '未放置'}` },
+    ...anchors.map((a) => {
+      const c = summary?.anchors[a.name];
+      return {
+        value: `anchor:${a.name}`,
+        label: `锚点 ${a.name}（第 ${a.line} 行${c ? ` · ${c.active} 条规则` : ''}）`,
+      };
+    }),
+    ...missing.map(([anchorName, count]) => ({
+      value: `missing:${anchorName}`,
+      label: `缺失锚点 ${anchorName}（${count.total} 条规则受影响）`,
+    })),
+  ];
+
   return (
-    <InspectorSection title="锚点与注入点" meta={`${anchors.length} 个锚点`}>
+    <DataView label="锚点与注入点" summary={`${anchors.length} 个锚点${missing.length ? ` · ${missing.length} 个缺失` : ''}`} items={markerItems}>
+      <InspectorSection title="锚点与注入点" meta={`${anchors.length} 个锚点`}>
       <ul className="flex flex-col">
         {[
           { label: '策略组', hint: 'PROXY-GROUPS', marker: groupsMarker },
@@ -495,7 +552,8 @@ export function MarkersSection({
           添加
         </Button>
       </form>
-    </InspectorSection>
+      </InspectorSection>
+    </DataView>
   );
 }
 
@@ -527,9 +585,9 @@ function MarkerRow({
   );
   const className = 'flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left';
   return onClick ? (
-    <button type="button" onClick={onClick} className={cn(className, 'transition-colors hover:bg-surface-2')}>
+    <UiButton type="button" onClick={onClick} className={cn(className, 'transition-colors hover:bg-surface-2')}>
       {body}
-    </button>
+    </UiButton>
   ) : (
     <div className={className}>{body}</div>
   );
@@ -558,7 +616,15 @@ export function PoliciesSection({
   }, [policies, managed]);
 
   return (
-    <InspectorSection title="可用策略" meta={loading ? undefined : `${policies.length} 个`}>
+    <DataView
+      label="可用策略"
+      summary={loading ? '加载中' : `共 ${policies.length} 个可用策略`}
+      items={policies.map((p) => ({
+        value: p,
+        label: `${p}${usage?.[p] ? `（${usage[p]} 条规则）` : ''}`,
+      }))}
+    >
+      <InspectorSection title="可用策略" meta={loading ? undefined : `${policies.length} 个`}>
       <p className="-mt-1 text-xs leading-relaxed text-ink-3">规则可以指向这些目标。策略组在「策略组」页管理。</p>
       {loading ? (
         <div className="flex flex-wrap gap-1.5">
@@ -595,7 +661,8 @@ export function PoliciesSection({
             ))}
         </div>
       )}
-    </InspectorSection>
+      </InspectorSection>
+    </DataView>
   );
 }
 
@@ -617,7 +684,7 @@ export function SnippetsSection({
           const existing = snippet.keys.map((key) => hasTopKey(content, key)).find((line) => line !== null) ?? null;
           return (
             <li key={snippet.id}>
-              <button
+              <UiButton
                 type="button"
                 onClick={() => (existing ? onReveal(existing) : onInsert(snippet))}
                 className="group flex w-full items-start gap-2.5 rounded-lg border border-line bg-surface px-3 py-2 text-left shadow-xs transition-[border-color,background-color] hover:border-line-strong hover:bg-surface-2/60"
@@ -634,7 +701,7 @@ export function SnippetsSection({
                 >
                   {existing ? `已有 · 第 ${existing} 行` : '插入'}
                 </span>
-              </button>
+              </UiButton>
             </li>
           );
         })}

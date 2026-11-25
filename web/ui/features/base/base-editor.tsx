@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { EditorView } from '@codemirror/view';
 import { openSearchPanel } from '@codemirror/search';
+import { Button as UiButton } from '@ui-sdk/react/button';
 import {
   BookOpen,
   CircleAlert,
@@ -391,7 +392,14 @@ export function BaseEditor() {
               放弃
             </Button>
           )}
-          <Button variant="primary" size="sm" onClick={() => void save()} loading={saving} disabled={!dirty}>
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() => void save()}
+            loading={saving}
+            disabled={!dirty}
+            data-agent-confirm="保存基础配置 YAML"
+          >
             保存
             <Kbd className="ml-0.5 h-4 min-w-4 border-inverse-ink/20 bg-transparent text-[10px] text-inverse-ink/70 shadow-none">⌘S</Kbd>
           </Button>
@@ -404,24 +412,24 @@ export function BaseEditor() {
       <div className="flex min-h-0 flex-1 flex-col gap-5 @4xl:flex-row">
         <Card className="flex h-[64dvh] min-h-[360px] min-w-0 flex-col overflow-hidden lg:h-auto lg:min-h-0 lg:flex-1 @4xl:h-auto @4xl:flex-1">
           <div className="min-h-0 flex-1">
-            <CodeEditor value={content} onChange={onChange} onReady={onReady} wrap={wrap} language="yaml" />
+            <CodeEditor label="基础配置 YAML" value={content} onChange={onChange} onReady={onReady} wrap={wrap} language="yaml" />
           </div>
           <div className="flex h-8 shrink-0 items-center gap-3 border-t border-line bg-surface-2/50 px-3 text-2xs text-ink-3">
             <span className="tnum">{cursor ? `第 ${cursor.line} 行，第 ${cursor.col} 列` : `共 ${content.split('\n').length} 行`}</span>
             {cursor && <span className="tnum text-ink-4">共 {cursor.lines} 行</span>}
             <span className="flex-1" />
             <Tooltip content="查找" shortcut="⌘F">
-              <button
+              <UiButton
                 type="button"
                 aria-label="查找"
                 onClick={() => view && openSearchPanel(view)}
                 className="flex size-6 items-center justify-center rounded-md hover:bg-surface-3 hover:text-ink"
               >
                 <Search size={13} />
-              </button>
+              </UiButton>
             </Tooltip>
             <Tooltip content={wrap ? '不自动换行' : '自动换行'}>
-              <button
+              <UiButton
                 type="button"
                 aria-label="自动换行"
                 aria-pressed={wrap}
@@ -429,7 +437,7 @@ export function BaseEditor() {
                 className={cn('flex size-6 items-center justify-center rounded-md hover:bg-surface-3 hover:text-ink', wrap && 'bg-surface-3 text-ink')}
               >
                 <WrapText size={13} />
-              </button>
+              </UiButton>
             </Tooltip>
             <span className="font-mono text-[10.5px] text-ink-4">YAML</span>
           </div>
@@ -538,7 +546,7 @@ function StatusPill({
               ? { tone: 'border-warn/25 bg-warn-soft text-warn', icon: <TriangleAlert size={13} />, label: '内容为空' }
               : { tone: 'border-warn/25 bg-warn-soft text-warn', icon: <TriangleAlert size={13} />, label: '无法校验' };
   return (
-    <button
+    <UiButton
       type="button"
       onClick={onClick}
       aria-live="polite"
@@ -549,7 +557,7 @@ function StatusPill({
     >
       {view.icon}
       {view.label}
-    </button>
+    </UiButton>
   );
 }
 

@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { Button as UiButton } from '@ui-sdk/react/button';
 import {
   BookMarked,
   CloudDownload,
@@ -15,6 +16,7 @@ import {
   SearchX,
   Trash2,
 } from 'lucide-react';
+import { DataView } from '@/ui/agent';
 import { api, request } from '@/ui/data/api';
 import { refreshShared, useAllRules, useMeta, usePolicies, useRuleSets } from '@/ui/data/hooks';
 import type { RuleSetListItem } from '@/ui/data/types';
@@ -119,7 +121,8 @@ export function RuleSetsView() {
     const ok = await confirmAction({
       title: `删除规则集「${set.name}」？`,
       description: '删除后所有配置文件都不能再引用它。若其他配置文件仍在使用，服务器会拒绝删除。可以在操作历史里撤销。',
-      confirmText: '删除',
+      confirmText: '确认删除',
+      confirmHint: `删除规则集「${set.name}」`,
       tone: 'danger',
     });
     if (!ok) return;
@@ -161,8 +164,15 @@ export function RuleSetsView() {
 
       <div className="flex flex-col gap-4">
         <div className="flex flex-wrap items-center gap-2">
-          <SearchInput value={query} onChange={setQuery} placeholder="搜索名称、备注或地址" className="w-full sm:w-64" />
+          <SearchInput
+            aria-label="搜索规则集"
+            value={query}
+            onChange={setQuery}
+            placeholder="搜索名称、备注或地址"
+            className="w-full sm:w-64"
+          />
           <SegmentedControl<SourceFilter>
+            label="规则集来源筛选"
             value={source}
             onChange={setSource}
             options={[
@@ -173,6 +183,7 @@ export function RuleSetsView() {
           />
           <div className="w-[120px]">
             <Select<'all' | Behavior>
+              label="规则集行为筛选"
               value={behavior}
               onValueChange={setBehavior}
               options={[
@@ -262,20 +273,33 @@ export function RuleSetsView() {
               }
             />
           ) : (
-            <ul className="divide-y divide-line">
-              {filtered.map((set) => (
-                <RuleSetRow
-                  key={set.id}
-                  set={set}
-                  usage={usage.get(set.name)}
-                  usageLoading={!rules.data}
-                  onOpen={() => go({ kind: 'edit', id: set.id })}
-                  onCopyHosted={hostedBase ? () => void copyHosted(set) : undefined}
-                  onLocalize={() => void localize(set)}
-                  onDelete={() => void remove(set)}
-                />
-              ))}
-            </ul>
+            <DataView
+              label="规则集列表"
+              summary={`显示 ${filtered.length} / ${sets.length} 个规则集${rules.data ? ` · ${injected} 个写入最终配置` : ''}`}
+              items={filtered.map((set) => {
+                const src = sourceOf(set);
+                const u = usage.get(set.name);
+                return {
+                  value: set.id,
+                  label: `${set.name} · ${SOURCE_LABEL[src]} · ${set.format}/${set.behavior ?? '未设置'} · ${usageText(u)}${set.note ? ` · ${set.note}` : ''}`,
+                };
+              })}
+            >
+              <ul className="divide-y divide-line">
+                {filtered.map((set) => (
+                  <RuleSetRow
+                    key={set.id}
+                    set={set}
+                    usage={usage.get(set.name)}
+                    usageLoading={!rules.data}
+                    onOpen={() => go({ kind: 'edit', id: set.id })}
+                    onCopyHosted={hostedBase ? () => void copyHosted(set) : undefined}
+                    onLocalize={() => void localize(set)}
+                    onDelete={() => void remove(set)}
+                  />
+                ))}
+              </ul>
+            </DataView>
           )}
         </Card>
       </div>
@@ -322,8 +346,9 @@ function RuleSetRow({
       onClick={onOpen}
     >
       <div className="min-w-0">
-        <button
+        <UiButton
           type="button"
+          aria-label={`编辑规则集「${set.name}」`}
           onClick={(event) => {
             event.stopPropagation();
             onOpen();
@@ -331,7 +356,7 @@ function RuleSetRow({
           className="block max-w-full truncate text-left font-mono text-[13px] font-medium text-ink outline-none focus-visible:underline"
         >
           {set.name}
-        </button>
+        </UiButton>
         <div className="truncate text-xs text-ink-3">
           {set.note || (src === 'remote' ? <span className="font-mono text-[11px]">{hostOf(set.url)}</span> : '—')}
         </div>
@@ -367,7 +392,15 @@ function RuleSetRow({
             { label: '编辑', icon: Pencil, onSelect: onOpen },
             ...(src === 'local' && onCopyHosted ? [{ label: '复制托管地址', icon: Link2, onSelect: onCopyHosted }] : []),
             ...(src === 'remote' && set.format !== 'mrs'
-              ? [{ label: '转为本地托管', icon: CloudDownload, onSelect: onLocalize, hint: '下载一次' }]
+              ? [
+                  {
+                    label: '转为本地托管',
+                    icon: CloudDownload,
+                    onSelect: onLocalize,
+                    hint: '下载一次',
+                    confirm: `将规则集「${set.name}」转为本地托管`,
+                  },
+                ]
               : []),
             'separator' as const,
             { label: '删除', icon: Trash2, tone: 'danger' as const, onSelect: onDelete, disabled: used, hint: used ? '使用中' : undefined },
