@@ -23,12 +23,12 @@ import { errorMessage } from '@/ui/data/api';
 import { useAssistantConfig } from '@/ui/data/hooks';
 import { useIsomorphicLayoutEffect } from '@/ui/data/query';
 import { cn } from '@/ui/lib/cn';
-import { Button, Monogram, Skeleton, Tooltip } from '@/ui/primitives';
+import { Button, Skeleton, Tooltip } from '@/ui/primitives';
 import { modKey } from '@/ui/shell/hotkeys';
 import { useActiveProfile } from '@/ui/shell/scope';
 import { setUi, useUi } from '@/ui/shell/state';
 import { Composer, type ComposerHandle } from './composer';
-import type { AssistantRuntimeContext } from './prompt';
+import { pageLabelFor, type AssistantRuntimeContext } from './prompt';
 import { clearConversation, retry, sendMessage, stop, useConversation } from './session';
 import { Thread } from './thread';
 
@@ -50,7 +50,7 @@ function IconTile({ icon: Icon }: { icon: typeof Sparkles }) {
 function NotConfigured({ onNavigate }: { onNavigate: () => void }) {
   const points = [
     { icon: ListChecks, text: '直接读取和操作当前页面的规则、策略组、订阅源和配置' },
-    { icon: ShieldCheck, text: '所有写入和删除操作都会先弹出确认框，你点确认才会执行' },
+    { icon: ShieldCheck, text: '所有写入和删除操作都会先在对话里请你确认，你点允许才会执行' },
     { icon: KeyRound, text: '用你自己的 DeepSeek（或 OpenAI 兼容）模型，浏览器直接调用' },
   ];
   return (
@@ -81,7 +81,7 @@ function NotConfigured({ onNavigate }: { onNavigate: () => void }) {
   );
 }
 
-function Welcome({ profileLabel, onPick }: { profileLabel: string | null; onPick: (text: string) => void }) {
+function Welcome({ onPick }: { onPick: (text: string) => void }) {
   return (
     <div className="flex flex-1 flex-col justify-end gap-5 px-4 pb-3 pt-8 animate-rise">
       <div className="flex flex-col items-start gap-3 px-1">
@@ -89,9 +89,7 @@ function Welcome({ profileLabel, onPick }: { profileLabel: string | null; onPick
         <div>
           <h2 className="text-md font-semibold tracking-tight text-ink">有什么可以帮你？</h2>
           <p className="mt-1 text-xs leading-relaxed text-ink-3">
-            {profileLabel
-              ? `我可以直接查看和操作当前页面（当前配置「${profileLabel}」），任何写入改动都会先弹窗请你确认。`
-              : '我可以直接查看和操作当前页面，任何写入改动都会先弹窗请你确认。'}
+            我可以直接查看和操作页面内容，也能按你的要求切换配置或页面；任何写入改动都会先在对话里请你确认。
           </p>
         </div>
       </div>
@@ -201,6 +199,17 @@ export function AssistantPanel({ onClose }: { onClose: () => void }) {
 
   const hasConversation = convo.items.length > 0;
 
+  const pageLabel = pageLabelFor(pathname);
+  const isProfileScopedRoute = /^\/p\/[^/]+/.test(pathname);
+  const contextLabel =
+    isProfileScopedRoute && profileContext ? `${profileContext.label} · ${pageLabel}` : pageLabel;
+  const contextTitle =
+    isProfileScopedRoute && profileContext
+      ? `当前位置：${profileContext.label} / ${pageLabel}`
+      : profileContext
+        ? `当前页面：${pageLabel}（活动配置：${profileContext.label}）`
+        : `当前页面：${pageLabel}`;
+
   let body: React.ReactNode;
   if (loading) body = <LoadingState />;
   else if (config.error)
@@ -214,7 +223,7 @@ export function AssistantPanel({ onClose }: { onClose: () => void }) {
       </div>
     );
   else if (!configured) body = <NotConfigured onNavigate={() => !isDocked() && onClose()} />;
-  else if (!hasConversation) body = <Welcome profileLabel={profileContext?.label ?? null} onPick={send} />;
+  else if (!hasConversation) body = <Welcome onPick={send} />;
   else
     body = (
       <div className="flex flex-col gap-4 px-4 py-4">
@@ -230,19 +239,16 @@ export function AssistantPanel({ onClose }: { onClose: () => void }) {
           <Sparkles size={15} strokeWidth={1.75} />
         </span>
         <div className="min-w-0 flex-1 leading-tight">
-          <div className="text-sm font-semibold text-ink">AI 助手</div>
-          <div className="truncate font-mono text-2xs text-ink-3">
-            {config.data?.model ?? (loading ? ' ' : '未配置模型')}
+          <div className="flex min-w-0 items-baseline gap-1.5">
+            <span className="shrink-0 text-sm font-semibold text-ink">AI 助手</span>
+            <span className="truncate font-mono text-2xs text-ink-4">
+              {config.data?.model ?? (loading ? '' : '未配置')}
+            </span>
+          </div>
+          <div className="truncate text-2xs text-ink-3" title={contextTitle}>
+            {contextLabel}
           </div>
         </div>
-        {profileContext && (
-          <Tooltip content="当前选中的配置文件">
-            <span className="inline-flex h-6 max-w-[132px] shrink-0 items-center gap-1.5 rounded-full border border-line bg-surface-2 pl-1 pr-2 text-2xs font-medium text-ink-2">
-              <Monogram name={profileContext.label} colorKey={profileContext.name} size={16} />
-              <span className="truncate">{profileContext.label}</span>
-            </span>
-          </Tooltip>
-        )}
         {configured && (
           <Tooltip content="新对话">
             <Button
