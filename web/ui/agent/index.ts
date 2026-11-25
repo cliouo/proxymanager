@@ -12,12 +12,15 @@ export {
 } from './bridge';
 export {
   clearAgentConfirms,
+  findConfirmTargetElement,
+  registerInlineConfirmHost,
   requestAgentConfirm,
   resolveAgentConfirm,
+  useHasInlineConfirmHost,
   usePendingAgentConfirm,
   type AgentConfirmRequest,
 } from './confirm';
-export { AgentHost } from './agent-host';
+export { AgentConfirmCard, AgentHost } from './agent-host';
 export { DataView, type DataViewItem } from './data-view-react';
 export {
   customTools,

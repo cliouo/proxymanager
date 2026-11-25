@@ -274,6 +274,19 @@
     stroke-dashoffset: -24;
   }
 }
+@keyframes agent-spotlight {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 2px var(--surface),
+      0 0 0 5px color-mix(in srgb, var(--warn) 78%, transparent);
+  }
+  50% {
+    box-shadow:
+      0 0 0 2px var(--surface),
+      0 0 0 8px color-mix(in srgb, var(--warn) 28%, transparent);
+  }
+}
 
 @layer base {
   *,
@@ -467,6 +480,23 @@
   }
   .skeleton {
     animation-duration: 6s;
+  }
+}
+
+/* Highlight the page control waiting for user confirmation in the AI sidebar. */
+[data-agent-confirm-target='true'] {
+  position: relative;
+  z-index: 2;
+  outline: 2px solid var(--warn);
+  outline-offset: 2px;
+  box-shadow:
+    0 0 0 2px var(--surface),
+    0 0 0 5px color-mix(in srgb, var(--warn) 70%, transparent);
+  animation: agent-spotlight 1.8s var(--ease-out-expo) 3;
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-agent-confirm-target='true'] {
+    animation: none;
   }
 }
 

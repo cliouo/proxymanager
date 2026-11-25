@@ -18,6 +18,7 @@ import {
   Waypoints,
   X,
 } from 'lucide-react';
+import { AgentConfirmCard, registerInlineConfirmHost, usePendingAgentConfirm } from '@/ui/agent';
 import { errorMessage } from '@/ui/data/api';
 import { useAssistantConfig } from '@/ui/data/hooks';
 import { useIsomorphicLayoutEffect } from '@/ui/data/query';
@@ -142,6 +143,7 @@ export function AssistantPanel({ onClose }: { onClose: () => void }) {
     [pathname, profileContext],
   );
   const convo = useConversation();
+  const pendingConfirm = usePendingAgentConfirm();
   const composerRef = useRef<ComposerHandle>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
@@ -150,6 +152,8 @@ export function AssistantPanel({ onClose }: { onClose: () => void }) {
 
   const configured = !!config.data;
   const loading = config.isLoading;
+
+  useEffect(() => registerInlineConfirmHost(), []);
 
   useEffect(() => {
     if (!configured) return;
@@ -167,7 +171,7 @@ export function AssistantPanel({ onClose }: { onClose: () => void }) {
   useIsomorphicLayoutEffect(() => {
     const el = scrollRef.current;
     if (el && pinned.current) el.scrollTop = el.scrollHeight;
-  }, [convo.items]);
+  }, [convo.items, pendingConfirm?.id]);
 
   const onScroll = () => {
     const el = scrollRef.current;
@@ -213,8 +217,9 @@ export function AssistantPanel({ onClose }: { onClose: () => void }) {
   else if (!hasConversation) body = <Welcome profileLabel={profileContext?.label ?? null} onPick={send} />;
   else
     body = (
-      <div className="px-4 py-4">
+      <div className="flex flex-col gap-4 px-4 py-4">
         <Thread items={convo.items} running={convo.running} onRetry={onRetry} />
+        {pendingConfirm && <AgentConfirmCard request={pendingConfirm} />}
       </div>
     );
 
@@ -267,6 +272,11 @@ export function AssistantPanel({ onClose }: { onClose: () => void }) {
           aria-live="off"
         >
           {body}
+          {!hasConversation && pendingConfirm && (
+            <div className="px-4 pb-4">
+              <AgentConfirmCard request={pendingConfirm} />
+            </div>
+          )}
         </div>
         {showJump && hasConversation && (
           <button

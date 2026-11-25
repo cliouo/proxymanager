@@ -11,18 +11,90 @@ import {
 } from '@ui-sdk/react/alert-dialog';
 import { ShieldAlert } from 'lucide-react';
 import { registerAppWebMcp, type AppAgent } from './bridge';
-import { resolveAgentConfirm, usePendingAgentConfirm } from './confirm';
+import {
+  findConfirmTargetElement,
+  resolveAgentConfirm,
+  useHasInlineConfirmHost,
+  usePendingAgentConfirm,
+  type AgentConfirmRequest,
+} from './confirm';
+
+function useConfirmTargetHighlight(request: AgentConfirmRequest | null) {
+  useEffect(() => {
+    if (!request) return;
+    const target = findConfirmTargetElement(request.step);
+    if (!target) return;
+    target.setAttribute('data-agent-confirm-target', 'true');
+    if (typeof target.scrollIntoView === 'function') {
+      target.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+    return () => {
+      target.removeAttribute('data-agent-confirm-target');
+    };
+  }, [request]);
+}
+
+export function AgentConfirmCard({ request }: { request: AgentConfirmRequest }) {
+  const targetLabel =
+    (typeof request.step.args[0] === 'string' && request.step.args[0]) ||
+    request.step.label ||
+    request.step.ref;
+
+  return (
+    <div
+      role="region"
+      aria-label="AI 操作确认"
+      data-agent-hidden
+      className="animate-rise rounded-xl border border-warn/35 bg-warn-soft/55 p-3.5 shadow-xs"
+    >
+      <div className="flex items-start gap-2.5">
+        <span className="mt-0.5 inline-flex size-6 shrink-0 items-center justify-center rounded-lg bg-warn/15 text-warn">
+          <ShieldAlert size={14} strokeWidth={2} aria-hidden="true" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="text-xs font-semibold text-ink">AI 请求确认</div>
+          <p className="mt-1 text-sm leading-relaxed text-ink">{request.message}</p>
+          {targetLabel && (
+            <div className="mt-1.5 text-2xs text-ink-3">
+              目标操作：<span className="font-medium text-ink-2">{targetLabel}</span>
+            </div>
+          )}
+        </div>
+      </div>
+      <div className="mt-3 flex items-center justify-end gap-2">
+        <button
+          type="button"
+          onClick={() => resolveAgentConfirm(request.id, false)}
+          className="inline-flex h-7 select-none items-center justify-center rounded-md border border-line bg-surface px-2.5 text-xs font-medium text-ink-2 transition hover:bg-surface-2 hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+        >
+          拒绝
+        </button>
+        <button
+          type="button"
+          onClick={() => resolveAgentConfirm(request.id, true)}
+          className="inline-flex h-7 select-none items-center justify-center rounded-md bg-inverse px-3 text-xs font-medium text-inverse-ink shadow-xs transition hover:bg-inverse/88 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+        >
+          允许执行
+        </button>
+      </div>
+    </div>
+  );
+}
 
 export function AgentConfirmDialog() {
   const request = usePendingAgentConfirm();
+  const hasInlineHost = useHasInlineConfirmHost();
+  useConfirmTargetHighlight(request);
+
+  const showModal = Boolean(request) && !hasInlineHost;
   const targetLabel = request?.step.label || request?.step.ref;
 
   return (
     <div data-agent-hidden>
       <AlertDialog
-        open={Boolean(request)}
+        open={showModal}
         onOpenChange={(open, details) => {
-          if (!open && request) {
+          if (!open && request && !hasInlineHost) {
             resolveAgentConfirm(request.id, details.returnValue === 'confirm');
           }
         }}

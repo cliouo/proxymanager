@@ -1,6 +1,7 @@
 'use client';
 
 import { useSyncExternalStore, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import {
   AlertDialog,
   AlertDialogBackdrop,
@@ -23,6 +24,7 @@ import { ApiError, errorMessage, type ConfigIssue } from '@/ui/data/api';
 import { cn } from '@/ui/lib/cn';
 import { Button } from './button';
 import { Dialog } from './overlay';
+import { ASSISTANT_PERSISTENT_SELECTORS, useWorkspaceOverlayScope } from './overlay-scope';
 
 function createStore<T>(initial: T) {
   let state = initial;
@@ -200,13 +202,16 @@ export function confirmAction(options: Omit<ConfirmRequest, 'resolve'>): Promise
 
 function ConfirmDialog() {
   const request = useSyncExternalStore(confirmStore.subscribe, confirmStore.get, () => null);
+  const { scopedContainer, keepAssistantInteractive } = useWorkspaceOverlayScope();
+  const isScoped = Boolean(scopedContainer);
   const confirmMessage =
     request?.confirmHint ??
     (typeof request?.title === 'string' ? request.title : '确认执行此操作');
 
-  return (
+  const tree = (
     <AlertDialog
       open={!!request}
+      persistentElements={keepAssistantInteractive ? ASSISTANT_PERSISTENT_SELECTORS : undefined}
       onOpenChange={(open, details) => {
         if (!open && request) {
           request.resolve(details.returnValue === 'confirm');
@@ -214,8 +219,21 @@ function ConfirmDialog() {
         }
       }}
     >
-      <AlertDialogBackdrop className="fixed inset-0 z-50 bg-overlay backdrop-blur-[1.5px] data-ending-style:animate-[fade-out_0.16s_ease-in_both] data-open:animate-fade-in" />
-      <AlertDialogContent className="fixed left-1/2 top-[min(14vh,120px)] z-50 m-0 flex max-h-[calc(100dvh-min(14vh,120px)-24px)] w-[calc(100%-24px)] max-w-[420px] -translate-x-1/2 flex-col overflow-hidden rounded-2xl border border-line bg-surface p-0 text-ink shadow-xl outline-none data-ending-style:animate-[sink_0.16s_ease-in_both] data-open:animate-pop">
+      <AlertDialogBackdrop
+        className={cn(
+          isScoped ? 'pointer-events-auto absolute inset-0 z-10' : 'fixed inset-0 z-50',
+          'bg-overlay backdrop-blur-[1.5px] data-ending-style:animate-[fade-out_0.16s_ease-in_both] data-open:animate-fade-in',
+        )}
+      />
+      <AlertDialogContent
+        inline={keepAssistantInteractive || undefined}
+        className={cn(
+          isScoped
+            ? 'pointer-events-auto absolute left-1/2 top-[min(14vh,120px)] z-20 max-h-[calc(100%-min(14vh,120px)-24px)]'
+            : 'fixed left-1/2 top-[min(14vh,120px)] z-50 max-h-[calc(100dvh-min(14vh,120px)-24px)]',
+          'm-0 flex w-[calc(100%-24px)] max-w-[420px] -translate-x-1/2 flex-col overflow-hidden rounded-2xl border border-line bg-surface p-0 text-ink shadow-xl outline-none data-ending-style:animate-[sink_0.16s_ease-in_both] data-open:animate-pop',
+        )}
+      >
         <div className="flex flex-col gap-1.5 px-5 pb-4 pt-5">
           <AlertDialogTitle className="flex items-center gap-2 text-md font-semibold tracking-tight text-ink">
             {request?.tone === 'danger' && <AlertTriangle size={17} className="shrink-0 text-bad" />}
@@ -249,6 +267,8 @@ function ConfirmDialog() {
       </AlertDialogContent>
     </AlertDialog>
   );
+
+  return scopedContainer ? createPortal(tree, scopedContainer) : tree;
 }
 
 export function FeedbackHost() {

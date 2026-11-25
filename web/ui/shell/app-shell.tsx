@@ -102,6 +102,10 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   const docked = assistantOpen && wide;
 
+  useEffect(() => {
+    setUi({ assistantDocked: docked });
+  }, [docked]);
+
   return (
     <ActiveLineColors>
       <div className="flex min-h-dvh bg-canvas">
@@ -117,17 +121,19 @@ export function AppShell({ children }: { children: ReactNode }) {
               <div id="scroll-root" className="@container/main h-full overflow-y-auto overflow-x-hidden">
                 {children}
               </div>
+              <div id="main-overlay-root" className="pointer-events-none absolute inset-0 z-50" />
             </main>
             <AnimatePresence initial={false}>
               {docked && (
                 <motion.aside
                   key="assistant-dock"
                   data-agent-hidden
+                  data-assistant-surface
                   initial={{ width: 0, opacity: 0 }}
                   animate={{ width: 420, opacity: 1 }}
                   exit={{ width: 0, opacity: 0 }}
                   transition={{ type: 'spring', bounce: 0, duration: 0.42 }}
-                  className="hidden h-[calc(100dvh-16px)] shrink-0 overflow-hidden xl:block"
+                  className="relative z-[60] hidden h-[calc(100dvh-16px)] shrink-0 overflow-hidden xl:block"
                 >
                   <div className="h-full w-[420px] overflow-hidden rounded-2xl border border-line bg-surface shadow-sm">
                     <AssistantPanel onClose={() => setUi({ assistantOpen: false })} />
@@ -138,7 +144,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           </div>
         </div>
         {!wide && (
-          <div data-agent-hidden>
+          <div data-agent-hidden data-assistant-surface>
             {/* Non-modal so the main page stays interactive while the assistant operates it on narrow screens. */}
             <UiDialog
               modal={false}
@@ -146,8 +152,10 @@ export function AppShell({ children }: { children: ReactNode }) {
               onOpenChange={(open) => setUi({ assistantOpen: open })}
             >
               <DialogContent
+                inline
                 data-agent-hidden
-                className="fixed bottom-2 right-2 top-2 z-50 m-0 w-[min(440px,calc(100vw-16px))] overflow-hidden rounded-2xl border border-line bg-surface p-0 text-ink shadow-xl outline-none data-open:animate-[slide-in-right_0.38s_var(--ease-out-expo)_both]"
+                data-assistant-surface
+                className="fixed bottom-2 right-2 top-2 z-[60] m-0 w-[min(440px,calc(100vw-16px))] overflow-hidden rounded-2xl border border-line bg-surface p-0 text-ink shadow-xl outline-none data-open:animate-[slide-in-right_0.38s_var(--ease-out-expo)_both]"
               >
                 <DialogTitle className="sr-only">AI 助手</DialogTitle>
                 <DialogDescription className="sr-only">用自然语言查看和修改配置</DialogDescription>

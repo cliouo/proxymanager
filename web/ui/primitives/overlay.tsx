@@ -1,6 +1,7 @@
 'use client';
 
 import { cloneElement, isValidElement, useRef, type ComponentType, type ReactElement, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Dialog as UiDialog,
   DialogBackdrop,
@@ -30,6 +31,7 @@ import {
 import { Tooltip as UiTooltip, TooltipContent, TooltipTrigger } from '@ui-sdk/react/tooltip';
 import { Check, ChevronRight, X } from 'lucide-react';
 import { cn } from '@/ui/lib/cn';
+import { ASSISTANT_PERSISTENT_SELECTORS, useWorkspaceOverlayScope } from './overlay-scope';
 
 export interface DialogProps {
   open: boolean;
@@ -62,14 +64,32 @@ export function Dialog({
   bare,
 }: DialogProps) {
   const contentRef = useRef<HTMLDivElement>(null);
-  return (
-    <UiDialog open={open} onOpenChange={(next) => onOpenChange(next)}>
-      <DialogBackdrop className="fixed inset-0 z-50 bg-overlay backdrop-blur-[1.5px] data-ending-style:animate-[fade-out_0.16s_ease-in_both] data-open:animate-fade-in" />
+  const { scopedContainer, keepAssistantInteractive } = useWorkspaceOverlayScope();
+  const isScoped = Boolean(scopedContainer);
+
+  const tree = (
+    <UiDialog
+      open={open}
+      onOpenChange={(next) => onOpenChange(next)}
+      modal={keepAssistantInteractive ? false : true}
+      persistentElements={keepAssistantInteractive ? ASSISTANT_PERSISTENT_SELECTORS : undefined}
+    >
+      <DialogBackdrop
+        onClick={keepAssistantInteractive ? () => onOpenChange(false) : undefined}
+        className={cn(
+          isScoped ? 'pointer-events-auto absolute inset-0 z-10' : 'fixed inset-0 z-50',
+          'bg-overlay backdrop-blur-[1.5px] data-ending-style:animate-[fade-out_0.16s_ease-in_both] data-open:animate-fade-in',
+        )}
+      />
       <DialogContent
         ref={contentRef}
+        inline={keepAssistantInteractive || undefined}
         initialFocus={() => contentRef.current?.querySelector<HTMLElement>('[data-autofocus]') ?? null}
         className={cn(
-          'fixed left-1/2 top-[min(14vh,120px)] z-50 m-0 flex max-h-[calc(100dvh-min(14vh,120px)-24px)] w-[calc(100%-24px)] -translate-x-1/2 flex-col',
+          isScoped
+            ? 'pointer-events-auto absolute left-1/2 top-[min(14vh,120px)] z-20 max-h-[calc(100%-min(14vh,120px)-24px)]'
+            : 'fixed left-1/2 top-[min(14vh,120px)] z-50 max-h-[calc(100dvh-min(14vh,120px)-24px)]',
+          'm-0 flex w-[calc(100%-24px)] -translate-x-1/2 flex-col',
           'overflow-hidden rounded-2xl border border-line bg-surface p-0 text-ink shadow-xl outline-none',
           'data-ending-style:animate-[sink_0.16s_ease-in_both] data-open:animate-pop',
           dialogSizes[size],
@@ -114,6 +134,8 @@ export function Dialog({
       </DialogContent>
     </UiDialog>
   );
+
+  return scopedContainer ? createPortal(tree, scopedContainer) : tree;
 }
 
 export interface SheetProps {
@@ -137,13 +159,31 @@ export function Sheet({
   width = 480,
   headerExtra,
 }: SheetProps) {
-  return (
-    <UiDialog open={open} onOpenChange={(next) => onOpenChange(next)}>
-      <DialogBackdrop className="fixed inset-0 z-50 bg-overlay data-ending-style:animate-[fade-out_0.18s_ease-in_both] data-open:animate-fade-in" />
-      <DialogContent
-        style={{ width: `min(${width}px, calc(100vw - 16px))` }}
+  const { scopedContainer, keepAssistantInteractive } = useWorkspaceOverlayScope();
+  const isScoped = Boolean(scopedContainer);
+
+  const tree = (
+    <UiDialog
+      open={open}
+      onOpenChange={(next) => onOpenChange(next)}
+      modal={keepAssistantInteractive ? false : true}
+      persistentElements={keepAssistantInteractive ? ASSISTANT_PERSISTENT_SELECTORS : undefined}
+    >
+      <DialogBackdrop
+        onClick={keepAssistantInteractive ? () => onOpenChange(false) : undefined}
         className={cn(
-          'fixed bottom-2 right-2 top-2 z-50 m-0 flex flex-col overflow-hidden rounded-2xl border border-line bg-surface p-0 text-ink shadow-xl outline-none',
+          isScoped ? 'pointer-events-auto absolute inset-0 z-10' : 'fixed inset-0 z-50',
+          'bg-overlay data-ending-style:animate-[fade-out_0.18s_ease-in_both] data-open:animate-fade-in',
+        )}
+      />
+      <DialogContent
+        inline={keepAssistantInteractive || undefined}
+        style={{ width: isScoped ? `min(${width}px, calc(100% - 16px))` : `min(${width}px, calc(100vw - 16px))` }}
+        className={cn(
+          isScoped
+            ? 'pointer-events-auto absolute bottom-2 right-2 top-2 z-20'
+            : 'fixed bottom-2 right-2 top-2 z-50',
+          'm-0 flex flex-col overflow-hidden rounded-2xl border border-line bg-surface p-0 text-ink shadow-xl outline-none',
           'data-ending-style:animate-[slide-out-right_0.2s_ease-in_both] data-open:animate-[slide-in-right_0.38s_var(--ease-out-expo)_both]',
         )}
       >
@@ -173,6 +213,8 @@ export function Sheet({
       </DialogContent>
     </UiDialog>
   );
+
+  return scopedContainer ? createPortal(tree, scopedContainer) : tree;
 }
 
 export function Popover({
