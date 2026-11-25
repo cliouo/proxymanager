@@ -115,7 +115,7 @@ export function ProfileSwitcher({ collapsed }: { collapsed?: boolean }) {
             className="h-8 w-full rounded-md bg-transparent px-2 text-sm text-ink outline-none placeholder:text-ink-4"
           />
         </div>
-        <CommandEmpty className="px-2 py-6 text-center text-xs text-ink-3">没有匹配的配置文件</CommandEmpty>
+        <CommandEmpty className="px-2 py-6 text-center text-xs text-ink-3 empty:p-0">没有匹配的配置文件</CommandEmpty>
         <CommandList className="max-h-[320px] overflow-y-auto p-1">
           <CommandGroup>
             <CommandGroupLabel className="px-2 pb-1 pt-1.5 text-2xs font-medium text-ink-3">

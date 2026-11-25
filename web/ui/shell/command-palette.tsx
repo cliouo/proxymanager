@@ -131,7 +131,7 @@ export function CommandPalette() {
             />
             <Kbd>Esc</Kbd>
           </div>
-          <CommandEmpty className="flex flex-col items-center gap-2 py-12 text-sm text-ink-3">
+          <CommandEmpty className="flex flex-col items-center gap-2 py-12 text-sm text-ink-3 empty:p-0">
             <Search size={20} className="text-ink-4" />
             没有找到「{search}」
           </CommandEmpty>
