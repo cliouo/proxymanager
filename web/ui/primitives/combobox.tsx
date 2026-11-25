@@ -172,7 +172,7 @@ export function Combobox({
           />
         </div>
         {!showCustom && (
-          <ComboboxEmpty className="px-2 py-6 text-center text-xs text-ink-3">{emptyText}</ComboboxEmpty>
+          <ComboboxEmpty className="px-2 py-6 text-center text-xs text-ink-3 empty:p-0">{emptyText}</ComboboxEmpty>
         )}
         <ComboboxList className="max-h-[300px] overflow-y-auto p-1">
           {showCustom && (
@@ -382,7 +382,7 @@ export function MultiCombobox({
               />
             </div>
             {!showCustom && (
-              <ComboboxEmpty className="px-2 py-6 text-center text-xs text-ink-3">{emptyText}</ComboboxEmpty>
+              <ComboboxEmpty className="px-2 py-6 text-center text-xs text-ink-3 empty:p-0">{emptyText}</ComboboxEmpty>
             )}
             <ComboboxList className="max-h-[300px] overflow-y-auto p-1">
               {showCustom && (
