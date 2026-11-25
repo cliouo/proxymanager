@@ -2,6 +2,7 @@
 
 import { createElement, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import Link from 'next/link';
+import { Button as UiButton } from '@ui-sdk/react/button';
 import {
   ArrowRight,
   ChevronDown,
@@ -13,6 +14,7 @@ import {
   Undo2,
   Wand2,
 } from 'lucide-react';
+import { DataView } from '@/ui/agent';
 import { api, ApiError, errorMessage, request } from '@/ui/data/api';
 import { refreshProfile, refreshShared, useProfiles, usePools, useSources } from '@/ui/data/hooks';
 import { useIsomorphicLayoutEffect, useQuery } from '@/ui/data/query';
@@ -121,7 +123,8 @@ export function HistoryPage() {
     const ok = await confirmAction({
       title: '撤销这条操作？',
       description: `会把「${title}」造成的改动还原。还原前同样会预演最终配置，撤销本身也会记一条历史。`,
-      confirmText: '撤销',
+      confirmText: '确认撤销',
+      confirmHint: `撤销操作「${title}」`,
     });
     if (!ok) return;
     setBusyId(event.id);
@@ -192,40 +195,53 @@ export function HistoryPage() {
           />
         </Card>
       ) : (
-        <div className="flex flex-col gap-8">
-          {days.map((day) => (
-            <section key={day.key} className="flex animate-rise flex-col gap-2.5">
-              <h2 className="flex items-baseline justify-between px-1">
-                <span className="text-[15px] font-semibold tracking-tight text-ink">{dayLabel(day.ts, now)}</span>
-                <span className="tnum text-xs text-ink-3">{day.events.length} 条</span>
-              </h2>
-              <Card as="div" className="overflow-hidden">
-                <ol className="divide-y divide-line">
-                  {day.events.map((event) => (
-                    <EventRow
-                      key={event.id}
-                      event={event}
-                      now={now}
-                      profiles={profiles}
-                      busy={busyId === event.id}
-                      onUndo={() => void undo(event)}
-                      onJump={loadedIds.has(event.undoes ?? '') ? () => jumpTo(event.undoes!) : undefined}
-                    />
-                  ))}
-                </ol>
-              </Card>
-            </section>
-          ))}
-          <div className="flex justify-center">
-            {cursor ? (
-              <Button loading={loadingMore} icon={ChevronDown} onClick={() => void loadMore()}>
-                加载更早的记录
-              </Button>
-            ) : (
-              <span className="text-xs text-ink-4">没有更早的记录了 · 最多保留最近 1000 条</span>
-            )}
+        <DataView
+          label="操作历史列表"
+          summary={`已加载 ${events.length} 条记录${cursor ? '（还有更早记录）' : ''}`}
+          items={events.map((event) => {
+            const state = event.undone_by ? '已撤销' : canUndo(event) ? '可撤销' : '仅记录';
+            const target = event.target && 'name' in event.target && event.target.name ? ` · ${event.target.name}` : '';
+            return {
+              value: event.id,
+              label: `${clockTime(event.ts)} · ${eventTitle(event.op)}${target} · ${actorLabel(event.actor)} · ${state}`,
+            };
+          })}
+        >
+          <div className="flex flex-col gap-8">
+            {days.map((day) => (
+              <section key={day.key} className="flex animate-rise flex-col gap-2.5">
+                <h2 className="flex items-baseline justify-between px-1">
+                  <span className="text-[15px] font-semibold tracking-tight text-ink">{dayLabel(day.ts, now)}</span>
+                  <span className="tnum text-xs text-ink-3">{day.events.length} 条</span>
+                </h2>
+                <Card as="div" className="overflow-hidden">
+                  <ol className="divide-y divide-line">
+                    {day.events.map((event) => (
+                      <EventRow
+                        key={event.id}
+                        event={event}
+                        now={now}
+                        profiles={profiles}
+                        busy={busyId === event.id}
+                        onUndo={() => void undo(event)}
+                        onJump={loadedIds.has(event.undoes ?? '') ? () => jumpTo(event.undoes!) : undefined}
+                      />
+                    ))}
+                  </ol>
+                </Card>
+              </section>
+            ))}
+            <div className="flex justify-center">
+              {cursor ? (
+                <Button loading={loadingMore} icon={ChevronDown} onClick={() => void loadMore()}>
+                  加载更早的记录
+                </Button>
+              ) : (
+                <span className="text-xs text-ink-4">没有更早的记录了 · 最多保留最近 1000 条</span>
+              )}
+            </div>
           </div>
-        </div>
+        </DataView>
       )}
     </Page>
   );
@@ -256,11 +272,13 @@ function EventRow({
 
   return (
     <li id={`ev-${event.id}`} className="flex gap-3 px-4 py-3.5 sm:gap-4">
-      <Tooltip content={exactTime(event.ts)}>
-        <time dateTime={new Date(event.ts).toISOString()} className="tnum w-10 shrink-0 pt-1 font-mono text-[11.5px] text-ink-3">
-          {clockTime(event.ts)}
-        </time>
-      </Tooltip>
+      <span data-agent-hidden className="shrink-0">
+        <Tooltip content={exactTime(event.ts)}>
+          <time dateTime={new Date(event.ts).toISOString()} className="tnum block w-10 pt-1 font-mono text-[11.5px] text-ink-3">
+            {clockTime(event.ts)}
+          </time>
+        </Tooltip>
+      </span>
       <span
         className={cn(
           'mt-0.5 flex size-[26px] shrink-0 items-center justify-center rounded-full border',
@@ -283,16 +301,18 @@ function EventRow({
         <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11.5px] text-ink-3">
           <span>{actorLabel(event.actor)}</span>
           <span className="text-ink-4">·</span>
-          <Tooltip content={exactTime(event.ts)}>
-            <span>{relativeTime(event.ts, now || undefined)}</span>
-          </Tooltip>
+          <span data-agent-hidden>
+            <Tooltip content={exactTime(event.ts)}>
+              <span>{relativeTime(event.ts, now || undefined)}</span>
+            </Tooltip>
+          </span>
           {event.undoes && (
             <>
               <span className="text-ink-4">·</span>
               {onJump ? (
-                <button type="button" onClick={onJump} className="font-medium text-accent hover:underline">
+                <UiButton type="button" onClick={onJump} className="font-medium text-accent hover:underline">
                   撤销了另一条操作
-                </button>
+                </UiButton>
               ) : (
                 <span>撤销了另一条操作</span>
               )}
@@ -301,7 +321,7 @@ function EventRow({
           {hasDiff && (
             <>
               <span className="text-ink-4">·</span>
-              <button
+              <UiButton
                 type="button"
                 aria-expanded={open}
                 onClick={() => setOpen((v) => !v)}
@@ -309,7 +329,7 @@ function EventRow({
               >
                 {open ? '收起改动' : '查看改动'}
                 <ChevronDown size={12} className={cn('transition-transform', open && 'rotate-180')} />
-              </button>
+              </UiButton>
             </>
           )}
         </div>

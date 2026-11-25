@@ -37,30 +37,65 @@ function hasType(actual: string, expected: RedisStorageType): boolean {
   return actual === 'none' || actual === expected;
 }
 
+type ReadOp =
+  | { kind: 'type'; key: string }
+  | { kind: 'get'; key: string }
+  | { kind: 'hgetall'; key: string };
+
+/**
+ * Execute independent read commands in a single Upstash HTTP pipeline when
+ * supported, falling back to Promise.all for minimal test doubles.
+ */
+async function execReadBatch(ops: readonly ReadOp[]): Promise<unknown[]> {
+  if (ops.length === 0) return [];
+  const redis = getRedis();
+  if (typeof redis.pipeline === 'function') {
+    const pipe = redis.pipeline();
+    for (const op of ops) {
+      if (op.kind === 'type') pipe.type(op.key);
+      else if (op.kind === 'get') pipe.get(op.key);
+      else pipe.hgetall(op.key);
+    }
+    return pipe.exec<unknown[]>();
+  }
+  return Promise.all(
+    ops.map((op) => {
+      if (op.kind === 'type') return redis.type(op.key);
+      if (op.kind === 'get') return redis.get<unknown>(op.key);
+      return redis.hgetall<Record<string, unknown>>(op.key);
+    }),
+  );
+}
+
 /**
  * Read raw profile/provenance state without letting WRONGTYPE escape as a 500.
  * Callers can classify an unexpected type or malformed value as blocked while
  * transport failures still reject and are mapped to a credential-free 503.
  */
 export async function inspectSetupRoot(): Promise<SetupRootInspection> {
-  const redis = getRedis();
   const [revisionType, profilesType, provenanceType, snapshotType, auditEventsType, auditByIdType] =
-    await Promise.all([
-      redis.type(REDIS_KEYS.configVersion),
-      redis.type(REDIS_KEYS.profiles),
-      redis.type(REDIS_KEYS.setupProvenance),
-      redis.type(REDIS_KEYS.resolvedSnapshot),
-      redis.type(REDIS_KEYS.audit.events),
-      redis.type(REDIS_KEYS.audit.byId),
-    ]);
+    (await execReadBatch([
+      { kind: 'type', key: REDIS_KEYS.configVersion },
+      { kind: 'type', key: REDIS_KEYS.profiles },
+      { kind: 'type', key: REDIS_KEYS.setupProvenance },
+      { kind: 'type', key: REDIS_KEYS.resolvedSnapshot },
+      { kind: 'type', key: REDIS_KEYS.audit.events },
+      { kind: 'type', key: REDIS_KEYS.audit.byId },
+    ])) as string[];
   const revisionTypeValid = hasType(revisionType, 'string');
   const profilesTypeValid = hasType(profilesType, 'hash');
   const provenanceTypeValid = hasType(provenanceType, 'string');
-  const [revisionRaw, profilesRaw, provenanceRaw] = await Promise.all([
-    revisionType === 'string' ? redis.get<unknown>(REDIS_KEYS.configVersion) : null,
-    profilesType === 'hash' ? redis.hgetall<Record<string, unknown>>(REDIS_KEYS.profiles) : null,
-    provenanceType === 'string' ? redis.get<unknown>(REDIS_KEYS.setupProvenance) : null,
-  ]);
+
+  const readOps: ReadOp[] = [];
+  const revisionIdx = revisionType === 'string' ? readOps.push({ kind: 'get', key: REDIS_KEYS.configVersion }) - 1 : -1;
+  const profilesIdx = profilesType === 'hash' ? readOps.push({ kind: 'hgetall', key: REDIS_KEYS.profiles }) - 1 : -1;
+  const provenanceIdx =
+    provenanceType === 'string' ? readOps.push({ kind: 'get', key: REDIS_KEYS.setupProvenance }) - 1 : -1;
+  const readValues = await execReadBatch(readOps);
+
+  const revisionRaw = revisionIdx >= 0 ? readValues[revisionIdx] : null;
+  const profilesRaw = (profilesIdx >= 0 ? readValues[profilesIdx] : null) as Record<string, unknown> | null;
+  const provenanceRaw = provenanceIdx >= 0 ? readValues[provenanceIdx] : null;
   const revision = Number(revisionRaw ?? 0);
   return {
     revision: Number.isSafeInteger(revision) && revision >= 0 ? revision : 0,
@@ -77,31 +112,39 @@ export async function inspectSetupRoot(): Promise<SetupRootInspection> {
 }
 
 export async function inspectSetupStorage(profileId: string): Promise<SetupStorageInspection> {
-  const redis = getRedis();
   const keys = {
     baseContent: REDIS_KEYS.base.content(profileId),
     baseMeta: REDIS_KEYS.base.meta(profileId),
     proxyGroups: REDIS_KEYS.proxyGroups(profileId),
     rules: REDIS_KEYS.rules(profileId),
   };
-  const [baseContentType, baseMetaType, proxyGroupsType, rulesType] = await Promise.all([
-    redis.type(keys.baseContent),
-    redis.type(keys.baseMeta),
-    redis.type(keys.proxyGroups),
-    redis.type(keys.rules),
-  ]);
+  const [baseContentType, baseMetaType, proxyGroupsType, rulesType] = (await execReadBatch([
+    { kind: 'type', key: keys.baseContent },
+    { kind: 'type', key: keys.baseMeta },
+    { kind: 'type', key: keys.proxyGroups },
+    { kind: 'type', key: keys.rules },
+  ])) as string[];
   const typeIssues: SetupStorageInspection['typeIssues'] = [];
   if (!hasType(baseContentType, 'string')) typeIssues.push('base-content');
   if (!hasType(baseMetaType, 'string')) typeIssues.push('base-meta');
   if (!hasType(proxyGroupsType, 'hash')) typeIssues.push('proxy-groups');
   if (!hasType(rulesType, 'hash')) typeIssues.push('rules');
 
-  const [baseContent, baseMeta, proxyGroupsRaw, rulesRaw] = await Promise.all([
-    baseContentType === 'string' ? redis.get<unknown>(keys.baseContent) : null,
-    baseMetaType === 'string' ? redis.get<unknown>(keys.baseMeta) : null,
-    proxyGroupsType === 'hash' ? redis.hgetall<Record<string, unknown>>(keys.proxyGroups) : null,
-    rulesType === 'hash' ? redis.hgetall<Record<string, unknown>>(keys.rules) : null,
-  ]);
+  const readOps: ReadOp[] = [];
+  const baseContentIdx =
+    baseContentType === 'string' ? readOps.push({ kind: 'get', key: keys.baseContent }) - 1 : -1;
+  const baseMetaIdx =
+    baseMetaType === 'string' ? readOps.push({ kind: 'get', key: keys.baseMeta }) - 1 : -1;
+  const proxyGroupsIdx =
+    proxyGroupsType === 'hash' ? readOps.push({ kind: 'hgetall', key: keys.proxyGroups }) - 1 : -1;
+  const rulesIdx =
+    rulesType === 'hash' ? readOps.push({ kind: 'hgetall', key: keys.rules }) - 1 : -1;
+  const readValues = await execReadBatch(readOps);
+
+  const baseContent = baseContentIdx >= 0 ? readValues[baseContentIdx] : null;
+  const baseMeta = baseMetaIdx >= 0 ? readValues[baseMetaIdx] : null;
+  const proxyGroupsRaw = (proxyGroupsIdx >= 0 ? readValues[proxyGroupsIdx] : null) as Record<string, unknown> | null;
+  const rulesRaw = (rulesIdx >= 0 ? readValues[rulesIdx] : null) as Record<string, unknown> | null;
   return {
     baseContentPresent: baseContentType === 'string',
     baseMetaPresent: baseMetaType === 'string',

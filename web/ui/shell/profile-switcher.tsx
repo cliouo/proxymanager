@@ -1,13 +1,21 @@
 'use client';
 
-import { navigateWithGuard } from '@/ui/features/groups/guard';
-
 import { useMemo, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { Command } from 'cmdk';
+import { Button as UiButton } from '@ui-sdk/react/button';
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandGroupLabel,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@ui-sdk/react/command';
 import { Check, ChevronsUpDown, LayoutTemplate, Plus, Settings2 } from 'lucide-react';
 import { useProfiles, usePools, useSources } from '@/ui/data/hooks';
 import type { Profile } from '@/ui/data/types';
+import { navigateWithGuard } from '@/ui/features/groups/guard';
 import { cn } from '@/ui/lib/cn';
 import { Monogram, Popover } from '@/ui/primitives';
 import { profilePath, useActiveProfile } from './scope';
@@ -70,6 +78,7 @@ export function ProfileSwitcher({ collapsed }: { collapsed?: boolean }) {
       trigger={
         <button
           type="button"
+          aria-label={active ? `切换配置文件：${profileTitle(active)}` : '切换配置文件'}
           className={cn(
             'group flex w-full items-center gap-2.5 rounded-lg border border-line bg-surface text-left shadow-xs transition hover:border-line-strong',
             collapsed ? 'justify-center p-1.5' : 'px-2 py-1.5',
@@ -89,7 +98,7 @@ export function ProfileSwitcher({ collapsed }: { collapsed?: boolean }) {
                     <span className="rounded bg-surface-3 px-1 text-[10px] font-medium text-ink-3">模版</span>
                   )}
                 </span>
-                <span className="block truncate text-[11px] text-ink-3">{sourceLabel || ' '}</span>
+                <span className="block truncate text-[11px] text-ink-3">{sourceLabel || '\u00a0'}</span>
               </span>
               <ChevronsUpDown size={14} className="shrink-0 text-ink-3 group-hover:text-ink-2" />
             </>
@@ -99,35 +108,49 @@ export function ProfileSwitcher({ collapsed }: { collapsed?: boolean }) {
     >
       <Command loop className="flex flex-col">
         <div className="border-b border-line p-1.5">
-          <Command.Input
+          <CommandInput
             autoFocus
+            aria-label="搜索配置文件"
             placeholder="切换配置文件…"
             className="h-8 w-full rounded-md bg-transparent px-2 text-sm text-ink outline-none placeholder:text-ink-4"
           />
         </div>
-        <Command.List className="max-h-[320px] overflow-y-auto p-1">
-          <Command.Empty className="px-2 py-6 text-center text-xs text-ink-3">没有匹配的配置文件</Command.Empty>
-          <Command.Group
-            heading="配置文件"
-            className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:pb-1 [&_[cmdk-group-heading]]:pt-1.5 [&_[cmdk-group-heading]]:text-2xs [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-ink-3"
-          >
+        <CommandEmpty className="px-2 py-6 text-center text-xs text-ink-3">没有匹配的配置文件</CommandEmpty>
+        <CommandList className="max-h-[320px] overflow-y-auto p-1">
+          <CommandGroup>
+            <CommandGroupLabel className="px-2 pb-1 pt-1.5 text-2xs font-medium text-ink-3">
+              配置文件
+            </CommandGroupLabel>
             {normal.map((profile) => (
-              <ProfileRow key={profile.id} profile={profile} active={active?.id === profile.id} onSelect={() => go(profile)} intent={intentProps(targetHref(profile))} />
+              <ProfileRow
+                key={profile.id}
+                profile={profile}
+                active={active?.id === profile.id}
+                onSelect={() => go(profile)}
+                intent={intentProps(targetHref(profile))}
+              />
             ))}
-          </Command.Group>
+          </CommandGroup>
           {templates.length > 0 && (
-            <Command.Group
-              heading="模版"
-              className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:pb-1 [&_[cmdk-group-heading]]:pt-2 [&_[cmdk-group-heading]]:text-2xs [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-ink-3"
-            >
+            <CommandGroup>
+              <CommandGroupLabel className="px-2 pb-1 pt-2 text-2xs font-medium text-ink-3">
+                模版
+              </CommandGroupLabel>
               {templates.map((profile) => (
-                <ProfileRow key={profile.id} profile={profile} active={active?.id === profile.id} onSelect={() => go(profile)} intent={intentProps(targetHref(profile))} template />
+                <ProfileRow
+                  key={profile.id}
+                  profile={profile}
+                  active={active?.id === profile.id}
+                  onSelect={() => go(profile)}
+                  intent={intentProps(targetHref(profile))}
+                  template
+                />
               ))}
-            </Command.Group>
+            </CommandGroup>
           )}
-        </Command.List>
+        </CommandList>
         <div className="flex gap-1 border-t border-line p-1">
-          <button
+          <UiButton
             type="button"
             onClick={() => {
               void navigateWithGuard(() => {
@@ -138,8 +161,8 @@ export function ProfileSwitcher({ collapsed }: { collapsed?: boolean }) {
             className="flex h-8 flex-1 items-center gap-2 rounded-md px-2 text-[13px] text-ink-2 hover:bg-surface-2 hover:text-ink"
           >
             <Plus size={14} /> 新建配置文件
-          </button>
-          <button
+          </UiButton>
+          <UiButton
             type="button"
             onClick={() => {
               void navigateWithGuard(() => {
@@ -150,7 +173,7 @@ export function ProfileSwitcher({ collapsed }: { collapsed?: boolean }) {
             className="flex h-8 items-center gap-2 rounded-md px-2 text-[13px] text-ink-2 hover:bg-surface-2 hover:text-ink"
           >
             <Settings2 size={14} /> 管理
-          </button>
+          </UiButton>
         </div>
       </Command>
     </Popover>
@@ -171,11 +194,13 @@ function ProfileRow({
   intent?: ReturnType<typeof intentProps>;
 }) {
   return (
-    <Command.Item
+    <CommandItem
       {...intent}
-      value={`${profile.name} ${profile.display_name ?? ''}`}
-      onSelect={onSelect}
-      className="flex h-10 cursor-default items-center gap-2.5 rounded-md px-2 text-sm text-ink data-[selected=true]:bg-surface-2"
+      value={profile.id}
+      label={profileTitle(profile)}
+      keywords={[profile.name, profile.display_name ?? '']}
+      onSelect={() => onSelect()}
+      className="flex h-10 cursor-default items-center gap-2.5 rounded-md px-2 text-sm text-ink data-highlighted:bg-surface-2"
     >
       {template ? (
         <span className="flex size-6 items-center justify-center rounded-md border border-dashed border-line-strong text-ink-3">
@@ -189,6 +214,6 @@ function ProfileRow({
         <span className="block truncate font-mono text-[10.5px] text-ink-3">{profile.name}</span>
       </span>
       {active && <Check size={14} className="text-accent" />}
-    </Command.Item>
+    </CommandItem>
   );
 }

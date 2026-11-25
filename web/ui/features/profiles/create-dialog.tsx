@@ -2,6 +2,7 @@
 
 import { useState, type ComponentType, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
+import { Radio, RadioGroup } from '@ui-sdk/react/radio';
 import { CopyPlus, FilePlus2, LayoutTemplate } from 'lucide-react';
 import { partitionProfilesByKind } from '@/lib/profiles/kind';
 import { ApiError } from '@/ui/data/api';
@@ -114,6 +115,24 @@ export function CreateProfileDialog({
     }
   };
 
+  const confirmName = displayName.trim() || effectiveSlug || '未命名';
+  const confirmStart =
+    start === 'blank'
+      ? '空白'
+      : start === 'template'
+        ? `基于模版「${from ? profileTitle(from) : '未选'}」`
+        : `复制「${from ? profileTitle(from) : '未选'}」`;
+  const confirmSource =
+    sourceDraft.mode === 'none'
+      ? '不绑定节点来源'
+      : sourceDraft.mode === 'subscription'
+        ? '绑定订阅源'
+        : '绑定聚合订阅';
+  const confirmText =
+    kind === 'template'
+      ? `创建配置模版「${confirmName}」（${confirmStart}，${confirmSource}）`
+      : `创建配置文件「${confirmName}」并打开（${confirmStart}，${confirmSource}）`;
+
   return (
     <Dialog
       open={open}
@@ -125,7 +144,13 @@ export function CreateProfileDialog({
           <Button variant="ghost" onClick={() => onOpenChange(false)}>
             取消
           </Button>
-          <Button variant="primary" type="submit" form={FORM_ID} loading={busy}>
+          <Button
+            variant="primary"
+            type="submit"
+            form={FORM_ID}
+            loading={busy}
+            data-agent-confirm={confirmText}
+          >
             {kind === 'template' ? '创建模版' : '创建并打开'}
           </Button>
         </>
@@ -141,10 +166,17 @@ export function CreateProfileDialog({
       >
         <div className="flex flex-col gap-1.5">
           <span className="text-xs font-medium text-ink-2">从哪里开始</span>
-          <div role="radiogroup" aria-label="从哪里开始" className="flex flex-col gap-2">
+          <RadioGroup
+            aria-label="从哪里开始"
+            value={start}
+            onValueChange={(next) => {
+              if (next) setStart(next as StartMode);
+            }}
+            className="flex flex-col gap-2"
+          >
             <StartOption
+              value="template"
               selected={start === 'template'}
-              onSelect={() => setStart('template')}
               icon={LayoutTemplate}
               title="从模版开始"
               badge={templates.length > 0 ? <Badge tone="accent">推荐</Badge> : undefined}
@@ -156,6 +188,7 @@ export function CreateProfileDialog({
               disabled={templates.length === 0}
             >
               <Select
+                label="选择模版"
                 value={templateId}
                 onValueChange={setTemplateId}
                 placeholder="选择模版"
@@ -164,8 +197,8 @@ export function CreateProfileDialog({
               />
             </StartOption>
             <StartOption
+              value="blank"
               selected={start === 'blank'}
-              onSelect={() => setStart('blank')}
               icon={FilePlus2}
               title="空白"
               description={
@@ -175,14 +208,15 @@ export function CreateProfileDialog({
               }
             />
             <StartOption
+              value="copy"
               selected={start === 'copy'}
-              onSelect={() => setStart('copy')}
               icon={CopyPlus}
               title="复制现有配置"
               description="完整复制一份配置文件的策略组、规则、基础配置和设备。"
               disabled={normal.length === 0}
             >
               <Select
+                label="选择要复制的配置文件"
                 value={copyId}
                 onValueChange={setCopyId}
                 placeholder="选择配置文件"
@@ -190,7 +224,7 @@ export function CreateProfileDialog({
                 options={normal.map((p) => ({ value: p.id, label: profileTitle(p), description: p.name }))}
               />
             </StartOption>
-          </div>
+          </RadioGroup>
         </div>
 
         <div className="grid gap-4 sm:grid-cols-2">
@@ -257,8 +291,8 @@ export function CreateProfileDialog({
 }
 
 function StartOption({
+  value,
   selected,
-  onSelect,
   icon: Icon,
   title,
   description,
@@ -266,8 +300,8 @@ function StartOption({
   disabled,
   children,
 }: {
+  value: StartMode;
   selected: boolean;
-  onSelect: () => void;
   icon: ComponentType<{ size?: number; strokeWidth?: number }>;
   title: string;
   description: ReactNode;
@@ -283,12 +317,10 @@ function StartOption({
         disabled && 'opacity-55',
       )}
     >
-      <button
-        type="button"
-        role="radio"
-        aria-checked={selected}
+      <Radio
+        value={value}
+        aria-label={title}
         disabled={disabled}
-        onClick={onSelect}
         className="flex w-full items-start gap-3 rounded-lg px-3 py-2.5 text-left outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed"
       >
         <span
@@ -315,7 +347,7 @@ function StartOption({
         >
           {selected && <span className="size-1.5 rounded-full bg-accent-ink" />}
         </span>
-      </button>
+      </Radio>
       {selected && children && <div className="px-3 pb-3 sm:pl-[52px]">{children}</div>}
     </div>
   );

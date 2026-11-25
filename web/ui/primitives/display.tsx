@@ -1,4 +1,4 @@
-import type { ComponentType, ReactNode } from 'react';
+import type { ComponentType, ReactNode, Ref } from 'react';
 import { cn } from '@/ui/lib/cn';
 
 /* ─── Badge ──────────────────────────────────────────────────────────── */
@@ -98,14 +98,17 @@ export function Card({
   className,
   as: As = 'section',
   interactive,
+  ref,
 }: {
   children: ReactNode;
   className?: string;
   as?: 'section' | 'div' | 'article' | 'li';
   interactive?: boolean;
+  ref?: Ref<HTMLElement>;
 }) {
   return (
     <As
+      ref={ref as Ref<never>}
       className={cn(
         'rounded-xl border border-line bg-surface shadow-xs',
         interactive && 'transition-[border-color,box-shadow,transform] duration-200 hover:border-line-strong hover:shadow-md',

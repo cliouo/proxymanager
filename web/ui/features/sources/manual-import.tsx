@@ -126,8 +126,14 @@ export function ManualImportDialog({
           <Button variant="ghost" onClick={() => onOpenChange(false)}>
             取消
           </Button>
-          <Button variant="primary" loading={uploading} disabled={!content.trim()} onClick={() => void upload()}>
-            导入
+          <Button
+            variant="primary"
+            loading={uploading}
+            disabled={!content.trim()}
+            data-agent-confirm={`导入内容并切换「${sourceTitle(source)}」为手动维护模式`}
+            onClick={() => void upload()}
+          >
+            确认导入
           </Button>
         </>
       }

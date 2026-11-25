@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { Radio, RadioGroup } from '@ui-sdk/react/radio';
 import { CornerDownRight, Gauge, Link2, ShieldCheck, Shuffle } from 'lucide-react';
 import type { ProxyGroupType } from '@/ui/data/types';
 import { cn } from '@/ui/lib/cn';
@@ -192,24 +193,35 @@ export function CreateGroupDialog({ open, onOpenChange }: { open: boolean; onOpe
           <Button variant="ghost" onClick={() => onOpenChange(false)}>
             取消
           </Button>
-          <Button variant="primary" loading={busy} disabled={!canCreate} onClick={() => void create()}>
+          <Button
+            variant="primary"
+            loading={busy}
+            disabled={!canCreate}
+            data-agent-confirm={`创建策略组「${trimmed || '新策略组'}」`}
+            onClick={() => void create()}
+          >
             创建
           </Button>
         </>
       }
     >
       <div className="grid gap-5 sm:grid-cols-[208px_minmax(0,1fr)]">
-        <div role="radiogroup" aria-label="起点" className="flex flex-col gap-1">
+        <RadioGroup
+          aria-label="策略组起点"
+          value={preset}
+          onValueChange={(next) => {
+            if (next) pickPreset(next as PresetId);
+          }}
+          className="flex flex-col gap-1"
+        >
           {PRESETS.map((p) => {
             const active = p.id === preset;
             const Icon = p.icon;
             return (
-              <button
+              <Radio
                 key={p.id}
-                type="button"
-                role="radio"
-                aria-checked={active}
-                onClick={() => pickPreset(p.id)}
+                value={p.id}
+                aria-label={p.title}
                 className={cn(
                   'flex items-start gap-2.5 rounded-lg border px-2.5 py-2 text-left transition-colors',
                   'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent',
@@ -228,10 +240,10 @@ export function CreateGroupDialog({ open, onOpenChange }: { open: boolean; onOpe
                   <span className="block text-[13px] font-medium text-ink">{p.title}</span>
                   <span className="block text-[11px] leading-snug text-ink-3">{p.body}</span>
                 </span>
-              </button>
+              </Radio>
             );
           })}
-        </div>
+        </RadioGroup>
 
         <div className="flex min-w-0 flex-col gap-4">
           <Field label="名字" error={nameError} hint="会显示在客户端的策略组列表里。">

@@ -106,7 +106,8 @@ export function RuleSheet({
     const ok = await confirmAction({
       title: '删除这条规则？',
       description: `${ruleText(rule)}。删除后匹配它的流量会继续往下找规则；可以在操作历史中撤销。`,
-      confirmText: '删除',
+      confirmText: '确认删除',
+      confirmHint: `删除规则 ${ruleText(rule)}`,
       tone: 'danger',
     });
     if (!ok) return;
@@ -135,7 +136,13 @@ export function RuleSheet({
           <Button variant="ghost" onClick={onClose}>
             取消
           </Button>
-          <Button variant="primary" loading={saving} disabled={!changed || valueMissing || matchConflict} onClick={() => void save()}>
+          <Button
+            variant="primary"
+            loading={saving}
+            disabled={!changed || valueMissing || matchConflict}
+            data-agent-confirm={`保存规则 ${draft.type}${draft.value ? ` ${draft.value}` : ''} → ${draft.policy}`}
+            onClick={() => void save()}
+          >
             保存
           </Button>
         </>

@@ -2,6 +2,7 @@
 
 import { useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
 import Link from 'next/link';
+import { Button as UiButton } from '@ui-sdk/react/button';
 import {
   closestCenter,
   DndContext,
@@ -14,6 +15,7 @@ import {
 import { arrayMove, SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { AlertTriangle, EyeOff, Plus, Waypoints } from 'lucide-react';
+import { DataView } from '@/ui/agent';
 import type { ProxyGroup } from '@/ui/data/types';
 import { cn } from '@/ui/lib/cn';
 import { Button, EmptyState, Kbd, notify, SearchInput, Skeleton } from '@/ui/primitives';
@@ -40,12 +42,17 @@ function Row({
   const rules = ws.ruleCounts[group.name] ?? 0;
   const broken = ws.brokenBindings.get(group.id);
   return (
-    <Link
-      href={ws.hrefFor(group.id)}
-      data-group-id={group.id}
-      draggable={false}
-      aria-current={selected ? 'page' : undefined}
-      onClick={(event) => onNavigate(event, group.id)}
+    <UiButton
+      render={
+        <Link
+          href={ws.hrefFor(group.id)}
+          data-group-id={group.id}
+          draggable={false}
+          aria-current={selected ? 'page' : undefined}
+        />
+      }
+      aria-label={`选择策略组「${group.name}」`}
+      onClick={(event) => onNavigate(event as unknown as MouseEvent<HTMLAnchorElement>, group.id)}
       className={cn(
         'group/row relative flex items-center gap-2 rounded-lg py-2 pl-4 pr-2.5 outline-none transition-colors',
         'focus-visible:ring-2 focus-visible:ring-accent/40',
@@ -89,7 +96,7 @@ function Row({
           {rules}
         </span>
       )}
-    </Link>
+    </UiButton>
   );
 }
 
@@ -192,9 +199,17 @@ export function GroupList() {
             新建
           </Button>
         </div>
-        <SearchInput value={query} onChange={setQuery} placeholder="搜索名字、正则或成员…" inputSize="sm" />
+        <SearchInput aria-label="搜索策略组" value={query} onChange={setQuery} placeholder="搜索名字、正则或成员…" inputSize="sm" />
       </div>
 
+      <DataView
+        label="策略组列表"
+        summary={`共 ${ws.groups.length} 个策略组${results ? `（匹配 ${results.length} 个）` : ''}`}
+        items={visible.map((g) => ({
+          value: g.id,
+          label: `${g.name} · ${groupTypeMeta(g.type).short} · ${memberSummary(g, ws.summaryCtx)}${ws.ruleCounts[g.name] ? ` · ${ws.ruleCounts[g.name]} 条规则` : ''}${ws.brokenBindings.has(g.id) ? ' · 绑定异常' : ''}`,
+        }))}
+      >
       <div ref={listRef} onKeyDown={onKeyDown} className="min-h-0 flex-1 overflow-y-auto p-1.5">
         {loading ? (
           <div className="flex flex-col gap-1 p-1">
@@ -250,6 +265,7 @@ export function GroupList() {
           </DndContext>
         )}
       </div>
+      </DataView>
 
       {ws.groups.length > 1 && !results && (
         <div className="hidden items-center gap-1.5 border-t border-line px-3 py-2 text-[11px] text-ink-3 @3xl/main:flex">

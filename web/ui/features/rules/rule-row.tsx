@@ -1,6 +1,7 @@
 'use client';
 
 import { memo } from 'react';
+import { Button as UiButton } from '@ui-sdk/react/button';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { ArrowDown, ArrowUp, Copy, GripVertical, MoreHorizontal, Pencil, SquareCheck, Trash2 } from 'lucide-react';
@@ -124,7 +125,7 @@ export const RuleRow = memo(function RuleRow({
 
         <span className="flex min-w-0 items-center gap-2 max-md:col-start-3 max-md:row-start-1">
           <span className="shrink-0 font-mono text-[10.5px] text-ink-3 md:hidden">{rule.type}</span>
-          <button
+          <UiButton
             type="button"
             onClick={(event) => {
               event.stopPropagation();
@@ -138,7 +139,7 @@ export const RuleRow = memo(function RuleRow({
             )}
           >
             {rule.value}
-          </button>
+          </UiButton>
           {rule.options?.map((option) => (
             <span key={option} className="shrink-0 rounded border border-line px-1 font-mono text-[10px] text-ink-3 max-md:hidden">
               {option}
@@ -158,26 +159,49 @@ export const RuleRow = memo(function RuleRow({
         >
           <Tooltip content={enabled ? '停用' : '启用'}>
             <span className="flex items-center">
-              <Switch size="sm" checked={enabled} onCheckedChange={(next) => onToggle(rule, next)} label={enabled ? '停用规则' : '启用规则'} />
+              <Switch
+                size="sm"
+                checked={enabled}
+                onCheckedChange={(next) => onToggle(rule, next)}
+                data-agent-confirm={`${enabled ? '停用' : '启用'}规则 ${rule.type} ${rule.value}`}
+                label={`${enabled ? '停用' : '启用'}规则 ${rule.type} ${rule.value}`}
+              />
             </span>
           </Tooltip>
           <Menu
             trigger={
-              <button
+              <UiButton
                 type="button"
-                aria-label="更多操作"
+                aria-label={`${rule.type} ${rule.value} 更多操作`}
                 className="flex size-7 items-center justify-center rounded-md text-ink-3 opacity-60 transition hover:bg-surface-3 hover:text-ink group-hover:opacity-100 data-[state=open]:opacity-100"
               >
                 <MoreHorizontal size={15} />
-              </button>
+              </UiButton>
             }
             items={[
               { label: '编辑', icon: Pencil, onSelect: () => onOpen(rule) },
               { label: selected ? '取消选择' : '选择', icon: SquareCheck, onSelect: () => onSelect(rule.id, false) },
-              { label: '复制一条', icon: Copy, onSelect: () => onDuplicate(rule) },
+              {
+                label: '复制一条',
+                icon: Copy,
+                confirm: `复制规则 ${rule.type} ${rule.value}`,
+                onSelect: () => onDuplicate(rule),
+              },
               'separator',
-              { label: '上移一位', icon: ArrowUp, onSelect: () => onMove(rule, 'up'), disabled: !canMoveUp },
-              { label: '下移一位', icon: ArrowDown, onSelect: () => onMove(rule, 'down'), disabled: !canMoveDown },
+              {
+                label: '上移一位',
+                icon: ArrowUp,
+                confirm: `上移规则 ${rule.type} ${rule.value}`,
+                onSelect: () => onMove(rule, 'up'),
+                disabled: !canMoveUp,
+              },
+              {
+                label: '下移一位',
+                icon: ArrowDown,
+                confirm: `下移规则 ${rule.type} ${rule.value}`,
+                onSelect: () => onMove(rule, 'down'),
+                disabled: !canMoveDown,
+              },
               'separator',
               { label: '删除', icon: Trash2, tone: 'danger', onSelect: () => onDelete(rule) },
             ]}

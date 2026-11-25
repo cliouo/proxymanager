@@ -1,10 +1,11 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { Button as UiButton } from '@ui-sdk/react/button';
 import { AnimatePresence, motion } from 'motion/react';
 import { Check, Copy } from 'lucide-react';
-import { toast } from 'sonner';
 import { cn } from '@/ui/lib/cn';
+import { appToaster } from './feedback';
 import { Tooltip } from './overlay';
 
 export async function copyText(text: string): Promise<boolean> {
@@ -36,11 +37,11 @@ export function useCopy(timeout = 1600) {
     async (text: string, message?: string) => {
       const ok = await copyText(text);
       if (!ok) {
-        toast.error('复制失败，请手动选择文本复制');
+        appToaster.error('复制失败，请手动选择文本复制');
         return false;
       }
       setCopied(true);
-      if (message) toast.success(message);
+      if (message) appToaster.success(message);
       if (timer.current) window.clearTimeout(timer.current);
       timer.current = window.setTimeout(() => setCopied(false), timeout);
       return true;
@@ -99,7 +100,7 @@ export function CopyButton({
 }) {
   const { copied, copy } = useCopy();
   const button = (
-    <button
+    <UiButton
       type="button"
       aria-label={label}
       onClick={(event) => {
@@ -115,7 +116,7 @@ export function CopyButton({
     >
       <CopyIcon copied={copied} size={size === 'sm' ? 13 : 14} />
       {showLabel && <span>{copied ? '已复制' : label}</span>}
-    </button>
+    </UiButton>
   );
   return showLabel ? button : <Tooltip content={copied ? '已复制' : label}>{button}</Tooltip>;
 }

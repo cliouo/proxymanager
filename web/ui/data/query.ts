@@ -68,7 +68,7 @@ const STORE_MAX_CHARS = 2_500_000;
 
 const PERSISTED = [
   /^(workspace-bootstrap|profiles|setup|sources|pools|templates|history:ledger)$/,
-  /^p:[^:]+:(dashboard|meta|groups|groups-book|policies|anchors|rule-summary|rule-sets|rule-book|rules-all|devices|chains|preview)$/,
+  /^p:[^:]+:(dashboard|meta|groups|groups-book|policies|anchors|rule-summary|rule-sets|rule-book|rules-all|devices|chains|preview|summary)$/,
 ];
 
 export function isPersistedKey(key: string): boolean {

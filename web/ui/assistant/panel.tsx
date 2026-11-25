@@ -2,48 +2,41 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 import {
   ArrowDown,
   ArrowRight,
-  Clapperboard,
-  Gauge,
   KeyRound,
   ListChecks,
+  PlusCircle,
   RefreshCw,
   Rss,
   ScanSearch,
   ShieldCheck,
   Sparkles,
   SquarePen,
+  Waypoints,
   X,
 } from 'lucide-react';
-import { useAssistantConfig, useProfiles } from '@/ui/data/hooks';
-import { useIsomorphicLayoutEffect } from '@/ui/data/query';
+import { AgentConfirmCard, registerInlineConfirmHost, usePendingAgentConfirm } from '@/ui/agent';
 import { errorMessage } from '@/ui/data/api';
+import { useAssistantConfig } from '@/ui/data/hooks';
+import { useIsomorphicLayoutEffect } from '@/ui/data/query';
 import { cn } from '@/ui/lib/cn';
-import { Button, Monogram, Skeleton, Tooltip } from '@/ui/primitives';
+import { Button, Skeleton, Tooltip } from '@/ui/primitives';
 import { modKey } from '@/ui/shell/hotkeys';
 import { useActiveProfile } from '@/ui/shell/scope';
 import { setUi, useUi } from '@/ui/shell/state';
 import { Composer, type ComposerHandle } from './composer';
-import {
-  clearConversation,
-  markExpired,
-  resolveConfirm,
-  retry,
-  sendMessage,
-  stop,
-  useConversation,
-  type ConfirmItem,
-  type ProfileTarget,
-} from './session';
-import { Thread, type ThreadHandlers } from './thread';
+import { pageLabelFor, type AssistantRuntimeContext } from './prompt';
+import { clearConversation, retry, sendMessage, stop, useConversation } from './session';
+import { Thread } from './thread';
 
 const SUGGESTIONS = [
-  { icon: ScanSearch, text: '帮我检查一下这份配置有没有问题' },
-  { icon: Clapperboard, text: '把 netflix.com 走流媒体' },
-  { icon: Gauge, text: '新建一个美国节点自动测速组' },
-  { icon: Rss, text: '我的订阅源都正常吗？' },
+  { icon: ScanSearch, text: '看看当前页面有哪些内容' },
+  { icon: Rss, text: '帮我检查一下我的订阅源都正常吗？' },
+  { icon: Waypoints, text: '带我去看看当前配置的策略组' },
+  { icon: PlusCircle, text: '帮我新建一个订阅源' },
 ];
 
 function IconTile({ icon: Icon }: { icon: typeof Sparkles }) {
@@ -56,8 +49,8 @@ function IconTile({ icon: Icon }: { icon: typeof Sparkles }) {
 
 function NotConfigured({ onNavigate }: { onNavigate: () => void }) {
   const points = [
-    { icon: ListChecks, text: '查看与修改规则、策略组、节点处理、基础配置' },
-    { icon: ShieldCheck, text: '所有写操作都会先出确认卡，你点确认才会执行' },
+    { icon: ListChecks, text: '直接读取和操作当前页面的规则、策略组、订阅源和配置' },
+    { icon: ShieldCheck, text: '所有写入和删除操作都会先在对话里请你确认，你点允许才会执行' },
     { icon: KeyRound, text: '用你自己的 DeepSeek（或 OpenAI 兼容）模型，浏览器直接调用' },
   ];
   return (
@@ -67,7 +60,7 @@ function NotConfigured({ onNavigate }: { onNavigate: () => void }) {
         <div>
           <h2 className="text-md font-semibold tracking-tight text-ink">先接入一个模型</h2>
           <p className="mt-1 text-xs leading-relaxed text-ink-3">
-            填好模型地址和 API Key 后，就能用一句话查看和调整配置。
+            填好模型地址和 API Key 后，就能用一句话查看和操作界面。
           </p>
         </div>
       </div>
@@ -88,7 +81,7 @@ function NotConfigured({ onNavigate }: { onNavigate: () => void }) {
   );
 }
 
-function Welcome({ profileLabel, onPick }: { profileLabel: string; onPick: (text: string) => void }) {
+function Welcome({ onPick }: { onPick: (text: string) => void }) {
   return (
     <div className="flex flex-1 flex-col justify-end gap-5 px-4 pb-3 pt-8 animate-rise">
       <div className="flex flex-col items-start gap-3 px-1">
@@ -96,7 +89,7 @@ function Welcome({ profileLabel, onPick }: { profileLabel: string; onPick: (text
         <div>
           <h2 className="text-md font-semibold tracking-tight text-ink">有什么可以帮你？</h2>
           <p className="mt-1 text-xs leading-relaxed text-ink-3">
-            我会在「{profileLabel}」里查看规则、策略组、节点和基础配置。任何改动都会先给你确认。
+            我可以直接查看和操作页面内容，也能按你的要求切换配置或页面；任何写入改动都会先在对话里请你确认。
           </p>
         </div>
       </div>
@@ -136,14 +129,19 @@ function LoadingState() {
 const isDocked = () => typeof window !== 'undefined' && window.matchMedia('(min-width: 1280px)').matches;
 
 export function AssistantPanel({ onClose }: { onClose: () => void }) {
+  const pathname = usePathname() ?? '/';
   const profile = useActiveProfile();
-  const profiles = useProfiles();
   const config = useAssistantConfig();
-  const target: ProfileTarget | null = useMemo(
+  const profileContext = useMemo(
     () => (profile ? { id: profile.id, name: profile.name, label: profile.display_name || profile.name } : null),
     [profile],
   );
-  const convo = useConversation(target?.id ?? null);
+  const runtimeContext: AssistantRuntimeContext = useMemo(
+    () => ({ pathname, profile: profileContext }),
+    [pathname, profileContext],
+  );
+  const convo = useConversation();
+  const pendingConfirm = usePendingAgentConfirm();
   const composerRef = useRef<ComposerHandle>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
@@ -151,29 +149,27 @@ export function AssistantPanel({ onClose }: { onClose: () => void }) {
   const draft = useUi((s) => s.assistantDraft);
 
   const configured = !!config.data;
-  const ready = configured && !!target;
-  const loading = config.isLoading || (!target && profiles.isLoading);
+  const loading = config.isLoading;
 
-  // Focus the composer once the panel is usable (after Radix's own open autofocus).
+  useEffect(() => registerInlineConfirmHost(), []);
+
   useEffect(() => {
-    if (!ready) return;
+    if (!configured) return;
     const frame = requestAnimationFrame(() => composerRef.current?.focus());
     return () => cancelAnimationFrame(frame);
-  }, [ready]);
+  }, [configured]);
 
-  // Hand-off from openAssistant(draft): prefill, then clear.
   useEffect(() => {
-    if (draft === null || !ready) return;
+    if (draft === null || !configured) return;
     composerRef.current?.setValue(draft);
     requestAnimationFrame(() => composerRef.current?.focus());
     setUi({ assistantDraft: null });
-  }, [draft, ready]);
+  }, [draft, configured]);
 
-  // Follow the conversation unless the user scrolled up.
   useIsomorphicLayoutEffect(() => {
     const el = scrollRef.current;
     if (el && pinned.current) el.scrollTop = el.scrollHeight;
-  }, [convo.items]);
+  }, [convo.items, pendingConfirm?.id]);
 
   const onScroll = () => {
     const el = scrollRef.current;
@@ -192,26 +188,27 @@ export function AssistantPanel({ onClose }: { onClose: () => void }) {
 
   const send = useCallback(
     (text: string) => {
-      if (!target) return;
       pinned.current = true;
       setShowJump(false);
-      sendMessage(target, text);
+      sendMessage(runtimeContext, text);
     },
-    [target],
+    [runtimeContext],
   );
 
-  const handlers: ThreadHandlers = useMemo(
-    () => ({
-      onRetry: () => target && retry(target),
-      onConfirm: (id: string) => target && void resolveConfirm(target, id, 'confirm'),
-      onCancel: (id: string) => target && void resolveConfirm(target, id, 'cancel'),
-      onExpire: (id: string) => target && markExpired(target.id, id),
-      onReissue: (item: ConfirmItem) => send(`刚才的确认卡过期了，请重新发起这项改动：${item.summary}`),
-    }),
-    [target, send],
-  );
+  const onRetry = useCallback(() => retry(runtimeContext), [runtimeContext]);
 
   const hasConversation = convo.items.length > 0;
+
+  const pageLabel = pageLabelFor(pathname);
+  const isProfileScopedRoute = /^\/p\/[^/]+/.test(pathname);
+  const contextLabel =
+    isProfileScopedRoute && profileContext ? `${profileContext.label} · ${pageLabel}` : pageLabel;
+  const contextTitle =
+    isProfileScopedRoute && profileContext
+      ? `当前位置：${profileContext.label} / ${pageLabel}`
+      : profileContext
+        ? `当前页面：${pageLabel}（活动配置：${profileContext.label}）`
+        : `当前页面：${pageLabel}`;
 
   let body: React.ReactNode;
   if (loading) body = <LoadingState />;
@@ -226,18 +223,12 @@ export function AssistantPanel({ onClose }: { onClose: () => void }) {
       </div>
     );
   else if (!configured) body = <NotConfigured onNavigate={() => !isDocked() && onClose()} />;
-  else if (!target)
-    body = (
-      <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
-        <p className="text-sm font-medium text-ink">还没有配置文件</p>
-        <p className="text-xs text-ink-3">先创建一份配置文件，助手才能帮你查看和修改。</p>
-      </div>
-    );
-  else if (!hasConversation) body = <Welcome profileLabel={target.label} onPick={send} />;
+  else if (!hasConversation) body = <Welcome onPick={send} />;
   else
     body = (
-      <div className="px-4 py-4">
-        <Thread items={convo.items} running={convo.running} profileLabel={target.label} handlers={handlers} />
+      <div className="flex flex-col gap-4 px-4 py-4">
+        <Thread items={convo.items} running={convo.running} onRetry={onRetry} />
+        {pendingConfirm && <AgentConfirmCard request={pendingConfirm} />}
       </div>
     );
 
@@ -248,30 +239,29 @@ export function AssistantPanel({ onClose }: { onClose: () => void }) {
           <Sparkles size={15} strokeWidth={1.75} />
         </span>
         <div className="min-w-0 flex-1 leading-tight">
-          <div className="text-sm font-semibold text-ink">AI 助手</div>
-          <div className="truncate font-mono text-2xs text-ink-3">
-            {config.data?.model ?? (loading ? ' ' : '未配置模型')}
+          <div className="flex min-w-0 items-baseline gap-1.5">
+            <span className="shrink-0 text-sm font-semibold text-ink">AI 助手</span>
+            <span className="truncate font-mono text-2xs text-ink-4">
+              {config.data?.model ?? (loading ? '' : '未配置')}
+            </span>
+          </div>
+          <div className="truncate text-2xs text-ink-3" title={contextTitle}>
+            {contextLabel}
           </div>
         </div>
-        {target && (
-          <Tooltip content="助手读写的是这份配置文件">
-            <span className="inline-flex h-6 max-w-[132px] shrink-0 items-center gap-1.5 rounded-full border border-line bg-surface-2 pl-1 pr-2 text-2xs font-medium text-ink-2">
-              <Monogram name={target.label} colorKey={target.name} size={16} />
-              <span className="truncate">{target.label}</span>
-            </span>
-          </Tooltip>
-        )}
-        {ready && (
-          <Tooltip content="新对话">
+        {configured && (
+          <Tooltip content={hasConversation ? '新对话' : '当前还没有对话'}>
             <Button
               variant="ghost"
               size="sm"
               iconOnly
               icon={SquarePen}
               aria-label="新对话"
-              disabled={!hasConversation}
+              aria-disabled={!hasConversation || undefined}
+              className={cn(!hasConversation && 'cursor-not-allowed text-ink-4 opacity-50 hover:bg-transparent hover:text-ink-4')}
               onClick={() => {
-                clearConversation(target.id);
+                if (!hasConversation) return;
+                clearConversation();
                 composerRef.current?.focus();
               }}
             />
@@ -290,6 +280,11 @@ export function AssistantPanel({ onClose }: { onClose: () => void }) {
           aria-live="off"
         >
           {body}
+          {!hasConversation && pendingConfirm && (
+            <div className="px-4 pb-4">
+              <AgentConfirmCard request={pendingConfirm} />
+            </div>
+          )}
         </div>
         {showJump && hasConversation && (
           <button
@@ -306,14 +301,7 @@ export function AssistantPanel({ onClose }: { onClose: () => void }) {
         )}
       </div>
 
-      {ready && (
-        <Composer
-          ref={composerRef}
-          running={convo.running}
-          onSend={send}
-          onStop={() => stop(target.id)}
-        />
-      )}
+      {configured && <Composer ref={composerRef} running={convo.running} onSend={send} onStop={stop} />}
     </div>
   );
 }

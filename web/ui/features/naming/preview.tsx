@@ -3,6 +3,7 @@
 import { Fragment, useMemo, useState } from 'react';
 import { ArrowRight, CircleAlert, Link2Off } from 'lucide-react';
 import { codeFromFlag, regionByCode } from '@/lib/proxies/regions';
+import { DataView } from '@/ui/agent';
 import { errorMessage } from '@/ui/data/api';
 import { cn } from '@/ui/lib/cn';
 import { Badge, Card, CardHeader, SegmentedControl, Skeleton, Spinner, Tooltip } from '@/ui/primitives';
@@ -86,6 +87,7 @@ export function PreviewPanel({
           rows && paired ? (
             <SegmentedControl
               size="sm"
+              label="预览筛选"
               value={filter}
               onChange={setFilter}
               options={[
@@ -129,37 +131,49 @@ export function PreviewPanel({
           </ul>
         </div>
       )}
-      <div className="min-h-0 flex-1 overflow-y-auto border-t border-line">
-        {loading || !rows ? (
-          <div className="flex flex-col gap-3 p-4">
-            {[...Array(8)].map((_, i) => (
-              <div key={i} className="grid grid-cols-[1fr_16px_1fr] items-center gap-3">
-                <Skeleton className="h-4" style={{ width: `${70 - (i % 3) * 12}%` }} />
-                <span />
-                <Skeleton className="h-4" style={{ width: `${62 - (i % 4) * 8}%` }} />
-              </div>
-            ))}
-          </div>
-        ) : shown.length === 0 ? (
-          <p className="px-4 py-10 text-center text-xs text-ink-3">没有符合条件的节点。</p>
-        ) : (
-          <div className={cn('divide-y divide-line transition-opacity', (stale || validating) && 'opacity-60')}>
-            {paired && (
-              <div className="sticky top-0 z-10 grid grid-cols-[minmax(0,1fr)_16px_minmax(0,1fr)] gap-3 bg-surface px-4 py-2 text-2xs font-medium text-ink-3">
-                <span>现在</span>
-                <span />
-                <span>应用后</span>
-              </div>
-            )}
-            {shown.map((row) => (
-              <Row key={row.key} row={row} paired={paired} refs={row.before ? orphansByNode.get(row.before) : undefined} />
-            ))}
-          </div>
-        )}
-        {truncated && rows && (
-          <p className="border-t border-line px-4 py-2.5 text-center text-2xs text-ink-4">只显示前 {rows.length} 个节点</p>
-        )}
-      </div>
+      <DataView
+        label="改名预览列表"
+        summary={total !== null ? `${total} 个节点，${changed} 个改名` : '加载中'}
+        items={shown.slice(0, 80).map((r) => ({
+          value: r.key,
+          label: paired
+            ? `${r.before ?? ''} → ${r.after ?? '(重复移除)'}${r.collision ? ' [重名已区分]' : ''}`
+            : r.after ?? '(重复移除)',
+        }))}
+        className="flex min-h-0 flex-1 flex-col"
+      >
+        <div className="min-h-0 flex-1 overflow-y-auto border-t border-line">
+          {loading || !rows ? (
+            <div className="flex flex-col gap-3 p-4">
+              {[...Array(8)].map((_, i) => (
+                <div key={i} className="grid grid-cols-[1fr_16px_1fr] items-center gap-3">
+                  <Skeleton className="h-4" style={{ width: `${70 - (i % 3) * 12}%` }} />
+                  <span />
+                  <Skeleton className="h-4" style={{ width: `${62 - (i % 4) * 8}%` }} />
+                </div>
+              ))}
+            </div>
+          ) : shown.length === 0 ? (
+            <p className="px-4 py-10 text-center text-xs text-ink-3">没有符合条件的节点。</p>
+          ) : (
+            <div className={cn('divide-y divide-line transition-opacity', (stale || validating) && 'opacity-60')}>
+              {paired && (
+                <div className="sticky top-0 z-10 grid grid-cols-[minmax(0,1fr)_16px_minmax(0,1fr)] gap-3 bg-surface px-4 py-2 text-2xs font-medium text-ink-3">
+                  <span>现在</span>
+                  <span />
+                  <span>应用后</span>
+                </div>
+              )}
+              {shown.map((row) => (
+                <Row key={row.key} row={row} paired={paired} refs={row.before ? orphansByNode.get(row.before) : undefined} />
+              ))}
+            </div>
+          )}
+          {truncated && rows && (
+            <p className="border-t border-line px-4 py-2.5 text-center text-2xs text-ink-4">只显示前 {rows.length} 个节点</p>
+          )}
+        </div>
+      </DataView>
     </Card>
   );
 }
@@ -190,7 +204,9 @@ function Row({ row, paired, refs }: { row: PreviewRow; paired: boolean; refs?: O
         <LiteralName name={row.before ?? ''} className={cn('text-[13px] text-ink-2', !row.after && 'line-through decoration-ink-4')} />
         {refs && (
           <Tooltip content={`被${refs.map((r) => `${REF_KIND[r.kind] ?? r.kind}「${r.via}」`).join('、')}按名字引用，改名后会失效`}>
-            <Link2Off size={13} className="shrink-0 text-bad" aria-label="引用会失效" />
+            <span className="inline-flex shrink-0">
+              <Link2Off size={13} className="text-bad" aria-label="引用会失效" />
+            </span>
           </Tooltip>
         )}
       </span>

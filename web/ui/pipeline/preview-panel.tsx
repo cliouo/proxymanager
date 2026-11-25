@@ -1,7 +1,9 @@
 'use client';
 
 import { useMemo, useState, type ReactNode } from 'react';
+import { Button as UiButton } from '@ui-sdk/react/button';
 import { CircleAlert, Info, RotateCcw, TriangleAlert } from 'lucide-react';
+import { DataView } from '@/ui/agent';
 import { errorMessage } from '@/ui/data/api';
 import type { PipelinePreview, PreviewIssue } from '@/ui/data/types';
 import { cn } from '@/ui/lib/cn';
@@ -97,13 +99,13 @@ export function IssueList({ issues, limit = 4 }: { issues: PreviewIssue[]; limit
       ))}
       {views.length > limit && (
         <li>
-          <button
+          <UiButton
             type="button"
             onClick={() => setExpanded((v) => !v)}
             className="text-xs font-medium text-accent hover:underline underline-offset-4"
           >
             {expanded ? '收起' : `还有 ${views.length - limit} 条`}
-          </button>
+          </UiButton>
         </li>
       )}
     </ul>
@@ -137,29 +139,42 @@ export function NodeList({
   query,
   className,
   numbered = true,
+  label = '节点列表',
 }: {
   names: string[];
   query: string;
   className?: string;
   numbered?: boolean;
+  label?: string;
 }) {
   const needle = query.trim().toLowerCase();
   const rows = useMemo(
     () => names.map((name, index) => ({ name, index })).filter((row) => !needle || row.name.toLowerCase().includes(needle)),
     [names, needle],
   );
-  if (rows.length === 0) {
-    return <p className="py-6 text-center text-xs text-ink-3">{needle ? '没有匹配的节点' : '没有节点'}</p>;
-  }
+  const items = useMemo(
+    () => rows.map((row) => ({ value: String(row.index + 1), label: row.name })),
+    [rows],
+  );
+  const summary = needle
+    ? `筛选后 ${rows.length} / ${names.length} 个节点`
+    : `共 ${names.length} 个节点`;
+
   return (
-    <ul className={cn('flex flex-col', className)}>
-      {rows.map((row) => (
-        <li key={`${row.index}:${row.name}`} className="flex min-w-0 items-center gap-2 rounded-md px-1.5 py-1 text-[13px] hover:bg-surface-2">
-          {numbered && <span className="tnum w-6 shrink-0 text-right text-2xs text-ink-4">{row.index + 1}</span>}
-          <NodeName name={row.name} className="min-w-0 text-ink" />
-        </li>
-      ))}
-    </ul>
+    <DataView label={label} summary={summary} items={items}>
+      {rows.length === 0 ? (
+        <p className="py-6 text-center text-xs text-ink-3">{needle ? '没有匹配的节点' : '没有节点'}</p>
+      ) : (
+        <ul className={cn('flex flex-col', className)}>
+          {rows.map((row) => (
+            <li key={`${row.index}:${row.name}`} className="flex min-w-0 items-center gap-2 rounded-md px-1.5 py-1 text-[13px] hover:bg-surface-2">
+              {numbered && <span className="tnum w-6 shrink-0 text-right text-2xs text-ink-4">{row.index + 1}</span>}
+              <NodeName name={row.name} className="min-w-0 text-ink" />
+            </li>
+          ))}
+        </ul>
+      )}
+    </DataView>
   );
 }
 
@@ -253,6 +268,7 @@ export function PreviewPanel({
 
         <div className="flex items-center gap-2">
           <SegmentedControl
+            label="预览对比"
             size="sm"
             value={side}
             onChange={setSide}
@@ -261,7 +277,14 @@ export function PreviewPanel({
               { value: 'before', label: '处理前' },
             ]}
           />
-          <SearchInput value={query} onChange={setQuery} inputSize="sm" placeholder="搜索节点" className="min-w-0 flex-1" />
+          <SearchInput
+            value={query}
+            onChange={setQuery}
+            inputSize="sm"
+            aria-label="搜索预览节点"
+            placeholder="搜索节点"
+            className="min-w-0 flex-1"
+          />
         </div>
 
         {!data ? (
@@ -272,7 +295,7 @@ export function PreviewPanel({
           </div>
         ) : (
           <div className={cn('-mx-1.5 max-h-[420px] overflow-y-auto', preview.stale && 'opacity-60')}>
-            <NodeList names={payload?.names ?? []} query={query} />
+            <NodeList label="预览节点列表" names={payload?.names ?? []} query={query} />
           </div>
         )}
         {payload?.truncated && (

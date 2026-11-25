@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import QRCode from 'qrcode';
 import { useTheme } from 'next-themes';
 import { CircleAlert, ExternalLink, FileCode2, LayoutTemplate, MonitorSmartphone, QrCode, RefreshCw, Share2, Smartphone } from 'lucide-react';
+import { Button as UiButton } from '@ui-sdk/react/button';
 import { errorMessage } from '@/ui/data/api';
 import { useDashboard, useDevices } from '@/ui/data/hooks';
 import { cn } from '@/ui/lib/cn';
@@ -70,22 +71,21 @@ export function LinkRow({ label, url, hint, icon: Icon, active, onShowQr }: {
           {label}
           {hint && <span className="text-[11px] font-normal text-ink-3">{hint}</span>}
         </div>
-        <div className="truncate font-mono text-[11px] text-ink-3" title={url}>
+        <div className="truncate font-mono text-[11px] text-ink-3" title={url} data-agent-secret>
           {url}
         </div>
       </div>
       {onShowQr && (
-        <button
-          type="button"
+        <UiButton
           onClick={onShowQr}
-          aria-label="显示二维码"
+          aria-label={`显示「${label}」二维码`}
           className={cn(
             'flex size-7 items-center justify-center rounded-md text-ink-3 hover:bg-surface-2 hover:text-ink',
             active && 'text-accent',
           )}
         >
           <QrCode size={14} />
-        </button>
+        </UiButton>
       )}
       <CopyButton text={url} message={`已复制「${label}」`} />
     </div>

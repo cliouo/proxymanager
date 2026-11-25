@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { Button as UiButton } from '@ui-sdk/react/button';
 import { CloudDownload, Globe, HardDrive, Link2, Trash2 } from 'lucide-react';
 import { api } from '@/ui/data/api';
 import { refreshShared, useRuleSet } from '@/ui/data/hooks';
@@ -233,7 +234,13 @@ export function RuleSetSheet({
           <Button variant="ghost" onClick={onClose} disabled={saving}>
             取消
           </Button>
-          <Button variant="primary" onClick={() => void submit()} loading={saving} disabled={loading || (!!initial && !dirty)}>
+          <Button
+            variant="primary"
+            onClick={() => void submit()}
+            loading={saving}
+            disabled={loading || (!!initial && !dirty)}
+            data-agent-confirm={initial ? `保存规则集「${form.name}」` : `创建规则集「${form.name || '新规则集'}」`}
+          >
             {initial ? '保存' : '创建'}
           </Button>
         </>
@@ -282,6 +289,7 @@ export function RuleSetSheet({
           <Field label="来源" hint={form.source === 'local' ? '内容存在这里，由本服务提供下载地址。' : '客户端直接从这个地址下载，这里不保存内容。'}>
             {() => (
               <SegmentedControl<Source>
+                label="来源"
                 value={form.source}
                 stretch
                 onChange={(value) => {
@@ -300,6 +308,7 @@ export function RuleSetSheet({
             <Field label="格式" error={show('format')} hint={FORMAT_META[form.format]}>
               {() => (
                 <SegmentedControl<Format>
+                  label="格式"
                   value={form.format}
                   stretch
                   size="sm"
@@ -315,6 +324,7 @@ export function RuleSetSheet({
             <Field label="行为" error={show('behavior')} hint={form.behavior ? BEHAVIOR_META[form.behavior].hint : undefined}>
               {() => (
                 <SegmentedControl<Behavior | ''>
+                  label="行为"
                   value={form.behavior}
                   stretch
                   size="sm"
@@ -348,6 +358,7 @@ export function RuleSetSheet({
                   )}
                 >
                   <CodeEditor
+                    label="规则集内容"
                     value={form.content}
                     onChange={(value) => set('content', value)}
                     language={form.format === 'yaml' ? 'yaml' : 'text'}
@@ -379,7 +390,13 @@ export function RuleSetSheet({
                 <div className="text-[13px] font-medium text-ink">转为本地托管</div>
                 现在下载一次远程内容存到这里，之后由本服务提供，不再依赖原地址。
               </div>
-              <Button size="sm" variant="secondary" loading={localizing} onClick={() => void localize()}>
+              <Button
+                size="sm"
+                variant="secondary"
+                loading={localizing}
+                data-agent-confirm={`将规则集「${meta?.name ?? ''}」下载到本地托管`}
+                onClick={() => void localize()}
+              >
                 下载到本地
               </Button>
             </div>
@@ -401,7 +418,7 @@ export function RuleSetSheet({
                   />
                   <div className="flex flex-wrap gap-1">
                     {INTERVAL_PRESETS.map((preset) => (
-                      <button
+                      <UiButton
                         key={preset.value}
                         type="button"
                         onClick={() => set('interval', String(preset.value))}
@@ -413,7 +430,7 @@ export function RuleSetSheet({
                         )}
                       >
                         {preset.label}
-                      </button>
+                      </UiButton>
                     ))}
                   </div>
                 </div>
@@ -426,9 +443,9 @@ export function RuleSetSheet({
                     下载代理 <span className="font-normal text-ink-4">可选</span>
                   </span>
                   {form.proxy && (
-                    <button type="button" className="font-normal text-accent hover:underline" onClick={() => set('proxy', '')}>
+                    <UiButton type="button" aria-label="清除下载代理" className="font-normal text-accent hover:underline" onClick={() => set('proxy', '')}>
                       清除
-                    </button>
+                    </UiButton>
                   )}
                 </span>
               }

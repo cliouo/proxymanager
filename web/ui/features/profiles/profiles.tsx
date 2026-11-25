@@ -3,6 +3,7 @@
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { Button as UiButton } from '@ui-sdk/react/button';
 import {
   ArrowUpRight,
   CopyPlus,
@@ -19,10 +20,11 @@ import {
   Unplug,
 } from 'lucide-react';
 import { partitionProfilesByKind } from '@/lib/profiles/kind';
+import { DataView } from '@/ui/agent';
 import { errorMessage } from '@/ui/data/api';
-import { keys, refreshProfiles, useDevices, useGroups, useProfiles, useRuleSummary } from '@/ui/data/hooks';
+import { keys, refreshProfiles, useProfiles } from '@/ui/data/hooks';
 import { getQueryData } from '@/ui/data/query';
-import type { Profile, PublicDevice } from '@/ui/data/types';
+import type { Profile, ProfileCardSummary, PublicDevice } from '@/ui/data/types';
 import { cn } from '@/ui/lib/cn';
 import { formatCount } from '@/ui/lib/format';
 import {
@@ -46,6 +48,7 @@ import { assignLineColors, policyColor } from '@/ui/viz/lines';
 import { CreateProfileDialog, type CreateSeed } from './create-dialog';
 import { EditProfileSheet } from './edit-sheet';
 import { DEFAULT_PROFILE, profileApi, uncacheProfile } from './model';
+import { useNearViewport, useProfileSummary } from './summaries';
 
 /* ─── page ───────────────────────────────────────────────────────────── */
 
@@ -65,14 +68,18 @@ export function ProfilesPage() {
 
   const remove = async (profile: Profile) => {
     const title = profileTitle(profile);
-    const devices = getQueryData<PublicDevice[]>(keys.scoped(profile.id, 'devices'))?.length ?? 0;
+    const devices =
+      getQueryData<ProfileCardSummary>(keys.scoped(profile.id, 'summary'))?.devicesCount ??
+      getQueryData<PublicDevice[]>(keys.scoped(profile.id, 'devices'))?.length ??
+      0;
     const template = profile.kind === 'template';
     const ok = await confirmAction({
       title: `删除「${title}」？`,
       description: template
         ? '模版里的策略组、规则和基础配置会一起删除。之前从它创建的配置文件不受影响。此操作无法撤销。'
         : `它的策略组、规则、基础配置${devices ? `和 ${devices} 台设备` : ''}会一起删除，订阅链接 …/${profile.name} 随即失效。共享的订阅源、聚合订阅和规则集不受影响。此操作无法撤销。`,
-      confirmText: '删除',
+      confirmText: '确认删除',
+      confirmHint: `删除${template ? '模版' : '配置文件'}「${title}」`,
       tone: 'danger',
     });
     if (!ok) return false;
@@ -132,36 +139,46 @@ export function ProfilesPage() {
             }
             description="卡片顶部的色条是这份配置的线路构成：每段代表一个策略组，越长说明指向它的规则越多。"
           >
-            <div className="grid gap-4 sm:grid-cols-2 @4xl/main:grid-cols-3">
-              {!profiles.data ? (
-                [0, 1, 2].map((i) => <CardSkeleton key={i} />)
-              ) : (
-                <>
-                  {normal.map((profile) => (
-                    <ProfileCard
-                      key={profile.id}
-                      profile={profile}
-                      current={active?.id === profile.id}
-                      actions={actions}
-                    />
-                  ))}
-                  <button
-                    type="button"
-                    onClick={() => openCreate()}
-                    className="group flex min-h-[208px] animate-rise flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-line-strong px-6 text-center transition-colors hover:border-ink-4 hover:bg-surface/60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-                    style={{ animationDelay: `${normal.length * 50}ms` }}
-                  >
-                    <span className="flex size-10 items-center justify-center rounded-xl border border-line bg-surface text-ink-2 shadow-xs transition-transform group-hover:scale-105">
-                      <Plus size={18} strokeWidth={1.75} />
-                    </span>
-                    <span>
-                      <span className="block text-sm font-medium text-ink">新建配置文件</span>
-                      <span className="mt-0.5 block text-xs text-ink-3">从模版、空白骨架或现有配置开始</span>
-                    </span>
-                  </button>
-                </>
-              )}
-            </div>
+            <DataView
+              label="配置文件列表"
+              summary={`共 ${normal.length} 份配置文件`}
+              items={normal.map((p) => ({
+                value: p.id,
+                label: `${profileTitle(p)} (${p.name})${active?.id === p.id ? ' · 当前' : ''}${p.notes ? ` · ${p.notes}` : ''}`,
+              }))}
+            >
+              <div className="grid gap-4 sm:grid-cols-2 @4xl/main:grid-cols-3">
+                {!profiles.data ? (
+                  [0, 1, 2].map((i) => <CardSkeleton key={i} />)
+                ) : (
+                  <>
+                    {normal.map((profile) => (
+                      <ProfileCard
+                        key={profile.id}
+                        profile={profile}
+                        current={active?.id === profile.id}
+                        actions={actions}
+                      />
+                    ))}
+                    <button
+                      type="button"
+                      data-agent-hidden
+                      onClick={() => openCreate()}
+                      className="group flex min-h-[208px] animate-rise flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-line-strong px-6 text-center transition-colors hover:border-ink-4 hover:bg-surface/60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                      style={{ animationDelay: `${normal.length * 50}ms` }}
+                    >
+                      <span className="flex size-10 items-center justify-center rounded-xl border border-line bg-surface text-ink-2 shadow-xs transition-transform group-hover:scale-105">
+                        <Plus size={18} strokeWidth={1.75} />
+                      </span>
+                      <span>
+                        <span className="block text-sm font-medium text-ink">新建配置文件</span>
+                        <span className="mt-0.5 block text-xs text-ink-3">从模版、空白骨架或现有配置开始</span>
+                      </span>
+                    </button>
+                  </>
+                )}
+              </div>
+            </DataView>
           </Block>
 
           <Block
@@ -192,11 +209,20 @@ export function ProfilesPage() {
                 />
               </div>
             ) : (
-              <div className="grid gap-4 sm:grid-cols-2 @4xl/main:grid-cols-3">
-                {templates.map((profile, index) => (
-                  <TemplateCard key={profile.id} profile={profile} actions={actions} index={index} />
-                ))}
-              </div>
+              <DataView
+                label="配置模版列表"
+                summary={`共 ${templates.length} 个模版`}
+                items={templates.map((p) => ({
+                  value: p.id,
+                  label: `${profileTitle(p)} (${p.name})${p.notes ? ` · ${p.notes}` : ''}`,
+                }))}
+              >
+                <div className="grid gap-4 sm:grid-cols-2 @4xl/main:grid-cols-3">
+                  {templates.map((profile, index) => (
+                    <TemplateCard key={profile.id} profile={profile} actions={actions} index={index} />
+                  ))}
+                </div>
+              </DataView>
             )}
           </Block>
         </div>
@@ -267,32 +293,27 @@ function menuItems(profile: Profile, actions: CardActions, open: () => void): Me
   ];
 }
 
-/** Counts + the profile's route mix, from the cached per-profile reads. */
-function useProfileShape(profileId: string) {
-  const groups = useGroups(profileId);
-  const summary = useRuleSummary(profileId);
-  const devices = useDevices(profileId);
+/** Counts + the profile's route mix, loaded via bounded viewport-priority batches. */
+function useProfileShape(profileId: string, visible: boolean) {
+  const summary = useProfileSummary(profileId, visible);
   const segments = useMemo(() => {
-    if (!groups.data || !summary.data) return null;
+    if (!summary.data) return null;
     // Same colour assignment as the app-wide line colours: groups that rules use first, then by rank.
-    const ranked = groups.data
-      .slice()
-      .sort((a, b) => a.rank - b.rank)
-      .map((g) => g.name);
+    const ranked = summary.data.rankedGroupNames;
     const policies = summary.data.policies;
     const colors = assignLineColors([...ranked.filter((n) => policies[n]), ...ranked.filter((n) => !policies[n])]);
     return Object.entries(policies)
       .filter(([, count]) => count > 0)
       .sort((a, b) => b[1] - a[1])
       .map(([policy, count]) => ({ policy, count, color: policyColor(colors, policy) }));
-  }, [groups.data, summary.data]);
+  }, [summary.data]);
   return {
-    groups: groups.data?.length,
-    rules: summary.data?.active,
-    disabledRules: summary.data?.disabled ?? 0,
-    devices: devices.data?.length,
+    groups: summary.data?.groupsCount,
+    rules: summary.data?.activeRules,
+    disabledRules: summary.data?.disabledRules ?? 0,
+    devices: summary.data?.devicesCount,
     segments,
-    error: groups.error ?? summary.error,
+    error: summary.error,
   };
 }
 
@@ -327,11 +348,13 @@ function SourceLine({ profile }: { profile: Profile }) {
 
 function ProfileCard({ profile, current, actions }: { profile: Profile; current: boolean; actions: CardActions }) {
   const router = useRouter();
-  const shape = useProfileShape(profile.id);
+  const [cardRef, visible] = useNearViewport();
+  const shape = useProfileShape(profile.id, visible);
   const title = profileTitle(profile);
   const href = profilePath(profile.name);
   return (
     <Card
+      ref={cardRef}
       as="article"
       interactive
       className="group relative flex min-h-[208px] animate-rise flex-col overflow-hidden"
@@ -341,12 +364,13 @@ function ProfileCard({ profile, current, actions }: { profile: Profile; current:
         <Monogram name={title} colorKey={profile.id} size={40} />
         <div className="min-w-0 flex-1 pt-0.5">
           <div className="flex min-w-0 items-center gap-2">
-            <Link
-              href={href}
+            <UiButton
+              render={<Link href={href} />}
+              aria-label={`打开「${title}」`}
               className="truncate text-[15px] font-semibold tracking-tight text-ink outline-none after:absolute after:inset-0 after:rounded-xl focus-visible:after:shadow-[var(--ring)]"
             >
               {title}
-            </Link>
+            </UiButton>
             {current && (
               <Tooltip content="侧边栏当前正在编辑的配置文件">
                 <span className="relative z-10">
@@ -410,11 +434,13 @@ function Stat({ label, value, hint }: { label: string; value: number | undefined
 
 function TemplateCard({ profile, actions, index }: { profile: Profile; actions: CardActions; index: number }) {
   const router = useRouter();
-  const shape = useProfileShape(profile.id);
+  const [cardRef, visible] = useNearViewport();
+  const shape = useProfileShape(profile.id, visible);
   const title = profileTitle(profile);
   const href = profilePath(profile.name);
   return (
     <article
+      ref={cardRef}
       className="group relative flex min-h-[176px] animate-rise flex-col overflow-hidden rounded-xl border border-dashed border-line-strong bg-surface/50 transition-[border-color,background-color] duration-200 hover:border-ink-4 hover:bg-surface"
       style={{ animationDelay: `${index * 50}ms` }}
     >
@@ -425,12 +451,13 @@ function TemplateCard({ profile, actions, index }: { profile: Profile; actions: 
         </span>
         <div className="min-w-0 flex-1 pt-0.5">
           <div className="flex min-w-0 items-center gap-2">
-            <Link
-              href={href}
+            <UiButton
+              render={<Link href={href} />}
+              aria-label={`打开「${title}」`}
               className="truncate text-[15px] font-semibold tracking-tight text-ink outline-none after:absolute after:inset-0 after:rounded-xl focus-visible:after:shadow-[var(--ring)]"
             >
               {title}
-            </Link>
+            </UiButton>
             <Badge tone="outline" icon={EyeOff} title="模版的订阅链接返回 404">
               不对外分发
             </Badge>

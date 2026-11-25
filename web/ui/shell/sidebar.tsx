@@ -2,12 +2,13 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { Button as UiButton } from '@ui-sdk/react/button';
 import { motion } from 'motion/react';
 import { useTheme } from 'next-themes';
 import { Monitor, Moon, PanelLeftClose, PanelLeftOpen, Search, Sparkles, Sun } from 'lucide-react';
 import type { Profile } from '@/ui/data/types';
 import { cn } from '@/ui/lib/cn';
-import { Kbd, Tooltip } from '@/ui/primitives';
+import { Kbd, SegmentedControl, Tooltip } from '@/ui/primitives';
 import { Wordmark, LogoMark } from '@/ui/viz/logo';
 import { LIBRARY_NAV, PROFILE_NAV, SYSTEM_NAV, type NavItem } from './nav';
 import { ProfileSwitcher } from './profile-switcher';
@@ -47,10 +48,10 @@ function NavLink({
 }) {
   const Icon = item.icon;
   const link = (
-    <Link
-      href={href}
-      {...intentProps(href, profile)}
-      onClick={onNavigate}
+    <UiButton
+      render={<Link href={href} {...intentProps(href, profile)} />}
+      onClick={() => onNavigate?.()}
+      aria-label={collapsed ? item.label : undefined}
       aria-current={active ? 'page' : undefined}
       className={cn(
         'group relative flex h-8 items-center gap-2.5 rounded-lg text-[13px] font-medium outline-none transition-colors',
@@ -72,7 +73,7 @@ function NavLink({
         className={cn('relative z-10 shrink-0', active ? 'text-ink' : 'text-ink-3 group-hover:text-ink-2')}
       />
       {!collapsed && <span className="relative z-10 truncate">{item.label}</span>}
-    </Link>
+    </UiButton>
   );
   return collapsed ? (
     <Tooltip content={item.label} side="right">
@@ -103,45 +104,44 @@ function ThemeSwitch({ collapsed }: { collapsed: boolean }) {
     { value: 'dark', icon: Moon, label: '深色' },
     { value: 'system', icon: Monitor, label: '跟随系统' },
   ] as const;
+  const activeValue = (theme === 'light' || theme === 'dark' || theme === 'system' ? theme : 'system') as
+    | 'light'
+    | 'dark'
+    | 'system';
   if (collapsed) {
-    const current = options.find((o) => o.value === theme) ?? options[2];
+    const current = options.find((o) => o.value === activeValue) ?? options[2];
     const next = options[(options.indexOf(current) + 1) % options.length];
     const Icon = current.icon;
     return (
       <Tooltip content={`主题：${current.label}`} side="right">
-        <button
+        <UiButton
           type="button"
+          aria-label={`切换主题（当前：${current.label}）`}
           onClick={() => setTheme(next.value)}
           className="flex size-9 items-center justify-center rounded-lg text-ink-3 hover:bg-surface/60 hover:text-ink"
         >
           <Icon size={16} strokeWidth={1.75} />
-        </button>
+        </UiButton>
       </Tooltip>
     );
   }
   return (
-    <div className="flex items-center rounded-lg border border-line bg-surface-2/70 p-0.5" role="radiogroup" aria-label="主题">
-      {options.map((option) => {
-        const Icon = option.icon;
-        const active = theme === option.value;
-        return (
-          <Tooltip key={option.value} content={option.label}>
-            <button
-              type="button"
-              role="radio"
-              aria-checked={active}
-              onClick={() => setTheme(option.value)}
-              className={cn(
-                'flex h-6 w-7 items-center justify-center rounded-md transition-colors',
-                active ? 'bg-surface text-ink shadow-sm' : 'text-ink-3 hover:text-ink-2',
-              )}
-            >
-              <Icon size={13} strokeWidth={1.9} />
-            </button>
-          </Tooltip>
-        );
-      })}
-    </div>
+    <SegmentedControl
+      label="主题"
+      size="sm"
+      value={activeValue}
+      onChange={(next) => setTheme(next)}
+      options={options.map((option) => ({
+        value: option.value,
+        hint: option.label,
+        label: (
+          <>
+            <option.icon size={13} strokeWidth={1.9} aria-hidden="true" />
+            <span className="sr-only">{option.label}</span>
+          </>
+        ),
+      }))}
+    />
   );
 }
 
@@ -153,22 +153,29 @@ export function SidebarContent({ collapsed, onNavigate }: { collapsed: boolean; 
   return (
     <div className="flex h-full flex-col gap-3 px-2.5 pb-3 pt-3">
       <div className={cn('flex items-center', collapsed ? 'flex-col gap-2' : 'justify-between pl-1')}>
-        <Link href={profileName ? profilePath(profileName) : '/'} onClick={onNavigate} className="rounded-md outline-none">
+        <UiButton
+          render={<Link href={profileName ? profilePath(profileName) : '/'} />}
+          onClick={() => onNavigate?.()}
+          aria-label="ProxyManager 首页"
+          className="rounded-md outline-none"
+        >
           {collapsed ? <LogoMark /> : <Wordmark />}
-        </Link>
+        </UiButton>
         <Tooltip content={collapsed ? '展开侧边栏' : '收起侧边栏'} side="right" shortcut={`${modKey()} \\`}>
-          <button
+          <UiButton
             type="button"
+            aria-label={collapsed ? '展开侧边栏' : '收起侧边栏'}
             onClick={() => setUi((s) => ({ sidebarCollapsed: !s.sidebarCollapsed }))}
             className="hidden size-7 items-center justify-center rounded-md text-ink-3 hover:bg-surface/70 hover:text-ink lg:flex"
           >
             {collapsed ? <PanelLeftOpen size={15} /> : <PanelLeftClose size={15} />}
-          </button>
+          </UiButton>
         </Tooltip>
       </div>
 
-      <button
+      <UiButton
         type="button"
+        aria-label="打开命令面板"
         onClick={() => {
           onNavigate?.();
           openPalette();
@@ -185,9 +192,9 @@ export function SidebarContent({ collapsed, onNavigate }: { collapsed: boolean; 
             <Kbd>{modKey()}K</Kbd>
           </>
         )}
-      </button>
+      </UiButton>
 
-      <nav className="-mx-1 flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-1 pb-2">
+      <nav aria-label="主导航" className="-mx-1 flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-1 pb-2">
         <div className="flex flex-col gap-1.5">
           {!collapsed && <div className="px-2.5 pt-1 text-[11px] font-medium text-ink-3">当前配置</div>}
           <ProfileSwitcher collapsed={collapsed} />
@@ -238,8 +245,10 @@ export function SidebarContent({ collapsed, onNavigate }: { collapsed: boolean; 
       </nav>
 
       <div className={cn('flex flex-col gap-2', collapsed && 'items-center')}>
-        <button
+        <UiButton
           type="button"
+          data-agent-hidden
+          aria-label="打开 AI 助手"
           onClick={() => {
             onNavigate?.();
             openAssistant();
@@ -257,7 +266,7 @@ export function SidebarContent({ collapsed, onNavigate }: { collapsed: boolean; 
               <Kbd className="bg-surface/80">{modKey()}J</Kbd>
             </>
           )}
-        </button>
+        </UiButton>
         <div className={cn('flex items-center', collapsed ? 'justify-center' : 'justify-between pl-1')}>
           {!collapsed && <span className="text-[11px] text-ink-4">v2 · Transit</span>}
           <ThemeSwitch collapsed={collapsed} />

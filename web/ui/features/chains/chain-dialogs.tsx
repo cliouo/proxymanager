@@ -2,11 +2,14 @@
 
 import { useMemo, useState } from 'react';
 import { ChevronDown, CircleAlert, RefreshCw } from 'lucide-react';
+import { Button as UiButton } from '@ui-sdk/react/button';
+import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from '@ui-sdk/react/collapsible';
 import { matchFilter } from '@/lib/proxies/filterMatch';
 import { errorMessage } from '@/ui/data/api';
 import { refreshProfile } from '@/ui/data/hooks';
 import type { ParsedConfig, ProxyGroup } from '@/ui/data/types';
 import { cn } from '@/ui/lib/cn';
+import { DataView } from '@/ui/agent';
 import {
   Button,
   Combobox,
@@ -148,9 +151,8 @@ function SmartFields({
             />
             <div className="flex flex-wrap gap-1">
               {REGION_FILTERS.map((r) => (
-                <button
+                <UiButton
                   key={r.label}
-                  type="button"
                   onClick={() => onChange({ ...draft, filter: r.filter })}
                   className={cn(
                     'h-6 rounded-full border px-2 text-xs transition-colors',
@@ -158,42 +160,49 @@ function SmartFields({
                   )}
                 >
                   {r.label}
-                </button>
+                </UiButton>
               ))}
             </div>
           </div>
         )}
       </Field>
       {!result.error && (
-        <div className="rounded-lg border border-line bg-surface-2/50 px-3 py-2.5">
-          <div className="flex flex-wrap items-center gap-2 text-xs text-ink-2">
-            <span>
-              现在匹配 <span className="tnum font-semibold text-ink">{result.matched.length}</span> / {candidates.length} 个节点
-            </span>
-            <RegionStrip names={result.matched} max={6} />
-          </div>
-          {result.matched.length > 0 ? (
-            <div className="mt-2 flex max-h-[88px] flex-wrap gap-1 overflow-y-auto">
-              {result.matched.slice(0, 24).map((name) => (
-                <span key={name} className="inline-flex h-6 max-w-[200px] items-center rounded-md border border-line bg-surface px-1.5 text-xs">
-                  <NodeName name={name} />
-                </span>
-              ))}
-              {result.matched.length > 24 && <span className="self-center text-xs text-ink-3">+{result.matched.length - 24}</span>}
+        <DataView
+          label="前置匹配预览"
+          summary={`匹配 ${result.matched.length} / ${candidates.length} 个节点`}
+          items={result.matched.slice(0, 50).map((name) => ({ value: name, label: name }))}
+        >
+          <div className="rounded-lg border border-line bg-surface-2/50 px-3 py-2.5">
+            <div className="flex flex-wrap items-center gap-2 text-xs text-ink-2">
+              <span>
+                现在匹配 <span className="tnum font-semibold text-ink">{result.matched.length}</span> / {candidates.length} 个节点
+              </span>
+              <RegionStrip names={result.matched} max={6} />
             </div>
-          ) : (
-            <p className="mt-1 text-xs text-warn">没有节点匹配，链路会无法连通。</p>
-          )}
-          {backendExcluded && (
-            <p className="mt-2 text-xs text-ink-3">已自动排除落地节点「{backend}」。</p>
-          )}
-        </div>
+            {result.matched.length > 0 ? (
+              <div className="mt-2 flex max-h-[88px] flex-wrap gap-1 overflow-y-auto">
+                {result.matched.slice(0, 24).map((name) => (
+                  <span key={name} className="inline-flex h-6 max-w-[200px] items-center rounded-md border border-line bg-surface px-1.5 text-xs">
+                    <NodeName name={name} />
+                  </span>
+                ))}
+                {result.matched.length > 24 && <span className="self-center text-xs text-ink-3">+{result.matched.length - 24}</span>}
+              </div>
+            ) : (
+              <p className="mt-1 text-xs text-warn">没有节点匹配，链路会无法连通。</p>
+            )}
+            {backendExcluded && (
+              <p className="mt-2 text-xs text-ink-3">已自动排除落地节点「{backend}」。</p>
+            )}
+          </div>
+        </DataView>
       )}
       <Field label="挑选方式">
         {() => (
           <div className="flex flex-col gap-1.5">
             <SegmentedControl
               stretch
+              label="挑选方式"
               value={draft.strategy}
               onChange={(strategy) => onChange({ ...draft, strategy })}
               options={(['fallback', 'url-test'] as const).map((s) => ({ value: s, label: STRATEGY_META[s].label }))}
@@ -361,7 +370,13 @@ export function NewChainDialog({
           <Button variant="ghost" onClick={() => onOpenChange(false)}>
             取消
           </Button>
-          <Button variant="primary" loading={busy} disabled={!data.parsed} onClick={() => void submit()}>
+          <Button
+            variant="primary"
+            loading={busy}
+            disabled={!data.parsed}
+            data-agent-confirm={`创建链式代理「${chainName || '新链路'}」（落地节点：${backend || '未选'}）`}
+            onClick={() => void submit()}
+          >
             创建链路
           </Button>
         </>
@@ -371,6 +386,7 @@ export function NewChainDialog({
         <div className="flex flex-col gap-2">
           <SegmentedControl
             stretch
+            label="链路模式"
             value={mode}
             onChange={setMode}
             options={[
@@ -450,17 +466,12 @@ export function NewChainDialog({
           <SmartFields draft={smart} onChange={setSmart} nodeNames={nodeNames} backend={backend} tried={tried} />
         )}
 
-        <div>
-          <button
-            type="button"
-            onClick={() => setShowNames((v) => !v)}
-            aria-expanded={showNames}
-            className="flex items-center gap-1 text-xs font-medium text-ink-3 hover:text-ink"
-          >
+        <Collapsible open={showNames} onOpenChange={setShowNames}>
+          <CollapsibleTrigger className="flex items-center gap-1 text-xs font-medium text-ink-3 hover:text-ink">
             <ChevronDown size={13} className={cn('transition-transform', !showNames && '-rotate-90')} />
             自定义名称
-          </button>
-          {showNames && (
+          </CollapsibleTrigger>
+          <CollapsiblePanel>
             <div className="mt-3 grid animate-rise gap-4 sm:grid-cols-2">
               <Field label="链路名称" optional hint="客户端里显示的策略组名" error={errors.chainName}>
                 {(id) => (
@@ -485,9 +496,9 @@ export function NewChainDialog({
                 </Field>
               )}
             </div>
-          )}
+          </CollapsiblePanel>
           {!showNames && tried && nameError && <p className="mt-1 text-xs text-bad">{nameError}</p>}
-        </div>
+        </Collapsible>
       </div>
     </Dialog>
   );
@@ -567,7 +578,12 @@ export function EditPoolDialog({
           <Button variant="ghost" onClick={onClose}>
             取消
           </Button>
-          <Button variant="primary" loading={busy} onClick={() => void submit()}>
+          <Button
+            variant="primary"
+            loading={busy}
+            data-agent-confirm={view ? `保存前置池「${view.poolName}」的修改` : '保存前置池修改'}
+            onClick={() => void submit()}
+          >
             保存
           </Button>
         </>

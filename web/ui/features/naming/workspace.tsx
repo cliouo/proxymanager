@@ -174,7 +174,8 @@ function Workspace({
     const ok = await confirmAction({
       title: activation === 'enabled' ? '应用新的命名方案？' : '启用智能命名？',
       tone: orphans.length ? 'danger' : 'default',
-      confirmText: activation === 'enabled' ? '应用' : '启用',
+      confirmText: activation === 'enabled' ? '确认应用' : '确认启用',
+      confirmHint: '应用后将重写节点名称，客户端下次更新订阅时生效',
       description: (
         <span className="flex flex-col gap-2">
           <span>
@@ -214,7 +215,8 @@ function Workspace({
     const ok = await confirmAction({
       title: '撤销上次应用？',
       tone: 'danger',
-      confirmText: '撤销',
+      confirmText: '确认撤销',
+      confirmHint: '撤销上次应用的命名方案并恢复迁移前的引用',
       description: (
         <span className="flex flex-col gap-2">
           {prior.template ? <>
@@ -250,7 +252,8 @@ function Workspace({
     const ok = await confirmAction({
       title: '关闭智能命名？',
       tone: 'danger',
-      confirmText: '关闭',
+      confirmText: '确认关闭',
+      confirmHint: '关闭后节点恢复原始名称',
       description: (
         <span className="flex flex-col gap-2">
           <span>节点会恢复上游原来的名字。当前的命名方案会保留，之后点「重新启用」或「撤销上次应用」即可恢复。</span>
@@ -441,14 +444,16 @@ function Workspace({
         </div>
       </div>
 
-      <SaveBar
-        visible={dirty}
-        onSave={() => void apply()}
-        onDiscard={() => setPlan(stored)}
-        saving={busy === 'apply'}
-        message={activation === 'enabled' ? '命名方案有改动，尚未应用' : '方案已调整，应用后才会生效'}
-        saveLabel={activation === 'enabled' ? '应用' : '启用'}
-      />
+      <div data-agent-hidden>
+        <SaveBar
+          visible={dirty}
+          onSave={() => void apply()}
+          onDiscard={() => setPlan(stored)}
+          saving={busy === 'apply'}
+          message={activation === 'enabled' ? '命名方案有改动，尚未应用' : '方案已调整，应用后才会生效'}
+          saveLabel={activation === 'enabled' ? '应用' : '启用'}
+        />
+      </div>
     </Page>
   );
 }

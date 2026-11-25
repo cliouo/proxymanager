@@ -9,6 +9,7 @@ import { keys, refreshProfile, useDevice, useDevicePreview, useDevices } from '@
 import { setQueryData } from '@/ui/data/query';
 import type { DeviceUpdate, PublicDevice } from '@/ui/data/types';
 import { CodeEditor } from '@/ui/editor/code-editor';
+import { DataView } from '@/ui/agent';
 import {
   Button,
   Card,
@@ -190,6 +191,7 @@ function Workbench({ device }: { device: PublicDevice }) {
         title: '修改链接名？',
         description: `订阅链接会从 …/${baseline.name} 变成 …/${nextName}。已经导入旧链接的客户端需要重新导入，否则更新订阅会失败。`,
         confirmText: '修改并保存',
+        confirmHint: '修改链接名后客户端需重新导入订阅链接',
       });
       if (!ok) return;
       body.name = nextName;
@@ -218,7 +220,8 @@ function Workbench({ device }: { device: PublicDevice }) {
     const ok = await confirmAction({
       title: `删除设备「${label}」？`,
       description: '它的专属订阅链接会立即失效，客户端下次更新会失败。可以在「操作历史」里撤销。',
-      confirmText: '删除',
+      confirmText: '确认删除',
+      confirmHint: '删除后该设备的专属订阅链接会立即失效',
       tone: 'danger',
     });
     if (!ok) return;
@@ -280,6 +283,7 @@ function Workbench({ device }: { device: PublicDevice }) {
               actions={
                 <SegmentedControl
                   size="sm"
+                  label="差异编辑模式"
                   value={mode}
                   onChange={switchMode}
                   options={[
@@ -344,6 +348,7 @@ function Workbench({ device }: { device: PublicDevice }) {
                 <>
                   <div className="overflow-hidden rounded-lg border border-line bg-surface-2/40 focus-within:border-accent">
                     <CodeEditor
+                      label="设备差异 YAML"
                       value={sourceText}
                       onChange={setSourceText}
                       height="320px"
@@ -526,22 +531,41 @@ function SubscriptionCheck({ url, revision }: { url: string; revision: string })
   return (
     <div className="space-y-2">
       <Button size="sm" icon={RefreshCw} onClick={() => void check()}>重新检查</Button>
-      <div role="status" className="space-y-1 text-xs text-ink-2">
-        {Array.isArray(result) && (
-          <p className="font-medium text-ink">
-            {blocked
-              ? `Shadowrocket 无法下载此链接：${blocked} 项已知不兼容。`
-              : `Shadowrocket 可以下载此链接；${result.length} 项分流行为尚未验证，导入后可能与预期不同。`}
-          </p>
-        )}
-        {typeof result === 'string' ? result : result.slice(0, visibleCount).map((issue, index) => (
-          <p key={`${issue.listener ?? ''}:${issue.table ?? ''}:${issue.field ?? ''}:${issue.mode ?? ''}:${issue.ruleNumber ?? ''}:${index}`}>
-            {issue.status === 'incompatible' ? '已知不兼容' : '待验证'} · {describeShadowrocketIssueLocation(issue)}
-            {issue.member ? ` · 成员 ${issue.member}${issue.option ? `（${issue.option}）` : ''}` : issue.option ? ` · 选项 ${issue.option}` : ''}
-            {issue.reference && !issue.field && !issue.mode ? `（关联：${issue.reference}）` : ''}：{issue.reason}
-          </p>
-        ))}
-      </div>
+      <DataView
+        label="Shadowrocket 兼容性检查"
+        summary={
+          typeof result === 'string'
+            ? result || '未检查'
+            : blocked
+              ? `${blocked} 项不兼容，共 ${result.length} 项`
+              : `${result.length} 项待验证`
+        }
+        items={
+          typeof result === 'string'
+            ? (result ? [{ value: 'status', label: result }] : [])
+            : result.slice(0, 50).map((issue, i) => ({
+                value: String(i),
+                label: `${issue.status === 'incompatible' ? '不兼容' : '待验证'} · ${describeShadowrocketIssueLocation(issue)}：${issue.reason}`,
+              }))
+        }
+      >
+        <div role="status" className="space-y-1 text-xs text-ink-2">
+          {Array.isArray(result) && (
+            <p className="font-medium text-ink">
+              {blocked
+                ? `Shadowrocket 无法下载此链接：${blocked} 项已知不兼容。`
+                : `Shadowrocket 可以下载此链接；${result.length} 项分流行为尚未验证，导入后可能与预期不同。`}
+            </p>
+          )}
+          {typeof result === 'string' ? result : result.slice(0, visibleCount).map((issue, index) => (
+            <p key={`${issue.listener ?? ''}:${issue.table ?? ''}:${issue.field ?? ''}:${issue.mode ?? ''}:${issue.ruleNumber ?? ''}:${index}`}>
+              {issue.status === 'incompatible' ? '已知不兼容' : '待验证'} · {describeShadowrocketIssueLocation(issue)}
+              {issue.member ? ` · 成员 ${issue.member}${issue.option ? `（${issue.option}）` : ''}` : issue.option ? ` · 选项 ${issue.option}` : ''}
+              {issue.reference && !issue.field && !issue.mode ? `（关联：${issue.reference}）` : ''}：{issue.reason}
+            </p>
+          ))}
+        </div>
+      </DataView>
       {Array.isArray(result) && result.length > visibleCount && (
         <Button size="sm" aria-label="显示更多诊断" onClick={() => setVisibleCount((n) => n + 50)}>
           显示更多诊断（已显示 {visibleCount} / {result.length}）

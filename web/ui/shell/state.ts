@@ -6,6 +6,7 @@ import { useSyncExternalStore } from 'react';
 export interface UiState {
   paletteOpen: boolean;
   assistantOpen: boolean;
+  assistantDocked: boolean;
   shareOpen: boolean;
   /** Pre-filled prompt handed to the assistant when it opens. */
   assistantDraft: string | null;
@@ -15,6 +16,7 @@ export interface UiState {
 let state: UiState = {
   paletteOpen: false,
   assistantOpen: false,
+  assistantDocked: false,
   shareOpen: false,
   assistantDraft: null,
   sidebarCollapsed: false,

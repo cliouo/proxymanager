@@ -1,7 +1,8 @@
 'use client';
 
-import { Button, Card } from '@/ui/primitives';
 import { useState } from 'react';
+import { DataView } from '@/ui/agent';
+import { Button, Card, Checkbox } from '@/ui/primitives';
 import { api } from '@/ui/data/api';
 import { useQuery } from '@/ui/data/query';
 import type { NamingCandidate } from '@/lib/proxies/namingCandidates';
@@ -23,33 +24,49 @@ export function NamingCandidates({ type, id, version, busy, onApply }: {
     {query.data?.groupingAvailable && <GroupingPicker key={`${type}:${id}:${version}`} type={type} id={id} version={version} busy={busy} onApply={onApply} />}
     {!!query.error && <p role="alert" className="text-bad">推荐方案加载失败，请刷新页面重试。</p>}
     {!query.data && !query.error && <p className="text-ink-3">正在分析策略组与节点命名…</p>}
-    <div className="grid gap-4 @3xl/main:grid-cols-3">
-      {query.data?.candidates.map((candidate, index) => <div key={candidate.id} className="min-w-0 rounded-lg border border-line p-3">
-        <h3 className="font-medium">{candidate.title}{index === 0 && <span className="ml-2 text-xs text-accent">优先推荐</span>}</h3>
-        <p className="my-2 text-xs text-ink-3">{index === 0 ? '推荐理由：' : '方案说明：'}{candidateRationale(candidate)}</p>
-        {candidate.emptiedGroups.length > 0 && <p className="my-2 text-xs text-bad">应用后 {candidate.emptiedGroups.length} 个策略组将变空，无法自动恢复筛选。</p>}
-        <div className="my-2 max-h-40 overflow-auto break-words text-xs text-ink-2">
-          {candidate.sample.map((name, i) => <div key={i}>{name}</div>)}
-          {candidate.sample.length === 0 && <div>无可预览节点</div>}
-        </div>
-        <details className="my-3 text-xs">
-          <summary>策略组影响（{candidate.groups.length} 组）</summary>
-          {!candidate.groups.length && <p className="text-ink-3">没有需要迁移的策略组。</p>}
-          {candidate.groups.map((group) => <div key={`${group.profileId}:${group.groupId}`} className={group.emptied || group.broken ? 'text-bad' : 'text-ink-2'}>
-            {group.profileName} / {group.groupName}: {group.before} → {group.migration?.after ?? group.after}
-            {group.emptied && ' · 将变空'}
-            {group.broken && !group.emptied && ' · 筛选无法恢复原节点集合'}
-            {group.error && <p className="text-bad">{group.error}</p>}
-            {group.migration && <div className="break-all text-ink-3">筛选将迁移：<code>{group.migration.filter}</code></div>}
-          </div>)}
-        </details>
-        {candidate.references.length > 0 && <details className="my-2 text-xs"><summary>精确引用（{candidate.references.length}）</summary>
-          {candidate.references.map((ref, i) => <p key={i} className={ref.blocked ? 'text-bad' : 'text-ink-3'}>{ref.kind}: {ref.before} → {ref.after ?? '无法唯一映射'}{ref.blocked && ' · 需手动处理'}</p>)}
-        </details>}
-        {candidate.warnings.map((warning, i) => <p key={i} className="my-1 text-xs text-warn">{warning}</p>)}
-        <Button disabled={busy || candidate.blocked || query.data?.configVersion !== version} onClick={() => void onApply(candidate.template, candidate.title)}>应用</Button>
-      </div>)}
-    </div>
+    <DataView
+      label="推荐命名方案"
+      summary={query.data ? `共 ${query.data.candidates.length} 个推荐方案` : '正在加载'}
+      items={(query.data?.candidates ?? []).map((c, index) => ({
+        value: c.id,
+        label: `${c.title}${index === 0 ? ' [优先推荐]' : ''}${c.blocked ? ' [已阻止]' : ''} · ${candidateRationale(c)} · 模板: ${c.template}`,
+      }))}
+    >
+      <div className="grid gap-4 @3xl/main:grid-cols-3">
+        {query.data?.candidates.map((candidate, index) => <div key={candidate.id} className="min-w-0 rounded-lg border border-line p-3">
+          <h3 className="font-medium">{candidate.title}{index === 0 && <span className="ml-2 text-xs text-accent">优先推荐</span>}</h3>
+          <p className="my-2 text-xs text-ink-3">{index === 0 ? '推荐理由：' : '方案说明：'}{candidateRationale(candidate)}</p>
+          {candidate.emptiedGroups.length > 0 && <p className="my-2 text-xs text-bad">应用后 {candidate.emptiedGroups.length} 个策略组将变空，无法自动恢复筛选。</p>}
+          <div className="my-2 max-h-40 overflow-auto break-words text-xs text-ink-2">
+            {candidate.sample.map((name, i) => <div key={i}>{name}</div>)}
+            {candidate.sample.length === 0 && <div>无可预览节点</div>}
+          </div>
+          <details className="my-3 text-xs">
+            <summary>策略组影响（{candidate.groups.length} 组）</summary>
+            {!candidate.groups.length && <p className="text-ink-3">没有需要迁移的策略组。</p>}
+            {candidate.groups.map((group) => <div key={`${group.profileId}:${group.groupId}`} className={group.emptied || group.broken ? 'text-bad' : 'text-ink-2'}>
+              {group.profileName} / {group.groupName}: {group.before} → {group.migration?.after ?? group.after}
+              {group.emptied && ' · 将变空'}
+              {group.broken && !group.emptied && ' · 筛选无法恢复原节点集合'}
+              {group.error && <p className="text-bad">{group.error}</p>}
+              {group.migration && <div className="break-all text-ink-3">筛选将迁移：<code>{group.migration.filter}</code></div>}
+            </div>)}
+          </details>
+          {candidate.references.length > 0 && <details className="my-2 text-xs"><summary>精确引用（{candidate.references.length}）</summary>
+            {candidate.references.map((ref, i) => <p key={i} className={ref.blocked ? 'text-bad' : 'text-ink-3'}>{ref.kind}: {ref.before} → {ref.after ?? '无法唯一映射'}{ref.blocked && ' · 需手动处理'}</p>)}
+          </details>}
+          {candidate.warnings.map((warning, i) => <p key={i} className="my-1 text-xs text-warn">{warning}</p>)}
+          <Button
+            disabled={busy || candidate.blocked || query.data?.configVersion !== version}
+            aria-label={`应用「${candidate.title}」`}
+            data-agent-confirm={`应用命名方案「${candidate.title}」并迁移受影响的策略组筛选`}
+            onClick={() => void onApply(candidate.template, candidate.title)}
+          >
+            应用
+          </Button>
+        </div>)}
+      </div>
+    </DataView>
   </Card>;
 }
 
@@ -67,25 +84,48 @@ function GroupingPicker({ type, id, version, busy, onApply }: {
     <h3 className="font-medium">按用途生成策略组</h3>
     <p className="my-2 text-xs text-ink-3">只为尚无策略组的消费配置文件创建；已有策略组仅做必要的引用迁移。命名与策略组同时保存，可一起撤销。</p>
     {!!query.error && <p role="alert" className="text-bad">分组预览加载失败，请刷新重试。</p>}
-    <div className="my-3 flex flex-wrap gap-2">{preview?.purposes.map((p) => <label key={p.id} className="rounded-full border border-line px-3 py-1 text-sm">
-      <input type="checkbox" className="mr-1" checked={selected.includes(p.id)} disabled={busy || p.count === 0}
-        onChange={(event) => {
-          const checked = event.target.checked;
+    <div className="my-3 flex flex-wrap gap-2">{preview?.purposes.map((p) => <label key={p.id} className="inline-flex items-center gap-1.5 rounded-full border border-line px-3 py-1 text-sm">
+      <Checkbox
+        checked={selected.includes(p.id)}
+        disabled={busy || p.count === 0}
+        label={`${p.label} · ${p.count}`}
+        onCheckedChange={(checked) => {
           setSelection((current) => toggleGroupingPurpose(groupingSelection(current, preview), p.id, checked));
-        }} />
-      {p.label} · {p.count}
+        }}
+      />
+      <span>{p.label} · {p.count}</span>
     </label>)}</div>
-    <div aria-busy={loading}>
-    {loading && !query.error && <p className="text-ink-3">正在生成分组预览…</p>}
-    {!loading && preview && <code className="my-2 block break-all text-xs text-ink-3">{preview.template}</code>}
-    {!loading && preview?.profiles.map((profile, i) => <div key={i} className="my-3 text-sm"><h4 className="font-medium">{profile.name}</h4>
-      {profile.groups.map((group) => <div key={group.name} className="my-2"><p>{group.name} · {group.count} 节点{group.kind === 'single-sub' && ' · 订阅绑定'}</p>
-        <p className="break-words text-xs text-ink-3">{group.sample.join(' / ')}</p></div>)}
-    </div>)}
-    {!loading && preview?.warnings.map((warning, i) => <p key={i} className="text-xs text-bad">{warning}</p>)}
-    </div>
-    <Button disabled={busy || loading || !!query.error || !preview || preview.blocked || !selected.length || preview.configVersion !== version}
-      onClick={() => preview && void onApply(preview.template, '命名和策略组', selected)}>生成命名和策略组</Button>
+    <DataView
+      label="策略组生成预览"
+      summary={!loading && preview ? `${preview.profiles.length} 个配置文件` : '加载中'}
+      items={
+        !loading && preview
+          ? preview.profiles.flatMap((profile) =>
+              profile.groups.map((group) => ({
+                value: `${profile.name}:${group.name}`,
+                label: `${profile.name} / ${group.name} · ${group.count} 节点`,
+              })),
+            )
+          : []
+      }
+    >
+      <div aria-busy={loading}>
+      {loading && !query.error && <p className="text-ink-3">正在生成分组预览…</p>}
+      {!loading && preview && <code className="my-2 block break-all text-xs text-ink-3">{preview.template}</code>}
+      {!loading && preview?.profiles.map((profile, i) => <div key={i} className="my-3 text-sm"><h4 className="font-medium">{profile.name}</h4>
+        {profile.groups.map((group) => <div key={group.name} className="my-2"><p>{group.name} · {group.count} 节点{group.kind === 'single-sub' && ' · 订阅绑定'}</p>
+          <p className="break-words text-xs text-ink-3">{group.sample.join(' / ')}</p></div>)}
+      </div>)}
+      {!loading && preview?.warnings.map((warning, i) => <p key={i} className="text-xs text-bad">{warning}</p>)}
+      </div>
+    </DataView>
+    <Button
+      disabled={busy || loading || !!query.error || !preview || preview.blocked || !selected.length || preview.configVersion !== version}
+      data-agent-confirm="应用命名方案并自动生成所选用途的策略组"
+      onClick={() => preview && void onApply(preview.template, '命名和策略组', selected)}
+    >
+      生成命名和策略组
+    </Button>
   </div>;
 }
 

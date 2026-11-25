@@ -83,6 +83,7 @@ export function SourceField({
       {(id) => (
         <div className="flex flex-col gap-2">
           <SegmentedControl<SourceMode>
+            label="节点来源类型"
             stretch
             value={value.mode}
             onChange={(mode) => onChange({ mode, id: mode === value.mode ? value.id : null })}
@@ -135,6 +136,7 @@ export function KindField({
       {() => (
         <div className="flex flex-col gap-2">
           <SegmentedControl<ProfileKind>
+            label="配置文件类型"
             stretch
             value={value}
             onChange={onChange}

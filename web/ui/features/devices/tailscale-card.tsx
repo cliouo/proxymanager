@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { ChevronDown, CircleAlert, KeyRound, Network, RefreshCw, Trash2 } from 'lucide-react';
+import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from '@ui-sdk/react/collapsible';
 import { api, errorMessage } from '@/ui/data/api';
 import { keys, refreshProfile } from '@/ui/data/hooks';
 import { useQuery } from '@/ui/data/query';
@@ -202,7 +203,8 @@ export function TailscaleCard({
     const ok = await confirmAction({
       title: '移除这台设备的 Tailscale？',
       description: '移除后它的配置里不再包含 Tailscale 节点、策略组和 tailnet 路由规则。密钥也会一并删除。',
-      confirmText: '移除',
+      confirmText: '确认移除',
+      confirmHint: '移除后配置中不再包含 Tailscale 节点和路由规则',
       tone: 'danger',
     });
     if (!ok) return;
@@ -306,6 +308,7 @@ export function TailscaleCard({
                       mono
                       type="password"
                       autoComplete="off"
+                      data-agent-secret
                       placeholder={feature?.hasAuthKey ? '输入新密钥以替换' : 'tskey-auth-…'}
                       value={form.authKey}
                       onChange={(e) => update({ authKey: e.target.value })}
@@ -340,6 +343,7 @@ export function TailscaleCard({
             <div className="flex flex-col gap-2">
               <SegmentedControl
                 size="sm"
+                label="Tailscale 路由模式"
                 value={form.routeMode}
                 onChange={(routeMode) => update({ routeMode })}
                 options={[
@@ -377,17 +381,12 @@ export function TailscaleCard({
                 />
               </div>
             )}
-            <div>
-              <button
-                type="button"
-                onClick={() => setAdvanced((v) => !v)}
-                aria-expanded={advanced}
-                className="flex items-center gap-1 text-xs font-medium text-ink-3 hover:text-ink"
-              >
+            <Collapsible open={advanced} onOpenChange={setAdvanced}>
+              <CollapsibleTrigger className="flex items-center gap-1 text-xs font-medium text-ink-3 hover:text-ink">
                 <ChevronDown size={13} className={cn('transition-transform', !advanced && '-rotate-90')} />
                 高级设置
-              </button>
-              {advanced && (
+              </CollapsibleTrigger>
+              <CollapsiblePanel>
                 <div className="mt-3 grid animate-rise gap-4 sm:grid-cols-2">
                   <Field label="控制服务器" optional hint="自建 Headscale 时填写" error={shownError('controlUrl')}>
                     {(id) => (
@@ -428,8 +427,8 @@ export function TailscaleCard({
                     )}
                   </Field>
                 </div>
-              )}
-            </div>
+              </CollapsiblePanel>
+            </Collapsible>
             <div className="flex flex-wrap items-center gap-2 border-t border-line pt-3">
               {feature ? (
                 <Button variant="danger-ghost" size="sm" icon={Trash2} loading={busy === 'delete'} onClick={() => void remove()}>
@@ -452,6 +451,11 @@ export function TailscaleCard({
                 variant={dirty || !feature ? 'primary' : 'secondary'}
                 disabled={!!feature && !dirty}
                 loading={busy === 'save'}
+                data-agent-confirm={
+                  feature
+                    ? `保存设备「${device.display_name || device.name}」的 Tailscale 配置（${form.hostname}）`
+                    : `为设备「${device.display_name || device.name}」启用 Tailscale（${form.hostname}）`
+                }
               >
                 {feature ? '保存 Tailscale' : '启用并保存'}
               </Button>

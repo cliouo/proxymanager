@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { Check, Download, Link2, MoreHorizontal, Power, PowerOff, RadioTower, RefreshCw, RotateCcw, Trash2 } from 'lucide-react';
+import { DataView } from '@/ui/agent';
 import { errorMessage } from '@/ui/data/api';
 import { refreshShared, useSource, useSources } from '@/ui/data/hooks';
 import { formatDate, relativeTime } from '@/ui/lib/format';
@@ -37,23 +38,36 @@ function Facts({ source }: { source: Source }) {
     cells.push({ label: '导入节点', value: source.manual_snapshot ? `${source.manual_snapshot.proxy_count} 个` : '—' });
   }
   if (!traffic && cells.length === 0) return null;
+  const factItems = [
+    ...(traffic
+      ? [
+          {
+            value: 'traffic',
+            label: `流量：已用 ${Math.round(((traffic.upload + traffic.download) / Math.max(traffic.total || 1, 1)) * 100)}%${traffic.expire > 0 ? ` · ${formatDate(traffic.expire)} 到期` : ''}`,
+          },
+        ]
+      : []),
+    ...cells.map((cell) => ({ value: cell.label, label: `${cell.label}：${String(cell.value)}` })),
+  ];
   return (
-    <Card className="grid gap-px overflow-hidden bg-line sm:grid-cols-[1.4fr_repeat(3,1fr)]">
-      {traffic && (
-        <div className="bg-surface px-4 py-3">
-          <div className="mb-1.5 text-2xs text-ink-3">
-            流量{traffic.expire > 0 ? ` · ${formatDate(traffic.expire)} 到期` : ''}
+    <DataView label="订阅源概览" summary={factItems.map((i) => i.label).join('；')} items={factItems}>
+      <Card className="grid gap-px overflow-hidden bg-line sm:grid-cols-[1.4fr_repeat(3,1fr)]">
+        {traffic && (
+          <div className="bg-surface px-4 py-3">
+            <div className="mb-1.5 text-2xs text-ink-3">
+              流量{traffic.expire > 0 ? ` · ${formatDate(traffic.expire)} 到期` : ''}
+            </div>
+            <TrafficMeter traffic={traffic} />
           </div>
-          <TrafficMeter traffic={traffic} />
-        </div>
-      )}
-      {cells.map((cell) => (
-        <div key={cell.label} className="bg-surface px-4 py-3">
-          <div className="text-2xs text-ink-3">{cell.label}</div>
-          <div className="tnum mt-1 text-[13px] font-medium text-ink">{cell.value}</div>
-        </div>
-      ))}
-    </Card>
+        )}
+        {cells.map((cell) => (
+          <div key={cell.label} className="bg-surface px-4 py-3">
+            <div className="text-2xs text-ink-3">{cell.label}</div>
+            <div className="tnum mt-1 text-[13px] font-medium text-ink">{cell.value}</div>
+          </div>
+        ))}
+      </Card>
+    </DataView>
   );
 }
 
@@ -152,7 +166,13 @@ export function SourceDetail() {
             <HealthPill view={health} />
             <span className="text-ink-2">{health.detail}</span>
             {mode === 'manual' && (
-              <Button size="xs" variant="link" loading={busy === 'mode'} onClick={() => void backToAuto()}>
+              <Button
+                size="xs"
+                variant="link"
+                loading={busy === 'mode'}
+                data-agent-confirm={`将「${title}」改回平台自动拉取`}
+                onClick={() => void backToAuto()}
+              >
                 改回平台自动拉取
               </Button>
             )}
@@ -165,6 +185,7 @@ export function SourceDetail() {
               <Button
                 icon={RefreshCw}
                 loading={busy === 'refresh'}
+                data-agent-confirm={`刷新订阅源「${title}」`}
                 onClick={async () => {
                   setBusy('refresh');
                   await refreshSource(source);
@@ -188,8 +209,8 @@ export function SourceDetail() {
                   ? [{ label: '手动导入…', icon: Download, onSelect: () => setImporting(true) }, 'separator' as const]
                   : []),
                 source.enabled
-                  ? { label: '停用', icon: PowerOff, onSelect: () => void setSourceEnabled(source, false) }
-                  : { label: '启用', icon: Power, onSelect: () => void setSourceEnabled(source, true) },
+                  ? { label: '停用', icon: PowerOff, confirm: `停用订阅源「${title}」`, onSelect: () => void setSourceEnabled(source, false) }
+                  : { label: '启用', icon: Power, confirm: `启用订阅源「${title}」`, onSelect: () => void setSourceEnabled(source, true) },
                 { label: '删除', icon: Trash2, tone: 'danger' as const, onSelect: async () => (await deleteSource(source)) && router.push('/sources') },
               ]}
               trigger={<Button iconOnly icon={MoreHorizontal} aria-label="更多操作" />}
@@ -201,6 +222,7 @@ export function SourceDetail() {
       <div className="flex flex-col gap-6">
         <Facts source={source} />
         <Tabs
+          label="订阅源详情标签页"
           value={tab}
           onValueChange={setTab}
           className={TAB_SCROLL}

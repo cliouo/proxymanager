@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
+import { createParts } from '@ui-sdk/react/primitive';
 import { Compartment, EditorState, type Extension } from '@codemirror/state';
 import {
   drawSelection,
@@ -25,6 +26,9 @@ import { highlightSelectionMatches, search, searchKeymap } from '@codemirror/sea
 import { tags as t } from '@lezer/highlight';
 import { cn } from '@/ui/lib/cn';
 import { useIsomorphicLayoutEffect } from '@/ui/data/query';
+import { codeDocument } from './code-document';
+
+const { Root: CodeDocumentRoot } = createParts(codeDocument, { root: 'div' });
 
 /** Editor chrome built from the design tokens, so light/dark just work. */
 const transitTheme = EditorView.theme({
@@ -124,6 +128,8 @@ export interface CodeEditorProps {
   onSave?: () => void;
   /** Ref-style hook to get the view (e.g. to reveal a line). */
   onReady?: (view: EditorView) => void;
+  label?: string;
+  'aria-label'?: string;
 }
 
 export function CodeEditor({
@@ -140,6 +146,8 @@ export function CodeEditor({
   autoFocus,
   onSave,
   onReady,
+  label,
+  'aria-label': ariaLabel,
 }: CodeEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -235,11 +243,16 @@ export function CodeEditor({
   }, [wrap]);
 
   return (
-    <div
-      ref={hostRef}
+    <CodeDocumentRoot
+      aria-label={ariaLabel ?? label ?? '代码编辑器'}
+      value={value}
+      readOnly={readOnly}
+      onValueChange={(next) => onChange?.(next)}
       className={cn('min-h-0 overflow-hidden text-[12.5px]', className)}
       style={{ height: height ?? '100%', minHeight }}
-    />
+    >
+      <div ref={hostRef} className="h-full min-h-0" />
+    </CodeDocumentRoot>
   );
 }
 

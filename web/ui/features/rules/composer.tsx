@@ -1,6 +1,7 @@
 'use client';
 
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import { Input as UiInput } from '@ui-sdk/react/input';
 import { ArrowRight, CornerDownLeft, ListPlus, Sparkles, Wand2 } from 'lucide-react';
 import type { Rule, RuleSetListItem, RuleType } from '@/ui/data/types';
 import { cn } from '@/ui/lib/cn';
@@ -119,6 +120,7 @@ export const RuleComposer = forwardRef<
     <div className="rounded-xl border border-line bg-surface shadow-sm transition-shadow focus-within:shadow-md">
       <div className="flex flex-wrap items-center gap-2 p-2 md:flex-nowrap">
         <Select<RuleType | 'auto'>
+          label="规则类型"
           value={typeChoice}
           onValueChange={setTypeChoice}
           size="md"
@@ -141,6 +143,7 @@ export const RuleComposer = forwardRef<
         <div className="relative min-w-[200px] flex-1">
           {type === 'RULE-SET' && typeChoice === 'RULE-SET' ? (
             <Combobox
+              aria-label="选择规则集"
               value={value || null}
               onChange={setValue}
               placeholder="选择规则集"
@@ -152,11 +155,11 @@ export const RuleComposer = forwardRef<
               }))}
             />
           ) : (
-            <input
+            <UiInput
               ref={inputRef}
               value={type === 'MATCH' && typeChoice === 'MATCH' ? '' : value}
               disabled={typeChoice === 'MATCH'}
-              onChange={(event) => setValue(event.target.value)}
+              onValueChange={setValue}
               onPaste={(event) => {
                 const text = event.clipboardData.getData('text');
                 const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
@@ -179,6 +182,7 @@ export const RuleComposer = forwardRef<
         </div>
         <ArrowRight size={15} className="hidden shrink-0 text-ink-4 md:block" />
         <Combobox
+          aria-label="规则去向"
           value={policy}
           onChange={setPolicy}
           options={policyOptions}
@@ -191,6 +195,7 @@ export const RuleComposer = forwardRef<
           <Tooltip content="插入位置：规则会加到这个锚点的末尾">
             <div className="w-[112px] shrink-0">
               <Select
+                label="插入锚点"
                 value={anchor}
                 onValueChange={setAnchor}
                 mono
@@ -199,7 +204,14 @@ export const RuleComposer = forwardRef<
             </div>
           </Tooltip>
         )}
-        <Button variant="primary" onClick={() => void submit()} disabled={!canSubmit} loading={busy} className="shrink-0">
+        <Button
+          variant="primary"
+          onClick={() => void submit()}
+          disabled={!canSubmit}
+          loading={busy}
+          data-agent-confirm={`添加规则：${type ?? ''}${detected?.value ? ` ${detected.value}` : ''} → ${policy}`}
+          className="shrink-0"
+        >
           添加
           <CornerDownLeft size={13} className="opacity-60" />
         </Button>
@@ -329,7 +341,13 @@ function BatchAddDialog({
           <Button variant="ghost" onClick={onClose}>
             取消
           </Button>
-          <Button variant="primary" loading={busy} disabled={!valid.length || !policy} onClick={() => void submit()}>
+          <Button
+            variant="primary"
+            loading={busy}
+            disabled={!valid.length || !policy}
+            data-agent-confirm={`批量添加 ${valid.length} 条规则`}
+            onClick={() => void submit()}
+          >
             添加 {valid.length} 条
           </Button>
         </>
@@ -337,10 +355,17 @@ function BatchAddDialog({
     >
       <div className="mb-3 flex flex-wrap items-center gap-2 text-sm text-ink-2">
         全部指向
-        <Combobox value={policy} onChange={setPolicy} options={policyOptions} className="w-[180px]" renderValue={(v) => <PolicyChip policy={v} size="sm" className="border-0 bg-transparent px-0" />} />
+        <Combobox
+          aria-label="批量规则去向"
+          value={policy}
+          onChange={setPolicy}
+          options={policyOptions}
+          className="w-[180px]"
+          renderValue={(v) => <PolicyChip policy={v} size="sm" className="border-0 bg-transparent px-0" />}
+        />
         插入到
         <div className="w-[120px]">
-          <Select value={anchor} onValueChange={setAnchor} mono options={anchors.map((a) => ({ value: a, label: a }))} />
+          <Select label="批量插入锚点" value={anchor} onValueChange={setAnchor} mono options={anchors.map((a) => ({ value: a, label: a }))} />
         </div>
       </div>
       <div className="max-h-[340px] overflow-y-auto rounded-lg border border-line">

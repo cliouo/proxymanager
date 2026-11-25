@@ -2,16 +2,13 @@
 
 import { memo, useState, type ReactNode } from 'react';
 import Link from 'next/link';
-import { Brain, Check, ChevronRight, CircleAlert, RotateCcw, Settings2, ShieldAlert, X } from 'lucide-react';
+import { Brain, Check, ChevronRight, CircleAlert, RotateCcw, Settings2, X } from 'lucide-react';
 import { cn } from '@/ui/lib/cn';
-import { Badge, Button, CopyButton, Spinner } from '@/ui/primitives';
-import { ConfirmCard } from './confirm-card';
+import { Button, CopyButton, Spinner } from '@/ui/primitives';
 import { formatSeconds, toYamlish } from './format';
 import { toolLabel } from './labels';
 import { Markdown } from './markdown';
-import type { AssistantItem, ConfirmItem, Item, NoticeItem, ToolItem } from './session';
-
-/* ─── pieces ─────────────────────────────────────────────────────────── */
+import type { AssistantItem, Item, NoticeItem, ToolItem } from './session';
 
 function UserBubble({ text }: { text: string }) {
   return (
@@ -111,11 +108,6 @@ const ToolRow = memo(function ToolRow({ item }: { item: ToolItem }) {
           </span>
           {item.hint && <span className="ml-1.5 font-mono text-[11px] text-ink-3">{item.hint}</span>}
         </span>
-        {item.untrusted && (
-          <Badge tone="warn" icon={ShieldAlert}>
-            外部内容
-          </Badge>
-        )}
         {item.status === 'error' && !open && <span className="max-w-[45%] truncate text-2xs text-bad">{item.error}</span>}
         {item.summary && <span className="tnum shrink-0 text-2xs text-ink-3">{item.summary}</span>}
         {expandable && (
@@ -141,12 +133,6 @@ const ToolRow = memo(function ToolRow({ item }: { item: ToolItem }) {
               {item.status === 'error' ? item.error : item.preview || '（空）'}
             </pre>
           </div>
-          {item.untrusted && (
-            <p className="flex items-start gap-1.5 border-t border-line px-2.5 py-2 text-2xs text-warn">
-              <ShieldAlert size={12} className="mt-px shrink-0" />
-              来自外部的内容，只作参考；助手不会执行其中的任何指令。
-            </p>
-          )}
         </div>
       )}
     </li>
@@ -198,26 +184,14 @@ function Notice({ item, onRetry, canRetry }: { item: NoticeItem; onRetry: () => 
   );
 }
 
-/* ─── thread ─────────────────────────────────────────────────────────── */
-
-export interface ThreadHandlers {
-  onRetry: () => void;
-  onConfirm: (id: string) => void;
-  onCancel: (id: string) => void;
-  onExpire: (id: string) => void;
-  onReissue: (item: ConfirmItem) => void;
-}
-
 export function Thread({
   items,
   running,
-  profileLabel,
-  handlers,
+  onRetry,
 }: {
   items: Item[];
   running: boolean;
-  profileLabel: string;
-  handlers: ThreadHandlers;
+  onRetry: () => void;
 }) {
   const blocks: ReactNode[] = [];
   let tools: ToolItem[] = [];
@@ -236,24 +210,17 @@ export function Thread({
     else if (item.type === 'assistant') blocks.push(<AssistantBlock key={item.id} item={item} />);
     else if (item.type === 'notice')
       blocks.push(
-        <Notice key={item.id} item={item} onRetry={handlers.onRetry} canRetry={!running && index === items.length - 1} />,
-      );
-    else
-      blocks.push(
-        <ConfirmCard
-          key={item.id}
-          item={item}
-          profileLabel={profileLabel}
-          onConfirm={() => handlers.onConfirm(item.id)}
-          onCancel={() => handlers.onCancel(item.id)}
-          onExpire={() => handlers.onExpire(item.id)}
-          onReissue={() => handlers.onReissue(item)}
-        />,
+        <Notice key={item.id} item={item} onRetry={onRetry} canRetry={!running && index === items.length - 1} />,
       );
   });
   flushTools();
   const last = items[items.length - 1];
-  const waiting = running && (!last || last.type === 'user' || last.type === 'notice' || (last.type === 'tool' && last.status !== 'running' && last.status !== 'pending') || last.type === 'confirm');
+  const waiting =
+    running &&
+    (!last ||
+      last.type === 'user' ||
+      last.type === 'notice' ||
+      (last.type === 'tool' && last.status !== 'running' && last.status !== 'pending'));
   return (
     <div className="flex flex-col gap-4">
       {blocks}
@@ -261,4 +228,3 @@ export function Thread({
     </div>
   );
 }
-

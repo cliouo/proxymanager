@@ -1,6 +1,10 @@
 'use client';
 
 import { createContext, forwardRef, useContext, useId, type ReactNode } from 'react';
+import { Button as UiButton } from '@ui-sdk/react/button';
+import { Field as UiField, FieldDescription, FieldLabel } from '@ui-sdk/react/field';
+import { Input as UiInput } from '@ui-sdk/react/input';
+import { Textarea as UiTextarea } from '@ui-sdk/react/textarea';
 import { Search, X } from 'lucide-react';
 import { cn } from '@/ui/lib/cn';
 
@@ -12,11 +16,6 @@ const fieldBase = cn(
   'aria-[invalid=true]:border-bad aria-[invalid=true]:focus:shadow-[0_0_0_3px_color-mix(in_srgb,var(--bad)_18%,transparent)]',
 );
 
-/**
- * Set by <Field>: the control whose id matches gets aria-describedby pointing
- * at the hint or (only while shown) the error, and aria-invalid while there
- * is an error — so screen readers read the message when the field is focused.
- */
 interface FieldA11y {
   id: string;
   describedBy?: string;
@@ -41,21 +40,52 @@ function useFieldA11y(
   };
 }
 
+function toStringValue(value: string | number | readonly string[] | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  return Array.isArray(value) ? value.join(',') : String(value);
+}
+
 export interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
   mono?: boolean;
   leading?: ReactNode;
   trailing?: ReactNode;
   invalid?: boolean;
   inputSize?: 'sm' | 'md' | 'lg';
+  onValueChange?: (value: string) => void;
 }
 
 const inputSizes = { sm: 'h-7 text-xs', md: 'h-8', lg: 'h-10 text-base' };
 
 export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
-  { mono, leading, trailing, invalid, className, inputSize = 'md', ...props },
+  {
+    mono,
+    leading,
+    trailing,
+    invalid,
+    className,
+    inputSize = 'md',
+    value,
+    defaultValue,
+    onValueChange,
+    onChange,
+    ...props
+  },
   ref,
 ) {
   const a11y = useFieldA11y(props.id, invalid, props.required, props['aria-describedby']);
+  const handleValueChange =
+    onValueChange || onChange
+      ? (next: string, details: { source?: string }) => {
+          onValueChange?.(next);
+          if (details.source === 'agent' && !onValueChange && onChange) {
+            onChange({
+              target: { value: next },
+              currentTarget: { value: next },
+            } as React.ChangeEvent<HTMLInputElement>);
+          }
+        }
+      : undefined;
+
   if (leading || trailing) {
     return (
       <div className={cn('relative flex items-center', className)}>
@@ -64,8 +94,12 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
             {leading}
           </span>
         )}
-        <input
+        <UiInput
           ref={ref}
+          value={toStringValue(value)}
+          defaultValue={toStringValue(defaultValue)}
+          onChange={onChange}
+          onValueChange={handleValueChange}
           className={cn(
             fieldBase,
             inputSizes[inputSize],
@@ -82,8 +116,12 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
     );
   }
   return (
-    <input
+    <UiInput
       ref={ref}
+      value={toStringValue(value)}
+      defaultValue={toStringValue(defaultValue)}
+      onChange={onChange}
+      onValueChange={handleValueChange}
       className={cn(fieldBase, inputSizes[inputSize], 'px-2.5', mono && 'font-mono text-[12.5px]', className)}
       {...props}
       {...a11y}
@@ -91,19 +129,37 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
   );
 });
 
-export interface TextareaProps extends React.TextareaHTMLAttributes<HTMLTextAreaElement> {
+export interface TextareaProps extends Omit<React.TextareaHTMLAttributes<HTMLTextAreaElement>, 'onSubmit'> {
   mono?: boolean;
   invalid?: boolean;
+  onValueChange?: (value: string) => void;
 }
 
 export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(function Textarea(
-  { mono, invalid, className, ...props },
+  { mono, invalid, className, value, defaultValue, onValueChange, onChange, ...props },
   ref,
 ) {
   const a11y = useFieldA11y(props.id, invalid, props.required, props['aria-describedby']);
+  const handleValueChange =
+    onValueChange || onChange
+      ? (next: string, details: { source?: string }) => {
+          onValueChange?.(next);
+          if (details.source === 'agent' && !onValueChange && onChange) {
+            onChange({
+              target: { value: next },
+              currentTarget: { value: next },
+            } as React.ChangeEvent<HTMLTextAreaElement>);
+          }
+        }
+      : undefined;
+
   return (
-    <textarea
+    <UiTextarea
       ref={ref}
+      value={toStringValue(value)}
+      defaultValue={toStringValue(defaultValue)}
+      onChange={onChange}
+      onValueChange={handleValueChange}
       className={cn(
         fieldBase,
         'min-h-[84px] resize-y px-2.5 py-2 leading-relaxed',
@@ -124,6 +180,7 @@ export function SearchInput({
   autoFocus,
   shortcut,
   inputSize = 'md',
+  'aria-label': ariaLabel,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -132,6 +189,7 @@ export function SearchInput({
   autoFocus?: boolean;
   shortcut?: ReactNode;
   inputSize?: 'sm' | 'md' | 'lg';
+  'aria-label'?: string;
 }) {
   return (
     <Input
@@ -140,7 +198,8 @@ export function SearchInput({
       value={value}
       autoFocus={autoFocus}
       placeholder={placeholder}
-      onChange={(event) => onChange(event.target.value)}
+      aria-label={ariaLabel ?? placeholder}
+      onValueChange={(next) => onChange(next)}
       onKeyDown={(event) => {
         if (event.key === 'Escape' && value) {
           event.stopPropagation();
@@ -150,14 +209,14 @@ export function SearchInput({
       leading={<Search size={14} strokeWidth={1.75} />}
       trailing={
         value ? (
-          <button
+          <UiButton
             type="button"
-            aria-label="清除"
+            aria-label="清除搜索"
             onClick={() => onChange('')}
             className="flex size-5 items-center justify-center rounded text-ink-3 hover:bg-surface-2 hover:text-ink"
           >
             <X size={12} />
-          </button>
+          </UiButton>
         ) : (
           shortcut
         )
@@ -191,12 +250,10 @@ export interface FieldProps {
   error?: ReactNode;
   optional?: boolean;
   className?: string;
-  /** Render label and control side by side (settings rows). */
   inline?: boolean;
   children: (id: string) => ReactNode;
 }
 
-/** Label + control + hint/error, wired with a shared id (and aria-describedby, see FieldContext). */
 export function Field({ label, hint, error, optional, className, inline, children }: FieldProps) {
   const id = useId();
   const hintId = `${id}-hint`;
@@ -209,17 +266,27 @@ export function Field({ label, hint, error, optional, className, inline, childre
   if (inline) {
     return (
       <FieldContext.Provider value={a11y}>
-        <div className={cn('flex items-start justify-between gap-6 py-3', className)}>
+        <UiField
+          invalid={Boolean(error) || undefined}
+          className={cn('flex items-start justify-between gap-6 py-3', className)}
+        >
           <div className="min-w-0 flex-1 pt-1">
             {label && (
-              <Label htmlFor={id} optional={optional} className="text-sm font-medium text-ink">
-                {label}
-              </Label>
+              <div className="flex items-center gap-1.5">
+                <FieldLabel htmlFor={id} className="text-sm font-medium text-ink">
+                  {label}
+                </FieldLabel>
+                {optional && (
+                  <span aria-hidden="true" className="text-xs font-normal text-ink-4">
+                    可选
+                  </span>
+                )}
+              </div>
             )}
             {hint && !error && (
-              <p id={hintId} className="mt-0.5 text-xs text-ink-3">
+              <FieldDescription id={hintId} className="mt-0.5 text-xs text-ink-3">
                 {hint}
-              </p>
+              </FieldDescription>
             )}
             {error && (
               <p id={errorId} className="mt-0.5 text-xs text-bad">
@@ -228,17 +295,27 @@ export function Field({ label, hint, error, optional, className, inline, childre
             )}
           </div>
           <div className="shrink-0">{children(id)}</div>
-        </div>
+        </UiField>
       </FieldContext.Provider>
     );
   }
   return (
     <FieldContext.Provider value={a11y}>
-      <div className={cn('flex flex-col gap-1.5', className)}>
+      <UiField
+        invalid={Boolean(error) || undefined}
+        className={cn('flex flex-col gap-1.5', className)}
+      >
         {label && (
-          <Label htmlFor={id} optional={optional}>
-            {label}
-          </Label>
+          <div className="flex items-center gap-1.5">
+            <FieldLabel htmlFor={id} className="text-xs font-medium text-ink-2">
+              {label}
+            </FieldLabel>
+            {optional && (
+              <span aria-hidden="true" className="text-xs font-normal text-ink-4">
+                可选
+              </span>
+            )}
+          </div>
         )}
         {children(id)}
         {error ? (
@@ -246,11 +323,11 @@ export function Field({ label, hint, error, optional, className, inline, childre
             {error}
           </p>
         ) : hint ? (
-          <p id={hintId} className="text-xs leading-relaxed text-ink-3">
+          <FieldDescription id={hintId} className="text-xs leading-relaxed text-ink-3">
             {hint}
-          </p>
+          </FieldDescription>
         ) : null}
-      </div>
+      </UiField>
     </FieldContext.Provider>
   );
 }

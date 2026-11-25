@@ -73,7 +73,8 @@ async function deleteWithConfirm(kind: 'subscriptions' | 'collections', id: stri
   const ok = await confirmAction({
     title: `删除「${label}」？`,
     description: `${usageSentence(usage)}删除后无法恢复，它的分发链接也会失效。`,
-    confirmText: '删除',
+    confirmText: '确认永久删除',
+    confirmHint: `永久删除「${label}」`,
     tone: 'danger',
   });
   if (!ok) return false;
