@@ -1,6 +1,4 @@
 import { ProblemDetailsError } from '@/lib/http/problem';
-import { defaultTemplateFor } from '@/lib/proxies/naming';
-import { buildManagedCandidate } from '@/lib/services/namingManagedCandidate';
 import {
   applyOperatorMutation,
   buildOperatorSnapshot,
@@ -59,18 +57,15 @@ function invalidateSnapshot(): void {
 
 export async function createCollection(input: CollectionCreate): Promise<Collection> {
   const parsed = CollectionCreateSchema.parse(input);
-  let operators: unknown[];
-  if (parsed.operators !== undefined) {
-    operators = applyOperatorMutation(
-      buildOperatorSnapshot({ operators: [] }),
-      parsed.operators,
-      'generic',
-    ).storage;
-  } else {
-    const snapshot = buildOperatorSnapshot({ operators: [] });
-    const candidate = buildManagedCandidate(snapshot, { template: defaultTemplateFor(true) });
-    operators = applyOperatorMutation(snapshot, candidate.storage, 'naming').storage;
-  }
+  // 智能命名 is opt-in: a new collection starts with NO rename-template —
+  // users enable it per aggregate from the naming workspace. Creating a
+  // rename-template row through this GENERIC create is still forbidden
+  // (the mutation policy's dedicated naming gate).
+  const operators = applyOperatorMutation(
+    buildOperatorSnapshot({ operators: [] }),
+    parsed.operators,
+    'generic',
+  ).storage;
   // Version bracket FIRST — dup checks + commit share one generation.
   const planningVersion = await getConfigVersion();
   const dup = await getCollectionByName(parsed.name);

@@ -321,6 +321,7 @@ export function NewPoolDialog({
       type: 'select',
       subscription_ids: ids,
       subscription_tags: tags,
+      operators: [],
       notes: notes.trim() || undefined,
     };
     setSaving(true);

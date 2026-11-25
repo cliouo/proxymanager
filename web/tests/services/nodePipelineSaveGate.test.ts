@@ -536,13 +536,13 @@ describe('create / replace / delete gates (Delivery finding 6)', () => {
   it('collection create commits under the planning version (no consumers possible)', async () => {
     seedCollection();
     const created = await createCollection({ name: '新池', slug: 'new-pool' } as never);
-    expect(created.operators).toEqual([expect.objectContaining({ kind: 'rename-template', template: expect.any(String) })]);
+    expect(created.operators).toEqual([]);
     expect((bucket(REDIS_KEYS.collections).get(COL_ID) as Collection).operators).toEqual([]);
     expect(preflightMock).not.toHaveBeenCalled();
     expect(counters.get(REDIS_KEYS.configVersion)).toBe(8);
   });
 
-  it('honors explicit operator opt-out on creation but keeps generic naming creation forbidden', async () => {
+  it('explicit empty operators create a plain pool; generic naming creation stays forbidden', async () => {
     const created = await createCollection({ name: '无命名', slug: 'plain-pool', operators: [] } as never);
     expect(created.operators).toEqual([]);
     await expect(createCollection({ name: '不能注入', slug: 'invalid-pool', operators: [RT_OP] } as never)).rejects.toMatchObject({
