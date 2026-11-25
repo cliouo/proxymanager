@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Pause, Play, ShieldAlert, Square } from 'lucide-react';
 import { cn } from '@/ui/lib/cn';
 import { useUi } from '@/ui/shell/state';
@@ -314,91 +314,31 @@ export function AgentTakeoverAura() {
   const pendingConfirm = usePendingAgentConfirm();
   const active = takeover.mode !== 'idle';
   const rect = useLeftWorkspaceRect(active);
-  const gradientId = useId();
 
   if (!active || rect.width < 48 || rect.height < 48) return null;
 
   const waitingForHuman = takeover.mode === 'paused' || Boolean(pendingConfirm);
   const acting = !waitingForHuman && takeover.mode === 'acting';
-  const strokeWidth = waitingForHuman ? 2.5 : acting ? 2.5 : 2;
-  const inset = strokeWidth / 2;
-  const innerW = Math.max(0, rect.width - strokeWidth);
-  const innerH = Math.max(0, rect.height - strokeWidth);
+  const stateAttr = waitingForHuman ? 'paused' : acting ? 'acting' : 'standby';
 
   return (
     <div
       aria-hidden="true"
       data-agent-hidden
       data-takeover-exempt
+      data-aura-state={stateAttr}
       style={{ width: rect.width, height: rect.height }}
-      className="pointer-events-none fixed left-0 top-0 z-[58] overflow-hidden transition-opacity duration-200"
+      className="agent-fluid-aura pointer-events-none fixed left-0 top-0 z-[58] overflow-hidden"
     >
-      <div
-        className={cn(
-          'absolute inset-0 transition-shadow duration-300',
-          waitingForHuman
-            ? 'shadow-[inset_0_0_24px_0_color-mix(in_oklab,var(--warn)_24%,transparent)]'
-            : acting
-              ? 'shadow-[inset_0_0_22px_0_color-mix(in_oklab,var(--accent)_18%,transparent)]'
-              : 'shadow-[inset_0_0_16px_0_color-mix(in_oklab,var(--accent)_10%,transparent)]',
-        )}
-      />
-      <svg
-        width={rect.width}
-        height={rect.height}
-        className="block h-full w-full overflow-visible"
-      >
-        <defs>
-          <linearGradient id={gradientId} x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stopColor="var(--accent)" />
-            <stop offset="55%" stopColor="var(--l-8)" />
-            <stop offset="100%" stopColor="var(--accent)" />
-          </linearGradient>
-        </defs>
-        <rect
-          x={inset}
-          y={inset}
-          width={innerW}
-          height={innerH}
-          rx={0}
-          fill="none"
-          stroke={waitingForHuman ? 'var(--warn)' : 'var(--accent)'}
-          strokeOpacity={waitingForHuman ? 0.78 : acting ? 0.24 : 0.4}
-          strokeWidth={strokeWidth}
-        />
-        {!waitingForHuman && (
-          <>
-            <rect
-              x={inset}
-              y={inset}
-              width={innerW}
-              height={innerH}
-              rx={0}
-              fill="none"
-              pathLength={100}
-              stroke={`url(#${gradientId})`}
-              strokeWidth={acting ? 7 : 5}
-              strokeOpacity={acting ? 0.24 : 0.14}
-              strokeLinecap="round"
-              className={acting ? 'agent-aura-comet agent-aura-comet-fast' : 'agent-aura-comet'}
-            />
-            <rect
-              x={inset}
-              y={inset}
-              width={innerW}
-              height={innerH}
-              rx={0}
-              fill="none"
-              pathLength={100}
-              stroke={`url(#${gradientId})`}
-              strokeWidth={acting ? 2.6 : 2.1}
-              strokeOpacity={acting ? 0.95 : 0.72}
-              strokeLinecap="round"
-              className={acting ? 'agent-aura-comet agent-aura-comet-fast' : 'agent-aura-comet'}
-            />
-          </>
-        )}
-      </svg>
+      {/* Soft feathered edge mist so the perimeter never reads as a rigid hairline or sharp 90deg corner. */}
+      <div className="agent-aura-mist" />
+      <div className="agent-aura-vignette" />
+      {/* Independent non-harmonic radial waves gliding around the edges like luminous air and water. */}
+      <span className="agent-aura-wave agent-aura-wave-top" />
+      <span className="agent-aura-wave agent-aura-wave-right" />
+      <span className="agent-aura-wave agent-aura-wave-bottom" />
+      <span className="agent-aura-wave agent-aura-wave-left" />
+      <span className="agent-aura-wave agent-aura-wave-corner" />
     </div>
   );
 }
