@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { Dices, Eye, EyeOff, MoreHorizontal, Plus, Undo2 } from 'lucide-react';
+import { Button as UiButton } from '@ui-sdk/react/button';
 import { CodeEditor } from '@/ui/editor/code-editor';
 import { cn } from '@/ui/lib/cn';
 import {
@@ -215,6 +216,7 @@ function PatchRow({
       control = (
         <Select
           mono
+          label={meta?.label ?? k}
           value={text || undefined}
           onValueChange={onValue}
           options={options.map((o) => ({ value: o, label: o }))}
@@ -284,7 +286,7 @@ function PatchRow({
           </span>
         </div>
       </div>
-      {kind === 'object' && <YamlValue value={value} onValue={onValue} onError={onError} invalid={!!error} />}
+      {kind === 'object' && <YamlValue label={`${meta?.label ?? k} YAML`} value={value} onValue={onValue} onError={onError} invalid={!!error} />}
       {error && <p className="text-xs text-bad">{error}</p>}
     </li>
   );
@@ -351,7 +353,7 @@ function SecretField({
 }) {
   const [shown, setShown] = useState(false);
   return (
-    <div className="flex items-center gap-1">
+    <div className="flex items-center gap-1" data-agent-secret>
       <Input
         mono
         className="min-w-0 flex-1"
@@ -359,17 +361,17 @@ function SecretField({
         value={value}
         autoFocus={autoFocus}
         autoComplete="off"
+        data-agent-secret
         aria-label={label}
         onChange={(event) => onValue(event.target.value)}
         trailing={
-          <button
-            type="button"
+          <UiButton
             onClick={() => setShown((s) => !s)}
-            aria-label={shown ? '隐藏' : '显示'}
+            aria-label={shown ? `隐藏 ${label}` : `显示 ${label}`}
             className="flex size-6 items-center justify-center rounded text-ink-3 hover:bg-surface-2 hover:text-ink"
           >
             {shown ? <EyeOff size={13} /> : <Eye size={13} />}
-          </button>
+          </UiButton>
         }
       />
       {canGenerate && (
@@ -383,11 +385,13 @@ function SecretField({
 
 /** A nested value edited as a small YAML document; parses on every keystroke. */
 function YamlValue({
+  label,
   value,
   onValue,
   onError,
   invalid,
 }: {
+  label: string;
   value: unknown;
   onValue: (value: unknown) => void;
   onError: (error: string | null) => void;
@@ -409,6 +413,7 @@ function YamlValue({
       )}
     >
       <CodeEditor
+        label={label}
         value={text}
         lineNumbers={false}
         height={`${lines * 18 + 22}px`}

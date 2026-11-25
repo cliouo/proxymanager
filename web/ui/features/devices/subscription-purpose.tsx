@@ -1,6 +1,13 @@
+import { Select } from '@/ui/primitives';
 import type { DeviceLinkVariant } from './model';
 
 export const SHADOWROCKET_HINT = '在 Shadowrocket 的「配置」页下载并使用';
+
+const PURPOSE_OPTIONS: { value: DeviceLinkVariant; label: string }[] = [
+  { value: 'clash', label: 'Clash / Mihomo 完整配置' },
+  { value: 'shadowrocket', label: 'Shadowrocket 完整配置' },
+  { value: 'base64', label: '通用 Base64（仅节点）' },
+];
 
 export function SubscriptionPurpose({
   value,
@@ -10,15 +17,11 @@ export function SubscriptionPurpose({
   onChange: (value: DeviceLinkVariant) => void;
 }) {
   return (
-    <select
-      aria-label="订阅用途"
+    <Select
+      label="订阅用途"
       value={value}
-      onChange={(event) => onChange(event.target.value as DeviceLinkVariant)}
-      className="h-8 w-full rounded-md border border-line bg-surface px-2 text-sm text-ink"
-    >
-      <option value="clash">Clash / Mihomo 完整配置</option>
-      <option value="shadowrocket">Shadowrocket 完整配置</option>
-      <option value="base64">通用 Base64（仅节点）</option>
-    </select>
+      onValueChange={(next) => onChange(next as DeviceLinkVariant)}
+      options={PURPOSE_OPTIONS}
+    />
   );
 }

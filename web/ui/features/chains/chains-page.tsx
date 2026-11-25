@@ -6,6 +6,7 @@ import { matchFilter } from '@/lib/proxies/filterMatch';
 import { errorMessage } from '@/ui/data/api';
 import { refreshProfile, useChains, useGroups, useParsed, useRuleSummary } from '@/ui/data/hooks';
 import { cn } from '@/ui/lib/cn';
+import { DataView } from '@/ui/agent';
 import { Badge, Button, Card, confirmAction, copyText, EmptyState, Menu, notify, Skeleton, type MenuEntry } from '@/ui/primitives';
 import { Page, PageHeader } from '@/ui/shell/page';
 import { useScope } from '@/ui/shell/scope';
@@ -57,7 +58,8 @@ export function ChainsPage() {
           ? `它正被 ${users} 使用，需要先把这些引用改成别的策略，否则删除会被拒绝。`
           : '删除后客户端里不再有这个策略组，可以在「操作历史」里撤销。'
       }`,
-      confirmText: '删除',
+      confirmText: '确认删除',
+      confirmHint: '删除后客户端里不再有这个链式代理策略组',
       tone: 'danger',
     });
     if (!ok) return;
@@ -126,107 +128,122 @@ export function ChainsPage() {
           />
         </Card>
       ) : (
-        <div className="flex flex-col gap-3">
-          {views.map((view, index) => {
-            const { rules, refs } = usage(view.chainName);
-            const menu: MenuEntry[] = [
-              ...(view.kind === 'pool'
-                ? [{ label: '编辑前置成员', icon: Users, onSelect: () => setEditing(view) }]
-                : view.kind === 'smart'
-                  ? [{ label: '调整筛选与测速', icon: SlidersHorizontal, onSelect: () => setEditing(view) }]
-                  : []),
-              {
-                label: '复制策略组名',
-                icon: Copy,
-                onSelect: () => void copyText(view.chainName).then((ok) => ok && notify.success('已复制', view.chainName)),
-              },
-              'separator',
-              { label: '删除链路', icon: Trash2, tone: 'danger', onSelect: () => void remove(view) },
-            ];
-            const front =
-              view.kind === 'fixed' ? (
-                <Endpoint
-                  name={view.front}
-                  isGroup={groupNames.has(view.front)}
-                  meta={groupNames.has(view.front) ? '策略组' : nodeTypes.get(view.front)}
-                />
-              ) : (
-                <Endpoint
-                  name={view.poolName}
-                  isGroup
-                  meta={
-                    view.kind === 'pool'
-                      ? `前置池 · ${view.members.length} 个成员 · 客户端里切换`
-                      : `智能前置池 · ${STRATEGY_META[view.smart.strategy].label} · 每 ${view.smart.interval} 秒测速`
-                  }
-                />
-              );
-            const matched =
-              view.kind === 'smart' && parsed.data ? matchFilter(nodeNames, view.smart.filter || undefined).matched : null;
-            return (
-              <Card
-                key={view.chainName}
-                as="article"
-                className={cn(
-                  'flex animate-rise flex-col gap-4 p-4 transition-shadow',
-                  fresh === view.chainName && 'border-accent-line shadow-[var(--ring)]',
-                )}
-              >
-                <header className="flex items-start gap-3">
-                  <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-                    <PolicyChip policy={view.chainName} className="max-w-full" />
-                    <Badge tone="outline">{KIND_LABEL[view.kind]}</Badge>
-                  </div>
-                  <span className="hidden shrink-0 pt-1 text-xs text-ink-3 sm:inline">
-                    {rules || refs.length
-                      ? [rules ? `${rules} 条规则` : '', refs.length ? `${refs.length} 个策略组` : ''].filter(Boolean).join(' · ') + ' 在用'
-                      : '还没有规则使用'}
-                  </span>
-                  <Menu
-                    items={menu}
-                    trigger={
-                      <Button variant="ghost" size="sm" iconOnly icon={MoreHorizontal} aria-label={`链路 ${index + 1} 的更多操作`} />
+        <DataView
+          label="链式代理列表"
+          summary={`共 ${views.length} 条链路`}
+          items={views.map((v) => ({
+            value: v.chainName,
+            label: `${v.chainName} [${KIND_LABEL[v.kind]}] · ${
+              v.kind === 'fixed'
+                ? `${v.front} → ${v.backend}`
+                : v.kind === 'pool'
+                  ? `${v.poolName} (${v.members.length} 成员) → ${v.backend}`
+                  : `${v.poolName} (筛选: ${v.smart.filter || '全部'}) → ${v.backend}`
+            }`,
+          }))}
+        >
+          <div className="flex flex-col gap-3">
+            {views.map((view, index) => {
+              const { rules, refs } = usage(view.chainName);
+              const menu: MenuEntry[] = [
+                ...(view.kind === 'pool'
+                  ? [{ label: '编辑前置成员', icon: Users, onSelect: () => setEditing(view) }]
+                  : view.kind === 'smart'
+                    ? [{ label: '调整筛选与测速', icon: SlidersHorizontal, onSelect: () => setEditing(view) }]
+                    : []),
+                {
+                  label: '复制策略组名',
+                  icon: Copy,
+                  onSelect: () => void copyText(view.chainName).then((ok) => ok && notify.success('已复制', view.chainName)),
+                },
+                'separator',
+                { label: '删除链路', icon: Trash2, tone: 'danger', onSelect: () => void remove(view) },
+              ];
+              const front =
+                view.kind === 'fixed' ? (
+                  <Endpoint
+                    name={view.front}
+                    isGroup={groupNames.has(view.front)}
+                    meta={groupNames.has(view.front) ? '策略组' : nodeTypes.get(view.front)}
+                  />
+                ) : (
+                  <Endpoint
+                    name={view.poolName}
+                    isGroup
+                    meta={
+                      view.kind === 'pool'
+                        ? `前置池 · ${view.members.length} 个成员 · 客户端里切换`
+                        : `智能前置池 · ${STRATEGY_META[view.smart.strategy].label} · 每 ${view.smart.interval} 秒测速`
                     }
                   />
-                </header>
-                <ChainDiagram
-                  lineName={view.chainName}
-                  front={front}
-                  backend={<Endpoint name={view.backend} meta={nodeTypes.get(view.backend) ?? '落地节点'} />}
-                />
-                {view.kind === 'pool' && (
-                  <div className="flex flex-wrap items-center gap-1.5 border-t border-line pt-3">
-                    <span className="mr-1 text-xs text-ink-3">成员</span>
-                    {view.members.map((member) => (
-                      <span key={member} className="inline-flex h-6 max-w-[220px] items-center rounded-md border border-line bg-surface px-1.5 text-xs shadow-xs">
-                        <NodeName name={member} />
-                      </span>
-                    ))}
-                  </div>
-                )}
-                {view.kind === 'smart' && (
-                  <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-line pt-3 text-xs text-ink-3">
-                    <span>
-                      筛选{' '}
-                      <code className="rounded-[5px] border border-line bg-surface-2 px-1 py-px font-mono text-[11.5px] text-ink-2">
-                        {view.smart.filter || '全部节点'}
-                      </code>
+                );
+              const matched =
+                view.kind === 'smart' && parsed.data ? matchFilter(nodeNames, view.smart.filter || undefined).matched : null;
+              return (
+                <Card
+                  key={view.chainName}
+                  as="article"
+                  className={cn(
+                    'flex animate-rise flex-col gap-4 p-4 transition-shadow',
+                    fresh === view.chainName && 'border-accent-line shadow-[var(--ring)]',
+                  )}
+                >
+                  <header className="flex items-start gap-3">
+                    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+                      <PolicyChip policy={view.chainName} className="max-w-full" />
+                      <Badge tone="outline">{KIND_LABEL[view.kind]}</Badge>
+                    </div>
+                    <span className="hidden shrink-0 pt-1 text-xs text-ink-3 sm:inline">
+                      {rules || refs.length
+                        ? [rules ? `${rules} 条规则` : '', refs.length ? `${refs.length} 个策略组` : ''].filter(Boolean).join(' · ') + ' 在用'
+                        : '还没有规则使用'}
                     </span>
-                    {matched && (
-                      <>
-                        <span>
-                          当前匹配 <span className="tnum font-medium text-ink">{matched.length}</span> 个
+                    <Menu
+                      items={menu}
+                      trigger={
+                        <Button variant="ghost" size="sm" iconOnly icon={MoreHorizontal} aria-label={`链路 ${index + 1} 的更多操作`} />
+                      }
+                    />
+                  </header>
+                  <ChainDiagram
+                    lineName={view.chainName}
+                    front={front}
+                    backend={<Endpoint name={view.backend} meta={nodeTypes.get(view.backend) ?? '落地节点'} />}
+                  />
+                  {view.kind === 'pool' && (
+                    <div className="flex flex-wrap items-center gap-1.5 border-t border-line pt-3">
+                      <span className="mr-1 text-xs text-ink-3">成员</span>
+                      {view.members.map((member) => (
+                        <span key={member} className="inline-flex h-6 max-w-[220px] items-center rounded-md border border-line bg-surface px-1.5 text-xs shadow-xs">
+                          <NodeName name={member} />
                         </span>
-                        <RegionStrip names={matched} max={5} />
-                      </>
-                    )}
-                    <span className="basis-full text-2xs text-ink-4 sm:basis-auto">订阅更新、节点改名后自动跟着变</span>
-                  </div>
-                )}
-              </Card>
-            );
-          })}
-        </div>
+                      ))}
+                    </div>
+                  )}
+                  {view.kind === 'smart' && (
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-line pt-3 text-xs text-ink-3">
+                      <span>
+                        筛选{' '}
+                        <code className="rounded-[5px] border border-line bg-surface-2 px-1 py-px font-mono text-[11.5px] text-ink-2">
+                          {view.smart.filter || '全部节点'}
+                        </code>
+                      </span>
+                      {matched && (
+                        <>
+                          <span>
+                            当前匹配 <span className="tnum font-medium text-ink">{matched.length}</span> 个
+                          </span>
+                          <RegionStrip names={matched} max={5} />
+                        </>
+                      )}
+                      <span className="basis-full text-2xs text-ink-4 sm:basis-auto">订阅更新、节点改名后自动跟着变</span>
+                    </div>
+                  )}
+                </Card>
+              );
+            })}
+          </div>
+        </DataView>
       )}
 
       <NewChainDialog

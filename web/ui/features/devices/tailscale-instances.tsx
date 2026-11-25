@@ -16,6 +16,7 @@ import { keys, refreshProfile } from '@/ui/data/hooks';
 import { useQuery } from '@/ui/data/query';
 import type { PublicTailscaleDeviceFeature } from '@/ui/data/types';
 import { ipLiteralFamily } from '@/lib/net/ipLiteral';
+import { DataView } from '@/ui/agent';
 import {
   Badge,
   Button,
@@ -266,7 +267,7 @@ function InstanceEditor({
           <Button variant="ghost" size="sm" onClick={() => onOpenChange(false)}>
             取消
           </Button>
-          <Button size="sm" variant="primary" loading={busy} onClick={() => void save()}>
+          <Button size="sm" variant="primary" loading={busy} data-agent-confirm onClick={() => void save()}>
             {instance ? '保存实例' : '新增实例'}
           </Button>
         </>
@@ -335,6 +336,7 @@ function InstanceEditor({
                 mono
                 type="password"
                 autoComplete="off"
+                data-agent-secret
                 placeholder={instance?.hasAuthKey ? '输入新密钥以替换' : 'tskey-auth-…'}
                 value={form.authKey}
                 onChange={(event) => update({ authKey: event.target.value })}
@@ -458,7 +460,8 @@ export function AdditionalInstances({
       title: `删除 Tailscale 实例「${instance.hostname}」？`,
       description:
         '它的节点、策略组与「目标 IP + 端口」规则会从这台设备的配置中移除；原实例和其它附加实例不受影响。密钥一并删除且不可恢复。',
-      confirmText: '删除',
+      confirmText: '确认删除',
+      confirmHint: '删除该附加 Tailscale 实例及其密钥',
       tone: 'danger',
     });
     if (!ok) return;
@@ -511,40 +514,49 @@ export function AdditionalInstances({
           还没有附加实例。
         </p>
       ) : (
-        <ul className="flex flex-col gap-2">
-          {instances.map((instance) => (
-            <li
-              key={instance.id}
-              className="flex flex-wrap items-center gap-2 rounded-lg border border-line bg-surface-2/60 px-3 py-2"
-            >
-              <Server size={13} className="shrink-0 text-ink-3" />
-              <span className="font-mono text-xs text-ink">{instance.hostname}</span>
-              {instance.hasAuthKey ? (
-                <Badge tone="ok">密钥已设置</Badge>
-              ) : (
-                <Badge tone="warn">无密钥</Badge>
-              )}
-              <div className="flex min-w-0 flex-1 flex-wrap gap-1">
-                {(instance.serviceRoutes ?? []).map((route) => (
-                  <Badge key={`${route.ip}:${route.port}`} mono tone="outline">
-                    {formatServiceRoute(route)}
-                  </Badge>
-                ))}
-              </div>
-              <Button size="xs" variant="ghost" onClick={() => setEditing({ instance })}>
-                编辑
-              </Button>
-              <Button
-                size="xs"
-                variant="danger-ghost"
-                icon={Trash2}
-                loading={busyId === instance.id}
-                aria-label={`删除实例 ${instance.hostname}`}
-                onClick={() => void remove(instance)}
-              />
-            </li>
-          ))}
-        </ul>
+        <DataView
+          label="Tailscale 附加实例"
+          summary={`共 ${instances.length} 个附加实例`}
+          items={instances.map((i) => ({
+            value: i.id ?? i.hostname,
+            label: `${i.hostname} · ${i.hasAuthKey ? '密钥已设置' : '无密钥'}${(i.serviceRoutes?.length ?? 0) > 0 ? ` · ${(i.serviceRoutes ?? []).map(formatServiceRoute).join(', ')}` : ''}`,
+          }))}
+        >
+          <ul className="flex flex-col gap-2">
+            {instances.map((instance) => (
+              <li
+                key={instance.id}
+                className="flex flex-wrap items-center gap-2 rounded-lg border border-line bg-surface-2/60 px-3 py-2"
+              >
+                <Server size={13} className="shrink-0 text-ink-3" />
+                <span className="font-mono text-xs text-ink">{instance.hostname}</span>
+                {instance.hasAuthKey ? (
+                  <Badge tone="ok">密钥已设置</Badge>
+                ) : (
+                  <Badge tone="warn">无密钥</Badge>
+                )}
+                <div className="flex min-w-0 flex-1 flex-wrap gap-1">
+                  {(instance.serviceRoutes ?? []).map((route) => (
+                    <Badge key={`${route.ip}:${route.port}`} mono tone="outline">
+                      {formatServiceRoute(route)}
+                    </Badge>
+                  ))}
+                </div>
+                <Button size="xs" variant="ghost" onClick={() => setEditing({ instance })}>
+                  编辑
+                </Button>
+                <Button
+                  size="xs"
+                  variant="danger-ghost"
+                  icon={Trash2}
+                  loading={busyId === instance.id}
+                  aria-label={`删除实例 ${instance.hostname}`}
+                  onClick={() => void remove(instance)}
+                />
+              </li>
+            ))}
+          </ul>
+        </DataView>
       )}
 
       {(query.data?.warnings ?? []).map((warning) => (

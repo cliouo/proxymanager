@@ -3,9 +3,11 @@
 import { useDeferredValue, useMemo, useState } from 'react';
 import { diffLines } from 'diff';
 import { ChevronsUpDown, CircleAlert, RefreshCw } from 'lucide-react';
+import { Button as UiButton } from '@ui-sdk/react/button';
 import { errorMessage } from '@/ui/data/api';
 import { useDevicePreview } from '@/ui/data/hooks';
 import { cn } from '@/ui/lib/cn';
+import { DataView } from '@/ui/agent';
 import { Badge, Button, Card, CardHeader, SegmentedControl, Skeleton } from '@/ui/primitives';
 import { draftDeviceYaml, parseShared, type Patch } from './model';
 
@@ -110,6 +112,7 @@ export function PreviewPanel({
           <>
             <SegmentedControl
               size="sm"
+              label="预览视图"
               value={view}
               onChange={setView}
               options={[
@@ -161,7 +164,29 @@ export function PreviewPanel({
           ))}
         </div>
       ) : (
-        <>
+        <DataView
+          label="设备生效预览"
+          summary={
+            device === null
+              ? '差异无效'
+              : stats.add + stats.del === 0
+                ? '与共享配置一致'
+                : `${isDraft ? '草稿' : '已保存'} · +${stats.add} −${stats.del} 行`
+          }
+          items={[
+            ...issues.map((issue, i) => ({
+              value: `issue:${i}`,
+              label: `错误${issue.path ? ` (${issue.path})` : ''}：${issue.message}`,
+            })),
+            ...lines
+              .filter((l) => l.kind !== 'ctx')
+              .slice(0, 120)
+              .map((l, i) => ({
+                value: `diff:${i}`,
+                label: `${l.kind === 'add' ? '+' : '-'}${l.text}`,
+              })),
+          ]}
+        >
           {issues.length > 0 && (
             <ul className="flex flex-col gap-2 border-t border-line px-4 py-3">
               {issues.map((issue, i) => (
@@ -186,15 +211,14 @@ export function PreviewPanel({
               <div className="w-max min-w-full py-1.5 font-mono text-[11.5px] leading-[1.65]">
                 {rows.map((row, i) =>
                   row.type === 'gap' ? (
-                    <button
+                    <UiButton
                       key={`gap-${row.from}`}
-                      type="button"
                       onClick={() => setExpanded((prev) => new Set(prev).add(row.from))}
                       className="my-0.5 flex w-full items-center gap-2 bg-surface-2/70 px-3 py-0.5 font-sans text-[11px] text-ink-3 transition hover:bg-surface-2 hover:text-ink"
                     >
                       <ChevronsUpDown size={12} />
                       展开 {row.count} 行相同内容
-                    </button>
+                    </UiButton>
                   ) : (
                     <div
                       key={i}
@@ -227,7 +251,7 @@ export function PreviewPanel({
               </div>
             </div>
           )}
-        </>
+        </DataView>
       )}
     </Card>
   );

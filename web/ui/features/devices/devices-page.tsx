@@ -4,10 +4,12 @@ import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ArrowUpRight, CircleAlert, Layers, MonitorSmartphone, MoreHorizontal, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react';
+import { Radio, RadioGroup } from '@ui-sdk/react/radio';
 import { api, ApiError, errorMessage } from '@/ui/data/api';
 import { refreshProfile, useDashboard, useDevices } from '@/ui/data/hooks';
 import type { PublicDevice } from '@/ui/data/types';
 import { cn } from '@/ui/lib/cn';
+import { DataView } from '@/ui/agent';
 import {
   Button,
   Card,
@@ -73,7 +75,8 @@ export function DevicesPage() {
     const ok = await confirmAction({
       title: `删除设备「${label}」？`,
       description: '它的专属订阅链接会立即失效，客户端下次更新会失败。可以在「操作历史」里撤销。',
-      confirmText: '删除',
+      confirmText: '确认删除',
+      confirmHint: '删除后该设备的专属订阅链接会立即失效',
       tone: 'danger',
     });
     if (!ok) return;
@@ -156,31 +159,41 @@ export function DevicesPage() {
         </Card>
       ) : (
         <div className="flex flex-col gap-4">
-          <div className="grid gap-4 md:grid-cols-2 @4xl/main:grid-cols-3">
-            {list.map((device, index) => (
-              <DeviceCard
-                key={device.id}
-                device={device}
-                index={index}
-                href={path(`devices/${device.id}`)}
-                subscriptionUrl={sub.url}
-                onEdit={() => router.push(path(`devices/${device.id}`))}
-                onDelete={() => void remove(device)}
-              />
-            ))}
-            {!atLimit && (
-              <button
-                type="button"
-                onClick={() => openNew()}
-                className="flex min-h-[188px] flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-line-strong text-sm text-ink-3 transition-colors hover:border-ink-3 hover:bg-surface-2/50 hover:text-ink focus-visible:outline-2 focus-visible:outline-accent"
-              >
-                <span className="flex size-9 items-center justify-center rounded-full border border-line bg-surface shadow-xs">
-                  <Plus size={16} />
-                </span>
-                添加设备
-              </button>
-            )}
-          </div>
+          <DataView
+            label="设备列表"
+            summary={`共 ${list.length} / ${MAX_DEVICES_PER_PROFILE} 台设备`}
+            items={list.map((d) => ({
+              value: d.id,
+              label: `${d.display_name || d.name} (${d.name})${Object.keys(d.base_patch).length ? ` · ${Object.keys(d.base_patch).length} 项差异` : ''}${d.features.tailscale || (d.features.tailscaleInstances?.length ?? 0) > 0 ? ' · Tailscale' : ''}`,
+            }))}
+          >
+            <div className="grid gap-4 md:grid-cols-2 @4xl/main:grid-cols-3">
+              {list.map((device, index) => (
+                <DeviceCard
+                  key={device.id}
+                  device={device}
+                  index={index}
+                  href={path(`devices/${device.id}`)}
+                  subscriptionUrl={sub.url}
+                  onEdit={() => router.push(path(`devices/${device.id}`))}
+                  onDelete={() => void remove(device)}
+                />
+              ))}
+              {!atLimit && (
+                <button
+                  type="button"
+                  data-agent-hidden
+                  onClick={() => openNew()}
+                  className="flex min-h-[188px] flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-line-strong text-sm text-ink-3 transition-colors hover:border-ink-3 hover:bg-surface-2/50 hover:text-ink focus-visible:outline-2 focus-visible:outline-accent"
+                >
+                  <span className="flex size-9 items-center justify-center rounded-full border border-line bg-surface shadow-xs">
+                    <Plus size={16} />
+                  </span>
+                  添加设备
+                </button>
+              )}
+            </div>
+          </DataView>
           {/* the shelf every device stands on */}
           <div className="dot-grid flex animate-rise flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-line bg-surface-2/60 px-4 py-3 [animation-delay:120ms]">
             <span className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-line bg-surface text-ink-2 shadow-xs">
@@ -415,7 +428,7 @@ function NewDeviceDialog({
           <Button variant="ghost" onClick={onClose}>
             取消
           </Button>
-          <Button variant="primary" loading={busy} disabled={atLimit} onClick={() => void submit()}>
+          <Button variant="primary" loading={busy} disabled={atLimit} aria-label="确认添加设备" data-agent-confirm onClick={() => void submit()}>
             添加设备
           </Button>
         </>
@@ -468,19 +481,24 @@ function NewDeviceDialog({
         </Field>
         <div className="flex flex-col gap-1.5">
           <span className="text-xs font-medium text-ink-2">从哪种设备开始</span>
-          <div role="radiogroup" aria-label="预设" className="grid gap-2 sm:grid-cols-2">
+          <RadioGroup
+            aria-label="设备预设"
+            value={form.preset}
+            onValueChange={(value) => {
+              if (value) setForm({ ...form, preset: value as PresetId, presetTouched: true });
+            }}
+            className="grid gap-2 sm:grid-cols-2"
+          >
             {DEVICE_PRESETS.map((preset) => {
               const Icon = PRESET_ICON[preset.id];
               const active = form.preset === preset.id;
               const chips = Object.entries(preset.patch).map(([k, v]) => chipFor(k, v));
               if (preset.needsSecret) chips.push({ ...chipFor('secret', 'x'), value: '随机生成' });
               return (
-                <button
+                <Radio
                   key={preset.id}
-                  type="button"
-                  role="radio"
-                  aria-checked={active}
-                  onClick={() => setForm({ ...form, preset: preset.id, presetTouched: true })}
+                  value={preset.id}
+                  aria-label={preset.label}
                   className={cn(
                     'flex flex-col gap-2 rounded-xl border p-3 text-left transition-[border-color,background-color,box-shadow]',
                     active ? 'border-accent-line bg-accent-soft/50 shadow-[var(--ring)]' : 'border-line hover:border-line-strong hover:bg-surface-2/50',
@@ -498,10 +516,10 @@ function NewDeviceDialog({
                       ))}
                     </span>
                   )}
-                </button>
+                </Radio>
               );
             })}
-          </div>
+          </RadioGroup>
         </div>
         <button type="submit" hidden aria-hidden />
       </form>
