@@ -595,158 +595,195 @@
   --aura-primary: var(--accent);
   --aura-secondary: var(--l-8);
   --aura-tertiary: var(--l-3);
-  --aura-edge-alpha: 32%;
-  --aura-deep-alpha: 15%;
-  --aura-wave-alpha: 42%;
+  --aura-edge-alpha: 20%;
+  --aura-deep-alpha: 12%;
+  --aura-wave-alpha: 34%;
   --aura-speed: 1;
-  transition: opacity 0.25s var(--ease-out-expo);
+  transition: opacity 0.3s var(--ease-out-expo);
 }
 
 .dark .agent-fluid-aura {
-  --aura-edge-alpha: 44%;
-  --aura-deep-alpha: 20%;
-  --aura-wave-alpha: 54%;
+  --aura-edge-alpha: 28%;
+  --aura-deep-alpha: 16%;
+  --aura-wave-alpha: 44%;
 }
 
 .agent-fluid-aura[data-aura-state='acting'] {
-  --aura-edge-alpha: 42%;
-  --aura-deep-alpha: 20%;
-  --aura-wave-alpha: 54%;
-  --aura-speed: 0.62;
+  --aura-edge-alpha: 26%;
+  --aura-deep-alpha: 16%;
+  --aura-wave-alpha: 44%;
+  --aura-speed: 0.65;
 }
 
 .dark .agent-fluid-aura[data-aura-state='acting'] {
-  --aura-edge-alpha: 56%;
-  --aura-deep-alpha: 26%;
-  --aura-wave-alpha: 66%;
+  --aura-edge-alpha: 36%;
+  --aura-deep-alpha: 22%;
+  --aura-wave-alpha: 56%;
 }
 
 .agent-fluid-aura[data-aura-state='paused'] {
   --aura-primary: var(--warn);
   --aura-secondary: color-mix(in oklab, var(--warn) 78%, var(--l-4));
   --aura-tertiary: var(--warn);
-  --aura-edge-alpha: 38%;
-  --aura-deep-alpha: 16%;
-  --aura-wave-alpha: 34%;
+  --aura-edge-alpha: 24%;
+  --aura-deep-alpha: 13%;
+  --aura-wave-alpha: 28%;
 }
 
 .dark .agent-fluid-aura[data-aura-state='paused'] {
-  --aura-edge-alpha: 48%;
-  --aura-deep-alpha: 22%;
-  --aura-wave-alpha: 42%;
+  --aura-edge-alpha: 34%;
+  --aura-deep-alpha: 18%;
+  --aura-wave-alpha: 36%;
 }
 
-/* Soft rounded-corner inner mist: replaces rigid 90deg wireframes with pillowy perimeter depth. */
+/* Override UA popover centering/borders so top-layer takeover overlays keep exact fixed geometry. */
+[popover][data-takeover-layer] {
+  inset: auto;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  max-width: none;
+  max-height: none;
+}
+
+[popover][data-takeover-layer='aura'] {
+  left: 0;
+  top: 0;
+}
+
+[popover][data-takeover-layer='stage'] {
+  inset: 0;
+}
+
+/* Zero-spread ultra-diffused perimeter mist so there is never a hard glass-like rim. */
 .agent-aura-mist {
   position: absolute;
-  inset: -4px;
-  border-radius: 26px;
+  inset: -16px;
+  border-radius: 44px;
   box-shadow:
-    inset 0 0 18px 4px color-mix(in oklab, var(--aura-primary) var(--aura-edge-alpha), transparent),
-    inset 0 0 54px 10px color-mix(in oklab, var(--aura-secondary) var(--aura-deep-alpha), transparent);
-  transition: box-shadow 0.35s var(--ease-out-expo);
+    inset 0 0 64px 0 color-mix(in oklab, var(--aura-primary) var(--aura-edge-alpha), transparent),
+    inset 0 0 130px 0 color-mix(in oklab, var(--aura-secondary) var(--aura-deep-alpha), transparent);
+  transition: box-shadow 0.4s var(--ease-out-expo);
   @media (prefers-reduced-motion: no-preference) {
-    animation: agent-mist-breathe calc(5.2s * var(--aura-speed)) ease-in-out infinite;
+    animation: agent-mist-breathe calc(5.8s * var(--aura-speed)) ease-in-out infinite;
   }
 }
 
-/* Soft corner blooms so the 4 corners feel curved and liquid instead of sharp 90deg angles. */
-.agent-aura-vignette {
+/* Optical Gaussian-blurred cloud bed: dissolves every gradient contour into soft vapor and mist. */
+.agent-aura-clouds {
   position: absolute;
-  inset: 0;
-  background:
-    radial-gradient(220px 180px at 0% 0%, color-mix(in oklab, var(--aura-primary) 26%, transparent), transparent 72%),
-    radial-gradient(240px 180px at 100% 0%, color-mix(in oklab, var(--aura-secondary) 26%, transparent), transparent 72%),
-    radial-gradient(240px 180px at 100% 100%, color-mix(in oklab, var(--aura-tertiary) 24%, transparent), transparent 72%),
-    radial-gradient(220px 180px at 0% 100%, color-mix(in oklab, var(--aura-primary) 24%, transparent), transparent 72%);
-  transition: opacity 0.35s var(--ease-out-expo);
+  inset: -44px;
+  filter: blur(34px);
+  transform: translateZ(0);
 }
 
-/* Flowing elliptical light currents hugging the perimeter edges with smooth radial falloff (no filter seams). */
+/* Soft corner vapor pillows so the 4 corners melt smoothly without sharp angles. */
+.agent-aura-vignette {
+  position: absolute;
+  inset: 44px;
+  background:
+    radial-gradient(280px 240px at 0% 0%, color-mix(in oklab, var(--aura-primary) 26%, transparent) 0%, color-mix(in oklab, var(--aura-primary) 9%, transparent) 42%, transparent 78%),
+    radial-gradient(300px 240px at 100% 0%, color-mix(in oklab, var(--aura-secondary) 26%, transparent) 0%, color-mix(in oklab, var(--aura-secondary) 9%, transparent) 42%, transparent 78%),
+    radial-gradient(300px 240px at 100% 100%, color-mix(in oklab, var(--aura-tertiary) 24%, transparent) 0%, color-mix(in oklab, var(--aura-tertiary) 8%, transparent) 42%, transparent 78%),
+    radial-gradient(280px 240px at 0% 100%, color-mix(in oklab, var(--aura-primary) 24%, transparent) 0%, color-mix(in oklab, var(--aura-primary) 8%, transparent) 42%, transparent 78%);
+  transition: opacity 0.4s var(--ease-out-expo);
+}
+
+/* Flowing multi-stop Gaussian radial currents (cubic falloff eliminates visible oval edges). */
 .agent-aura-wave {
   position: absolute;
   border-radius: 9999px;
   will-change: transform, opacity;
-  transition: opacity 0.35s var(--ease-out-expo);
+  transition: opacity 0.4s var(--ease-out-expo);
 }
 
 .agent-aura-wave-top {
-  left: 10%;
+  left: 6%;
   top: -72px;
-  width: 68%;
-  height: 144px;
+  width: 74%;
+  height: 220px;
   background: radial-gradient(
-    ellipse at 50% 50%,
+    ellipse at 50% 42%,
     color-mix(in oklab, var(--aura-primary) var(--aura-wave-alpha), transparent) 0%,
-    color-mix(in oklab, var(--aura-secondary) calc(var(--aura-wave-alpha) * 0.55), transparent) 38%,
-    transparent 72%
+    color-mix(in oklab, var(--aura-secondary) calc(var(--aura-wave-alpha) * 0.58), transparent) 24%,
+    color-mix(in oklab, var(--aura-secondary) calc(var(--aura-wave-alpha) * 0.22), transparent) 48%,
+    color-mix(in oklab, var(--aura-primary) calc(var(--aura-wave-alpha) * 0.06), transparent) 68%,
+    transparent 86%
   );
   @media (prefers-reduced-motion: no-preference) {
-    animation: agent-wave-x calc(8.4s * var(--aura-speed)) ease-in-out infinite;
+    animation: agent-wave-x calc(8.8s * var(--aura-speed)) ease-in-out infinite;
   }
 }
 
 .agent-aura-wave-bottom {
-  left: 16%;
+  left: 12%;
   bottom: -74px;
-  width: 66%;
-  height: 148px;
+  width: 72%;
+  height: 224px;
   background: radial-gradient(
-    ellipse at 50% 50%,
+    ellipse at 50% 58%,
     color-mix(in oklab, var(--aura-tertiary) var(--aura-wave-alpha), transparent) 0%,
-    color-mix(in oklab, var(--aura-primary) calc(var(--aura-wave-alpha) * 0.55), transparent) 40%,
-    transparent 72%
+    color-mix(in oklab, var(--aura-primary) calc(var(--aura-wave-alpha) * 0.56), transparent) 24%,
+    color-mix(in oklab, var(--aura-primary) calc(var(--aura-wave-alpha) * 0.2), transparent) 48%,
+    color-mix(in oklab, var(--aura-tertiary) calc(var(--aura-wave-alpha) * 0.06), transparent) 68%,
+    transparent 86%
   );
   @media (prefers-reduced-motion: no-preference) {
-    animation: agent-wave-x-rev calc(10.6s * var(--aura-speed)) ease-in-out infinite;
+    animation: agent-wave-x-rev calc(10.8s * var(--aura-speed)) ease-in-out infinite;
   }
 }
 
 .agent-aura-wave-left {
   left: -74px;
-  top: 12%;
-  width: 148px;
-  height: 64%;
+  top: 8%;
+  width: 224px;
+  height: 70%;
   background: radial-gradient(
-    ellipse at 50% 50%,
+    ellipse at 42% 50%,
     color-mix(in oklab, var(--aura-secondary) var(--aura-wave-alpha), transparent) 0%,
-    color-mix(in oklab, var(--aura-primary) calc(var(--aura-wave-alpha) * 0.52), transparent) 40%,
-    transparent 72%
+    color-mix(in oklab, var(--aura-primary) calc(var(--aura-wave-alpha) * 0.54), transparent) 24%,
+    color-mix(in oklab, var(--aura-primary) calc(var(--aura-wave-alpha) * 0.2), transparent) 48%,
+    color-mix(in oklab, var(--aura-secondary) calc(var(--aura-wave-alpha) * 0.06), transparent) 68%,
+    transparent 86%
   );
   @media (prefers-reduced-motion: no-preference) {
-    animation: agent-wave-y calc(9.5s * var(--aura-speed)) ease-in-out infinite;
+    animation: agent-wave-y calc(9.7s * var(--aura-speed)) ease-in-out infinite;
   }
 }
 
 .agent-aura-wave-right {
   right: -74px;
-  top: 16%;
-  width: 148px;
-  height: 66%;
+  top: 12%;
+  width: 224px;
+  height: 72%;
   background: radial-gradient(
-    ellipse at 50% 50%,
+    ellipse at 58% 50%,
     color-mix(in oklab, var(--aura-primary) var(--aura-wave-alpha), transparent) 0%,
-    color-mix(in oklab, var(--aura-tertiary) calc(var(--aura-wave-alpha) * 0.56), transparent) 40%,
-    transparent 72%
+    color-mix(in oklab, var(--aura-tertiary) calc(var(--aura-wave-alpha) * 0.58), transparent) 24%,
+    color-mix(in oklab, var(--aura-tertiary) calc(var(--aura-wave-alpha) * 0.22), transparent) 48%,
+    color-mix(in oklab, var(--aura-primary) calc(var(--aura-wave-alpha) * 0.06), transparent) 68%,
+    transparent 86%
   );
   @media (prefers-reduced-motion: no-preference) {
-    animation: agent-wave-y-rev calc(11.3s * var(--aura-speed)) ease-in-out infinite;
+    animation: agent-wave-y-rev calc(11.5s * var(--aura-speed)) ease-in-out infinite;
   }
 }
 
 .agent-aura-wave-corner {
-  left: 0;
-  top: 0;
-  width: 56%;
-  height: 56%;
+  left: 44px;
+  top: 44px;
+  width: 58%;
+  height: 58%;
   background: radial-gradient(
-    ellipse at 20% 20%,
-    color-mix(in oklab, var(--aura-secondary) calc(var(--aura-wave-alpha) * 0.65), transparent) 0%,
-    color-mix(in oklab, var(--aura-primary) calc(var(--aura-wave-alpha) * 0.22), transparent) 32%,
-    transparent 64%
+    ellipse at 22% 22%,
+    color-mix(in oklab, var(--aura-secondary) calc(var(--aura-wave-alpha) * 0.55), transparent) 0%,
+    color-mix(in oklab, var(--aura-primary) calc(var(--aura-wave-alpha) * 0.22), transparent) 28%,
+    color-mix(in oklab, var(--aura-primary) calc(var(--aura-wave-alpha) * 0.06), transparent) 52%,
+    transparent 74%
   );
   @media (prefers-reduced-motion: no-preference) {
-    animation: agent-wave-orbit calc(13.5s * var(--aura-speed)) ease-in-out infinite;
+    animation: agent-wave-orbit calc(13.8s * var(--aura-speed)) ease-in-out infinite;
   }
 }
 

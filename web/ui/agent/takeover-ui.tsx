@@ -309,13 +309,107 @@ function useLeftWorkspaceRect(active: boolean): WorkspaceRect {
   return rect;
 }
 
+function promoteTakeoverLayers() {
+  if (typeof document === 'undefined') return;
+  // Promote in strict back-to-front visual order: aura -> action highlight -> pause bar.
+  const order = ['aura', 'stage', 'bar'];
+  for (const role of order) {
+    const el = document.querySelector<HTMLElement>(`[data-takeover-layer="${role}"]`);
+    if (!el || !el.isConnected || typeof el.showPopover !== 'function') continue;
+    try {
+      if (el.matches(':popover-open')) el.hidePopover();
+      el.showPopover();
+    } catch {
+      /* ignore unsupported or detached popover state */
+    }
+  }
+}
+
+function useTopLayerSync(enabled: boolean) {
+  useEffect(() => {
+    if (!enabled || typeof document === 'undefined') return;
+    let raf = 0;
+    const schedulePromote = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => promoteTakeoverLayers());
+    };
+    schedulePromote();
+
+    const onToggle = (event: Event) => {
+      const target = event.target;
+      if (target instanceof Element && target.hasAttribute('data-takeover-layer')) return;
+      if ((event as ToggleEvent).newState === 'open') {
+        schedulePromote();
+      }
+    };
+
+    const observer =
+      typeof MutationObserver !== 'undefined'
+        ? new MutationObserver((records) => {
+            for (const rec of records) {
+              const target = rec.target;
+              if (target instanceof Element && target.hasAttribute('data-takeover-layer')) continue;
+              if (
+                target instanceof Element &&
+                (target.hasAttribute('open') || target.hasAttribute('data-open'))
+              ) {
+                schedulePromote();
+                return;
+              }
+            }
+          })
+        : null;
+
+    document.addEventListener('toggle', onToggle, true);
+    observer?.observe(document.body, {
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['open', 'data-open'],
+    });
+
+    return () => {
+      cancelAnimationFrame(raf);
+      document.removeEventListener('toggle', onToggle, true);
+      observer?.disconnect();
+    };
+  }, [enabled]);
+}
+
+function useManualPopover(ref: React.RefObject<HTMLElement | null>, active: boolean) {
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof el.showPopover !== 'function') return;
+    if (active) {
+      promoteTakeoverLayers();
+    } else {
+      try {
+        if (el.matches(':popover-open')) el.hidePopover();
+      } catch {
+        /* ignore */
+      }
+    }
+    return () => {
+      try {
+        if (el.isConnected && el.matches(':popover-open')) el.hidePopover();
+      } catch {
+        /* ignore */
+      }
+    };
+  }, [ref, active]);
+}
+
 export function AgentTakeoverAura() {
   const takeover = useTakeover();
   const pendingConfirm = usePendingAgentConfirm();
   const active = takeover.mode !== 'idle';
   const rect = useLeftWorkspaceRect(active);
+  const auraRef = useRef<HTMLDivElement>(null);
+  const visible = active && rect.width >= 48 && rect.height >= 48;
 
-  if (!active || rect.width < 48 || rect.height < 48) return null;
+  useTopLayerSync(active);
+  useManualPopover(auraRef, visible);
+
+  if (!visible) return null;
 
   const waitingForHuman = takeover.mode === 'paused' || Boolean(pendingConfirm);
   const acting = !waitingForHuman && takeover.mode === 'acting';
@@ -323,22 +417,26 @@ export function AgentTakeoverAura() {
 
   return (
     <div
+      ref={auraRef}
+      popover="manual"
       aria-hidden="true"
       data-agent-hidden
       data-takeover-exempt
+      data-takeover-layer="aura"
       data-aura-state={stateAttr}
       style={{ width: rect.width, height: rect.height }}
-      className="agent-fluid-aura pointer-events-none fixed left-0 top-0 z-[58] overflow-hidden"
+      className="agent-fluid-aura pointer-events-none fixed left-0 top-0 z-[58] m-0 overflow-hidden border-0 bg-transparent p-0"
     >
-      {/* Soft feathered edge mist so the perimeter never reads as a rigid hairline or sharp 90deg corner. */}
+      {/* Ultra-soft diffused perimeter vapor + Gaussian-blurred drifting currents (no hard glass edge). */}
       <div className="agent-aura-mist" />
-      <div className="agent-aura-vignette" />
-      {/* Independent non-harmonic radial waves gliding around the edges like luminous air and water. */}
-      <span className="agent-aura-wave agent-aura-wave-top" />
-      <span className="agent-aura-wave agent-aura-wave-right" />
-      <span className="agent-aura-wave agent-aura-wave-bottom" />
-      <span className="agent-aura-wave agent-aura-wave-left" />
-      <span className="agent-aura-wave agent-aura-wave-corner" />
+      <div className="agent-aura-clouds">
+        <span className="agent-aura-vignette" />
+        <span className="agent-aura-wave agent-aura-wave-top" />
+        <span className="agent-aura-wave agent-aura-wave-right" />
+        <span className="agent-aura-wave agent-aura-wave-bottom" />
+        <span className="agent-aura-wave agent-aura-wave-left" />
+        <span className="agent-aura-wave agent-aura-wave-corner" />
+      </div>
     </div>
   );
 }
@@ -349,6 +447,7 @@ export function AgentTakeoverBar() {
   const active = takeover.mode !== 'idle';
   const rect = useLeftWorkspaceRect(active);
   const resumeRef = useRef<HTMLButtonElement>(null);
+  const barPopoverRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (takeover.mode === 'paused' && takeover.pauseTrigger === 'workspace') {
@@ -360,6 +459,8 @@ export function AgentTakeoverBar() {
   // Keep a stable host mounted in the DOM so @ui-sdk persistentElements always resolves [data-takeover-bar].
   const showVisual = active && rect.width >= 260;
   const centerX = Math.round(rect.width / 2);
+
+  useManualPopover(barPopoverRef, showVisual);
 
   return (
     <div
@@ -374,12 +475,16 @@ export function AgentTakeoverBar() {
 
       {showVisual && (
         <div
+          ref={barPopoverRef}
+          popover="manual"
+          data-takeover-layer="bar"
+          data-takeover-exempt
           style={{
             left: centerX,
             maxWidth: Math.max(240, rect.width - 24),
             bottom: 'calc(16px + env(safe-area-inset-bottom, 0px))',
           }}
-          className="pointer-events-auto fixed -translate-x-1/2"
+          className="pointer-events-auto fixed m-0 -translate-x-1/2 overflow-visible border-0 bg-transparent p-0"
         >
           {takeover.mode === 'paused' ? (
             <div
@@ -475,6 +580,7 @@ export function AgentTakeoverBar() {
 
 export function AgentActionStage() {
   const items = useAgentActionFx();
+  const stageRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const onPop = () => clearAgentActionFx();
@@ -482,14 +588,19 @@ export function AgentActionStage() {
     return () => window.removeEventListener('popstate', onPop);
   }, []);
 
+  useManualPopover(stageRef, items.length > 0);
+
   if (!items.length) return null;
 
   return (
     <div
+      ref={stageRef}
+      popover="manual"
       aria-hidden="true"
       data-agent-hidden
       data-takeover-exempt
-      className="pointer-events-none fixed inset-0 z-[59] overflow-hidden"
+      data-takeover-layer="stage"
+      className="pointer-events-none fixed inset-0 z-[59] m-0 h-dvh w-screen overflow-hidden border-0 bg-transparent p-0"
     >
       {items.map((item) => (
         <div
