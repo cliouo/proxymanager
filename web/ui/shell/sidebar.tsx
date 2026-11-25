@@ -280,8 +280,9 @@ export function Sidebar() {
   const collapsed = useUi((s) => s.sidebarCollapsed);
   return (
     <aside
+      data-takeover-sidebar
       className={cn(
-        'sticky top-0 hidden h-dvh shrink-0 transition-[width] duration-300 ease-[var(--ease-out-expo)] lg:block',
+        'sticky top-0 hidden h-dvh shrink-0 transition-[width,opacity] duration-300 ease-[var(--ease-out-expo)] lg:block',
         collapsed ? 'w-[64px]' : 'w-[248px]',
       )}
     >

@@ -1,6 +1,11 @@
 'use client';
 
 import { useSyncExternalStore } from 'react';
+import {
+  consumePauseStopTimeout,
+  releaseTakeover,
+  setTakeoverActivity,
+} from '@/ui/agent';
 import { errorMessage } from '@/ui/data/api';
 import { keys } from '@/ui/data/hooks';
 import { fetchQuery } from '@/ui/data/query';
@@ -16,7 +21,7 @@ import {
   type ChatMessage,
 } from './agent';
 import { previewText } from './format';
-import { describeInput, describeResult, resultError } from './labels';
+import { describeInput, describeResult, resultError, toolLabel } from './labels';
 import { buildSystemPrompt, type AssistantRuntimeContext } from './prompt';
 
 export type ToolStatus = 'pending' | 'running' | 'done' | 'error';
@@ -178,17 +183,27 @@ async function run(context: AssistantRuntimeContext, userText?: string) {
   let thinkingMs: number | undefined;
   const slots = new Map<string, string>();
 
+  const isCurrentRun = () => controller === activeController;
+  const updateOwned = (fn: (current: Conversation) => Conversation) => {
+    if (!isCurrentRun()) return;
+    update(fn);
+  };
+  const patchOwnedItem = <T extends Item>(id: string, fn: (item: T) => Item) => {
+    if (!isCurrentRun()) return;
+    patchItem<T>(id, fn);
+  };
+
   const endThinking = () => {
     if (thinkStart && thinkingMs === undefined) thinkingMs = Date.now() - thinkStart;
   };
   const flush = () => {
     if (frame) cancelAnimationFrame(frame);
     frame = 0;
-    if (!assistantId) return;
+    if (!assistantId || !isCurrentRun()) return;
     const { reasoning, content } = pending;
     pending = { reasoning: '', content: '' };
     const ms = thinkingMs;
-    patchItem<AssistantItem>(assistantId, (item) => ({
+    patchOwnedItem<AssistantItem>(assistantId, (item) => ({
       ...item,
       reasoning: item.reasoning + reasoning,
       text: item.text + content,
@@ -198,7 +213,7 @@ async function run(context: AssistantRuntimeContext, userText?: string) {
   const scheduleFlush = () => {
     if (!frame) frame = requestAnimationFrame(flush);
   };
-  const addItem = (item: Item) => update((c) => ({ ...c, items: [...c.items, item] }));
+  const addItem = (item: Item) => updateOwned((c) => ({ ...c, items: [...c.items, item] }));
   const ensureTool = (slot: string, name: string) => {
     let id = slots.get(slot);
     if (!id) {
@@ -210,12 +225,14 @@ async function run(context: AssistantRuntimeContext, userText?: string) {
   };
 
   const onEvent = (event: AgentEvent) => {
+    if (!isCurrentRun()) return;
     switch (event.type) {
       case 'round-start':
         flush();
         assistantId = uid();
         thinkStart = 0;
         thinkingMs = undefined;
+        setTakeoverActivity(activeController, '正在思考下一步…');
         addItem({ id: assistantId, type: 'assistant', text: '', reasoning: '', streaming: true });
         break;
       case 'reasoning':
@@ -239,7 +256,7 @@ async function run(context: AssistantRuntimeContext, userText?: string) {
         const id = assistantId;
         assistantId = null;
         if (!id) break;
-        update((c) => ({
+        updateOwned((c) => ({
           ...c,
           items: c.items.flatMap((item) => {
             if (item.id !== id || item.type !== 'assistant') return [item];
@@ -251,11 +268,13 @@ async function run(context: AssistantRuntimeContext, userText?: string) {
       }
       case 'tool-start': {
         const id = ensureTool(event.slot, event.name);
-        patchItem<ToolItem>(id, (item) => ({
+        const hint = describeInput(event.name, event.input);
+        setTakeoverActivity(activeController, hint ?? toolLabel(event.name));
+        patchOwnedItem<ToolItem>(id, (item) => ({
           ...item,
           status: 'running',
           input: event.input,
-          hint: describeInput(event.name, event.input),
+          hint,
         }));
         break;
       }
@@ -263,7 +282,7 @@ async function run(context: AssistantRuntimeContext, userText?: string) {
         const id = ensureTool(event.slot, event.name);
         const { result } = event;
         const failed = result.kind === 'error';
-        patchItem<ToolItem>(id, (item) => ({
+        patchOwnedItem<ToolItem>(id, (item) => ({
           ...item,
           status: failed ? 'error' : 'done',
           kind: result.kind,
@@ -274,7 +293,7 @@ async function run(context: AssistantRuntimeContext, userText?: string) {
         break;
       }
       case 'transcript':
-        update((c) => ({ ...c, messages: event.messages }));
+        updateOwned((c) => ({ ...c, messages: event.messages }));
         break;
     }
   };
@@ -290,9 +309,19 @@ async function run(context: AssistantRuntimeContext, userText?: string) {
         system: buildSystemPrompt(context),
         messages: read().messages,
         signal: activeController.signal,
+        owner: activeController,
+        onStop: stop,
         onEvent,
       });
-      if (status === 'interrupted') addItem({ id: uid(), type: 'notice', tone: 'info', text: '已停止' });
+      if (status === 'interrupted') {
+        const timedOut = consumePauseStopTimeout();
+        addItem({
+          id: uid(),
+          type: 'notice',
+          tone: 'info',
+          text: timedOut ? '暂停超过 4 分钟，已自动停止' : '已停止',
+        });
+      }
       if (status === 'cap') {
         addItem({
           id: uid(),
@@ -306,21 +335,30 @@ async function run(context: AssistantRuntimeContext, userText?: string) {
   } catch (error) {
     flush();
     const failedId = assistantId;
-    update((c) => ({
+    updateOwned((c) => ({
       ...c,
       items: c.items.filter((item) => item.id !== failedId && !(item.type === 'tool' && item.status === 'pending')),
     }));
     if (activeController.signal.aborted || isAbortError(error)) {
       status = 'interrupted';
-      addItem({ id: uid(), type: 'notice', tone: 'info', text: '已停止' });
+      const timedOut = consumePauseStopTimeout();
+      addItem({
+        id: uid(),
+        type: 'notice',
+        tone: 'info',
+        text: timedOut ? '暂停超过 4 分钟，已自动停止' : '已停止',
+      });
     } else {
       const { text, settings } = errorText(error);
       addItem({ id: uid(), type: 'notice', tone: 'error', text, retry: true, settings });
     }
   } finally {
     flush();
-    if (controller === activeController) controller = null;
-    update((c) => ({ ...c, running: false }));
+    releaseTakeover(activeController);
+    if (controller === activeController) {
+      controller = null;
+      update((c) => ({ ...c, running: false }));
+    }
   }
 }
 
@@ -339,7 +377,12 @@ export function stop() {
 }
 
 export function clearConversation() {
-  controller?.abort();
+  const active = controller;
+  controller = null;
+  if (active) {
+    releaseTakeover(active);
+    active.abort();
+  }
   convo = { ...EMPTY };
   try {
     window.sessionStorage.removeItem(STORAGE_KEY);

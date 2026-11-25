@@ -146,3 +146,7 @@ export function clearAgentConfirms(): void {
 export function usePendingAgentConfirm(): AgentConfirmRequest | null {
   return useSyncExternalStore(subscribe, getCurrent, () => null);
 }
+
+export function hasPendingAgentConfirm(): boolean {
+  return queue.length > 0;
+}

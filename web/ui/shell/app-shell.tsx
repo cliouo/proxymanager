@@ -75,8 +75,8 @@ function GlobalHotkeys() {
   const p = (sub?: string) => (profile ? profilePath(profile.name, sub) : '/');
   const go = (href: string) => void navigateWithGuard(() => router.push(href));
   useHotkey('mod+k', () => setUi((s) => ({ paletteOpen: !s.paletteOpen })));
-  useHotkey('mod+j', () => setUi((s) => ({ assistantOpen: !s.assistantOpen })));
-  useHotkey('mod+\\', () => setUi((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })));
+  useHotkey('mod+j', () => setUi((s) => ({ assistantOpen: !s.assistantOpen })), { allowDuringTakeover: true });
+  useHotkey('mod+\\', () => setUi((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })), { allowDuringTakeover: true });
   useHotkey('g o', () => go(p()));
   useHotkey('g g', () => go(p('groups')));
   useHotkey('g r', () => go(p('rules')));
@@ -129,6 +129,8 @@ export function AppShell({ children }: { children: ReactNode }) {
                   key="assistant-dock"
                   data-agent-hidden
                   data-assistant-surface
+                  data-assistant-panel
+                  data-takeover-exempt
                   initial={{ width: 0, opacity: 0 }}
                   animate={{ width: 420, opacity: 1 }}
                   exit={{ width: 0, opacity: 0 }}
@@ -155,6 +157,8 @@ export function AppShell({ children }: { children: ReactNode }) {
                 inline
                 data-agent-hidden
                 data-assistant-surface
+                data-assistant-panel
+                data-takeover-exempt
                 className="fixed bottom-2 right-2 top-2 z-[60] m-0 w-[min(440px,calc(100vw-16px))] overflow-hidden rounded-2xl border border-line bg-surface p-0 text-ink shadow-xl outline-none data-open:animate-[slide-in-right_0.38s_var(--ease-out-expo)_both]"
               >
                 <DialogTitle className="sr-only">AI 助手</DialogTitle>

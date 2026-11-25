@@ -10,6 +10,14 @@ import {
 import { pulseRequestSource, withRequestSource } from '@/ui/data/api';
 import { requestAgentConfirm } from './confirm';
 import { customTools, executeCustomTool } from './custom-tools';
+import {
+  beginWebMcpPulse,
+  emitElementActionFx,
+  isBuiltinOwnerValid,
+  isWorkspaceBusyForWebMcp,
+  resolveActionTargetElement,
+  waitIfPaused,
+} from './takeover';
 
 interface WebMcpToolRegistration {
   name: string;
@@ -25,9 +33,72 @@ interface WebMcpModelContext {
 
 export type AppAgent = ReturnType<typeof createAgent>;
 
+interface ActiveCallContext {
+  source: 'ai_chat' | 'webmcp';
+  owner?: AbortController;
+  signal?: AbortSignal;
+}
+
+let activeCallContext: ActiveCallContext | null = null;
+let lastFxKey = '';
+let lastFxAt = 0;
+
+function emitStepFxOnce(step: AgentAction) {
+  const key = `${step.ref}:${step.action}`;
+  const now = Date.now();
+  if (key === lastFxKey && now - lastFxAt < 180) return;
+  lastFxKey = key;
+  lastFxAt = now;
+  const target = resolveActionTargetElement(step);
+  const kind =
+    step.action === 'press' || step.action === 'click' || step.action === 'toggle' || step.action === 'setChecked'
+      ? 'press'
+      : 'fill';
+  emitElementActionFx(target, kind);
+}
+
 export function createAppAllow() {
-  return (step: AgentAction, { signal }: { signal: AbortSignal }): boolean | Promise<boolean> =>
-    step.confirm ? requestAgentConfirm(step, { signal }) : true;
+  return async (step: AgentAction, { signal }: { signal: AbortSignal }): Promise<boolean> => {
+    const ctx = activeCallContext;
+    const isBuiltin = ctx?.source === 'ai_chat';
+
+    if (!isBuiltin && isWorkspaceBusyForWebMcp()) {
+      return false;
+    }
+
+    if (isBuiltin) {
+      if (signal.aborted || ctx.signal?.aborted || !isBuiltinOwnerValid(ctx.owner)) {
+        return false;
+      }
+      try {
+        await waitIfPaused(ctx.signal ?? signal, ctx.owner);
+      } catch {
+        return false;
+      }
+      if (signal.aborted || ctx.signal?.aborted || !isBuiltinOwnerValid(ctx.owner)) {
+        return false;
+      }
+    }
+
+    if (step.confirm) {
+      const approved = await requestAgentConfirm(step, { signal });
+      if (!approved) return false;
+      if (isBuiltin && (signal.aborted || ctx.signal?.aborted || !isBuiltinOwnerValid(ctx.owner))) {
+        return false;
+      }
+      if (!isBuiltin && isWorkspaceBusyForWebMcp()) {
+        return false;
+      }
+    }
+
+    if (!isBuiltin && !ctx) {
+      const endPulse = beginWebMcpPulse();
+      setTimeout(endPulse, 900);
+    }
+
+    emitStepFxOnce(step);
+    return true;
+  };
 }
 
 let singleton: AppAgent | null = null;
@@ -42,20 +113,69 @@ export function getAgent(): AppAgent {
   return singleton;
 }
 
-export function runAgentAct(
+function captureAssistantFocus(): HTMLElement | null {
+  if (typeof document === 'undefined') return null;
+  const active = document.activeElement;
+  if (active instanceof HTMLElement && active.closest('[data-assistant-panel]')) {
+    return active;
+  }
+  return null;
+}
+
+function restoreAssistantFocusIfStolen(prev: HTMLElement | null) {
+  if (!prev || !prev.isConnected || typeof document === 'undefined') return;
+  const active = document.activeElement;
+  // Respect intentional focus moves into assistant, pause bar, or confirm card.
+  if (
+    active instanceof HTMLElement &&
+    active.closest('[data-assistant-panel], [data-takeover-bar], [data-agent-confirm-card]')
+  ) {
+    return;
+  }
+  prev.focus({ preventScroll: true });
+}
+
+export async function runAgentAct(
   input: { steps: AgentStep[] },
-  options?: { signal?: AbortSignal; source?: string; agent?: AppAgent },
+  options?: { signal?: AbortSignal; source?: 'ai_chat' | 'webmcp'; owner?: AbortController; agent?: AppAgent },
 ) {
   const target = options?.agent ?? getAgent();
-  return withRequestSource(options?.source ?? 'ai_chat', () =>
-    target.act(input, options?.signal ? { signal: options.signal } : undefined),
-  );
+  const source = options?.source ?? 'ai_chat';
+  const prevFocus = source === 'ai_chat' ? captureAssistantFocus() : null;
+  const prevCtx = activeCallContext;
+  activeCallContext = { source, owner: options?.owner, signal: options?.signal };
+  try {
+    return await withRequestSource(source, () =>
+      target.act(input, options?.signal ? { signal: options.signal } : undefined),
+    );
+  } finally {
+    activeCallContext = prevCtx;
+    restoreAssistantFocusIfStolen(prevFocus);
+  }
+}
+
+export async function runAgentQuery(
+  input: Parameters<AppAgent['query']>[0],
+  options?: { signal?: AbortSignal; source?: 'ai_chat' | 'webmcp'; owner?: AbortController; agent?: AppAgent },
+) {
+  const target = options?.agent ?? getAgent();
+  const source = options?.source ?? 'ai_chat';
+  const prevFocus = source === 'ai_chat' ? captureAssistantFocus() : null;
+  const prevCtx = activeCallContext;
+  activeCallContext = { source, owner: options?.owner, signal: options?.signal };
+  try {
+    return await withRequestSource(source, () => target.query(input));
+  } finally {
+    activeCallContext = prevCtx;
+    restoreAssistantFocusIfStolen(prevFocus);
+  }
 }
 
 export function registerAppWebMcp(target: AppAgent = getAgent()): () => void {
   let cancelPulse: (() => void) | null = null;
   const unregisterBridge = registerTools(target, {
     allow: () => {
+      if (isWorkspaceBusyForWebMcp()) return false;
       // Bridge allow already asks the user for data-agent-confirm steps; avoid double prompts.
       cancelPulse = pulseRequestSource('webmcp');
       return true;

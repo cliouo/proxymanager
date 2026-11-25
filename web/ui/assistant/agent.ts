@@ -1,19 +1,27 @@
 'use client';
 
 import {
+  acquireTakeover,
   agentTools,
+  beginClosedQueryCleanup,
+  consumeTakeoverRouteDrifted,
   customTools,
   executeCustomTool,
   findCustomTool,
   getAgent,
   hasMainSkeletons,
+  isBuiltinOwnerValid,
+  markTakeoverActing,
   runAgentAct,
+  runAgentQuery,
   settleRouteCommit,
+  waitIfPaused,
   type AgentStep,
   type AppAgent,
 } from '@/ui/agent';
 import { ApiError, api, errorMessage } from '@/ui/data/api';
 import type { AssistantConfig } from '@/ui/data/types';
+import { describeInput } from './labels';
 
 export interface ToolCall {
   id: string;
@@ -377,13 +385,26 @@ function errorResult(message: string): ToolDispatchResult {
   return { kind: 'error', data, modelContent: JSON.stringify(data) };
 }
 
+function makeAbortError(): Error {
+  return typeof DOMException !== 'undefined'
+    ? new DOMException('Aborted', 'AbortError')
+    : Object.assign(new Error('Aborted'), { name: 'AbortError' });
+}
+
 export async function dispatchAgentTool(
   name: string,
   input: unknown,
-  options?: { signal?: AbortSignal; agent?: AppAgent },
+  options?: {
+    signal?: AbortSignal;
+    owner?: AbortController;
+    onStop?: () => void;
+    onSideEffectDispatched?: () => void;
+    agent?: AppAgent;
+  },
 ): Promise<ToolDispatchResult> {
   const target = options?.agent ?? getAgent();
   const signal = options?.signal;
+  const owner = options?.owner;
   try {
     if (name === 'snapshot') {
       const data = target.snapshot();
@@ -400,32 +421,90 @@ export async function dispatchAgentTool(
     }
     if (name === 'query') {
       const args = isRecord(input) ? input : {};
-      const data = await target.query(args as Parameters<AppAgent['query']>[0]);
+      if (args.closed === true) {
+        await waitIfPaused(signal, owner);
+        if (signal?.aborted || !isBuiltinOwnerValid(owner)) throw makeAbortError();
+        let endActing: () => void = () => {};
+        let endCleanup: () => void = () => {};
+        if (owner) {
+          acquireTakeover(owner, { onStop: options?.onStop, activityLabel: '查询隐藏页面内容' });
+          endActing = markTakeoverActing(owner, '查询隐藏页面内容', { mutating: false });
+          endCleanup = beginClosedQueryCleanup(owner);
+        }
+        try {
+          const data = await runAgentQuery(args as Parameters<AppAgent['query']>[0], {
+            signal,
+            source: 'ai_chat',
+            owner,
+            agent: target,
+          });
+          // Discard partial arrays if the run was aborted or expired while SDK restored closed tabs.
+          if (signal?.aborted || !isBuiltinOwnerValid(owner)) throw makeAbortError();
+          if (isRecord(data) && typeof data.error === 'string') {
+            return { kind: 'error', data, modelContent: JSON.stringify(data) };
+          }
+          return { kind: 'query', data, modelContent: JSON.stringify(data) };
+        } finally {
+          endActing();
+          endCleanup();
+        }
+      }
+      const data = await runAgentQuery(args as Parameters<AppAgent['query']>[0], {
+        signal,
+        source: 'ai_chat',
+        owner,
+        agent: target,
+      });
       if (isRecord(data) && typeof data.error === 'string') {
         return { kind: 'error', data, modelContent: JSON.stringify(data) };
       }
       return { kind: 'query', data, modelContent: JSON.stringify(data) };
     }
     if (name === 'act') {
+      await waitIfPaused(signal, owner);
+      if (signal?.aborted || !isBuiltinOwnerValid(owner)) throw makeAbortError();
+      const validSteps = isRecord(input) && Array.isArray(input.steps) && input.steps.length > 0;
+      const label = describeInput('act', input) ?? '操作页面';
+      let endActing: () => void = () => {};
+      if (validSteps && owner) {
+        acquireTakeover(owner, { onStop: options?.onStop, activityLabel: label });
+        endActing = markTakeoverActing(owner, label, { mutating: true });
+      }
       const beforePath = typeof window !== 'undefined' ? window.location.pathname : '';
-      const data = await runAgentAct(input as { steps: AgentStep[] }, {
-        signal,
-        source: 'ai_chat',
-        agent: target,
-      });
-      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-      if (typeof window !== 'undefined' && window.location.pathname !== beforePath) {
-        await settleRouteCommit(signal);
+      try {
+        if (validSteps) options?.onSideEffectDispatched?.();
+        const data = await runAgentAct(input as { steps: AgentStep[] }, {
+          signal,
+          source: 'ai_chat',
+          owner,
+          agent: target,
+        });
+        if (signal?.aborted || !isBuiltinOwnerValid(owner)) throw makeAbortError();
+        if (typeof window !== 'undefined' && window.location.pathname !== beforePath) {
+          await settleRouteCommit(signal);
+        }
+        if (isRecord(data) && data.ok === false) {
+          return { kind: 'error', data, modelContent: JSON.stringify(data) };
+        }
+        return { kind: 'act', data, modelContent: JSON.stringify(data) };
+      } finally {
+        endActing();
       }
-      if (isRecord(data) && data.ok === false) {
-        return { kind: 'error', data, modelContent: JSON.stringify(data) };
-      }
-      return { kind: 'act', data, modelContent: JSON.stringify(data) };
     }
     const custom = findCustomTool(name);
     if (custom) {
-      const data = await executeCustomTool(name, input, { signal, source: 'ai_chat', agent: target });
-      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+      if (custom.effect === 'write') {
+        await waitIfPaused(signal, owner);
+        if (signal?.aborted || !isBuiltinOwnerValid(owner)) throw makeAbortError();
+      }
+      const data = await executeCustomTool(name, input, {
+        signal,
+        source: 'ai_chat',
+        owner,
+        agent: target,
+        onWriteDispatched: custom.effect === 'write' ? options?.onSideEffectDispatched : undefined,
+      });
+      if (signal?.aborted || !isBuiltinOwnerValid(owner)) throw makeAbortError();
       if (isRecord(data) && data.ok === false) {
         return { kind: 'error', data, modelContent: JSON.stringify(data) };
       }
@@ -485,10 +564,12 @@ export async function runAgent(options: {
   tools?: OpenAiTool[];
   messages: ChatMessage[];
   signal: AbortSignal;
+  owner?: AbortController;
+  onStop?: () => void;
   agent?: AppAgent;
   onEvent: (event: AgentEvent) => void;
 }): Promise<AgentStatus> {
-  const { config, system, signal, agent, onEvent } = options;
+  const { config, system, signal, owner, onStop, agent, onEvent } = options;
   const tools = options.tools ?? toOpenAiTools();
   const convo = repairTranscript(options.messages);
   const commit = () => onEvent({ type: 'transcript', messages: [...convo] });
@@ -500,6 +581,11 @@ export async function runAgent(options: {
   };
 
   for (let round = 0; round < MAX_ROUNDS; round++) {
+    try {
+      await waitIfPaused(signal, owner);
+    } catch {
+      return interrupt('');
+    }
     if (signal.aborted) return interrupt('');
     onEvent({ type: 'round-start', round });
     const turn = await streamModelRound({
@@ -526,6 +612,11 @@ export async function runAgent(options: {
     if (!turn.toolCalls.length) return 'done';
 
     for (const [index, call] of turn.toolCalls.entries()) {
+      try {
+        await waitIfPaused(signal, owner);
+      } catch {
+        return interrupt('');
+      }
       const slot = slotId(round, index);
       const name = call.function.name;
       let input: unknown = {};
@@ -540,10 +631,39 @@ export async function runAgent(options: {
       let result: ToolDispatchResult;
       if (parseFailed) {
         result = errorResult('工具参数不是合法的 JSON，请重新生成参数后再调用。');
+      } else if (name !== 'snapshot' && consumeTakeoverRouteDrifted()) {
+        result = errorResult('暂停期间页面或配置已切换，请先调用 snapshot 重新确认当前页面后再继续。');
       } else {
+        let sideEffectDispatched = false;
         try {
-          result = await dispatchAgentTool(name, input, { signal, agent });
+          result = await dispatchAgentTool(name, input, {
+            signal,
+            owner,
+            onStop,
+            agent,
+            onSideEffectDispatched: () => {
+              sideEffectDispatched = true;
+            },
+          });
         } catch {
+          const abortedResult = sideEffectDispatched
+            ? {
+                kind: 'error' as const,
+                data: {
+                  interrupted: true,
+                  status: 'dispatched_unverified',
+                  error: '操作已发起但在返回前被中断，页面或服务端可能已完成变更。继续前请先调用 snapshot 核对当前状态，勿重复写入。',
+                },
+                modelContent: JSON.stringify({
+                  interrupted: true,
+                  status: 'dispatched_unverified',
+                  error: '操作已发起但在返回前被中断，页面或服务端可能已完成变更。继续前请先调用 snapshot 核对当前状态，勿重复写入。',
+                }),
+              }
+            : errorResult('调用被中断，未执行。');
+          onEvent({ type: 'tool-result', slot, name, input, result: abortedResult });
+          convo.push({ role: 'tool', tool_call_id: call.id, content: abortedResult.modelContent });
+          commit();
           return interrupt('');
         }
       }

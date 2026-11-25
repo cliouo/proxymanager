@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
+import { isTakeoverLocked } from '@/ui/agent/takeover';
 import { useIsomorphicLayoutEffect } from '@/ui/data/query';
 
 export const isMac = () =>
@@ -21,9 +22,9 @@ function isTypingTarget(target: EventTarget | null): boolean {
 export function useHotkey(
   combo: string,
   handler: (event: KeyboardEvent) => void,
-  options: { enabled?: boolean; allowInInput?: boolean } = {},
+  options: { enabled?: boolean; allowInInput?: boolean; allowDuringTakeover?: boolean } = {},
 ) {
-  const { enabled = true, allowInInput = false } = options;
+  const { enabled = true, allowInInput = false, allowDuringTakeover = false } = options;
   const handlerRef = useRef(handler);
   useIsomorphicLayoutEffect(() => {
     handlerRef.current = handler;
@@ -50,6 +51,7 @@ export function useHotkey(
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.isComposing) return;
+      if (!allowDuringTakeover && isTakeoverLocked()) return;
       const hasMod = combo.includes('mod+');
       if (!allowInInput && !hasMod && isTypingTarget(event.target)) return;
       if (matchesStep(event, parts[stage])) {
@@ -74,5 +76,5 @@ export function useHotkey(
       window.removeEventListener('keydown', onKeyDown);
       if (timer) window.clearTimeout(timer);
     };
-  }, [combo, enabled, allowInInput]);
+  }, [combo, enabled, allowInInput, allowDuringTakeover]);
 }

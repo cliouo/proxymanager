@@ -507,3 +507,139 @@
     animation: flow var(--flow-duration, 2.4s) var(--ease-out-expo) var(--flow-delay, 0s) 1;
   }
 }
+
+/* AI workspace takeover: perimeter comet, in-place action pulse, and protected left-side feel. */
+@keyframes agent-aura-comet {
+  from {
+    stroke-dashoffset: 0;
+  }
+  to {
+    stroke-dashoffset: -100;
+  }
+}
+
+@keyframes agent-fx-press {
+  0% {
+    opacity: 0;
+    transform: scale(1.03);
+    background-color: color-mix(in oklab, var(--accent) 18%, transparent);
+    box-shadow: 0 0 0 2px color-mix(in oklab, var(--accent) 85%, transparent);
+  }
+  30% {
+    opacity: 1;
+    transform: scale(0.985);
+    background-color: color-mix(in oklab, var(--accent) 14%, transparent);
+    box-shadow: 0 0 0 2px color-mix(in oklab, var(--accent) 75%, transparent);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1);
+    background-color: transparent;
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+@keyframes agent-fx-ring {
+  0% {
+    opacity: 0.75;
+    transform: scale(0.35);
+    box-shadow: 0 0 0 2px color-mix(in oklab, var(--accent) 80%, transparent);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(2);
+    box-shadow: 0 0 0 1px color-mix(in oklab, var(--accent) 0%, transparent);
+  }
+}
+
+@keyframes agent-fx-fill {
+  0% {
+    opacity: 0;
+    box-shadow: 0 0 0 2px color-mix(in oklab, var(--accent) 70%, transparent);
+  }
+  25% {
+    opacity: 1;
+    box-shadow: 0 0 0 2px color-mix(in oklab, var(--accent) 60%, transparent);
+  }
+  100% {
+    opacity: 0;
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+@keyframes agent-fx-underline {
+  from {
+    opacity: 0.95;
+    transform: scaleX(0);
+    transform-origin: left center;
+  }
+  65% {
+    opacity: 0.95;
+    transform: scaleX(1);
+    transform-origin: left center;
+  }
+  to {
+    opacity: 0;
+    transform: scaleX(1);
+    transform-origin: left center;
+  }
+}
+
+.agent-aura-comet {
+  stroke-dasharray: 22 78;
+  @media (prefers-reduced-motion: no-preference) {
+    animation: agent-aura-comet 7.2s linear infinite;
+  }
+}
+
+.agent-aura-comet-fast {
+  stroke-dasharray: 28 72;
+  @media (prefers-reduced-motion: no-preference) {
+    animation: agent-aura-comet 3.2s linear infinite;
+  }
+}
+
+.agent-fx-press {
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--accent) 70%, transparent);
+  animation: fade-out 0.48s var(--ease-out-expo) both;
+  @media (prefers-reduced-motion: no-preference) {
+    animation: agent-fx-press 0.48s var(--ease-out-expo) both;
+  }
+}
+
+.agent-fx-ring {
+  opacity: 0;
+  @media (prefers-reduced-motion: no-preference) {
+    animation: agent-fx-ring 0.46s var(--ease-out-expo) both;
+  }
+}
+
+.agent-fx-fill {
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--accent) 60%, transparent);
+  animation: fade-out 0.5s var(--ease-out-expo) both;
+  @media (prefers-reduced-motion: no-preference) {
+    animation: agent-fx-fill 0.5s var(--ease-out-expo) both;
+  }
+}
+
+.agent-fx-underline {
+  opacity: 0;
+  @media (prefers-reduced-motion: no-preference) {
+    animation: agent-fx-underline 0.5s var(--ease-out-expo) both;
+  }
+}
+
+[data-agent-locked='true'] [data-takeover-sidebar] {
+  opacity: 0.85;
+  cursor: default;
+}
+
+[data-agent-locked='true'] [data-takeover-sidebar] :is(a, button),
+[data-agent-locked='true'] #main :is(a, button, [role='button']) {
+  cursor: default;
+}
+
+/* Relax drag handles during takeover so touch swipes starting on a handle still scroll natively. */
+[data-agent-locked='true'] #main .touch-none {
+  touch-action: pan-y;
+}
