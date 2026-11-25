@@ -146,19 +146,15 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe('pass-10 blocker 1: collection alias routes use the ENABLED authoritative set', () => {
-  it('creates naming defaults through the shared API, preserving explicit operator opt-out', async () => {
-    for (const [slug, operators] of [['managed', undefined], ['unmanaged', []]] as const) {
+  it('creates collections WITHOUT naming by default (智能命名 is opt-in)', async () => {
+    for (const [slug, operators] of [['omitted', undefined], ['explicit', []]] as const) {
       const response = await createPOST(new Request('http://localhost/api/v1/collections', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: slug, slug, operators }),
       }));
       expect(response.status).toBe(201);
       const body = await response.json();
-      if (operators === undefined) {
-        expect(body.data.operators).toEqual([expect.objectContaining({ kind: 'rename-template' })]);
-      } else {
-        expect(body.data.operators).toEqual([]);
-      }
+      expect(body.data.operators).toEqual([]);
     }
   });
 
