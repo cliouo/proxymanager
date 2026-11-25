@@ -1,22 +1,14 @@
 'use client';
 
-/**
- * Conversation store for the assistant — one conversation per profile id,
- * kept outside React so a running turn survives the panel closing or moving
- * between the dock and the sheet. Persisted to sessionStorage (throttled).
- */
-
 import { useSyncExternalStore } from 'react';
-import { ApiError, errorMessage } from '@/ui/data/api';
-import { keys, refreshProfile, refreshProfiles, refreshShared } from '@/ui/data/hooks';
+import { errorMessage } from '@/ui/data/api';
+import { keys } from '@/ui/data/hooks';
 import { fetchQuery } from '@/ui/data/query';
 import {
   MAX_ROUNDS,
   ModelError,
-  confirmWrite,
   fetchAssistantConfig,
   isAbortError,
-  loadBootstrap,
   repairTranscript,
   runAgent,
   type AgentEvent,
@@ -25,15 +17,9 @@ import {
 } from './agent';
 import { previewText } from './format';
 import { describeInput, describeResult, resultError } from './labels';
-
-export interface ProfileTarget {
-  id: string;
-  name: string;
-  label: string;
-}
+import { buildSystemPrompt, type AssistantRuntimeContext } from './prompt';
 
 export type ToolStatus = 'pending' | 'running' | 'done' | 'error';
-export type ConfirmStatus = 'pending' | 'confirming' | 'done' | 'unknown' | 'failed' | 'cancelled' | 'expired';
 
 export interface UserItem {
   id: string;
@@ -60,23 +46,7 @@ export interface ToolItem {
   kind?: string;
   summary?: string | null;
   preview?: string;
-  untrusted?: boolean;
   error?: string;
-}
-export interface ConfirmItem {
-  id: string;
-  type: 'confirm';
-  slot: string;
-  name: string;
-  summary: string;
-  diff: unknown;
-  token: string;
-  expiresAt: number;
-  status: ConfirmStatus;
-  result?: string;
-  undoable?: boolean;
-  error?: string;
-  issues?: string[];
 }
 export interface NoticeItem {
   id: string;
@@ -86,24 +56,19 @@ export interface NoticeItem {
   retry?: boolean;
   settings?: boolean;
 }
-export type Item = UserItem | AssistantItem | ToolItem | ConfirmItem | NoticeItem;
+export type Item = UserItem | AssistantItem | ToolItem | NoticeItem;
 
 export interface Conversation {
   items: Item[];
-  /** Model transcript (no system message). */
   messages: ChatMessage[];
-  /** Confirm-card outcomes waiting to be told to the model. */
-  queued: string[];
   running: boolean;
 }
 
-/* ─── store ──────────────────────────────────────────────────────────── */
-
-const EMPTY: Conversation = { items: [], messages: [], queued: [], running: false };
-const STORAGE_PREFIX = 'pm.assistant.v1:';
-const convos = new Map<string, Conversation>();
-const controllers = new Map<string, AbortController>();
-const persistTimers = new Map<string, number>();
+const EMPTY: Conversation = { items: [], messages: [], running: false };
+const STORAGE_KEY = 'pm.assistant.v2';
+let convo: Conversation | null = null;
+let controller: AbortController | null = null;
+let persistTimer: number | null = null;
 const listeners = new Set<() => void>();
 
 const uid = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
@@ -113,23 +78,19 @@ function settle(item: Item): Item {
   if (item.type === 'tool' && (item.status === 'pending' || item.status === 'running')) {
     return { ...item, status: 'error', error: '页面刷新，调用被中断。' };
   }
-  if (item.type === 'confirm' && item.status === 'confirming') {
-    return { ...item, status: 'unknown', error: '执行途中页面刷新了，结果未知。' };
-  }
   return item;
 }
 
-function hydrate(profileId: string): Conversation {
+function hydrate(): Conversation {
   if (typeof window === 'undefined') return EMPTY;
   try {
-    const raw = window.sessionStorage.getItem(STORAGE_PREFIX + profileId);
+    const raw = window.sessionStorage.getItem(STORAGE_KEY);
     if (!raw) return { ...EMPTY };
-    const parsed = JSON.parse(raw) as { v?: number; items?: unknown; messages?: unknown; queued?: unknown };
-    if (parsed.v !== 1 || !Array.isArray(parsed.items) || !Array.isArray(parsed.messages)) return { ...EMPTY };
+    const parsed = JSON.parse(raw) as { v?: number; items?: unknown; messages?: unknown };
+    if (parsed.v !== 2 || !Array.isArray(parsed.items) || !Array.isArray(parsed.messages)) return { ...EMPTY };
     return {
       items: (parsed.items as Item[]).map(settle),
       messages: repairTranscript(parsed.messages as ChatMessage[]),
-      queued: Array.isArray(parsed.queued) ? parsed.queued.filter((q): q is string => typeof q === 'string') : [],
       running: false,
     };
   } catch {
@@ -137,56 +98,41 @@ function hydrate(profileId: string): Conversation {
   }
 }
 
-function read(profileId: string): Conversation {
-  let convo = convos.get(profileId);
-  if (!convo) {
-    convo = hydrate(profileId);
-    convos.set(profileId, convo);
-  }
+function read(): Conversation {
+  if (!convo) convo = hydrate();
   return convo;
 }
 
-function persist(profileId: string) {
-  const convo = convos.get(profileId);
-  if (!convo) return;
+function persist() {
+  if (!convo || typeof window === 'undefined') return;
   try {
-    const key = STORAGE_PREFIX + profileId;
-    if (!convo.items.length && !convo.messages.length) window.sessionStorage.removeItem(key);
-    else
-      window.sessionStorage.setItem(
-        key,
-        JSON.stringify({ v: 1, items: convo.items, messages: convo.messages, queued: convo.queued }),
-      );
+    if (!convo.items.length && !convo.messages.length) window.sessionStorage.removeItem(STORAGE_KEY);
+    else window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ v: 2, items: convo.items, messages: convo.messages }));
   } catch {
-    /* storage full or unavailable — keep the conversation in memory only */
+    /* storage full or unavailable */
   }
 }
 
-function schedulePersist(profileId: string) {
-  if (typeof window === 'undefined' || persistTimers.has(profileId)) return;
-  persistTimers.set(
-    profileId,
-    window.setTimeout(() => {
-      persistTimers.delete(profileId);
-      persist(profileId);
-    }, 600),
-  );
+function schedulePersist() {
+  if (typeof window === 'undefined' || persistTimer !== null) return;
+  persistTimer = window.setTimeout(() => {
+    persistTimer = null;
+    persist();
+  }, 600);
 }
 
 if (typeof window !== 'undefined') {
-  window.addEventListener('pagehide', () => {
-    for (const id of convos.keys()) persist(id);
-  });
+  window.addEventListener('pagehide', () => persist());
 }
 
-function update(profileId: string, fn: (convo: Conversation) => Conversation) {
-  convos.set(profileId, fn(read(profileId)));
-  schedulePersist(profileId);
+function update(fn: (current: Conversation) => Conversation) {
+  convo = fn(read());
+  schedulePersist();
   for (const listener of listeners) listener();
 }
 
-function patchItem<T extends Item>(profileId: string, id: string, fn: (item: T) => Item) {
-  update(profileId, (c) => ({ ...c, items: c.items.map((item) => (item.id === id ? fn(item as T) : item)) }));
+function patchItem<T extends Item>(id: string, fn: (item: T) => Item) {
+  update((c) => ({ ...c, items: c.items.map((item) => (item.id === id ? fn(item as T) : item)) }));
 }
 
 function subscribe(listener: () => void) {
@@ -196,18 +142,8 @@ function subscribe(listener: () => void) {
   };
 }
 
-export function useConversation(profileId: string | null): Conversation {
-  return useSyncExternalStore(
-    subscribe,
-    () => (profileId ? read(profileId) : EMPTY),
-    () => EMPTY,
-  );
-}
-
-/* ─── running a turn ─────────────────────────────────────────────────── */
-
-function contextFor(target: ProfileTarget): string {
-  return `\n\n---\n当前上下文：用户正在配置文件「${target.label}」（name: ${target.name}）中与你对话。规则、策略组、基础配置和设备类工具都作用于这份配置文件；订阅源、聚合订阅与规则集为所有配置文件共享。`;
+export function useConversation(): Conversation {
+  return useSyncExternalStore(subscribe, read, () => EMPTY);
 }
 
 function errorText(error: unknown): { text: string; settings: boolean } {
@@ -215,27 +151,23 @@ function errorText(error: unknown): { text: string; settings: boolean } {
   return { text: errorMessage(error), settings: false };
 }
 
-async function run(target: ProfileTarget, userText?: string) {
-  const pid = target.id;
-  if (controllers.has(pid)) return;
-  const controller = new AbortController();
-  controllers.set(pid, controller);
+async function run(context: AssistantRuntimeContext, userText?: string) {
+  if (controller) return;
+  const activeController = new AbortController();
+  controller = activeController;
 
-  update(pid, (c) => {
+  update((c) => {
     let messages = c.messages;
-    const parts = [...c.queued, ...(userText ? [userText] : [])];
-    if (parts.length) {
-      const text = parts.join('\n\n');
+    if (userText) {
       const last = messages[messages.length - 1];
-      // Keep strict user/assistant alternation: fold into a trailing user turn.
       messages =
         last?.role === 'user'
-          ? [...messages.slice(0, -1), { role: 'user', content: `${last.content ?? ''}\n\n${text}` }]
-          : [...messages, { role: 'user', content: text }];
+          ? [...messages.slice(0, -1), { role: 'user', content: `${last.content ?? ''}\n\n${userText}` }]
+          : [...messages, { role: 'user', content: userText }];
     }
     const items = c.items.filter((item) => !(item.type === 'notice' && item.retry));
     if (userText) items.push({ id: uid(), type: 'user', text: userText });
-    return { ...c, items, messages, queued: [], running: true };
+    return { ...c, items, messages, running: true };
   });
 
   let assistantId: string | null = null;
@@ -255,7 +187,7 @@ async function run(target: ProfileTarget, userText?: string) {
     const { reasoning, content } = pending;
     pending = { reasoning: '', content: '' };
     const ms = thinkingMs;
-    patchItem<AssistantItem>(pid, assistantId, (item) => ({
+    patchItem<AssistantItem>(assistantId, (item) => ({
       ...item,
       reasoning: item.reasoning + reasoning,
       text: item.text + content,
@@ -265,7 +197,7 @@ async function run(target: ProfileTarget, userText?: string) {
   const scheduleFlush = () => {
     if (!frame) frame = requestAnimationFrame(flush);
   };
-  const addItem = (item: Item) => update(pid, (c) => ({ ...c, items: [...c.items, item] }));
+  const addItem = (item: Item) => update((c) => ({ ...c, items: [...c.items, item] }));
   const ensureTool = (slot: string, name: string) => {
     let id = slots.get(slot);
     if (!id) {
@@ -306,7 +238,7 @@ async function run(target: ProfileTarget, userText?: string) {
         const id = assistantId;
         assistantId = null;
         if (!id) break;
-        update(pid, (c) => ({
+        update((c) => ({
           ...c,
           items: c.items.flatMap((item) => {
             if (item.id !== id || item.type !== 'assistant') return [item];
@@ -318,7 +250,7 @@ async function run(target: ProfileTarget, userText?: string) {
       }
       case 'tool-start': {
         const id = ensureTool(event.slot, event.name);
-        patchItem<ToolItem>(pid, id, (item) => ({
+        patchItem<ToolItem>(id, (item) => ({
           ...item,
           status: 'running',
           input: event.input,
@@ -329,55 +261,34 @@ async function run(target: ProfileTarget, userText?: string) {
       case 'tool-result': {
         const id = ensureTool(event.slot, event.name);
         const { result } = event;
-        if (result.kind === 'confirm-write' && result.data && typeof result.data === 'object') {
-          const data = result.data as Record<string, unknown>;
-          patchItem<ToolItem>(pid, id, () => ({
-            id,
-            type: 'confirm',
-            slot: event.slot,
-            name: typeof data.action === 'string' ? data.action : event.name,
-            summary: typeof data.summary === 'string' ? data.summary : '',
-            diff: data.diff,
-            token: typeof data.token === 'string' ? data.token : '',
-            expiresAt: typeof data.expiresAt === 'number' ? data.expiresAt : Date.now() + 300_000,
-            status: 'pending',
-          }));
-        } else {
-          const failed = result.kind === 'error';
-          patchItem<ToolItem>(pid, id, (item) => ({
-            ...item,
-            status: failed ? 'error' : 'done',
-            kind: result.kind,
-            untrusted: result.untrusted || undefined,
-            summary: failed ? null : describeResult(result.kind, result.data),
-            preview: previewText(result.data),
-            error: failed ? resultError(result.data) : undefined,
-          }));
-        }
+        const failed = result.kind === 'error';
+        patchItem<ToolItem>(id, (item) => ({
+          ...item,
+          status: failed ? 'error' : 'done',
+          kind: result.kind,
+          summary: failed ? null : describeResult(result.kind, result.data),
+          preview: previewText(result.data),
+          error: failed ? resultError(result.data) : undefined,
+        }));
         break;
       }
       case 'transcript':
-        update(pid, (c) => ({ ...c, messages: event.messages }));
+        update((c) => ({ ...c, messages: event.messages }));
         break;
     }
   };
 
   let status: AgentStatus | 'error' = 'error';
   try {
-    const [config, bootstrap] = await Promise.all([
-      fetchQuery(keys.assistantConfig, fetchAssistantConfig),
-      loadBootstrap(),
-    ]);
+    const config = await fetchQuery(keys.assistantConfig, fetchAssistantConfig);
     if (!config) {
       addItem({ id: uid(), type: 'notice', tone: 'error', text: 'AI 助手还没有配置模型。', settings: true });
     } else {
       status = await runAgent({
         config,
-        bootstrap,
-        context: contextFor(target),
-        profileId: pid,
-        messages: read(pid).messages,
-        signal: controller.signal,
+        system: buildSystemPrompt(context),
+        messages: read().messages,
+        signal: activeController.signal,
         onEvent,
       });
       if (status === 'interrupted') addItem({ id: uid(), type: 'notice', tone: 'info', text: '已停止' });
@@ -393,12 +304,11 @@ async function run(target: ProfileTarget, userText?: string) {
   } catch (error) {
     flush();
     const failedId = assistantId;
-    // Drop the half-streamed round and calls that never ran — they are not in the transcript.
-    update(pid, (c) => ({
+    update((c) => ({
       ...c,
       items: c.items.filter((item) => item.id !== failedId && !(item.type === 'tool' && item.status === 'pending')),
     }));
-    if (controller.signal.aborted || isAbortError(error)) {
+    if (activeController.signal.aborted || isAbortError(error)) {
       status = 'interrupted';
       addItem({ id: uid(), type: 'notice', tone: 'info', text: '已停止' });
     } else {
@@ -407,97 +317,32 @@ async function run(target: ProfileTarget, userText?: string) {
     }
   } finally {
     flush();
-    controllers.delete(pid);
-    update(pid, (c) => ({ ...c, running: false }));
+    if (controller === activeController) controller = null;
+    update((c) => ({ ...c, running: false }));
   }
-  // Confirm cards resolved while the model was busy: let it react now.
-  if (status === 'done' && read(pid).queued.length) void run(target);
 }
 
-/* ─── public actions ─────────────────────────────────────────────────── */
-
-export function sendMessage(target: ProfileTarget, text: string) {
+export function sendMessage(context: AssistantRuntimeContext, text: string) {
   const trimmed = text.trim();
-  if (!trimmed || controllers.has(target.id)) return;
-  void run(target, trimmed);
+  if (!trimmed || controller) return;
+  void run(context, trimmed);
 }
 
-export function retry(target: ProfileTarget) {
-  void run(target);
+export function retry(context: AssistantRuntimeContext) {
+  void run(context);
 }
 
-export function stop(profileId: string) {
-  controllers.get(profileId)?.abort();
+export function stop() {
+  controller?.abort();
 }
 
-export function clearConversation(profileId: string) {
-  controllers.get(profileId)?.abort();
-  convos.set(profileId, { ...EMPTY });
+export function clearConversation() {
+  controller?.abort();
+  convo = { ...EMPTY };
   try {
-    window.sessionStorage.removeItem(STORAGE_PREFIX + profileId);
+    window.sessionStorage.removeItem(STORAGE_KEY);
   } catch {
     /* ignore */
   }
   for (const listener of listeners) listener();
-}
-
-function tellModel(target: ProfileTarget, note: string, kick = true) {
-  update(target.id, (c) => ({ ...c, queued: [...c.queued, `【确认卡结果】${note}`] }));
-  if (kick && !controllers.has(target.id)) void run(target);
-}
-
-export function markExpired(profileId: string, itemId: string) {
-  patchItem<ConfirmItem>(profileId, itemId, (item) => (item.status === 'pending' ? { ...item, status: 'expired' } : item));
-}
-
-export async function resolveConfirm(target: ProfileTarget, itemId: string, decision: 'confirm' | 'cancel') {
-  const pid = target.id;
-  const item = read(pid).items.find((i): i is ConfirmItem => i.id === itemId && i.type === 'confirm');
-  if (!item || item.status !== 'pending') return;
-  const what = `「${item.summary}」`;
-
-  if (decision === 'cancel') {
-    patchItem<ConfirmItem>(pid, itemId, (i) => ({ ...i, status: 'cancelled' }));
-    tellModel(target, `用户取消了${what}，没有执行任何改动。`);
-    return;
-  }
-
-  patchItem<ConfirmItem>(pid, itemId, (i) => ({ ...i, status: 'confirming' }));
-  const refresh = () => {
-    refreshProfile(pid);
-    refreshShared();
-    if (item.name.includes('profile')) refreshProfiles();
-  };
-  try {
-    const outcome = await confirmWrite(item.token);
-    refresh();
-    if (outcome.kind === 'write-result') {
-      patchItem<ConfirmItem>(pid, itemId, (i) => ({
-        ...i,
-        status: 'done',
-        result: outcome.summary || i.summary,
-        undoable: outcome.undoable || undefined,
-      }));
-      tellModel(target, `用户已确认，${what}执行成功。执行结果：${outcome.modelContent}`);
-    } else {
-      patchItem<ConfirmItem>(pid, itemId, (i) => ({ ...i, status: 'unknown' }));
-      tellModel(target, `用户确认了${what}，但服务器没有返回明确结果：${outcome.modelContent}`);
-    }
-  } catch (error) {
-    if (error instanceof ApiError && error.status === 409) {
-      patchItem<ConfirmItem>(pid, itemId, (i) => ({ ...i, status: 'expired' }));
-      tellModel(target, `${what}的确认已失效（超时或已使用），没有执行。`, false);
-      return;
-    }
-    if (!(error instanceof ApiError) || error.status === 0 || error.status >= 500) {
-      // The request may have reached the server: the write could have happened.
-      refresh();
-      patchItem<ConfirmItem>(pid, itemId, (i) => ({ ...i, status: 'unknown', error: errorMessage(error) }));
-      tellModel(target, `用户确认了${what}，但执行结果未知（${errorMessage(error)}）。不要自动重试，先请用户核对当前状态。`);
-      return;
-    }
-    const issues = error.issues.map((issue) => issue.message).slice(0, 6);
-    patchItem<ConfirmItem>(pid, itemId, (i) => ({ ...i, status: 'failed', error: errorMessage(error), issues }));
-    tellModel(target, `用户确认了${what}，但执行失败：${errorMessage(error)}。不要自动重试，先向用户说明原因。`);
-  }
 }
