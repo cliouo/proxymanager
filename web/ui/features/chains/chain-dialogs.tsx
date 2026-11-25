@@ -370,7 +370,13 @@ export function NewChainDialog({
           <Button variant="ghost" onClick={() => onOpenChange(false)}>
             取消
           </Button>
-          <Button variant="primary" loading={busy} disabled={!data.parsed} data-agent-confirm onClick={() => void submit()}>
+          <Button
+            variant="primary"
+            loading={busy}
+            disabled={!data.parsed}
+            data-agent-confirm={`创建链式代理「${chainName || '新链路'}」（落地节点：${backend || '未选'}）`}
+            onClick={() => void submit()}
+          >
             创建链路
           </Button>
         </>
@@ -572,7 +578,12 @@ export function EditPoolDialog({
           <Button variant="ghost" onClick={onClose}>
             取消
           </Button>
-          <Button variant="primary" loading={busy} data-agent-confirm onClick={() => void submit()}>
+          <Button
+            variant="primary"
+            loading={busy}
+            data-agent-confirm={view ? `保存前置池「${view.poolName}」的修改` : '保存前置池修改'}
+            onClick={() => void submit()}
+          >
             保存
           </Button>
         </>

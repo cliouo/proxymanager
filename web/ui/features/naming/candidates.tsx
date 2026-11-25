@@ -59,7 +59,7 @@ export function NamingCandidates({ type, id, version, busy, onApply }: {
           <Button
             disabled={busy || candidate.blocked || query.data?.configVersion !== version}
             aria-label={`应用「${candidate.title}」`}
-            data-agent-confirm
+            data-agent-confirm={`应用命名方案「${candidate.title}」并迁移受影响的策略组筛选`}
             onClick={() => void onApply(candidate.template, candidate.title)}
           >
             应用
@@ -121,7 +121,7 @@ function GroupingPicker({ type, id, version, busy, onApply }: {
     </DataView>
     <Button
       disabled={busy || loading || !!query.error || !preview || preview.blocked || !selected.length || preview.configVersion !== version}
-      data-agent-confirm
+      data-agent-confirm="应用命名方案并自动生成所选用途的策略组"
       onClick={() => preview && void onApply(preview.template, '命名和策略组', selected)}
     >
       生成命名和策略组

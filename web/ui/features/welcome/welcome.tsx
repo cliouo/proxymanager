@@ -260,7 +260,19 @@ function SetupView({
             </ul>
           </div>
           <div className="flex flex-col gap-3">
-            <Button variant="primary" size="lg" loading={busy} trailingIcon={ArrowRight} data-agent-confirm onClick={onBootstrap} className="w-full">
+            <Button
+              variant="primary"
+              size="lg"
+              loading={busy}
+              trailingIcon={ArrowRight}
+              data-agent-confirm={
+                status.state === 'recoverable'
+                  ? '补全 default 配置文件的初始化内容'
+                  : '初始化工作区并创建默认配置文件 default'
+              }
+              onClick={onBootstrap}
+              className="w-full"
+            >
               {status.state === 'recoverable' ? '补全初始化' : '初始化'}
             </Button>
             <p className="flex items-start gap-2 text-xs leading-relaxed text-ink-3">

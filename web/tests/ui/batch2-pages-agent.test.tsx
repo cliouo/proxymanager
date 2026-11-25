@@ -153,7 +153,7 @@ describe('Phase 5 Batch 2 pages agent-readiness', () => {
     expect(fill.ok, fill.error?.message).toBe(true);
 
     const submitPromise = runAgentAct({ steps: [{ ref: '创建并打开', action: 'press' }] }, { agent });
-    expect(await screen.findByText('创建新配置文件')).toBeTruthy();
+    expect(await screen.findByText(/创建配置文件「.*」并打开/)).toBeTruthy();
     await user.click(screen.getByRole('button', { name: '允许执行' }));
     const created = await submitPromise;
     expect(created.ok, created.error?.message).toBe(true);

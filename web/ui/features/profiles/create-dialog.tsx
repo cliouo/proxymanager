@@ -115,6 +115,24 @@ export function CreateProfileDialog({
     }
   };
 
+  const confirmName = displayName.trim() || effectiveSlug || '未命名';
+  const confirmStart =
+    start === 'blank'
+      ? '空白'
+      : start === 'template'
+        ? `基于模版「${from ? profileTitle(from) : '未选'}」`
+        : `复制「${from ? profileTitle(from) : '未选'}」`;
+  const confirmSource =
+    sourceDraft.mode === 'none'
+      ? '不绑定节点来源'
+      : sourceDraft.mode === 'subscription'
+        ? '绑定订阅源'
+        : '绑定聚合订阅';
+  const confirmText =
+    kind === 'template'
+      ? `创建配置模版「${confirmName}」（${confirmStart}，${confirmSource}）`
+      : `创建配置文件「${confirmName}」并打开（${confirmStart}，${confirmSource}）`;
+
   return (
     <Dialog
       open={open}
@@ -131,7 +149,7 @@ export function CreateProfileDialog({
             type="submit"
             form={FORM_ID}
             loading={busy}
-            data-agent-confirm={kind === 'template' ? '创建新配置模版' : '创建新配置文件'}
+            data-agent-confirm={confirmText}
           >
             {kind === 'template' ? '创建模版' : '创建并打开'}
           </Button>

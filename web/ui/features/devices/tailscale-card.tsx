@@ -451,7 +451,11 @@ export function TailscaleCard({
                 variant={dirty || !feature ? 'primary' : 'secondary'}
                 disabled={!!feature && !dirty}
                 loading={busy === 'save'}
-                data-agent-confirm
+                data-agent-confirm={
+                  feature
+                    ? `保存设备「${device.display_name || device.name}」的 Tailscale 配置（${form.hostname}）`
+                    : `为设备「${device.display_name || device.name}」启用 Tailscale（${form.hostname}）`
+                }
               >
                 {feature ? '保存 Tailscale' : '启用并保存'}
               </Button>

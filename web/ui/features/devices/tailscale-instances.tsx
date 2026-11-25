@@ -267,7 +267,17 @@ function InstanceEditor({
           <Button variant="ghost" size="sm" onClick={() => onOpenChange(false)}>
             取消
           </Button>
-          <Button size="sm" variant="primary" loading={busy} data-agent-confirm onClick={() => void save()}>
+          <Button
+            size="sm"
+            variant="primary"
+            loading={busy}
+            data-agent-confirm={
+              instance
+                ? `保存 Tailscale 附加实例「${form.hostname}」`
+                : `新增 Tailscale 附加实例「${form.hostname}」`
+            }
+            onClick={() => void save()}
+          >
             {instance ? '保存实例' : '新增实例'}
           </Button>
         </>

@@ -428,7 +428,14 @@ function NewDeviceDialog({
           <Button variant="ghost" onClick={onClose}>
             取消
           </Button>
-          <Button variant="primary" loading={busy} disabled={atLimit} aria-label="确认添加设备" data-agent-confirm onClick={() => void submit()}>
+          <Button
+            variant="primary"
+            loading={busy}
+            disabled={atLimit}
+            aria-label="确认添加设备"
+            data-agent-confirm={`添加设备「${form.displayName.trim() || name || '新设备'}」并生成专属订阅链接`}
+            onClick={() => void submit()}
+          >
             添加设备
           </Button>
         </>
