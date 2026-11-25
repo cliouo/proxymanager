@@ -58,6 +58,7 @@ function MobileBar() {
       </UiButton>
       <UiButton
         type="button"
+        data-agent-hidden
         aria-label="AI 助手"
         onClick={() => openAssistant()}
         className="flex size-8 items-center justify-center rounded-md text-accent hover:bg-surface"
@@ -138,8 +139,12 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
         {!wide && (
           <div data-agent-hidden>
-            <UiDialog open={assistantOpen} onOpenChange={(open) => setUi({ assistantOpen: open })}>
-              <DialogBackdrop className="fixed inset-0 z-50 bg-overlay data-open:animate-fade-in" />
+            {/* Non-modal so the main page stays interactive while the assistant operates it on narrow screens. */}
+            <UiDialog
+              modal={false}
+              open={assistantOpen}
+              onOpenChange={(open) => setUi({ assistantOpen: open })}
+            >
               <DialogContent
                 data-agent-hidden
                 className="fixed bottom-2 right-2 top-2 z-50 m-0 w-[min(440px,calc(100vw-16px))] overflow-hidden rounded-2xl border border-line bg-surface p-0 text-ink shadow-xl outline-none data-open:animate-[slide-in-right_0.38s_var(--ease-out-expo)_both]"
