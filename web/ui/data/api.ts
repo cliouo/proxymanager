@@ -117,6 +117,69 @@ export function buildUrl(path: string, query?: Query): string {
 /** Set while a speculative (prefetch) call starts its requests; see withLowPriority. */
 let lowPriority = false;
 
+const sourceStack: string[] = [];
+let transientSource: { value: string; timer: ReturnType<typeof setTimeout>; cleanup: () => void } | null = null;
+
+function clearTransientSource() {
+  if (!transientSource) return;
+  clearTimeout(transientSource.timer);
+  transientSource.cleanup();
+  transientSource = null;
+}
+
+export function getActiveRequestSource(): string | null {
+  if (sourceStack.length > 0) return sourceStack[sourceStack.length - 1];
+  return transientSource?.value ?? null;
+}
+
+export function withRequestSource<T>(source: string, run: () => T): T {
+  sourceStack.push(source);
+  let popped = false;
+  const pop = () => {
+    if (popped) return;
+    popped = true;
+    const idx = sourceStack.lastIndexOf(source);
+    if (idx !== -1) sourceStack.splice(idx, 1);
+  };
+  try {
+    const result = run();
+    if (result !== null && (typeof result === 'object' || typeof result === 'function')) {
+      const maybeThenable = result as unknown as { then?: unknown };
+      if (typeof maybeThenable.then === 'function') {
+        return Promise.resolve(result).finally(pop) as unknown as T;
+      }
+    }
+    pop();
+    return result;
+  } catch (error) {
+    pop();
+    throw error;
+  }
+}
+
+// Marks requests started right after a WebMCP step allow; clears on trusted user input.
+export function pulseRequestSource(source: string, durationMs = 2000): () => void {
+  clearTransientSource();
+  const onUserInput = (event: Event) => {
+    if (event.isTrusted) clearTransientSource();
+  };
+  const cleanup = () => {
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('pointerdown', onUserInput, true);
+      window.removeEventListener('keydown', onUserInput, true);
+    }
+  };
+  if (typeof window !== 'undefined') {
+    window.addEventListener('pointerdown', onUserInput, true);
+    window.addEventListener('keydown', onUserInput, true);
+  }
+  const timer = setTimeout(clearTransientSource, durationMs);
+  transientSource = { value: source, timer, cleanup };
+  return () => {
+    if (transientSource?.timer === timer) clearTransientSource();
+  };
+}
+
 /**
  * Run `start` so every request it begins synchronously is sent with fetch
  * `priority: 'low'` — prefetches shouldn't compete with what the user is
@@ -139,6 +202,10 @@ export function request<T = unknown>(path: string, options: RequestOptions = {})
 async function send<T>(path: string, options: RequestOptions, priority?: RequestPriority): Promise<T> {
   const key = getAdminKey();
   const headers: Record<string, string> = { Accept: 'application/json', ...options.headers };
+  const source = getActiveRequestSource();
+  if (source && !Object.keys(headers).some((k) => k.toLowerCase() === 'x-source')) {
+    headers['X-Source'] = source;
+  }
   if (key) headers.Authorization = `Bearer ${key}`;
   let body: BodyInit | undefined;
   if (options.body !== undefined) {
