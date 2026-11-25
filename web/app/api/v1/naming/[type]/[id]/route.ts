@@ -77,7 +77,7 @@ import { mergeCollectionMemberProxies } from '@/lib/services/nodeExportService';
 import { resolveSubscriptionProxiesRaw } from '@/lib/services/subscriptionFetcher';
 import { getCollection } from '@/lib/services/collectionService';
 import { getSubscription, listSubscriptions } from '@/lib/services/subscriptionService';
-import { applyNamingPlan, rollbackNamingPlan } from '@/lib/services/namingApplyService';
+import { applyNamingPlan, disableNamingPlan, rollbackNamingPlan } from '@/lib/services/namingApplyService';
 import { listProfiles } from '@/lib/repos/profilesRepo';
 import { getNamingHistory, type NamingHistoryPlan } from '@/lib/repos/namingHistoryRepo';
 import {
@@ -151,7 +151,15 @@ const RollbackBody = z
   })
   .strict();
 
-const PostBody = z.union([ApplyBody, PreviewBody, RollbackBody, CandidatesBody, GroupingBody]);
+/** 关闭智能命名: mark the managed row disabled (original names), undoable. */
+const DisableBody = z
+  .object({
+    disable: z.literal(true),
+    expectedVersion: ExpectedVersion,
+  })
+  .strict();
+
+const PostBody = z.union([ApplyBody, PreviewBody, RollbackBody, DisableBody, CandidatesBody, GroupingBody]);
 
 /** Project a PERSISTED history plan for the workspace response — explicit
  * fields only (template/tw2cn/sourceAliases/disabled). rawOp, opId, position
@@ -600,6 +608,10 @@ export const POST = withProblemDetails(async (request: Request, ctx: Ctx) => {
   // profile-scoped authority remains exclusive to assistant actions.
   await requireGlobalNamingTarget(type, id);
   const audit = { actor, scope: 'global' as const };
+  if ('disable' in body) {
+    await disableNamingPlan(type, id, { audit, expectedVersion: body.expectedVersion });
+    return Response.json({ data: await loadWorkspace(type, id) });
+  }
   if ('rollback' in body) {
     // Rollback restores the persisted prior plan, clears the history field
     // AND persists a durable naming-source audit event in ONE atomic

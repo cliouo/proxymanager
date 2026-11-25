@@ -103,7 +103,7 @@ export interface NamingApplyResult {
   /** Version the CAS committed under — always equals planningVersion. */
   confirmedVersion: number;
   history: 'created' | 'cleared';
-  mode: 'added' | 'replaced' | 'removed';
+  mode: 'added' | 'replaced' | 'removed' | 'disabled';
   /** Human label of the edited source (for audit summaries). */
   label: string;
 }
@@ -150,7 +150,7 @@ export function buildNamingAudit(
     label: string;
     hadManaged: boolean;
     template?: string;
-    mode: 'added' | 'replaced' | 'removed';
+    mode: 'added' | 'replaced' | 'removed' | 'disabled';
     profileChanges?: NamingProfileChange[];
   } & ({ scope: 'global'; profileId?: never } | { scope?: 'profile'; profileId: string }),
 ): {
@@ -759,6 +759,100 @@ export async function applyNamingPlan(
         ? (entity as Subscription).display_name?.trim() || (entity as Subscription).name
         : (entity as Collection).name,
   };
+}
+
+/**
+ * 关闭智能命名: mark the LOGICAL managed rename-template row `disabled` so
+ * nodes keep their original upstream names. The plan (template, rules,
+ * aliases) stays on the row — the workspace shows it as 「已停用」 and a
+ * later apply re-enables it. The COMPLETE enabled row is persisted as the
+ * rollback target, so 「撤销」 restores it byte-exact (same id/position).
+ *
+ * Global (administrator workspace) authority only. Refuses when the current
+ * history carries a cross-profile group/rule migration: overwriting it would
+ * drop the only way to undo that migration — the user must 撤销 first.
+ */
+export async function disableNamingPlan(
+  type: 'subscription' | 'collection',
+  id: string,
+  options: { audit: NamingAuditRequest; expectedVersion: number },
+): Promise<NamingApplyResult> {
+  if (!options?.audit) {
+    throw ProblemDetailsError.preconditionFailed('命名写入必须携带审计信息。');
+  }
+  if (options.audit.scope !== 'global') {
+    throw ProblemDetailsError.forbidden('关闭智能命名只能从管理员命名工作区操作。');
+  }
+  const planningVersion = await assertBracketVersion(options.expectedVersion);
+  const historyField = `${type}:${id}`;
+  const entity = await readEntity(type, id);
+  const snapshot = buildOperatorSnapshot(entity);
+  const managed = snapshot.managed;
+  const priorRaw = managed !== undefined ? snapshot.raw[managed.index] : undefined;
+  if (managed === undefined || !isRecord(priorRaw) || priorRaw.disabled === true) {
+    throw ProblemDetailsError.unprocessable('智能命名当前没有开启，无需关闭。');
+  }
+  const existingHistory = await getNamingHistory(type, id);
+  if (existingHistory?.profileChanges?.length) {
+    throw ProblemDetailsError.unprocessable(
+      '上次应用的方案同时迁移了策略组/规则引用。请先点「撤销」恢复原状，再关闭智能命名。',
+    );
+  }
+  const priorOp = priorRaw as {
+    id: string;
+    template?: string;
+    tw2cn?: boolean;
+    sourceAliases?: Record<string, string>;
+    recognitionRules?: Array<{ pattern: string; field: string; value: string }>;
+    nodeFacts?: import('@/lib/proxies/naming').NodeFacts;
+  };
+  const next = [...snapshot.raw];
+  next[managed.index] = { ...safeJsonClone(priorRaw), disabled: true };
+  assertStoredListContract(next);
+  assertCurrentWriteProjection(next);
+  const namingResult = applyOperatorMutation(snapshot, next, 'naming');
+  const nextEntity: Subscription | Collection = {
+    ...entity,
+    operators: namingResult.storage as Subscription['operators'],
+    updated_at: nowSeconds(),
+  };
+  const priorState: NamingHistoryPlan = {
+    hadManaged: true,
+    template: priorOp.template,
+    tw2cn: priorOp.tw2cn,
+    sourceAliases: priorOp.sourceAliases,
+    recognitionRules: priorOp.recognitionRules,
+    ...(priorOp.nodeFacts !== undefined ? { nodeFacts: priorOp.nodeFacts } : {}),
+    opId: managed.id,
+    position: managed.index,
+    disabled: false,
+    rawOp: safeJsonClone(priorRaw),
+  };
+  const label =
+    type === 'subscription'
+      ? (entity as Subscription).display_name?.trim() || (entity as Subscription).name
+      : (entity as Collection).name;
+  const audit = buildNamingAudit({
+    op: 'naming.apply',
+    actor: options.audit.actor,
+    scope: 'global',
+    type,
+    id,
+    label,
+    hadManaged: true,
+    template: priorOp.template,
+    mode: 'disabled',
+  });
+  await commitUnderBracket({
+    planningVersion,
+    type,
+    id,
+    nextEntity,
+    history: { op: 'set', field: historyField, value: safeJsonStringify(priorState) },
+    audit,
+    authority: { scope: 'global' },
+  });
+  return { planningVersion, confirmedVersion: planningVersion, history: 'created', mode: 'disabled', label };
 }
 
 /**

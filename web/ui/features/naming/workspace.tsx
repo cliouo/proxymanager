@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
-import { AlertTriangle, Layers, SearchX, Undo2, Wand2 } from 'lucide-react';
+import { AlertTriangle, Layers, PowerOff, SearchX, Undo2, Wand2 } from 'lucide-react';
 import { validateTemplate } from '@/lib/proxies/naming';
 import { NodeFactsSchema } from '@/schemas/nodeFacts';
 import { ApiError, errorMessage } from '@/ui/data/api';
@@ -20,6 +20,7 @@ import {
   applyPlan,
   isVersionConflict,
   rollbackPlan,
+  disablePlan,
   recognizeNodeFacts,
   useCurrentNames,
   useDebounced,
@@ -100,7 +101,7 @@ function Workspace({
   ws: ReturnType<typeof useNamingWorkspace>;
 }) {
   const [plan, setPlan] = useState<NamingPlan>(() => storedPlan(data));
-  const [busy, setBusy] = useState<'apply' | 'rollback' | 'recognize' | null>(null);
+  const [busy, setBusy] = useState<'apply' | 'rollback' | 'disable' | 'recognize' | null>(null);
   const [rulesOpen, setRulesOpen] = useState(
     () => (data.managed.recognitionRules?.length ?? 0) > 0,
   );
@@ -245,6 +246,34 @@ function Workspace({
     }
   };
 
+  const disable = async () => {
+    const ok = await confirmAction({
+      title: '关闭智能命名？',
+      tone: 'danger',
+      confirmText: '关闭',
+      description: (
+        <span className="flex flex-col gap-2">
+          <span>节点会恢复上游原来的名字。当前的命名方案会保留，之后点「重新启用」或「撤销上次应用」即可恢复。</span>
+          <span className="text-warn">如果有策略组筛选或规则依赖统一后的名字（例如按「美国」匹配），关闭后可能匹配不到节点；保存前会先校验配置，校验不过不会写入。</span>
+        </span>
+      ),
+    });
+    if (!ok) return;
+    setBusy('disable');
+    try {
+      const next = await disablePlan(type, id, data.configVersion);
+      ws.mutate(next);
+      setPlan(storedPlan(next));
+      refreshShared();
+      notify.success('智能命名已关闭', '客户端下次更新订阅时会看到原始节点名。');
+    } catch (error) {
+      if (isVersionConflict(error)) await onConflict();
+      else notify.error(error, '关闭失败');
+    } finally {
+      setBusy(null);
+    }
+  };
+
   useHotkey('mod+s', () => void apply(), { enabled: applyable });
 
   const recognize = async () => {
@@ -309,6 +338,11 @@ function Workspace({
             >
               AI 识别节点
             </Button>
+            {activation === 'enabled' && (
+              <Button icon={PowerOff} loading={busy === 'disable'} disabled={!!busy} onClick={() => void disable()}>
+                关闭智能命名
+              </Button>
+            )}
             {data.priorPlan.present && (
               <Button icon={Undo2} loading={busy === 'rollback'} disabled={!!busy} onClick={() => void rollback()}>
                 撤销上次应用
@@ -338,7 +372,7 @@ function Workspace({
           ) : (
             <span>暂时没有配置文件用到它</span>
           )}
-          {activation === 'disabled' && <span className="text-warn">· 命名步骤在处理流程里被停用了，应用后会重新启用</span>}
+          {activation === 'disabled' && <span className="text-warn">· 智能命名已关闭，节点使用原始名字；点「重新启用」恢复</span>}
         </div>
       </PageHeader>
 

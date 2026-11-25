@@ -293,7 +293,7 @@ async function call(
   const requestBody =
     body !== null &&
     typeof body === 'object' &&
-    (Object.hasOwn(body, 'apply') || Object.hasOwn(body, 'rollback')) &&
+    (Object.hasOwn(body, 'apply') || Object.hasOwn(body, 'rollback') || Object.hasOwn(body, 'disable')) &&
     !Object.hasOwn(body, 'expectedVersion')
       ? {
           ...(body as Record<string, unknown>),
@@ -1434,6 +1434,78 @@ describe('POST apply — policy preservation + persisted prior plan', () => {
       expect(bucket(REDIS_KEYS.namingHistory).has('subscription:' + SUB_ID)).toBe(false);
       void label;
     }
+  });
+
+  it('disable (关闭智能命名) keeps the plan on a disabled row, records an undoable prior state, and rollback re-enables it exactly', async () => {
+    const filler = { id: 'f-1', kind: 'flag-emoji', regions: { HK: '🇭🇰' } };
+    const managedOp = {
+      id: 'rt-on',
+      kind: 'rename-template',
+      template: '${emoji} ${region}',
+      tw2cn: true,
+      recognitionRules: [{ pattern: '中转', field: 'route', value: '中转' }],
+    };
+    seedSub({ operators: [filler, managedOp] });
+    counters.set(REDIS_KEYS.configVersion, 7);
+    const res = await call(POST, 'subscription', SUB_ID, { disable: true });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: { managed: { present: boolean }; priorPlan: { present: boolean } } };
+    expect(body.data.priorPlan.present).toBe(true);
+    const stored = bucket(REDIS_KEYS.subscriptions).get(SUB_ID) as { operators: unknown[] };
+    expect(stored.operators).toEqual([filler, { ...managedOp, disabled: true }]);
+    expect(counters.get(REDIS_KEYS.configVersion)).toBe(8);
+    const history = bucket(REDIS_KEYS.namingHistory).get('subscription:' + SUB_ID) as {
+      hadManaged: boolean; opId?: string; position?: number; disabled?: boolean;
+    };
+    expect(history).toMatchObject({ hadManaged: true, opId: 'rt-on', position: 1, disabled: false });
+    const audits = [...bucket(REDIS_KEYS.audit.byId).values()].map((v) => JSON.parse(String(v)) as { op: string; after: { mode: string } });
+    expect(audits.some((a) => a.op === 'naming.apply' && a.after.mode === 'disabled')).toBe(true);
+
+    // disabling again is a clean 422, nothing written
+    const again = await call(POST, 'subscription', SUB_ID, { disable: true });
+    expect(again.status).toBe(422);
+    expect(counters.get(REDIS_KEYS.configVersion)).toBe(8);
+
+    // 撤销 restores the ENABLED row byte-exact
+    const rollbackRes = await call(POST, 'subscription', SUB_ID, { rollback: true });
+    expect(rollbackRes.status).toBe(200);
+    const restored = bucket(REDIS_KEYS.subscriptions).get(SUB_ID) as { operators: unknown[] };
+    expect(restored.operators).toEqual([filler, managedOp]);
+    expect(bucket(REDIS_KEYS.namingHistory).has('subscription:' + SUB_ID)).toBe(false);
+  });
+
+  it('disable without an enabled managed row is a clean 422 with nothing written', async () => {
+    counters.set(REDIS_KEYS.configVersion, 7);
+    const res = await call(POST, 'subscription', SUB_ID, { disable: true });
+    expect(res.status).toBe(422);
+    expect(counters.get(REDIS_KEYS.configVersion)).toBe(7);
+    expect(bucket(REDIS_KEYS.audit.byId).size).toBe(0);
+  });
+
+  it('disable works on collections and re-apply re-enables the kept plan', async () => {
+    bucket(REDIS_KEYS.collections).set(COL_ID, {
+      id: COL_ID,
+      name: '聚合一号',
+      slug: 'agg-1',
+      enabled: true,
+      type: 'select',
+      subscription_ids: [SUB_ID],
+      subscription_tags: [],
+      operators: [],
+      created_at: 1,
+      updated_at: 1,
+    });
+    counters.set(REDIS_KEYS.configVersion, 7);
+    const first = await call(POST, 'collection', COL_ID, { apply: { template: '${region}' } });
+    expect(first.status).toBe(200);
+    const off = await call(POST, 'collection', COL_ID, { disable: true });
+    expect(off.status).toBe(200);
+    const disabled = bucket(REDIS_KEYS.collections).get(COL_ID) as { operators: Array<{ kind: string; disabled?: boolean; template?: string }> };
+    expect(disabled.operators).toEqual([expect.objectContaining({ kind: 'rename-template', template: '${region}', disabled: true })]);
+    const on = await call(POST, 'collection', COL_ID, { apply: { template: '${region}' } });
+    expect(on.status).toBe(200);
+    const enabled = bucket(REDIS_KEYS.collections).get(COL_ID) as { operators: Array<{ disabled?: boolean }> };
+    expect(enabled.operators[0].disabled).toBeUndefined();
   });
 
   it('a pre-existing DISABLED rename-template is preserved as history and restored EXACTLY on rollback', async () => {

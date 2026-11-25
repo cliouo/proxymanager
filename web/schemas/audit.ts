@@ -120,7 +120,7 @@ export const NamingAuditEventSchema = z
             length: z.number().int().min(0).max(512),
           })
           .strict(),
-        mode: z.enum(['added', 'replaced', 'removed']),
+        mode: z.enum(['added', 'replaced', 'removed', 'disabled']),
         migration: z.object({ profiles: z.number().int().nonnegative(), groups: z.number().int().nonnegative(), rules: z.number().int().nonnegative() }).strict().optional(),
       })
       .strict(),
