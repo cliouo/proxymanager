@@ -9,6 +9,19 @@ import {
 } from '@ui-sdk/react/agent';
 import { pulseRequestSource, withRequestSource } from '@/ui/data/api';
 import { requestAgentConfirm } from './confirm';
+import { customTools, executeCustomTool } from './custom-tools';
+
+interface WebMcpToolRegistration {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+  execute: (input: Record<string, unknown>) => Promise<unknown>;
+}
+
+interface WebMcpModelContext {
+  registerTool?: (tool: WebMcpToolRegistration, options?: { signal?: AbortSignal }) => unknown;
+  unregisterTool?: (name: string) => unknown;
+}
 
 export type AppAgent = ReturnType<typeof createAgent>;
 
@@ -41,17 +54,48 @@ export function runAgentAct(
 
 export function registerAppWebMcp(target: AppAgent = getAgent()): () => void {
   let cancelPulse: (() => void) | null = null;
-  const unregister = registerTools(target, {
+  const unregisterBridge = registerTools(target, {
     allow: () => {
       // Bridge allow already asks the user for data-agent-confirm steps; avoid double prompts.
       cancelPulse = pulseRequestSource('webmcp');
       return true;
     },
   });
+
+  const modelContext =
+    typeof document !== 'undefined'
+      ? (document as Document & { modelContext?: WebMcpModelContext }).modelContext
+      : undefined;
+  const controller = new AbortController();
+  const cleanups: Array<() => void> = [];
+  if (modelContext?.registerTool) {
+    for (const tool of customTools) {
+      const registration = modelContext.registerTool(
+        {
+          name: tool.name,
+          description: tool.description,
+          inputSchema: tool.inputSchema,
+          execute: (input) => executeCustomTool(tool.name, input, { source: 'webmcp' }),
+        },
+        { signal: controller.signal },
+      );
+      if (typeof registration === 'function') {
+        cleanups.push(registration as () => void);
+      } else if (typeof modelContext.unregisterTool === 'function') {
+        const unregisterTool = modelContext.unregisterTool.bind(modelContext);
+        cleanups.push(() => {
+          void unregisterTool(tool.name);
+        });
+      }
+    }
+  }
+
   return () => {
     cancelPulse?.();
     cancelPulse = null;
-    unregister();
+    controller.abort();
+    for (const cleanup of cleanups) cleanup();
+    unregisterBridge();
   };
 }
 

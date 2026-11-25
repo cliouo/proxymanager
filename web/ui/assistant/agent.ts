@@ -1,6 +1,15 @@
 'use client';
 
-import { agentTools, getAgent, runAgentAct, type AgentStep, type AppAgent } from '@/ui/agent';
+import {
+  agentTools,
+  customTools,
+  executeCustomTool,
+  findCustomTool,
+  getAgent,
+  runAgentAct,
+  type AgentStep,
+  type AppAgent,
+} from '@/ui/agent';
 import { ApiError, api, errorMessage } from '@/ui/data/api';
 import type { AssistantConfig } from '@/ui/data/types';
 
@@ -28,7 +37,7 @@ export interface OpenAiTool {
 }
 
 export interface ToolDispatchResult {
-  kind: 'snapshot' | 'query' | 'act' | 'error';
+  kind: 'snapshot' | 'query' | 'act' | 'custom' | 'error';
   data: unknown;
   modelContent: string;
 }
@@ -36,7 +45,7 @@ export interface ToolDispatchResult {
 export const MAX_ROUNDS = 16;
 
 export function toOpenAiTools(): OpenAiTool[] {
-  return agentTools.map(({ name, description, inputSchema }) => ({
+  return [...agentTools, ...customTools].map(({ name, description, inputSchema }) => ({
     type: 'function',
     function: {
       name,
@@ -419,6 +428,15 @@ export async function dispatchAgentTool(
         return { kind: 'error', data, modelContent: JSON.stringify(data) };
       }
       return { kind: 'act', data, modelContent: JSON.stringify(data) };
+    }
+    const custom = findCustomTool(name);
+    if (custom) {
+      const data = await executeCustomTool(name, input, { signal, source: 'ai_chat' });
+      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+      if (isRecord(data) && data.ok === false) {
+        return { kind: 'error', data, modelContent: JSON.stringify(data) };
+      }
+      return { kind: 'custom', data, modelContent: JSON.stringify(data) };
     }
     return errorResult(`未知工具：${name}`);
   } catch (error) {

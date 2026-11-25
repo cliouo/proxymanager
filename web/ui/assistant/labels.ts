@@ -2,6 +2,14 @@ const TOOL_LABELS: Record<string, string> = {
   snapshot: '查看当前页面',
   query: '查询页面内容',
   act: '操作页面',
+  search_mihomo_docs: '查询 Mihomo 文档',
+  fetch_url: '抓取外部链接',
+  preview_direct_alias_migration: '预检直连别名迁移',
+  migrate_direct_alias: '迁移直连别名',
+  preview_legacy_profile_repair: '预检旧配置恢复',
+  repair_legacy_profile: '恢复旧配置',
+  preview_legacy_chain_profile_repair: '预检旧链配置恢复',
+  repair_legacy_chain_profile: '恢复旧链配置',
 };
 
 const ACTION_LABELS: Record<string, string> = {
@@ -49,6 +57,24 @@ export function describeInput(name: string, input: unknown): string | null {
     return head ? clip(`${head} 等 ${args.steps.length} 步`) : `${args.steps.length} 步`;
   }
 
+  if (name === 'search_mihomo_docs' && typeof args.question === 'string') {
+    return clip(args.question);
+  }
+  if (name === 'fetch_url' && typeof args.url === 'string') {
+    return clip(args.url);
+  }
+  if (
+    (name === 'preview_direct_alias_migration' ||
+      name === 'migrate_direct_alias' ||
+      name === 'preview_legacy_profile_repair' ||
+      name === 'repair_legacy_profile' ||
+      name === 'preview_legacy_chain_profile_repair' ||
+      name === 'repair_legacy_chain_profile') &&
+    typeof args.alias === 'string'
+  ) {
+    return clip(`别名「${args.alias}」`);
+  }
+
   return null;
 }
 
@@ -76,6 +102,14 @@ export function describeResult(kind: string, data: unknown): string | null {
       return `${record.steps.length} 步完成`;
     }
   }
+  if (kind === 'custom') {
+    const record = asRecord(data);
+    if (record?.unavailable === true) return '文档服务暂不可用';
+    if (typeof record?.bytes === 'number') return `${record.bytes} 字节`;
+    if (typeof record?.newVersion === 'number') return `版本 v${record.newVersion}`;
+    if (record?.safe === true) return '预检通过';
+  }
+
   return null;
 }
 
