@@ -3,7 +3,9 @@
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { Button as UiButton } from '@ui-sdk/react/button';
 import { Boxes, Link2, MoreHorizontal, Pencil, Plus, RadioTower, RefreshCw, RotateCcw, Trash2, Workflow } from 'lucide-react';
+import { DataView } from '@/ui/agent';
 import { errorMessage } from '@/ui/data/api';
 import { usePools, useSources } from '@/ui/data/hooks';
 import { cn } from '@/ui/lib/cn';
@@ -63,6 +65,8 @@ async function copyLink(url: string | null, label: string) {
 export function SourceCard({ source, subBase }: { source: Source; subBase: string | null }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
+  const [optimistic, setOptimistic] = useState<{ base: boolean; next: boolean } | null>(null);
+  const enabled = optimistic && optimistic.base === source.enabled ? optimistic.next : source.enabled;
   const health = sourceHealth(source);
   const traffic = source.traffic ?? trafficOf(source.fetch_health) ?? source.manual_snapshot?.traffic;
   const title = sourceTitle(source);
@@ -71,12 +75,16 @@ export function SourceCard({ source, subBase }: { source: Source; subBase: strin
     <article
       className={cn(
         'group relative flex flex-col gap-3.5 rounded-xl border border-line bg-surface p-4 shadow-xs transition-[border-color,box-shadow] hover:border-line-strong hover:shadow-md',
-        !source.enabled && 'bg-surface-2/40',
+        !enabled && 'bg-surface-2/40',
       )}
     >
-      <Link href={`/sources/${source.id}`} {...intentProps(`/sources/${source.id}`)} className="absolute inset-0 rounded-xl focus-visible:outline-2 focus-visible:outline-accent" aria-label={`打开「${title}」`} />
+      <UiButton
+        render={<Link href={`/sources/${source.id}`} {...intentProps(`/sources/${source.id}`)} />}
+        className="absolute inset-0 rounded-xl focus-visible:outline-2 focus-visible:outline-accent"
+        aria-label={`打开「${title}」`}
+      />
       <div className="flex items-start gap-3">
-        <Monogram name={title} colorKey={source.id} size={34} className={cn(!source.enabled && 'opacity-50 grayscale')} />
+        <Monogram name={title} colorKey={source.id} size={34} className={cn(!enabled && 'opacity-50 grayscale')} />
         <div className="min-w-0 flex-1">
           <div className="truncate text-[14px] font-semibold tracking-tight text-ink">{title}</div>
           <div className="mt-0.5 flex items-center gap-1.5">
@@ -87,13 +95,16 @@ export function SourceCard({ source, subBase }: { source: Source; subBase: strin
         <div className="relative z-10 flex items-center gap-0.5">
           <Switch
             size="sm"
-            checked={source.enabled}
+            checked={enabled}
             disabled={busy}
-            label={source.enabled ? `停用「${title}」` : `启用「${title}」`}
+            label={enabled ? `停用「${title}」` : `启用「${title}」`}
+            data-agent-confirm={enabled ? `停用订阅源「${title}」` : `启用订阅源「${title}」`}
             onCheckedChange={async (on) => {
+              setOptimistic({ base: source.enabled, next: on });
               setBusy(true);
-              await setSourceEnabled(source, on);
+              const ok = await setSourceEnabled(source, on);
               setBusy(false);
+              if (!ok) setOptimistic(null);
             }}
           />
           <Menu
@@ -103,6 +114,7 @@ export function SourceCard({ source, subBase }: { source: Source; subBase: strin
                     {
                       label: '刷新',
                       icon: RefreshCw,
+                      confirm: `刷新订阅源「${title}」`,
                       onSelect: async () => {
                         setBusy(true);
                         await refreshSource(source);
@@ -145,6 +157,8 @@ export function SourceCard({ source, subBase }: { source: Source; subBase: strin
 
 export function PoolCard({ pool, sources, subBase }: { pool: Pool; sources: Source[]; subBase: string | null }) {
   const [busy, setBusy] = useState(false);
+  const [optimistic, setOptimistic] = useState<{ base: boolean; next: boolean } | null>(null);
+  const enabled = optimistic && optimistic.base === pool.enabled ? optimistic.next : pool.enabled;
   const members = resolvePoolMembers(pool, sources);
   const active = activeMembers(members);
   const steps = pool.operators.filter((op) => !op.disabled).length;
@@ -152,10 +166,14 @@ export function PoolCard({ pool, sources, subBase }: { pool: Pool; sources: Sour
     <article
       className={cn(
         'group relative flex min-w-0 flex-col gap-3.5 rounded-xl border border-line bg-surface p-4 shadow-xs transition-[border-color,box-shadow] hover:border-line-strong hover:shadow-md',
-        !pool.enabled && 'bg-surface-2/40',
+        !enabled && 'bg-surface-2/40',
       )}
     >
-      <Link href={`/pools/${pool.id}`} {...intentProps(`/pools/${pool.id}`)} className="absolute inset-0 rounded-xl focus-visible:outline-2 focus-visible:outline-accent" aria-label={`打开「${pool.name}」`} />
+      <UiButton
+        render={<Link href={`/pools/${pool.id}`} {...intentProps(`/pools/${pool.id}`)} />}
+        className="absolute inset-0 rounded-xl focus-visible:outline-2 focus-visible:outline-accent"
+        aria-label={`打开「${pool.name}」`}
+      />
       <div className="flex items-start gap-3">
         <span className="flex size-[34px] shrink-0 items-center justify-center rounded-[28%] border border-line bg-surface-2 text-ink-2">
           <Boxes size={17} strokeWidth={1.75} />
@@ -167,13 +185,16 @@ export function PoolCard({ pool, sources, subBase }: { pool: Pool; sources: Sour
         <div className="relative z-10 flex items-center gap-0.5">
           <Switch
             size="sm"
-            checked={pool.enabled}
+            checked={enabled}
             disabled={busy}
-            label={pool.enabled ? `停用「${pool.name}」` : `启用「${pool.name}」`}
+            label={enabled ? `停用「${pool.name}」` : `启用「${pool.name}」`}
+            data-agent-confirm={enabled ? `停用聚合订阅「${pool.name}」` : `启用聚合订阅「${pool.name}」`}
             onCheckedChange={async (on) => {
+              setOptimistic({ base: pool.enabled, next: on });
               setBusy(true);
-              await setPoolEnabled(pool, on);
+              const ok = await setPoolEnabled(pool, on);
               setBusy(false);
+              if (!ok) setOptimistic(null);
             }}
           />
           <Menu
@@ -294,7 +315,12 @@ export function SourcesIndex() {
           tab === 'sources' ? (
             <>
               {refreshable.length > 0 && (
-                <Button icon={RefreshCw} loading={refreshingAll} onClick={() => void refreshAll()}>
+                <Button
+                  icon={RefreshCw}
+                  loading={refreshingAll}
+                  data-agent-confirm={`刷新全部 ${refreshable.length} 个订阅源`}
+                  onClick={() => void refreshAll()}
+                >
                   全部刷新
                 </Button>
               )}
@@ -310,6 +336,7 @@ export function SourcesIndex() {
         }
       />
       <Tabs
+        label="节点来源分类"
         value={tab}
         onValueChange={(value) => go({ tab: value })}
         className={TAB_SCROLL}
@@ -324,7 +351,14 @@ export function SourcesIndex() {
               ? '订阅源是节点的原始来源：机场订阅或你自己维护的节点。'
               : '聚合订阅把多个订阅源合成一份节点列表，可以整体加工、整体绑定。'}
           </p>
-          <SearchInput value={query} onChange={setQuery} placeholder={tab === 'sources' ? '搜索名称、标识或标签' : '搜索聚合订阅'} className="w-full sm:w-64" inputSize="sm" />
+          <SearchInput
+            value={query}
+            onChange={setQuery}
+            aria-label={tab === 'sources' ? '搜索订阅源' : '搜索聚合订阅'}
+            placeholder={tab === 'sources' ? '搜索名称、标识或标签' : '搜索聚合订阅'}
+            className="w-full sm:w-64"
+            inputSize="sm"
+          />
         </div>
         {loadError ? (
           <div className="flex items-center justify-between gap-3 rounded-xl border border-bad/20 bg-bad-soft px-4 py-3 text-sm text-ink-2">
@@ -351,11 +385,19 @@ export function SourcesIndex() {
           ) : shownSources.length === 0 ? (
             <EmptyState compact title="没有匹配的订阅源" description="换个关键词试试。" />
           ) : (
-            <div className="grid animate-rise gap-4 sm:grid-cols-2 @4xl/main:grid-cols-3">
+            <DataView
+              label="订阅源列表"
+              summary={`共 ${shownSources.length} 个订阅源`}
+              items={shownSources.map((source) => ({
+                value: source.id,
+                label: `${sourceTitle(source)} (${source.name}) · ${source.kind === 'local' ? '本地' : '远程'} · ${source.enabled ? '启用' : '停用'} · ${nodeLine(source)}`,
+              }))}
+              className="grid animate-rise gap-4 sm:grid-cols-2 @4xl/main:grid-cols-3"
+            >
               {shownSources.map((source) => (
                 <SourceCard key={source.id} source={source} subBase={subBase} />
               ))}
-            </div>
+            </DataView>
           )}
         </TabPanel>
         <TabPanel value="pools" className="outline-none">
@@ -375,11 +417,22 @@ export function SourcesIndex() {
           ) : shownPools.length === 0 ? (
             <EmptyState compact title="没有匹配的聚合订阅" description="换个关键词试试。" />
           ) : (
-            <div className="grid animate-rise gap-4 sm:grid-cols-2 @4xl/main:grid-cols-3">
+            <DataView
+              label="聚合订阅列表"
+              summary={`共 ${shownPools.length} 个聚合订阅`}
+              items={shownPools.map((pool) => {
+                const activeCount = activeMembers(resolvePoolMembers(pool, list)).length;
+                return {
+                  value: pool.id,
+                  label: `${pool.name} (${pool.slug ?? pool.id.slice(0, 8)}) · ${pool.enabled ? '启用' : '停用'} · ${activeCount} 个订阅源`,
+                };
+              })}
+              className="grid animate-rise gap-4 sm:grid-cols-2 @4xl/main:grid-cols-3"
+            >
               {shownPools.map((pool) => (
                 <PoolCard key={pool.id} pool={pool} sources={list} subBase={subBase} />
               ))}
-            </div>
+            </DataView>
           )}
         </TabPanel>
       </Tabs>
