@@ -3,10 +3,12 @@
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import { Button as UiButton } from '@ui-sdk/react/button';
 import { closestCenter, DndContext, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { Boxes, Check, GripVertical, Link2, MoreHorizontal, Plus, Power, PowerOff, RotateCcw, Tag, Trash2, X } from 'lucide-react';
+import { DataView } from '@/ui/agent';
 import { errorMessage } from '@/ui/data/api';
 import { refreshShared, usePool, usePools, useSources } from '@/ui/data/hooks';
 import { cn } from '@/ui/lib/cn';
@@ -141,6 +143,7 @@ function MembersPanel({ pool, sources, active }: { pool: Pool; sources: Source[]
             <p className="mt-0.5 text-xs text-ink-3">按顺序合并，节点重名时保留排在前面的那个。拖动调整顺序。</p>
           </div>
           <MultiCombobox
+            label="成员订阅源"
             className="[&>span]:hidden"
             value={ids}
             onChange={setIds}
@@ -160,17 +163,26 @@ function MembersPanel({ pool, sources, active }: { pool: Pool; sources: Source[]
             <EmptyState compact icon={Boxes} title="还没有手动选择的订阅源" description="点击「添加订阅源」，或者在下面按标签自动收录。" />
           </Card>
         ) : (
-          <Card className="overflow-hidden">
-            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
-              <SortableContext items={ids} strategy={verticalListSortingStrategy}>
-                <ol className="divide-y divide-line">
-                  {ids.map((id) => (
-                    <MemberRow key={id} id={id} source={byId.get(id) ?? null} onRemove={() => setIds(ids.filter((x) => x !== id))} />
-                  ))}
-                </ol>
-              </SortableContext>
-            </DndContext>
-          </Card>
+          <DataView
+            label="聚合订阅成员顺序"
+            summary={`已手动选择 ${ids.length} 个订阅源`}
+            items={ids.map((id, idx) => {
+              const s = byId.get(id);
+              return { value: id, label: `${idx + 1}. ${s ? sourceTitle(s) : '已删除的订阅源'}` };
+            })}
+          >
+            <Card className="overflow-hidden">
+              <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+                <SortableContext items={ids} strategy={verticalListSortingStrategy}>
+                  <ol className="divide-y divide-line">
+                    {ids.map((id) => (
+                      <MemberRow key={id} id={id} source={byId.get(id) ?? null} onRemove={() => setIds(ids.filter((x) => x !== id))} />
+                    ))}
+                  </ol>
+                </SortableContext>
+              </DndContext>
+            </Card>
+          </DataView>
         )}
       </section>
 
@@ -179,21 +191,22 @@ function MembersPanel({ pool, sources, active }: { pool: Pool; sources: Source[]
           <h3 className="text-[15px] font-semibold tracking-tight text-ink">按标签自动加入</h3>
           <p className="mt-0.5 text-xs text-ink-3">带这些标签的订阅源会自动加入，以后新加的订阅源也一样；它们排在手动选择的后面。</p>
         </div>
-        <TagInput value={tags} onChange={setTags} validate={validateTag} placeholder="输入标签，回车添加" />
+        <TagInput aria-label="自动加入标签" value={tags} onChange={setTags} validate={validateTag} placeholder="输入标签，回车添加" />
         {allTags.filter((t) => !tags.includes(t)).length > 0 && (
           <div className="flex flex-wrap items-center gap-1.5 text-xs text-ink-3">
             现有标签：
             {allTags
               .filter((t) => !tags.includes(t))
               .map((tag) => (
-                <button
+                <UiButton
                   key={tag}
                   type="button"
+                  aria-label={`添加标签 ${tag}`}
                   onClick={() => setTags([...tags, tag])}
                   className="rounded-md border border-line bg-surface px-1.5 py-px text-ink-2 hover:border-line-strong hover:text-ink"
                 >
                   + {tag}
-                </button>
+                </UiButton>
               ))}
           </div>
         )}
@@ -228,6 +241,7 @@ function MembersPanel({ pool, sources, active }: { pool: Pool; sources: Source[]
       <SaveBar
         visible={dirty}
         saving={saving}
+        confirmHint={`保存聚合订阅「${pool.name}」的成员修改`}
         onSave={() => void save()}
         onDiscard={() => {
           setIds(pool.subscription_ids);
@@ -309,6 +323,7 @@ function PoolSettings({ pool, active }: { pool: Pool; active: boolean }) {
       <SaveBar
         visible={dirty}
         saving={saving}
+        confirmHint={`保存聚合订阅「${pool.name}」的设置修改`}
         onSave={() => void save()}
         onDiscard={() => {
           setName(pool.name);
@@ -417,8 +432,8 @@ export function PoolDetail() {
             <Menu
               items={[
                 pool.enabled
-                  ? { label: '停用', icon: PowerOff, onSelect: () => void setPoolEnabled(pool, false) }
-                  : { label: '启用', icon: Power, onSelect: () => void setPoolEnabled(pool, true) },
+                  ? { label: '停用', icon: PowerOff, confirm: `停用聚合订阅「${pool.name}」`, onSelect: () => void setPoolEnabled(pool, false) }
+                  : { label: '启用', icon: Power, confirm: `启用聚合订阅「${pool.name}」`, onSelect: () => void setPoolEnabled(pool, true) },
                 { label: '删除', icon: Trash2, tone: 'danger' as const, onSelect: async () => (await deletePool(pool)) && router.push('/sources?tab=pools') },
               ]}
               trigger={<Button iconOnly icon={MoreHorizontal} aria-label="更多操作" />}
@@ -428,6 +443,7 @@ export function PoolDetail() {
       />
 
       <Tabs
+        label="聚合订阅详情标签页"
         value={tab}
         onValueChange={setTab}
         className={TAB_SCROLL}

@@ -130,7 +130,7 @@ export function SourceSettings({ source, active }: { source: Source; active: boo
           </div>
         )}
         <Field label="标签" optional hint="聚合订阅可以按标签自动收录订阅源。">
-          {() => <TagInput value={form.tags} onChange={(tags) => set('tags', tags)} validate={validateTag} />}
+          {() => <TagInput aria-label="订阅源标签" value={form.tags} onChange={(tags) => set('tags', tags)} validate={validateTag} />}
         </Field>
         <div className="flex items-center justify-between gap-4 border-t border-line pt-4">
           <div>
@@ -178,7 +178,7 @@ export function SourceSettings({ source, active }: { source: Source; active: boo
         <Section title="节点内容" description="Clash 格式的 YAML，包含一个 proxies: 列表。保存前会检查所有用到它的配置文件。">
           {errors.content && <p className="text-xs text-bad">{errors.content}</p>}
           <div className="-m-4 overflow-hidden rounded-xl">
-            <CodeEditor value={form.content} onChange={(content) => set('content', content)} height="360px" onSave={() => void save()} />
+            <CodeEditor label="节点内容" value={form.content} onChange={(content) => set('content', content)} height="360px" onSave={() => void save()} />
           </div>
         </Section>
       )}
@@ -198,7 +198,13 @@ export function SourceSettings({ source, active }: { source: Source; active: boo
         </div>
       </Section>
 
-      <SaveBar visible={dirty} saving={saving} onSave={() => void save()} onDiscard={() => setForm(initial)} />
+      <SaveBar
+        visible={dirty}
+        saving={saving}
+        confirmHint={`保存对订阅源「${source.display_name?.trim() || source.name}」的设置修改`}
+        onSave={() => void save()}
+        onDiscard={() => setForm(initial)}
+      />
     </div>
   );
 }

@@ -3,13 +3,16 @@
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { Button as UiButton } from '@ui-sdk/react/button';
+import { Radio, RadioGroup, RadioIndicator } from '@ui-sdk/react/radio';
 import { ArrowUpRight, Boxes, FileCode2, Layers, Plus, QrCode, RotateCcw, Trash2, X } from 'lucide-react';
+import { DataView } from '@/ui/agent';
 import { errorMessage } from '@/ui/data/api';
 import { useMeta, useProfiles, useSourceUsage } from '@/ui/data/hooks';
 import { useQuery } from '@/ui/data/query';
 import type { StoredOperator } from '@/ui/data/types';
 import { cn } from '@/ui/lib/cn';
-import { Button, Card, EmptyState, Input, Monogram, SearchInput, Skeleton } from '@/ui/primitives';
+import { Button, Card, EmptyState, Input, Monogram, SearchInput, SegmentedControl, Skeleton } from '@/ui/primitives';
 import { useActiveProfile } from '@/ui/shell/scope';
 import { LinkRow, QrImage } from '@/ui/shell/share-dialog';
 import { countRegions, Flag, describeNode } from '@/ui/viz/nodes';
@@ -101,33 +104,28 @@ export function NodesPanel({
               : '正在读取…'}
           </p>
         </div>
-        <SearchInput value={query} onChange={setQuery} placeholder="搜索节点名称" className="w-full sm:w-64" />
+        <SearchInput value={query} onChange={setQuery} aria-label="搜索节点名称" placeholder="搜索节点名称" className="w-full sm:w-64" />
       </div>
       {data && <MemberErrors errors={data.memberErrors} />}
       {data && data.issues.length > 0 && <IssueList issues={data.issues} limit={3} />}
       {regions.length > 1 && (
-        <div className="flex flex-wrap gap-1.5" role="group" aria-label="按地区筛选">
-          {[{ region: 'all' as const, zh: '全部', count: names.length }, ...regions].map((r) => {
-            const key = r.region ?? 'other';
-            const on = region === r.region;
-            return (
-              <button
-                key={key}
-                type="button"
-                aria-pressed={on}
-                onClick={() => setRegion(on && r.region !== 'all' ? 'all' : r.region)}
-                className={cn(
-                  'inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-xs transition-colors',
-                  on ? 'border-ink bg-inverse text-inverse-ink' : 'border-line bg-surface text-ink-2 hover:border-line-strong',
-                )}
-              >
+        <SegmentedControl
+          label="按地区筛选"
+          size="sm"
+          value={region === 'all' ? 'all' : (region ?? '__other__')}
+          onChange={(next) => setRegion(next === 'all' ? 'all' : next === '__other__' ? null : next)}
+          className="flex-wrap"
+          options={[{ region: 'all' as const, zh: '全部', count: names.length }, ...regions].map((r) => ({
+            value: r.region === 'all' ? 'all' : (r.region ?? '__other__'),
+            label: (
+              <span className="inline-flex items-center gap-1">
                 {r.region !== 'all' && <Flag region={r.region} size={13} />}
-                {r.zh}
-                <span className={cn('tnum', on ? 'text-inverse-ink/70' : 'text-ink-3')}>{r.count}</span>
-              </button>
-            );
-          })}
-        </div>
+                <span>{r.zh}</span>
+                <span className="tnum text-ink-3">{r.count}</span>
+              </span>
+            ),
+          }))}
+        />
       )}
       <Card className="p-2">
         {!data ? (
@@ -178,8 +176,27 @@ export function UsagePanel({ kind, id }: { kind: 'subscription' | 'collection'; 
       />
     );
   }
+  const usageItems = [
+    ...data.profiles.map((p) => {
+      const profile = profiles?.find((x) => x.id === p.id);
+      const direct = profile?.source && 'id' in profile.source && profile.source.id === id;
+      return {
+        value: `profile:${p.id}`,
+        label: `配置文件：${profile?.display_name || p.name} (${p.name}) · ${direct ? '直接绑定' : '经由聚合订阅'}`,
+      };
+    }),
+    ...data.collections.map((c) => ({
+      value: `pool:${c.id}`,
+      label: `聚合订阅：${c.name}`,
+    })),
+  ];
   return (
-    <div className="flex flex-col gap-6">
+    <DataView
+      label="使用情况"
+      summary={`${data.profiles.length} 个配置文件，${data.collections.length} 个聚合订阅`}
+      items={usageItems}
+      className="flex flex-col gap-6"
+    >
       {data.profiles.length > 0 && (
         <section className="flex flex-col gap-2">
           <h3 className="text-[13px] font-semibold text-ink">配置文件 · {data.profiles.length}</h3>
@@ -190,7 +207,12 @@ export function UsagePanel({ kind, id }: { kind: 'subscription' | 'collection'; 
               const direct = profile?.source && 'id' in profile.source && profile.source.id === id;
               const title = profile?.display_name || p.name;
               return (
-                <Link key={p.id} href={`/p/${encodeURIComponent(p.name)}`} className="group flex items-center gap-3 px-4 py-3 hover:bg-surface-2/60">
+                <UiButton
+                  key={p.id}
+                  render={<Link href={`/p/${encodeURIComponent(p.name)}`} />}
+                  aria-label={`打开配置文件「${title}」`}
+                  className="group flex items-center gap-3 px-4 py-3 text-left hover:bg-surface-2/60"
+                >
                   <Monogram name={title} colorKey={p.id} size={28} />
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-[13px] font-medium text-ink">{title}</div>
@@ -198,7 +220,7 @@ export function UsagePanel({ kind, id }: { kind: 'subscription' | 'collection'; 
                   </div>
                   <span className="text-xs text-ink-3">{direct ? '直接绑定' : '经由聚合订阅'}</span>
                   <ArrowUpRight size={14} className="text-ink-4 group-hover:text-ink-2" />
-                </Link>
+                </UiButton>
               );
             })}
           </Card>
@@ -209,18 +231,23 @@ export function UsagePanel({ kind, id }: { kind: 'subscription' | 'collection'; 
           <h3 className="text-[13px] font-semibold text-ink">聚合订阅 · {data.collections.length}</h3>
           <Card className="divide-y divide-line">
             {data.collections.map((c) => (
-              <Link key={c.id} href={`/pools/${c.id}`} className="group flex items-center gap-3 px-4 py-3 hover:bg-surface-2/60">
+              <UiButton
+                key={c.id}
+                render={<Link href={`/pools/${c.id}`} />}
+                aria-label={`打开聚合订阅「${c.name}」`}
+                className="group flex items-center gap-3 px-4 py-3 text-left hover:bg-surface-2/60"
+              >
                 <span className="flex size-7 items-center justify-center rounded-lg border border-line bg-surface-2 text-ink-2">
                   <Boxes size={14} />
                 </span>
                 <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-ink">{c.name}</span>
                 <ArrowUpRight size={14} className="text-ink-4 group-hover:text-ink-2" />
-              </Link>
+              </UiButton>
             ))}
           </Card>
         </section>
       )}
-    </div>
+    </DataView>
   );
 }
 
@@ -283,13 +310,13 @@ export function HeaderRowsEditor({
   const set = (id: string, patch: Partial<HeaderRow>) => onChange(rows.map((r) => (r.id === id ? { ...r, ...patch } : r)));
   return (
     <div className="flex flex-col gap-2">
-      {rows.map((row) => (
+      {rows.map((row, index) => (
         <div key={row.id} className="flex flex-col gap-1">
           <div className="flex items-center gap-2">
             <Input
               mono
               inputSize="sm"
-              aria-label="请求头名称"
+              aria-label={`请求头 ${index + 1} 名称`}
               placeholder="名称，如 Authorization"
               value={row.name}
               invalid={!!errors[row.id]}
@@ -299,7 +326,7 @@ export function HeaderRowsEditor({
             <Input
               mono
               inputSize="sm"
-              aria-label="请求头的值"
+              aria-label={`请求头 ${index + 1} 值`}
               placeholder="值"
               value={row.value}
               onChange={(e) => set(row.id, { value: e.target.value })}
@@ -310,7 +337,7 @@ export function HeaderRowsEditor({
               variant="ghost"
               iconOnly
               icon={rows.length > 1 ? Trash2 : X}
-              aria-label="移除这个请求头"
+              aria-label={`移除请求头 ${index + 1}`}
               onClick={() => onChange(rows.filter((r) => r.id !== row.id))}
             />
           </div>
@@ -328,37 +355,37 @@ export function HeaderRowsEditor({
 
 export function PolicyPicker({ value, onChange }: { value: FailurePolicy; onChange: (value: FailurePolicy) => void }) {
   return (
-    <div role="radiogroup" aria-label="拉取失败时" className="grid gap-2 sm:grid-cols-2">
-      {POLICY_OPTIONS.map((option) => {
-        const on = option.value === value;
-        return (
-          <button
-            key={option.value}
-            type="button"
-            role="radio"
-            aria-checked={on}
-            onClick={() => onChange(option.value)}
-            className={cn(
-              'flex flex-col gap-1 rounded-lg border px-3 py-2.5 text-left transition-colors',
-              'focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent',
-              on ? 'border-accent-line bg-accent-soft/60' : 'border-line bg-surface hover:border-line-strong',
-            )}
-          >
-            <span className="flex items-center gap-2 text-[13px] font-medium text-ink">
-              <span
-                className={cn(
-                  'flex size-3.5 items-center justify-center rounded-full border',
-                  on ? 'border-accent bg-accent' : 'border-line-strong bg-surface',
-                )}
-              >
-                {on && <span className="size-1.5 rounded-full bg-accent-ink" />}
-              </span>
-              {option.title}
-            </span>
-            <span className="text-xs leading-relaxed text-ink-3">{option.description}</span>
-          </button>
-        );
-      })}
-    </div>
+    <RadioGroup
+      aria-label="拉取失败时"
+      value={value}
+      onValueChange={(next) => {
+        if (next) onChange(next as FailurePolicy);
+      }}
+      className="grid gap-2 sm:grid-cols-2"
+    >
+      {POLICY_OPTIONS.map((option) => (
+        <label
+          key={option.value}
+          className={cn(
+            'flex cursor-pointer flex-col gap-1 rounded-lg border px-3 py-2.5 text-left transition-colors',
+            'has-focus-visible:outline-2 has-focus-visible:outline-offset-1 has-focus-visible:outline-accent',
+            option.value === value
+              ? 'border-accent-line bg-accent-soft/60'
+              : 'border-line bg-surface hover:border-line-strong',
+          )}
+        >
+          <span className="flex items-center gap-2 text-[13px] font-medium text-ink">
+            <Radio
+              value={option.value}
+              className="flex size-3.5 shrink-0 items-center justify-center rounded-full border border-line-strong bg-surface outline-none data-checked:border-accent data-checked:bg-accent"
+            >
+              <RadioIndicator className="size-1.5 rounded-full bg-accent-ink" />
+            </Radio>
+            {option.title}
+          </span>
+          <span className="text-xs leading-relaxed text-ink-3">{option.description}</span>
+        </label>
+      ))}
+    </RadioGroup>
   );
 }
