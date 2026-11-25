@@ -16,6 +16,7 @@ import {
   TriangleAlert,
   Wrench,
 } from 'lucide-react';
+import { DataView } from '@/ui/agent';
 import { api, ApiError, errorMessage, request } from '@/ui/data/api';
 import { keys, useSetupStatus } from '@/ui/data/hooks';
 import { invalidate, setQueryData } from '@/ui/data/query';
@@ -193,37 +194,49 @@ function SetupView({
 
   return (
     <div className="flex animate-rise flex-col gap-6">
-      <div>
-        {status.state !== 'empty' && (
-          <Badge tone={status.state === 'blocked' ? 'bad' : 'warn'} icon={status.state === 'blocked' ? ShieldAlert : Wrench} className="mb-3">
-            {status.state === 'blocked' ? '已阻止' : '可以补全'}
-          </Badge>
-        )}
-        <h1 className="text-[28px] font-semibold leading-tight tracking-[-0.02em] text-ink">{heading}</h1>
-        <p className="mt-2 text-sm leading-relaxed text-ink-2">{intro}</p>
-      </div>
+      <DataView
+        label="工作区初始化状态"
+        summary={`${status.state}${diagnostics.length ? ` · ${diagnostics.length} 项诊断` : ''}`}
+        items={[
+          { value: 'state', label: `状态: ${status.state} · 可初始化: ${status.can_bootstrap ? '是' : '否'}` },
+          ...diagnostics.map((d) => ({
+            value: d.code,
+            label: `${COMPONENT_LABEL[d.component] ?? d.component} · ${DIAGNOSTIC_COPY[d.code] ?? d.message}`,
+          })),
+        ]}
+      >
+        <div>
+          {status.state !== 'empty' && (
+            <Badge tone={status.state === 'blocked' ? 'bad' : 'warn'} icon={status.state === 'blocked' ? ShieldAlert : Wrench} className="mb-3">
+              {status.state === 'blocked' ? '已阻止' : '可以补全'}
+            </Badge>
+          )}
+          <h1 className="text-[28px] font-semibold leading-tight tracking-[-0.02em] text-ink">{heading}</h1>
+          <p className="mt-2 text-sm leading-relaxed text-ink-2">{intro}</p>
+        </div>
 
-      {diagnostics.length > 0 && (
-        <ul className="flex flex-col gap-2">
-          {diagnostics.map((d) => (
-            <li
-              key={d.code}
-              className={cn(
-                'flex gap-2.5 rounded-lg border px-3 py-2.5 text-sm',
-                d.repairable ? 'border-warn/25 bg-warn-soft/70' : 'border-bad/20 bg-bad-soft/70',
-              )}
-            >
-              {d.repairable ? <Wrench size={14} className="mt-0.5 shrink-0 text-warn" /> : <ShieldAlert size={14} className="mt-0.5 shrink-0 text-bad" />}
-              <div className="min-w-0">
-                <div className="text-ink">{DIAGNOSTIC_COPY[d.code] ?? d.message}</div>
-                <div className="mt-0.5 font-mono text-[11px] text-ink-3">
-                  {COMPONENT_LABEL[d.component] ?? d.component} · {d.code} · {d.repairable ? '可自动补全' : '需手动处理'}
+        {diagnostics.length > 0 && (
+          <ul className="mt-4 flex flex-col gap-2">
+            {diagnostics.map((d) => (
+              <li
+                key={d.code}
+                className={cn(
+                  'flex gap-2.5 rounded-lg border px-3 py-2.5 text-sm',
+                  d.repairable ? 'border-warn/25 bg-warn-soft/70' : 'border-bad/20 bg-bad-soft/70',
+                )}
+              >
+                {d.repairable ? <Wrench size={14} className="mt-0.5 shrink-0 text-warn" /> : <ShieldAlert size={14} className="mt-0.5 shrink-0 text-bad" />}
+                <div className="min-w-0">
+                  <div className="text-ink">{DIAGNOSTIC_COPY[d.code] ?? d.message}</div>
+                  <div className="mt-0.5 font-mono text-[11px] text-ink-3">
+                    {COMPONENT_LABEL[d.component] ?? d.component} · {d.code} · {d.repairable ? '可自动补全' : '需手动处理'}
+                  </div>
                 </div>
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </DataView>
 
       {status.can_bootstrap ? (
         <>
@@ -247,7 +260,7 @@ function SetupView({
             </ul>
           </div>
           <div className="flex flex-col gap-3">
-            <Button variant="primary" size="lg" loading={busy} trailingIcon={ArrowRight} onClick={onBootstrap} className="w-full">
+            <Button variant="primary" size="lg" loading={busy} trailingIcon={ArrowRight} data-agent-confirm onClick={onBootstrap} className="w-full">
               {status.state === 'recoverable' ? '补全初始化' : '初始化'}
             </Button>
             <p className="flex items-start gap-2 text-xs leading-relaxed text-ink-3">

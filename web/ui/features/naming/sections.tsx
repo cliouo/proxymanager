@@ -2,9 +2,11 @@
 
 import { useState, type ReactNode } from 'react';
 import { AlertTriangle, ChevronRight, Plus, Trash2 } from 'lucide-react';
+import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from '@ui-sdk/react/collapsible';
 import { LINE_TAGS, type NamingField } from '@/lib/proxies/naming';
 import type { SourceHealthReport } from '@/lib/proxies/namingHealth';
 import { REGIONS } from '@/lib/proxies/regions';
+import { DataView } from '@/ui/agent';
 import { cn } from '@/ui/lib/cn';
 import { Badge, Button, Card, CardHeader, Input, Monogram, Select, Tooltip } from '@/ui/primitives';
 import {
@@ -38,22 +40,21 @@ export function Section({
 }) {
   return (
     <Card className="overflow-hidden">
-      <button
-        type="button"
-        aria-expanded={open}
-        onClick={() => onOpenChange(!open)}
-        className="flex w-full items-start gap-2.5 px-4 py-3.5 text-left transition-colors hover:bg-surface-2/50 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent"
-      >
-        <ChevronRight size={15} className={cn('mt-0.5 shrink-0 text-ink-3 transition-transform', open && 'rotate-90')} />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2 text-sm font-semibold tracking-tight text-ink">
-            {title}
-            {badge}
+      <Collapsible open={open} onOpenChange={onOpenChange}>
+        <CollapsibleTrigger className="flex w-full items-start gap-2.5 px-4 py-3.5 text-left transition-colors hover:bg-surface-2/50 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent">
+          <ChevronRight size={15} className={cn('mt-0.5 shrink-0 text-ink-3 transition-transform', open && 'rotate-90')} />
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2 text-sm font-semibold tracking-tight text-ink">
+              {title}
+              {badge}
+            </div>
+            <p className="mt-0.5 text-xs text-ink-3">{description}</p>
           </div>
-          <p className="mt-0.5 text-xs text-ink-3">{description}</p>
-        </div>
-      </button>
-      {open && <div className="animate-rise border-t border-line px-4 py-3.5">{children}</div>}
+        </CollapsibleTrigger>
+        <CollapsiblePanel>
+          <div className="animate-rise border-t border-line px-4 py-3.5">{children}</div>
+        </CollapsiblePanel>
+      </Collapsible>
     </Card>
   );
 }
@@ -138,6 +139,7 @@ export function RulesEditor({
             <span>时，</span>
             <Select<RuleField>
               size="sm"
+              label="识别字段"
               className="w-[88px]"
               value={rule.field}
               onValueChange={(field) => update(index, { field, value: field === 'region' ? '' : rule.value })}
@@ -147,6 +149,7 @@ export function RulesEditor({
             {rule.field === 'region' || rule.field === 'tag' ? (
               <Select<string>
                 size="sm"
+                label={rule.field === 'tag' ? '选择标签' : '选择地区'}
                 className="w-[120px]"
                 value={rule.value || undefined}
                 placeholder={rule.field === 'tag' ? '选择标签' : '选择地区'}
@@ -235,80 +238,93 @@ export function CoverageCard({
         title="识别情况"
         description={`每个字段在多少节点名里被认出来。覆盖不全的字段适合放进可选片段。${rulesDiffer ? '（按已应用的识别规则统计）' : ''}`}
       />
-      <div className="overflow-x-auto px-4 pb-2">
-        <table className="w-full text-left text-xs">
-          <thead>
-            <tr className="text-2xs text-ink-3">
-              <th className="py-1.5 pr-3 font-medium">字段</th>
-              {health.map((r) => (
-                <th key={r.sourceKey} className="min-w-[120px] py-1.5 pr-3 font-medium">
-                  {multi ? <span className="block max-w-[140px] truncate">{r.sourceLabel}</span> : `覆盖（${r.nodeCount} 个节点）`}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-line">
-            {fields.map((field) => (
-              <tr key={field}>
-                <td className="whitespace-nowrap py-2 pr-3 text-ink-2">{FIELD_META[field].label}</td>
-                {health.map((report) => {
-                  const cov = report.fields.find((f) => f.field === field);
-                  if (!cov) return <td key={report.sourceKey} />;
-                  const samples = cov.samples.map((s) => `${sampleDisplay(field, s.value)} ×${s.count}`).join(' · ');
-                  return (
-                    <td key={report.sourceKey} className="py-2 pr-3">
-                      <Tooltip content={cov.present ? `${samples}${cov.sampleTruncated ? ` 等 ${cov.sampleTotal} 种` : ''}` : '没有识别到'}>
-                        <div className="flex items-center gap-2">
-                          <div className="h-1.5 w-full min-w-[48px] overflow-hidden rounded-full bg-surface-3">
-                            <div
-                              className={cn('h-full rounded-full', cov.percent === 100 ? 'bg-ok' : 'bg-ink-3')}
-                              style={{ width: `${cov.percent}%` }}
-                            />
-                          </div>
-                          <span className={cn('tnum w-9 shrink-0 text-right', cov.percent ? 'text-ink-2' : 'text-ink-4')}>
-                            {cov.percent ? `${cov.percent}%` : '—'}
-                          </span>
-                          {cov.confidence.low > 0 ? (
-                            <Tooltip content={`${cov.confidence.low} 个结果不太确定`}>
-                              <AlertTriangle size={12} className="shrink-0 text-warn" aria-label="有低置信结果" />
-                            </Tooltip>
-                          ) : (
-                            <span className="w-3 shrink-0" />
-                          )}
-                        </div>
-                      </Tooltip>
-                    </td>
-                  );
-                })}
+      <DataView
+        label="字段识别覆盖率"
+        summary={`${health.length} 个来源，${notes.length} 条提示`}
+        items={health.flatMap((r) =>
+          r.fields.map((f) => ({
+            value: `${r.sourceKey}:${f.field}`,
+            label: `${multi ? `${r.sourceLabel} · ` : ''}${FIELD_META[f.field].label}: ${f.percent}%`,
+          })),
+        )}
+      >
+        <div className="overflow-x-auto px-4 pb-2">
+          <table className="w-full text-left text-xs">
+            <thead>
+              <tr className="text-2xs text-ink-3">
+                <th className="py-1.5 pr-3 font-medium">字段</th>
+                {health.map((r) => (
+                  <th key={r.sourceKey} className="min-w-[120px] py-1.5 pr-3 font-medium">
+                    {multi ? <span className="block max-w-[140px] truncate">{r.sourceLabel}</span> : `覆盖（${r.nodeCount} 个节点）`}
+                  </th>
+                ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
-        <div className="flex items-center justify-between py-2">
-          <span className="text-2xs text-ink-4">来源、序号由系统自动生成，始终可用。</span>
-          <Button size="xs" variant="ghost" onClick={() => setShowAll(!showAll)}>
-            {showAll ? '收起' : `全部 ${MATRIX_FIELDS.length} 个字段`}
-          </Button>
+            </thead>
+            <tbody className="divide-y divide-line">
+              {fields.map((field) => (
+                <tr key={field}>
+                  <td className="whitespace-nowrap py-2 pr-3 text-ink-2">{FIELD_META[field].label}</td>
+                  {health.map((report) => {
+                    const cov = report.fields.find((f) => f.field === field);
+                    if (!cov) return <td key={report.sourceKey} />;
+                    const samples = cov.samples.map((s) => `${sampleDisplay(field, s.value)} ×${s.count}`).join(' · ');
+                    return (
+                      <td key={report.sourceKey} className="py-2 pr-3">
+                        <Tooltip content={cov.present ? `${samples}${cov.sampleTruncated ? ` 等 ${cov.sampleTotal} 种` : ''}` : '没有识别到'}>
+                          <div className="flex items-center gap-2">
+                            <div className="h-1.5 w-full min-w-[48px] overflow-hidden rounded-full bg-surface-3">
+                              <div
+                                className={cn('h-full rounded-full', cov.percent === 100 ? 'bg-ok' : 'bg-ink-3')}
+                                style={{ width: `${cov.percent}%` }}
+                              />
+                            </div>
+                            <span className={cn('tnum w-9 shrink-0 text-right', cov.percent ? 'text-ink-2' : 'text-ink-4')}>
+                              {cov.percent ? `${cov.percent}%` : '—'}
+                            </span>
+                            {cov.confidence.low > 0 ? (
+                              <Tooltip content={`${cov.confidence.low} 个结果不太确定`}>
+                                <span className="inline-flex shrink-0">
+                                  <AlertTriangle size={12} className="text-warn" aria-label="有低置信结果" />
+                                </span>
+                              </Tooltip>
+                            ) : (
+                              <span className="w-3 shrink-0" />
+                            )}
+                          </div>
+                        </Tooltip>
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="flex items-center justify-between py-2">
+            <span className="text-2xs text-ink-4">来源、序号由系统自动生成，始终可用。</span>
+            <Button size="xs" variant="ghost" onClick={() => setShowAll(!showAll)}>
+              {showAll ? '收起' : `全部 ${MATRIX_FIELDS.length} 个字段`}
+            </Button>
+          </div>
         </div>
-      </div>
-      {notes.length > 0 && (
-        <ul className="flex flex-col divide-y divide-line border-t border-line">
-          {notes.map((note) => (
-            <li key={note.key} className="flex items-start gap-2.5 px-4 py-2.5 text-xs">
-              <AlertTriangle size={13} className="mt-px shrink-0 text-warn" />
-              <span className="min-w-0 flex-1 text-ink-2">
-                {multi && <Badge className="mr-1.5">{note.report.sourceLabel}</Badge>}
-                {note.text}
-              </span>
-              {'drift' in note && note.drift && note.drift.samples[0] && (
-                <Button size="xs" variant="secondary" onClick={() => onSuggestRule(ruleFromDrift(note.drift.field, note.drift.samples[0]))}>
-                  加识别规则
-                </Button>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
+        {notes.length > 0 && (
+          <ul className="flex flex-col divide-y divide-line border-t border-line">
+            {notes.map((note) => (
+              <li key={note.key} className="flex items-start gap-2.5 px-4 py-2.5 text-xs">
+                <AlertTriangle size={13} className="mt-px shrink-0 text-warn" />
+                <span className="min-w-0 flex-1 text-ink-2">
+                  {multi && <Badge className="mr-1.5">{note.report.sourceLabel}</Badge>}
+                  {note.text}
+                </span>
+                {'drift' in note && note.drift && note.drift.samples[0] && (
+                  <Button size="xs" variant="secondary" onClick={() => onSuggestRule(ruleFromDrift(note.drift.field, note.drift.samples[0]))}>
+                    加识别规则
+                  </Button>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </DataView>
     </Card>
   );
 }

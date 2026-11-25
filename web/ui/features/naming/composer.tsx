@@ -2,6 +2,7 @@
 
 import { useMemo, useRef, useState } from 'react';
 import { CircleAlert, CircleCheck, HelpCircle, X } from 'lucide-react';
+import { Button as UiButton } from '@ui-sdk/react/button';
 import type { NamingField } from '@/lib/proxies/naming';
 import { useIsomorphicLayoutEffect } from '@/ui/data/query';
 import { cn } from '@/ui/lib/cn';
@@ -87,9 +88,8 @@ export function TemplateComposer({
           {presets.map((preset) => {
             const active = preset.template === plan.template;
             return (
-              <button
+              <UiButton
                 key={preset.id}
-                type="button"
                 aria-pressed={active}
                 onClick={() => setTemplate(preset.template)}
                 className={cn(
@@ -105,7 +105,7 @@ export function TemplateComposer({
                 <span className="truncate text-2xs text-ink-3" title={exampleName(preset.template) ?? undefined}>
                   {exampleName(preset.template) ?? preset.hint}
                 </span>
-              </button>
+              </UiButton>
             );
           })}
         </div>
@@ -153,6 +153,7 @@ export function TemplateComposer({
             <div className="flex flex-wrap items-center gap-2">
               <SegmentedControl
                 size="sm"
+                label="字段插入方式"
                 value={mode}
                 onChange={setMode}
                 options={[
@@ -163,6 +164,7 @@ export function TemplateComposer({
               {mode === 'optional' && (
                 <SegmentedControl
                   size="sm"
+                  label="可选片段分隔符"
                   value={separator}
                   onChange={setSeparator}
                   options={SEPARATORS.map((s) => ({ value: s.value, label: s.label, hint: `用「${s.value}」分隔` }))}
@@ -187,8 +189,7 @@ export function TemplateComposer({
                         : meta.hint
                   }
                 >
-                  <button
-                    type="button"
+                  <UiButton
                     onMouseDown={(event) => event.preventDefault()}
                     onClick={() => insert(field)}
                     className={cn(
@@ -202,7 +203,7 @@ export function TemplateComposer({
                     {(missing || partial) && (
                       <span className={cn('tnum text-2xs', missing ? 'text-ink-4' : 'text-warn')}>{stat.percent}%</span>
                     )}
-                  </button>
+                  </UiButton>
                 </Tooltip>
               );
             })}
@@ -264,14 +265,13 @@ function Structure({ pieces, onRemove }: { pieces: Piece[]; onRemove: (piece: Pi
                 {piece.mod && <span className="ml-1 font-mono text-2xs text-ink-3">:{piece.mod}</span>}
               </span>
             )}
-            <button
-              type="button"
+            <UiButton
               aria-label={`移除${FIELD_META[piece.field].label}`}
               onClick={() => onRemove(piece)}
               className="flex size-5 items-center justify-center rounded text-ink-4 hover:bg-surface-3 hover:text-ink"
             >
               <X size={11} />
-            </button>
+            </UiButton>
           </span>
         ),
       )}
@@ -293,13 +293,10 @@ function SyntaxHelp() {
       align="end"
       className="w-[320px] p-3"
       trigger={
-        <button
-          type="button"
-          className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs font-medium text-ink-2 hover:bg-surface-2 hover:text-ink"
-        >
+        <UiButton className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs font-medium text-ink-2 hover:bg-surface-2 hover:text-ink">
           <HelpCircle size={13} />
           写法
-        </button>
+        </UiButton>
       }
     >
       <div className="mb-2 text-xs text-ink-2">模板里除了字段，其余文字原样保留。</div>
