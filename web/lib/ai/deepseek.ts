@@ -11,7 +11,14 @@
  * Set DEEPSEEK_THINKING=disabled to opt out (then we send temperature instead).
  */
 
-import type { DeepSeekTool } from './toolSchema';
+export interface DeepSeekTool {
+  type: 'function';
+  function: {
+    name: string;
+    description: string;
+    parameters: Record<string, unknown>;
+  };
+}
 
 const BASE_URL = process.env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com';
 const MODEL = process.env.DEEPSEEK_MODEL ?? 'deepseek-v4-pro';
