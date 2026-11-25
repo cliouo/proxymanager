@@ -22,9 +22,9 @@ import {
 import { partitionProfilesByKind } from '@/lib/profiles/kind';
 import { DataView } from '@/ui/agent';
 import { errorMessage } from '@/ui/data/api';
-import { keys, refreshProfiles, useDevices, useGroups, useProfiles, useRuleSummary } from '@/ui/data/hooks';
+import { keys, refreshProfiles, useProfiles } from '@/ui/data/hooks';
 import { getQueryData } from '@/ui/data/query';
-import type { Profile, PublicDevice } from '@/ui/data/types';
+import type { Profile, ProfileCardSummary, PublicDevice } from '@/ui/data/types';
 import { cn } from '@/ui/lib/cn';
 import { formatCount } from '@/ui/lib/format';
 import {
@@ -48,6 +48,7 @@ import { assignLineColors, policyColor } from '@/ui/viz/lines';
 import { CreateProfileDialog, type CreateSeed } from './create-dialog';
 import { EditProfileSheet } from './edit-sheet';
 import { DEFAULT_PROFILE, profileApi, uncacheProfile } from './model';
+import { useNearViewport, useProfileSummary } from './summaries';
 
 /* ─── page ───────────────────────────────────────────────────────────── */
 
@@ -67,7 +68,10 @@ export function ProfilesPage() {
 
   const remove = async (profile: Profile) => {
     const title = profileTitle(profile);
-    const devices = getQueryData<PublicDevice[]>(keys.scoped(profile.id, 'devices'))?.length ?? 0;
+    const devices =
+      getQueryData<ProfileCardSummary>(keys.scoped(profile.id, 'summary'))?.devicesCount ??
+      getQueryData<PublicDevice[]>(keys.scoped(profile.id, 'devices'))?.length ??
+      0;
     const template = profile.kind === 'template';
     const ok = await confirmAction({
       title: `删除「${title}」？`,
@@ -289,32 +293,27 @@ function menuItems(profile: Profile, actions: CardActions, open: () => void): Me
   ];
 }
 
-/** Counts + the profile's route mix, from the cached per-profile reads. */
-function useProfileShape(profileId: string) {
-  const groups = useGroups(profileId);
-  const summary = useRuleSummary(profileId);
-  const devices = useDevices(profileId);
+/** Counts + the profile's route mix, loaded via bounded viewport-priority batches. */
+function useProfileShape(profileId: string, visible: boolean) {
+  const summary = useProfileSummary(profileId, visible);
   const segments = useMemo(() => {
-    if (!groups.data || !summary.data) return null;
+    if (!summary.data) return null;
     // Same colour assignment as the app-wide line colours: groups that rules use first, then by rank.
-    const ranked = groups.data
-      .slice()
-      .sort((a, b) => a.rank - b.rank)
-      .map((g) => g.name);
+    const ranked = summary.data.rankedGroupNames;
     const policies = summary.data.policies;
     const colors = assignLineColors([...ranked.filter((n) => policies[n]), ...ranked.filter((n) => !policies[n])]);
     return Object.entries(policies)
       .filter(([, count]) => count > 0)
       .sort((a, b) => b[1] - a[1])
       .map(([policy, count]) => ({ policy, count, color: policyColor(colors, policy) }));
-  }, [groups.data, summary.data]);
+  }, [summary.data]);
   return {
-    groups: groups.data?.length,
-    rules: summary.data?.active,
-    disabledRules: summary.data?.disabled ?? 0,
-    devices: devices.data?.length,
+    groups: summary.data?.groupsCount,
+    rules: summary.data?.activeRules,
+    disabledRules: summary.data?.disabledRules ?? 0,
+    devices: summary.data?.devicesCount,
     segments,
-    error: groups.error ?? summary.error,
+    error: summary.error,
   };
 }
 
@@ -349,11 +348,13 @@ function SourceLine({ profile }: { profile: Profile }) {
 
 function ProfileCard({ profile, current, actions }: { profile: Profile; current: boolean; actions: CardActions }) {
   const router = useRouter();
-  const shape = useProfileShape(profile.id);
+  const [cardRef, visible] = useNearViewport();
+  const shape = useProfileShape(profile.id, visible);
   const title = profileTitle(profile);
   const href = profilePath(profile.name);
   return (
     <Card
+      ref={cardRef}
       as="article"
       interactive
       className="group relative flex min-h-[208px] animate-rise flex-col overflow-hidden"
@@ -433,11 +434,13 @@ function Stat({ label, value, hint }: { label: string; value: number | undefined
 
 function TemplateCard({ profile, actions, index }: { profile: Profile; actions: CardActions; index: number }) {
   const router = useRouter();
-  const shape = useProfileShape(profile.id);
+  const [cardRef, visible] = useNearViewport();
+  const shape = useProfileShape(profile.id, visible);
   const title = profileTitle(profile);
   const href = profilePath(profile.name);
   return (
     <article
+      ref={cardRef}
       className="group relative flex min-h-[176px] animate-rise flex-col overflow-hidden rounded-xl border border-dashed border-line-strong bg-surface/50 transition-[border-color,background-color] duration-200 hover:border-ink-4 hover:bg-surface"
       style={{ animationDelay: `${index * 50}ms` }}
     >

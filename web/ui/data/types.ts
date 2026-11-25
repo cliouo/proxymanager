@@ -63,6 +63,15 @@ export type PublicDevice = Omit<Device, 'features'> & { features: PublicDeviceFe
 
 export type RuleSetListItem = RuleSetMeta & { referenced_in_base: boolean };
 
+export interface ProfileCardSummary {
+  groupsCount: number;
+  rankedGroupNames: string[];
+  activeRules: number;
+  disabledRules: number;
+  policies: Record<string, number>;
+  devicesCount: number;
+}
+
 export interface DashboardData {
   hasBase: boolean;
   buildId?: string | null;
@@ -118,6 +127,7 @@ export interface PreviewData {
   proxy_group_count: number;
   node_names?: string[];
   nodes_by_sub?: Record<string, string[]>;
+  node_types?: Record<string, string>;
   collisions?: Collision[];
   subscriptions?: SnapshotSubStatus[];
   warnings: string[];
