@@ -1,11 +1,35 @@
 'use client';
 
-import { type ComponentType, type ReactNode } from 'react';
-import { Dialog as RDialog, DropdownMenu, Popover as RPopover, Tooltip as RTooltip } from 'radix-ui';
+import { isValidElement, useRef, type ComponentType, type ReactNode } from 'react';
+import {
+  Dialog as UiDialog,
+  DialogBackdrop,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+} from '@ui-sdk/react/dialog';
+import {
+  Menu as UiMenu,
+  MenuContent,
+  MenuGroup,
+  MenuGroupLabel,
+  MenuItem,
+  MenuSeparator,
+  MenuSub,
+  MenuSubContent,
+  MenuSubTrigger,
+  MenuTrigger,
+} from '@ui-sdk/react/menu';
+import {
+  Popover as UiPopover,
+  PopoverClose as UiPopoverClose,
+  PopoverContent,
+  PopoverTrigger,
+} from '@ui-sdk/react/popover';
+import { Tooltip as UiTooltip, TooltipContent, TooltipTrigger } from '@ui-sdk/react/tooltip';
 import { Check, ChevronRight, X } from 'lucide-react';
 import { cn } from '@/ui/lib/cn';
-
-/* ─── Dialog ─────────────────────────────────────────────────────────── */
 
 export interface DialogProps {
   open: boolean;
@@ -16,7 +40,6 @@ export interface DialogProps {
   footer?: ReactNode;
   size?: 'sm' | 'md' | 'lg' | 'xl';
   className?: string;
-  /** Hide the default header (render your own). */
   bare?: boolean;
 }
 
@@ -38,67 +61,60 @@ export function Dialog({
   className,
   bare,
 }: DialogProps) {
+  const contentRef = useRef<HTMLDivElement>(null);
   return (
-    <RDialog.Root open={open} onOpenChange={onOpenChange}>
-      <RDialog.Portal>
-        <RDialog.Overlay className="fixed inset-0 z-50 bg-overlay backdrop-blur-[1.5px] data-[state=closed]:animate-[fade-out_0.16s_ease-in_both] data-[state=open]:animate-fade-in" />
-        <RDialog.Content
-          className={cn(
-            'fixed left-1/2 top-[min(14vh,120px)] z-50 flex max-h-[calc(100dvh-min(14vh,120px)-24px)] w-[calc(100%-24px)] -translate-x-1/2 flex-col',
-            'overflow-hidden rounded-2xl border border-line bg-surface shadow-xl outline-none',
-            'data-[state=closed]:animate-[sink_0.16s_ease-in_both] data-[state=open]:animate-pop',
-            dialogSizes[size],
-            className,
-          )}
-          onOpenAutoFocus={(event) => {
-            const target = event.currentTarget as HTMLElement | null;
-            const preferred = target?.querySelector<HTMLElement>('[data-autofocus]');
-            if (preferred) {
-              event.preventDefault();
-              preferred.focus();
-            }
-          }}
-        >
-          {!bare && (title || description) ? (
-            <div className="flex items-start gap-4 px-5 pb-1 pt-5">
-              <div className="min-w-0 flex-1">
-                {title && (
-                  <RDialog.Title className="text-md font-semibold tracking-tight text-ink">{title}</RDialog.Title>
-                )}
-                {description ? (
-                  <RDialog.Description className="mt-1 text-sm leading-relaxed text-ink-2">
-                    {description}
-                  </RDialog.Description>
-                ) : (
-                  <RDialog.Description className="sr-only">{typeof title === 'string' ? title : '对话框'}</RDialog.Description>
-                )}
-              </div>
-              <RDialog.Close
-                aria-label="关闭"
-                className="-mr-1.5 -mt-1 flex size-7 shrink-0 items-center justify-center rounded-md text-ink-3 transition hover:bg-surface-2 hover:text-ink"
-              >
-                <X size={16} strokeWidth={1.75} />
-              </RDialog.Close>
+    <UiDialog open={open} onOpenChange={(next) => onOpenChange(next)}>
+      <DialogBackdrop className="fixed inset-0 z-50 bg-overlay backdrop-blur-[1.5px] data-ending-style:animate-[fade-out_0.16s_ease-in_both] data-open:animate-fade-in" />
+      <DialogContent
+        ref={contentRef}
+        initialFocus={() => contentRef.current?.querySelector<HTMLElement>('[data-autofocus]') ?? null}
+        className={cn(
+          'fixed left-1/2 top-[min(14vh,120px)] z-50 m-0 flex max-h-[calc(100dvh-min(14vh,120px)-24px)] w-[calc(100%-24px)] -translate-x-1/2 flex-col',
+          'overflow-hidden rounded-2xl border border-line bg-surface p-0 text-ink shadow-xl outline-none',
+          'data-ending-style:animate-[sink_0.16s_ease-in_both] data-open:animate-pop',
+          dialogSizes[size],
+          className,
+        )}
+      >
+        {!bare && (title || description) ? (
+          <div className="flex items-start gap-4 px-5 pb-1 pt-5">
+            <div className="min-w-0 flex-1">
+              {title && (
+                <DialogTitle className="text-md font-semibold tracking-tight text-ink">{title}</DialogTitle>
+              )}
+              {description ? (
+                <DialogDescription className="mt-1 text-sm leading-relaxed text-ink-2">
+                  {description}
+                </DialogDescription>
+              ) : (
+                <DialogDescription className="sr-only">
+                  {typeof title === 'string' ? title : '对话框'}
+                </DialogDescription>
+              )}
             </div>
-          ) : (
-            <>
-              <RDialog.Title className="sr-only">{typeof title === 'string' ? title : '对话框'}</RDialog.Title>
-              <RDialog.Description className="sr-only">对话框</RDialog.Description>
-            </>
-          )}
-          <div className={cn('min-h-0 flex-1 overflow-y-auto', !bare && 'px-5 py-4')}>{children}</div>
-          {footer && (
-            <div className="flex items-center justify-end gap-2 border-t border-line bg-surface-2/60 px-5 py-3">
-              {footer}
-            </div>
-          )}
-        </RDialog.Content>
-      </RDialog.Portal>
-    </RDialog.Root>
+            <DialogClose
+              aria-label="关闭"
+              className="-mr-1.5 -mt-1 flex size-7 shrink-0 items-center justify-center rounded-md text-ink-3 transition hover:bg-surface-2 hover:text-ink"
+            >
+              <X size={16} strokeWidth={1.75} />
+            </DialogClose>
+          </div>
+        ) : (
+          <>
+            <DialogTitle className="sr-only">{typeof title === 'string' ? title : '对话框'}</DialogTitle>
+            <DialogDescription className="sr-only">对话框</DialogDescription>
+          </>
+        )}
+        <div className={cn('min-h-0 flex-1 overflow-y-auto', !bare && 'px-5 py-4')}>{children}</div>
+        {footer && (
+          <div className="flex items-center justify-end gap-2 border-t border-line bg-surface-2/60 px-5 py-3">
+            {footer}
+          </div>
+        )}
+      </DialogContent>
+    </UiDialog>
   );
 }
-
-/* ─── Sheet (side panel) ─────────────────────────────────────────────── */
 
 export interface SheetProps {
   open: boolean;
@@ -122,46 +138,42 @@ export function Sheet({
   headerExtra,
 }: SheetProps) {
   return (
-    <RDialog.Root open={open} onOpenChange={onOpenChange}>
-      <RDialog.Portal>
-        <RDialog.Overlay className="fixed inset-0 z-50 bg-overlay data-[state=closed]:animate-[fade-out_0.18s_ease-in_both] data-[state=open]:animate-fade-in" />
-        <RDialog.Content
-          style={{ width: `min(${width}px, calc(100vw - 16px))` }}
-          className={cn(
-            'fixed bottom-2 right-2 top-2 z-50 flex flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-xl outline-none',
-            'data-[state=closed]:animate-[slide-out-right_0.2s_ease-in_both] data-[state=open]:animate-[slide-in-right_0.38s_var(--ease-out-expo)_both]',
-          )}
-        >
-          <div className="flex items-start gap-3 border-b border-line px-5 py-4">
-            <div className="min-w-0 flex-1">
-              <RDialog.Title className="text-md font-semibold tracking-tight text-ink">{title ?? '详情'}</RDialog.Title>
-              {description ? (
-                <RDialog.Description className="mt-0.5 text-xs text-ink-3">{description}</RDialog.Description>
-              ) : (
-                <RDialog.Description className="sr-only">侧边面板</RDialog.Description>
-              )}
-            </div>
-            {headerExtra}
-            <RDialog.Close
-              aria-label="关闭"
-              className="-mr-1.5 flex size-7 shrink-0 items-center justify-center rounded-md text-ink-3 transition hover:bg-surface-2 hover:text-ink"
-            >
-              <X size={16} strokeWidth={1.75} />
-            </RDialog.Close>
+    <UiDialog open={open} onOpenChange={(next) => onOpenChange(next)}>
+      <DialogBackdrop className="fixed inset-0 z-50 bg-overlay data-ending-style:animate-[fade-out_0.18s_ease-in_both] data-open:animate-fade-in" />
+      <DialogContent
+        style={{ width: `min(${width}px, calc(100vw - 16px))` }}
+        className={cn(
+          'fixed bottom-2 right-2 top-2 z-50 m-0 flex flex-col overflow-hidden rounded-2xl border border-line bg-surface p-0 text-ink shadow-xl outline-none',
+          'data-ending-style:animate-[slide-out-right_0.2s_ease-in_both] data-open:animate-[slide-in-right_0.38s_var(--ease-out-expo)_both]',
+        )}
+      >
+        <div className="flex items-start gap-3 border-b border-line px-5 py-4">
+          <div className="min-w-0 flex-1">
+            <DialogTitle className="text-md font-semibold tracking-tight text-ink">{title ?? '详情'}</DialogTitle>
+            {description ? (
+              <DialogDescription className="mt-0.5 text-xs text-ink-3">{description}</DialogDescription>
+            ) : (
+              <DialogDescription className="sr-only">侧边面板</DialogDescription>
+            )}
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">{children}</div>
-          {footer && (
-            <div className="flex items-center justify-end gap-2 border-t border-line bg-surface-2/60 px-5 py-3">
-              {footer}
-            </div>
-          )}
-        </RDialog.Content>
-      </RDialog.Portal>
-    </RDialog.Root>
+          {headerExtra}
+          <DialogClose
+            aria-label="关闭"
+            className="-mr-1.5 flex size-7 shrink-0 items-center justify-center rounded-md text-ink-3 transition hover:bg-surface-2 hover:text-ink"
+          >
+            <X size={16} strokeWidth={1.75} />
+          </DialogClose>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">{children}</div>
+        {footer && (
+          <div className="flex items-center justify-end gap-2 border-t border-line bg-surface-2/60 px-5 py-3">
+            {footer}
+          </div>
+        )}
+      </DialogContent>
+    </UiDialog>
   );
 }
-
-/* ─── Popover ────────────────────────────────────────────────────────── */
 
 export function Popover({
   trigger,
@@ -185,30 +197,30 @@ export function Popover({
   modal?: boolean;
 }) {
   return (
-    <RPopover.Root open={open} onOpenChange={onOpenChange} modal={modal}>
-      <RPopover.Trigger asChild>{trigger}</RPopover.Trigger>
-      <RPopover.Portal>
-        <RPopover.Content
-          align={align}
-          side={side}
-          sideOffset={sideOffset}
-          collisionPadding={12}
-          className={cn(
-            'z-50 max-h-[var(--radix-popover-content-available-height)] overflow-y-auto rounded-xl border border-line bg-surface p-1 shadow-lg outline-none',
-            'origin-[var(--radix-popover-content-transform-origin)] data-[state=closed]:animate-[sink_0.12s_ease-in_both] data-[state=open]:animate-pop',
-            className,
-          )}
-        >
-          {children}
-        </RPopover.Content>
-      </RPopover.Portal>
-    </RPopover.Root>
+    <UiPopover open={open} onOpenChange={(next) => onOpenChange?.(next)} modal={modal}>
+      {isValidElement<{ children?: ReactNode }>(trigger) ? (
+        <PopoverTrigger render={trigger}>{trigger.props.children}</PopoverTrigger>
+      ) : (
+        <PopoverTrigger>{trigger}</PopoverTrigger>
+      )}
+      <PopoverContent
+        align={align}
+        side={side}
+        sideOffset={sideOffset}
+        collisionPadding={12}
+        className={cn(
+          'z-50 m-0 max-h-[var(--available-height)] overflow-y-auto rounded-xl border border-line bg-surface p-1 text-ink shadow-lg outline-none',
+          'origin-[var(--transform-origin)] data-ending-style:animate-[sink_0.12s_ease-in_both] data-open:animate-pop',
+          className,
+        )}
+      >
+        {children}
+      </PopoverContent>
+    </UiPopover>
   );
 }
 
-export const PopoverClose = RPopover.Close;
-
-/* ─── Tooltip ────────────────────────────────────────────────────────── */
+export const PopoverClose = UiPopoverClose;
 
 export function Tooltip({
   content,
@@ -225,28 +237,28 @@ export function Tooltip({
 }) {
   if (disabled || !content) return <>{children}</>;
   return (
-    <RTooltip.Root>
-      <RTooltip.Trigger asChild>{children}</RTooltip.Trigger>
-      <RTooltip.Portal>
-        <RTooltip.Content
-          side={side}
-          sideOffset={6}
-          collisionPadding={8}
-          className="z-[60] flex max-w-xs items-center gap-2 rounded-md bg-inverse px-2 py-1 text-xs text-inverse-ink shadow-md data-[state=closed]:animate-[fade-out_0.1s_both] data-[state=delayed-open]:animate-fade-in"
-        >
-          {content}
-          {shortcut && (
-            <span className="rounded border border-inverse-ink/20 px-1 font-mono text-[10px] text-inverse-ink/70">
-              {shortcut}
-            </span>
-          )}
-        </RTooltip.Content>
-      </RTooltip.Portal>
-    </RTooltip.Root>
+    <UiTooltip delay={350}>
+      {isValidElement<{ children?: ReactNode }>(children) ? (
+        <TooltipTrigger render={children}>{children.props.children}</TooltipTrigger>
+      ) : (
+        <TooltipTrigger>{children}</TooltipTrigger>
+      )}
+      <TooltipContent
+        side={side}
+        sideOffset={6}
+        collisionPadding={8}
+        className="z-[60] m-0 flex max-w-xs items-center gap-2 rounded-md border-0 bg-inverse px-2 py-1 text-xs text-inverse-ink shadow-md data-ending-style:animate-[fade-out_0.1s_both] data-open:animate-fade-in"
+      >
+        {content}
+        {shortcut && (
+          <span className="rounded border border-inverse-ink/20 px-1 font-mono text-[10px] text-inverse-ink/70">
+            {shortcut}
+          </span>
+        )}
+      </TooltipContent>
+    </UiTooltip>
   );
 }
-
-/* ─── Dropdown menu ──────────────────────────────────────────────────── */
 
 type IconComponent = ComponentType<{ size?: number; strokeWidth?: number; className?: string }>;
 
@@ -259,6 +271,7 @@ export interface MenuItemSpec {
   disabled?: boolean;
   checked?: boolean;
   hint?: ReactNode;
+  confirm?: string;
   items?: MenuEntry[];
 }
 
@@ -266,7 +279,7 @@ export type MenuEntry = MenuItemSpec | 'separator' | { heading: ReactNode };
 
 const itemClass = cn(
   'relative flex h-8 cursor-default select-none items-center gap-2 rounded-md px-2 text-sm text-ink outline-none',
-  'data-[highlighted]:bg-surface-2 data-[disabled]:pointer-events-none data-[disabled]:text-ink-4',
+  'data-highlighted:bg-surface-2 data-disabled:pointer-events-none data-disabled:text-ink-4',
 );
 
 function MenuItems({ items }: { items: MenuEntry[] }) {
@@ -274,41 +287,45 @@ function MenuItems({ items }: { items: MenuEntry[] }) {
     <>
       {items.map((entry, index) => {
         if (entry === 'separator') {
-          return <DropdownMenu.Separator key={index} className="mx-1 my-1 h-px bg-line" />;
+          return <MenuSeparator key={`sep-${index}`} className="mx-1 my-1 h-px bg-line" />;
         }
         if ('heading' in entry) {
           return (
-            <DropdownMenu.Label key={index} className="px-2 pb-1 pt-2 text-2xs font-medium uppercase tracking-wide text-ink-3">
-              {entry.heading}
-            </DropdownMenu.Label>
+            <MenuGroup key={`heading-${index}`}>
+              <MenuGroupLabel className="px-2 pb-1 pt-2 text-2xs font-medium uppercase tracking-wide text-ink-3">
+                {entry.heading}
+              </MenuGroupLabel>
+            </MenuGroup>
           );
         }
         const Icon = entry.icon;
+        const itemKey = typeof entry.label === 'string' ? `${entry.label}-${index}` : `item-${index}`;
         if (entry.items) {
           return (
-            <DropdownMenu.Sub key={index}>
-              <DropdownMenu.SubTrigger className={cn(itemClass, 'data-[state=open]:bg-surface-2')}>
+            <MenuSub key={itemKey}>
+              <MenuSubTrigger className={cn(itemClass, 'data-open:bg-surface-2')}>
                 {Icon && <Icon size={15} strokeWidth={1.75} className="text-ink-3" />}
                 <span className="flex-1">{entry.label}</span>
                 <ChevronRight size={14} className="text-ink-3" />
-              </DropdownMenu.SubTrigger>
-              <DropdownMenu.Portal>
-                <DropdownMenu.SubContent
-                  sideOffset={6}
-                  className="z-50 min-w-[180px] rounded-xl border border-line bg-surface p-1 shadow-lg data-[state=open]:animate-pop"
-                >
-                  <MenuItems items={entry.items} />
-                </DropdownMenu.SubContent>
-              </DropdownMenu.Portal>
-            </DropdownMenu.Sub>
+              </MenuSubTrigger>
+              <MenuSubContent
+                sideOffset={6}
+                className="z-50 m-0 min-w-[180px] rounded-xl border border-line bg-surface p-1 text-ink shadow-lg data-open:animate-pop"
+              >
+                <MenuItems items={entry.items} />
+              </MenuSubContent>
+            </MenuSub>
           );
         }
         return (
-          <DropdownMenu.Item
-            key={index}
+          <MenuItem
+            key={itemKey}
+            value={typeof entry.label === 'string' ? entry.label : itemKey}
             disabled={entry.disabled}
+            destructive={entry.tone === 'danger' || undefined}
+            data-agent-confirm={entry.confirm}
             onSelect={() => entry.onSelect?.()}
-            className={cn(itemClass, entry.tone === 'danger' && 'text-bad data-[highlighted]:bg-bad-soft')}
+            className={cn(itemClass, entry.tone === 'danger' && 'text-bad data-highlighted:bg-bad-soft')}
           >
             {Icon ? (
               <Icon
@@ -324,7 +341,7 @@ function MenuItems({ items }: { items: MenuEntry[] }) {
             <span className="flex-1 truncate">{entry.label}</span>
             {entry.hint && <span className="text-xs text-ink-3">{entry.hint}</span>}
             {entry.shortcut && <span className="font-mono text-2xs text-ink-4">{entry.shortcut}</span>}
-          </DropdownMenu.Item>
+          </MenuItem>
         );
       })}
     </>
@@ -347,23 +364,25 @@ export function Menu({
   onOpenChange?: (open: boolean) => void;
 }) {
   return (
-    <DropdownMenu.Root modal={false} onOpenChange={onOpenChange}>
-      <DropdownMenu.Trigger asChild>{trigger}</DropdownMenu.Trigger>
-      <DropdownMenu.Portal>
-        <DropdownMenu.Content
-          align={align}
-          side={side}
-          sideOffset={6}
-          collisionPadding={10}
-          className={cn(
-            'z-50 max-h-[var(--radix-dropdown-menu-content-available-height)] min-w-[200px] overflow-y-auto rounded-xl border border-line bg-surface p-1 shadow-lg outline-none',
-            'origin-[var(--radix-dropdown-menu-content-transform-origin)] data-[state=closed]:animate-[sink_0.12s_ease-in_both] data-[state=open]:animate-pop',
-            className,
-          )}
-        >
-          <MenuItems items={items} />
-        </DropdownMenu.Content>
-      </DropdownMenu.Portal>
-    </DropdownMenu.Root>
+    <UiMenu modal={false} onOpenChange={(next) => onOpenChange?.(next)}>
+      {isValidElement<{ children?: ReactNode }>(trigger) ? (
+        <MenuTrigger render={trigger}>{trigger.props.children}</MenuTrigger>
+      ) : (
+        <MenuTrigger>{trigger}</MenuTrigger>
+      )}
+      <MenuContent
+        align={align}
+        side={side}
+        sideOffset={6}
+        collisionPadding={10}
+        className={cn(
+          'z-50 m-0 max-h-[var(--available-height)] min-w-[200px] overflow-y-auto rounded-xl border border-line bg-surface p-1 text-ink shadow-lg outline-none',
+          'origin-[var(--transform-origin)] data-ending-style:animate-[sink_0.12s_ease-in_both] data-open:animate-pop',
+          className,
+        )}
+      >
+        <MenuItems items={items} />
+      </MenuContent>
+    </UiMenu>
   );
 }

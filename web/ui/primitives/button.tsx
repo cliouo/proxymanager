@@ -1,7 +1,7 @@
 'use client';
 
 import { forwardRef, isValidElement, type ComponentType, type ReactNode } from 'react';
-import { Slot } from 'radix-ui';
+import { Button as UiButton } from '@ui-sdk/react/button';
 import { cn } from '@/ui/lib/cn';
 import { Spinner } from './spinner';
 
@@ -25,7 +25,8 @@ const variants: Record<ButtonVariant, string> = {
     'bg-accent text-accent-ink shadow-xs hover:bg-accent-hover disabled:opacity-50',
   secondary:
     'bg-surface text-ink border border-line shadow-xs hover:border-line-strong hover:bg-surface-2 disabled:text-ink-4',
-  ghost: 'text-ink-2 hover:bg-surface-2 hover:text-ink data-[state=open]:bg-surface-2 disabled:text-ink-4',
+  ghost:
+    'text-ink-2 hover:bg-surface-2 hover:text-ink data-open:bg-surface-2 data-[state=open]:bg-surface-2 disabled:text-ink-4',
   subtle: 'bg-surface-2 text-ink-2 hover:bg-surface-3 hover:text-ink disabled:text-ink-4',
   danger: 'bg-bad text-white shadow-xs hover:bg-bad/90 disabled:opacity-50',
   'danger-ghost': 'text-bad hover:bg-bad-soft disabled:opacity-50',
@@ -81,10 +82,18 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
     children,
     disabled,
     type,
+    onClick,
     ...props
   },
   ref,
 ) {
+  const handleClick = onClick
+    ? (event: React.MouseEvent<HTMLElement>) => {
+        // Callers control pending UI via `loading` and often await confirmAction() inside onClick;
+        // returning that Promise would stall ui-sdk Button's agent press until the dialog closes.
+        void onClick(event as React.MouseEvent<HTMLButtonElement>);
+      }
+    : undefined;
   const classes = cn(
     'relative inline-flex select-none items-center justify-center whitespace-nowrap font-medium',
     'transition-[background-color,border-color,color,box-shadow,transform,opacity] duration-150',
@@ -96,26 +105,35 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
     className,
   );
 
-  if (asChild) {
+  if (asChild && isValidElement<{ children?: ReactNode }>(children)) {
     return (
-      <Slot.Root ref={ref} className={classes} {...props}>
-        {children}
-      </Slot.Root>
+      <UiButton
+        ref={ref}
+        render={children}
+        className={classes}
+        disabled={disabled || loading}
+        aria-busy={loading || undefined}
+        onClick={handleClick}
+        {...props}
+      >
+        {children.props.children}
+      </UiButton>
     );
   }
 
   return (
-    <button
+    <UiButton
       ref={ref}
       type={type ?? 'button'}
       className={classes}
       disabled={disabled || loading}
       aria-busy={loading || undefined}
+      onClick={handleClick}
       {...props}
     >
       {loading ? <Spinner size={iconSize[size]} /> : renderIcon(icon, size)}
       {children}
       {!loading && renderIcon(trailingIcon, size)}
-    </button>
+    </UiButton>
   );
 });
