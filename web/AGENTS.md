@@ -6,6 +6,10 @@ This version has breaking changes — APIs, conventions, and file structure may 
 
 <!-- END:nextjs-agent-rules -->
 
+## ui-sdk
+
+Before using ui-sdk, read `node_modules/@ui-sdk/react/docs/llms.txt`.
+
 ## Proxy parser cache invariant
 
 When proxy URI parsing or subscription normalisation changes the emitted node

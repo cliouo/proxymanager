@@ -1,0 +1,3 @@
+[tools]
+# Matches web/package.json engines ("24.x") and CI (.github/workflows/plugin.yml).
+node = "24"

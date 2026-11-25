@@ -36,7 +36,7 @@
     "test:e2e": "playwright test"
   },
   "engines": {
-    "node": "22.x"
+    "node": "24.x"
   },
   "dependencies": {
     "@asteasolutions/zod-to-openapi": "^8.5.0",
@@ -51,6 +51,8 @@
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
     "@lezer/highlight": "^1.2.3",
+    "@ui-sdk/core": "0.1.0-beta.17",
+    "@ui-sdk/react": "0.1.0-beta.17",
     "@upstash/redis": "^1.38.0",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
