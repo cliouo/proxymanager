@@ -272,13 +272,16 @@ export function Field({ label, hint, error, optional, className, inline, childre
         >
           <div className="min-w-0 flex-1 pt-1">
             {label && (
-              <FieldLabel
-                htmlFor={id}
-                className="flex items-center gap-1.5 text-sm font-medium text-ink"
-              >
-                {label}
-                {optional && <span className="font-normal text-ink-4">可选</span>}
-              </FieldLabel>
+              <div className="flex items-center gap-1.5">
+                <FieldLabel htmlFor={id} className="text-sm font-medium text-ink">
+                  {label}
+                </FieldLabel>
+                {optional && (
+                  <span aria-hidden="true" className="text-xs font-normal text-ink-4">
+                    可选
+                  </span>
+                )}
+              </div>
             )}
             {hint && !error && (
               <FieldDescription id={hintId} className="mt-0.5 text-xs text-ink-3">
@@ -303,13 +306,16 @@ export function Field({ label, hint, error, optional, className, inline, childre
         className={cn('flex flex-col gap-1.5', className)}
       >
         {label && (
-          <FieldLabel
-            htmlFor={id}
-            className="flex items-center gap-1.5 text-xs font-medium text-ink-2"
-          >
-            {label}
-            {optional && <span className="font-normal text-ink-4">可选</span>}
-          </FieldLabel>
+          <div className="flex items-center gap-1.5">
+            <FieldLabel htmlFor={id} className="text-xs font-medium text-ink-2">
+              {label}
+            </FieldLabel>
+            {optional && (
+              <span aria-hidden="true" className="text-xs font-normal text-ink-4">
+                可选
+              </span>
+            )}
+          </div>
         )}
         {children(id)}
         {error ? (

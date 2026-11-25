@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import type { ReactNode } from 'react';
+import { Button as UiButton } from '@ui-sdk/react/button';
 import { ArrowLeft } from 'lucide-react';
 import { cn } from '@/ui/lib/cn';
 
@@ -51,13 +52,13 @@ export function PageHeader({
     <header className={cn('animate-rise pb-6 pt-7 sm:pt-9', className)}>
       {tabTitle && <title>{`${tabTitle} · ProxyManager`}</title>}
       {back && (
-        <Link
-          href={back.href}
+        <UiButton
+          render={<Link href={back.href} />}
           className="mb-3 inline-flex items-center gap-1 text-xs font-medium text-ink-3 transition hover:text-ink"
         >
           <ArrowLeft size={13} />
           {back.label}
-        </Link>
+        </UiButton>
       )}
       <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-4">
         <div className="min-w-0 basis-full sm:basis-0 sm:flex-1">
@@ -110,6 +111,7 @@ export function SaveBar({
   saving,
   message = '有未保存的修改',
   saveLabel = '保存',
+  confirmHint = '保存当前页面的修改到服务端',
 }: {
   visible: boolean;
   onSave: () => void;
@@ -117,6 +119,7 @@ export function SaveBar({
   saving?: boolean;
   message?: ReactNode;
   saveLabel?: string;
+  confirmHint?: string;
 }) {
   if (!visible) return null;
   return (
@@ -127,23 +130,24 @@ export function SaveBar({
           {message}
         </span>
         <div className="flex items-center gap-1">
-          <button
+          <UiButton
             type="button"
-            onClick={onDiscard}
+            onClick={() => onDiscard()}
             disabled={saving}
             className="h-7 rounded-md px-2.5 text-xs font-medium text-ink-2 hover:bg-surface-2 hover:text-ink disabled:opacity-50"
           >
             放弃
-          </button>
-          <button
+          </UiButton>
+          <UiButton
             type="button"
-            onClick={onSave}
+            data-agent-confirm={confirmHint}
+            onClick={() => onSave()}
             disabled={saving}
             className="flex h-7 items-center gap-1.5 rounded-md bg-inverse px-3 text-xs font-medium text-inverse-ink hover:bg-inverse/88 disabled:opacity-60"
           >
             {saving ? '保存中…' : saveLabel}
             <span className="rounded border border-inverse-ink/20 px-1 font-mono text-[10px] text-inverse-ink/70">⌘S</span>
-          </button>
+          </UiButton>
         </div>
       </div>
     </div>

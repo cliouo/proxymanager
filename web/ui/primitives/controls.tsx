@@ -29,6 +29,7 @@ export function Switch({
   id,
   label,
   className,
+  'data-agent-confirm': agentConfirm,
 }: {
   checked: boolean;
   onCheckedChange: (checked: boolean) => void;
@@ -37,6 +38,7 @@ export function Switch({
   id?: string;
   label?: string;
   className?: string;
+  'data-agent-confirm'?: string;
 }) {
   const dims = size === 'sm' ? 'h-4 w-7' : 'h-[18px] w-8';
   const thumb = size === 'sm' ? 'size-3 data-checked:translate-x-3' : 'size-3.5 data-checked:translate-x-3.5';
@@ -44,6 +46,7 @@ export function Switch({
     <UiSwitch
       id={id}
       aria-label={label}
+      data-agent-confirm={agentConfirm}
       checked={checked}
       disabled={disabled}
       onCheckedChange={(next) => onCheckedChange(next)}

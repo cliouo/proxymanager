@@ -18,3 +18,4 @@ export {
   type AgentConfirmRequest,
 } from './confirm';
 export { AgentHost } from './agent-host';
+export { DataView, type DataViewItem } from './data-view-react';
