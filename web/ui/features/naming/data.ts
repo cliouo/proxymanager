@@ -74,6 +74,12 @@ export function rollbackPlan(type: TargetType, id: string, expectedVersion: numb
   return api.post<NamingWorkspaceData>(path(type, id), { rollback: true, expectedVersion });
 }
 
+/** 关闭智能命名: the managed step is kept (disabled) so names revert to the
+ * originals; 「撤销上次应用」 re-enables it. */
+export function disablePlan(type: TargetType, id: string, expectedVersion: number) {
+  return api.post<NamingWorkspaceData>(path(type, id), { disable: true, expectedVersion });
+}
+
 export async function recognizeNodeFacts(ref: string) {
   const result = await api.post<{
     nodeFacts: unknown;

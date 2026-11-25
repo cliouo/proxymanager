@@ -400,7 +400,7 @@ function Subject({ event }: { event: AuditEvent }) {
     return (
       <Line label={target.type === 'subscription' ? '订阅源' : '聚合订阅'}>
         <span className="text-ink">{target.name}</span>
-        {mode && <span className="text-ink-3">{{ added: '新增命名规则', replaced: '替换命名规则', removed: '移除命名规则' }[mode] ?? mode}</span>}
+        {mode && <span className="text-ink-3">{{ added: '新增命名规则', replaced: '替换命名规则', removed: '移除命名规则', disabled: '关闭智能命名' }[mode] ?? mode}</span>}
       </Line>
     );
   }
