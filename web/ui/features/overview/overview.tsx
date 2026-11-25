@@ -3,6 +3,7 @@
 import { useMemo } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { Button as UiButton } from '@ui-sdk/react/button';
 import {
   AlertTriangle,
   ArrowUpRight,
@@ -19,6 +20,7 @@ import {
   Sparkles,
   Unplug,
 } from 'lucide-react';
+import { DataView } from '@/ui/agent';
 import {
   useAllRules,
   useDashboard,
@@ -166,15 +168,70 @@ export function Overview() {
     const tone = sourceHealth(s).tone;
     return tone === 'bad' || tone === 'warn';
   });
-  const warnings = preview.data?.warnings ?? [];
-  const collisions = preview.data?.collisions ?? [];
-  const unmatched = preview.data?.unmatched_anchors ?? [];
+  const warnings = useMemo(() => preview.data?.warnings ?? [], [preview.data]);
+  const collisions = useMemo(() => preview.data?.collisions ?? [], [preview.data]);
+  const unmatched = useMemo(() => preview.data?.unmatched_anchors ?? [], [preview.data]);
   const renderError = preview.error;
 
   const breakdownText = Object.entries(breakdown)
     .sort((a, b) => b[1] - a[1])
     .map(([type, n]) => `${n} ${GROUP_TYPES[type as keyof typeof GROUP_TYPES]?.short ?? type}`)
     .join(' · ');
+
+  const overviewSummaryItems = useMemo(() => {
+    const items: Array<{ value: string; label: string }> = [
+      {
+        value: 'nodes',
+        label: `节点：${preview.data ? preview.data.inlined_proxy_count : '加载中'}（${sourceLabel}）`,
+      },
+      {
+        value: 'groups',
+        label: `策略组：${counts?.proxyGroups ?? 0}${breakdownText ? `（${breakdownText}）` : ''}`,
+      },
+      {
+        value: 'rules',
+        label: `规则：启用 ${activeRules ?? 0}${disabledRules > 0 ? ` / 共 ${rules.data?.length}` : ''}（${counts?.anchors ?? 0} 个锚点）`,
+      },
+      {
+        value: 'devices',
+        label: `设备：${dashboard.data?.deviceCounts.total ?? 0}${dashboard.data?.deviceCounts.tailscale ? `（${dashboard.data.deviceCounts.tailscale} 台启用 Tailscale）` : ''}`,
+      },
+    ];
+    if (supply.mode === 'none') items.push({ value: 'alert:no-source', label: '提示：尚未绑定节点来源' });
+    if (renderError) items.push({ value: 'alert:render', label: `错误：最终配置渲染失败（${String((renderError as Error).message ?? renderError)}）` });
+    for (const s of failing) {
+      items.push({ value: `alert:source:${s.id}`, label: `订阅源异常：${s.display_name || s.name}（${sourceHealth(s).detail}）` });
+    }
+    if (collisions.length > 0) {
+      items.push({ value: 'alert:collisions', label: `重名合并：${collisions.length} 个节点（${collisions.slice(0, 3).map((c) => c.name).join('、')}）` });
+    }
+    if (unmatched.length > 0) {
+      items.push({ value: 'alert:unmatched', label: `缺少锚点：${unmatched.join('、')}` });
+    }
+    for (const [i, w] of warnings.entries()) {
+      items.push({ value: `alert:warn:${i}`, label: `渲染提示：${w}` });
+    }
+    for (const r of regions.slice(0, 8)) {
+      items.push({ value: `region:${r.region ?? 'other'}`, label: `地区分布：${r.zh} ${r.count} 个` });
+    }
+    return items;
+  }, [
+    preview.data,
+    sourceLabel,
+    counts,
+    breakdownText,
+    activeRules,
+    disabledRules,
+    rules.data,
+    dashboard.data,
+    supply.mode,
+    renderError,
+    failing,
+    collisions,
+    unmatched,
+    warnings,
+    regions,
+  ]);
 
   return (
     <Page width="wide">
@@ -303,7 +360,12 @@ export function Overview() {
         )}
 
         {/* KPI strip */}
-        <Card className="grid animate-rise grid-cols-2 overflow-hidden @3xl/main:grid-cols-4 [&>*]:border-line @max-3xl/main:[&>*:nth-child(-n+2)]:border-b @max-3xl/main:[&>*:nth-child(odd)]:border-r @3xl/main:[&>*:not(:last-child)]:border-r">
+        <DataView
+          label="配置总览状态"
+          summary={`${profileTitle(profile)} · ${preview.data ? `${preview.data.inlined_proxy_count} 节点` : '节点加载中'} · ${counts?.proxyGroups ?? 0} 策略组 · ${activeRules ?? 0} 规则 · ${dashboard.data?.deviceCounts.total ?? 0} 设备`}
+          items={overviewSummaryItems}
+        >
+          <Card className="grid animate-rise grid-cols-2 overflow-hidden @3xl/main:grid-cols-4 [&>*]:border-line @max-3xl/main:[&>*:nth-child(-n+2)]:border-b @max-3xl/main:[&>*:nth-child(odd)]:border-r @3xl/main:[&>*:not(:last-child)]:border-r">
           <Kpi
             label="节点"
             icon={RadioTower}
@@ -353,7 +415,8 @@ export function Overview() {
             }
             href={path('devices')}
           />
-        </Card>
+          </Card>
+        </DataView>
 
         <div className="grid gap-6 @4xl/main:grid-cols-[minmax(0,1fr)_380px]">
           {/* flow map */}
@@ -635,13 +698,13 @@ function FlowList({ flow, onPick }: { flow: NonNullable<ReturnType<typeof buildF
         const value = totals.get(node.id) ?? 0;
         return (
           <li key={node.id}>
-            <button type="button" onClick={() => onPick(node.id)} className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 text-left">
+            <UiButton type="button" onClick={() => onPick(node.id)} className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 text-left">
               <span className="truncate text-[13px] font-medium text-ink">{node.label}</span>
               <span className="tnum text-xs text-ink-3">{value} 条</span>
               <span className="col-span-2 h-1.5 overflow-hidden rounded-full bg-surface-3">
                 <span className="block h-full rounded-full" style={{ width: `${(value / max) * 100}%`, background: node.color }} />
               </span>
-            </button>
+            </UiButton>
           </li>
         );
       })}
@@ -678,14 +741,14 @@ function DeviceRow({
       </Link>
       {url && (
         <Tooltip content={copied ? '已复制' : '复制设备订阅链接'}>
-          <button
+          <UiButton
             type="button"
             onClick={() => void copy(url, `已复制「${name}」的订阅链接`)}
             className="flex size-7 items-center justify-center rounded-md text-ink-3 hover:bg-surface-2 hover:text-ink"
-            aria-label="复制设备订阅链接"
+            aria-label={`复制「${name}」的订阅链接`}
           >
             <CopyIcon copied={copied} />
-          </button>
+          </UiButton>
         </Tooltip>
       )}
     </div>

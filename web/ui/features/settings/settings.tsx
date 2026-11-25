@@ -2,8 +2,10 @@
 
 import { useEffect, useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
+import { Button as UiButton } from '@ui-sdk/react/button';
 import { useTheme } from 'next-themes';
 import { ExternalLink, Eye, EyeOff, LogOut, Monitor, Moon, RefreshCw, Sun, TriangleAlert } from 'lucide-react';
+import { DataView } from '@/ui/agent';
 import { api, ApiError, clearAdminKey, errorMessage, request } from '@/ui/data/api';
 import { keys, useAssistantConfig, useMeta } from '@/ui/data/hooks';
 import { clearQueries, setQueryData, useQuery } from '@/ui/data/query';
@@ -141,7 +143,12 @@ export function SettingsPage() {
         <Section id="session" title="登录" description="管理密钥只保存在这台浏览器里。">
           <Card>
             <Row label="退出登录" hint="清除本机保存的管理密钥和缓存数据，回到登录页。">
-              <Button variant="danger-ghost" icon={LogOut} onClick={logout}>
+              <Button
+                variant="danger-ghost"
+                icon={LogOut}
+                data-agent-confirm="退出登录并清除本机保存的管理密钥"
+                onClick={logout}
+              >
                 退出登录
               </Button>
             </Row>
@@ -159,6 +166,7 @@ function ThemeRow() {
   return (
     <Row label="主题" hint="跟随系统时，会随系统的浅色 / 深色模式自动切换。">
       <SegmentedControl
+        label="外观主题"
         value={(theme as 'light' | 'dark' | 'system' | undefined) ?? 'system'}
         onChange={setTheme}
         options={[
@@ -318,25 +326,27 @@ function AssistantSettings() {
             hint="密钥保存在服务器上。使用助手时，浏览器会取回它并直接调用模型接口。"
           >
             {(id) => (
-              <Input
-                id={id}
-                mono
-                type={revealKey ? 'text' : 'password'}
-                autoComplete="off"
-                value={form.apiKey}
-                placeholder={configured ? '已保存 · 留空则保持不变' : 'sk-…'}
-                onChange={(e) => set('apiKey', e.target.value)}
-                trailing={
-                  <button
-                    type="button"
-                    aria-label={revealKey ? '隐藏' : '显示'}
-                    onClick={() => setRevealKey((v) => !v)}
-                    className="flex size-6 items-center justify-center rounded text-ink-3 hover:bg-surface-2 hover:text-ink"
-                  >
-                    {revealKey ? <EyeOff size={14} /> : <Eye size={14} />}
-                  </button>
-                }
-              />
+              <div data-agent-secret>
+                <Input
+                  id={id}
+                  mono
+                  type={revealKey ? 'text' : 'password'}
+                  autoComplete="off"
+                  value={form.apiKey}
+                  placeholder={configured ? '已保存 · 留空则保持不变' : 'sk-…'}
+                  onChange={(e) => set('apiKey', e.target.value)}
+                  trailing={
+                    <UiButton
+                      type="button"
+                      aria-label={revealKey ? '隐藏 API Key' : '显示 API Key'}
+                      onClick={() => setRevealKey((v) => !v)}
+                      className="flex size-6 items-center justify-center rounded text-ink-3 hover:bg-surface-2 hover:text-ink"
+                    >
+                      {revealKey ? <EyeOff size={14} /> : <Eye size={14} />}
+                    </UiButton>
+                  }
+                />
+              </div>
             )}
           </Field>
         </div>
@@ -350,6 +360,7 @@ function AssistantSettings() {
           </Row>
           <Row label="思考强度" hint="开启深度思考时生效。">
             <SegmentedControl
+              label="思考强度"
               size="sm"
               value={form.reasoningEffort}
               onChange={(value) => set('reasoningEffort', value)}
@@ -378,12 +389,21 @@ function AssistantSettings() {
               放弃修改
             </Button>
           )}
-          <Button variant="primary" size="sm" loading={saving} disabled={!dirty || invalid} onClick={() => void save()}>
+          <Button
+            variant="primary"
+            size="sm"
+            loading={saving}
+            disabled={!dirty || invalid}
+            data-agent-confirm="保存 AI 助手设置"
+            onClick={() => void save()}
+          >
             保存
           </Button>
         </div>
       </Card>
-      <SaveBar visible={dirty} saving={saving} onSave={() => void save()} onDiscard={() => setDraft(null)} message="AI 助手设置有未保存的修改" />
+      <div data-agent-hidden>
+        <SaveBar visible={dirty} saving={saving} onSave={() => void save()} onDiscard={() => setDraft(null)} message="AI 助手设置有未保存的修改" />
+      </div>
     </>
   );
 }
@@ -428,84 +448,108 @@ function ConnectionInfo() {
   const masked = subBase && token ? subBase.replace(token, '•'.repeat(Math.min(12, Math.max(6, token.length)))) : subBase;
   const redisOk = health.data?.checks.redis.ok;
 
+  const healthItems = [
+    { value: 'api-base', label: `管理接口：${apiBase || '/api/v1'}` },
+    {
+      value: 'service',
+      label: health.data
+        ? `服务状态：${health.data.status === 'ok' ? '正常' : '降级'} · Redis ${redisOk ? '已连接' : '不可用'} · 已运行 ${formatDuration(health.data.uptime_seconds * 1000)}${health.data.build_id ? ` · 构建 ${health.data.build_id}` : ''}`
+        : health.error
+          ? `服务状态：检查失败（${errorMessage(health.error)}）`
+          : '服务状态：加载中',
+    },
+  ];
+
   return (
-    <Card className="divide-y divide-line">
-      <Row stacked label="管理接口" hint="所有请求都带 Authorization: Bearer <管理密钥>。">
-        <ValueBox text={apiBase}>
-          <CopyButton text={apiBase} label="复制接口地址" size="sm" />
-        </ValueBox>
-      </Row>
-      <Row label="OpenAPI 文档" hint="完整的接口描述，公开可读，不含任何数据。">
-        <Button asChild size="sm" trailingIcon={ExternalLink}>
-          <a href="/api/v1/openapi.json" target="_blank" rel="noreferrer">
-            openapi.json
-          </a>
-        </Button>
-      </Row>
-      <Row
-        stacked
-        label="订阅链接前缀"
-        hint={
-          <>
-            加上 <span className="font-mono">/配置文件标识</span> 就是该配置文件的订阅链接。中间一段是服务器的 SUB_TOKEN，泄露后请更换。
-          </>
-        }
-      >
-        {meta.isLoading ? (
-          <Skeleton className="h-8 w-full" />
-        ) : meta.error || !subBase ? (
-          <span className="text-xs text-bad">{meta.error ? errorMessage(meta.error) : '不可用'}</span>
-        ) : (
-          <ValueBox text={reveal ? subBase : (masked ?? '')}>
-            <button
-              type="button"
-              aria-label={reveal ? '隐藏令牌' : '显示令牌'}
-              onClick={() => setReveal((v) => !v)}
-              className="flex size-6 shrink-0 items-center justify-center rounded-md text-ink-3 hover:bg-surface-2 hover:text-ink"
-            >
-              {reveal ? <EyeOff size={13} /> : <Eye size={13} />}
-            </button>
-            <CopyButton text={subBase} label="复制前缀" size="sm" />
+    <DataView
+      label="连接与服务状态"
+      summary={
+        health.data
+          ? `${health.data.status === 'ok' ? '服务正常' : '服务降级'} · Redis ${redisOk ? '已连接' : '不可用'}`
+          : '连接信息'
+      }
+      items={healthItems}
+    >
+      <Card className="divide-y divide-line">
+        <Row stacked label="管理接口" hint="所有请求都带 Authorization: Bearer <管理密钥>。">
+          <ValueBox text={apiBase}>
+            <CopyButton text={apiBase} label="复制接口地址" size="sm" />
           </ValueBox>
-        )}
-      </Row>
-      <Row
-        label="服务状态"
-        hint={
-          health.data
-            ? `已运行 ${formatDuration(health.data.uptime_seconds * 1000)}${health.data.build_id ? ` · 构建 ${health.data.build_id}` : ''}`
-            : '检查服务和 Redis 是否正常'
-        }
-      >
-        <span className="flex items-center gap-3">
-          {health.isLoading ? (
-            <Skeleton className="h-5 w-32" />
-          ) : health.error && !health.data ? (
-            <span className="text-xs text-bad">{errorMessage(health.error)}</span>
-          ) : (
+        </Row>
+        <Row label="OpenAPI 文档" hint="完整的接口描述，公开可读，不含任何数据。">
+          <Button asChild size="sm" trailingIcon={ExternalLink}>
+            <a href="/api/v1/openapi.json" target="_blank" rel="noreferrer">
+              openapi.json
+            </a>
+          </Button>
+        </Row>
+        <Row
+          stacked
+          label="订阅链接前缀"
+          hint={
             <>
-              <span className="flex items-center gap-1.5 text-xs text-ink-2">
-                <StatusDot tone={health.data?.status === 'ok' ? 'ok' : 'warn'} />
-                {health.data?.status === 'ok' ? '服务正常' : '服务降级'}
-              </span>
-              <span className="flex items-center gap-1.5 text-xs text-ink-2">
-                <StatusDot tone={redisOk ? 'ok' : 'bad'} />
-                Redis {redisOk ? '已连接' : '不可用'}
-              </span>
+              加上 <span className="font-mono">/配置文件标识</span> 就是该配置文件的订阅链接。中间一段是服务器的 SUB_TOKEN，泄露后请更换。
             </>
+          }
+        >
+          {meta.isLoading ? (
+            <Skeleton className="h-8 w-full" />
+          ) : meta.error || !subBase ? (
+            <span className="text-xs text-bad">{meta.error ? errorMessage(meta.error) : '不可用'}</span>
+          ) : (
+            <div data-agent-secret>
+              <ValueBox text={reveal ? subBase : (masked ?? '')}>
+                <UiButton
+                  type="button"
+                  aria-label={reveal ? '隐藏令牌' : '显示令牌'}
+                  onClick={() => setReveal((v) => !v)}
+                  className="flex size-6 shrink-0 items-center justify-center rounded-md text-ink-3 hover:bg-surface-2 hover:text-ink"
+                >
+                  {reveal ? <EyeOff size={13} /> : <Eye size={13} />}
+                </UiButton>
+                <CopyButton text={subBase} label="复制前缀" size="sm" />
+              </ValueBox>
+            </div>
           )}
-          <Button
-            variant="ghost"
-            size="sm"
-            iconOnly
-            icon={RefreshCw}
-            aria-label="重新检查"
-            loading={health.isValidating}
-            onClick={() => void health.refetch()}
-          />
-        </span>
-      </Row>
-    </Card>
+        </Row>
+        <Row
+          label="服务状态"
+          hint={
+            health.data
+              ? `已运行 ${formatDuration(health.data.uptime_seconds * 1000)}${health.data.build_id ? ` · 构建 ${health.data.build_id}` : ''}`
+              : '检查服务和 Redis 是否正常'
+          }
+        >
+          <span className="flex items-center gap-3">
+            {health.isLoading ? (
+              <Skeleton className="h-5 w-32" />
+            ) : health.error && !health.data ? (
+              <span className="text-xs text-bad">{errorMessage(health.error)}</span>
+            ) : (
+              <>
+                <span className="flex items-center gap-1.5 text-xs text-ink-2">
+                  <StatusDot tone={health.data?.status === 'ok' ? 'ok' : 'warn'} />
+                  {health.data?.status === 'ok' ? '服务正常' : '服务降级'}
+                </span>
+                <span className="flex items-center gap-1.5 text-xs text-ink-2">
+                  <StatusDot tone={redisOk ? 'ok' : 'bad'} />
+                  Redis {redisOk ? '已连接' : '不可用'}
+                </span>
+              </>
+            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              iconOnly
+              icon={RefreshCw}
+              aria-label="重新检查"
+              loading={health.isValidating}
+              onClick={() => void health.refetch()}
+            />
+          </span>
+        </Row>
+      </Card>
+    </DataView>
   );
 }
 

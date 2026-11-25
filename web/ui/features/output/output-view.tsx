@@ -4,6 +4,7 @@ import { useMemo, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import type { EditorView } from '@codemirror/view';
 import { openSearchPanel } from '@codemirror/search';
+import { Button as UiButton } from '@ui-sdk/react/button';
 import {
   AlertTriangle,
   ArrowUpRight,
@@ -18,6 +19,7 @@ import {
   Search,
   WrapText,
 } from 'lucide-react';
+import { DataView } from '@/ui/agent';
 import { ApiError, errorMessage } from '@/ui/data/api';
 import { usePreview, useSources } from '@/ui/data/hooks';
 import type { Collision, PreviewData, SnapshotSubStatus } from '@/ui/data/types';
@@ -197,6 +199,7 @@ export function OutputView() {
                 </div>
                 <div className="h-[min(72dvh,820px)] min-h-[420px]">
                   <CodeEditor
+                    label="最终配置 YAML"
                     value={data.content}
                     readOnly
                     wrap={wrap}
@@ -255,35 +258,47 @@ function Receipt({
     },
   ];
   return (
-    <Card className="grid animate-rise grid-cols-2 gap-px overflow-hidden bg-line @3xl/main:grid-cols-[1.3fr_repeat(4,1fr)]">
-      <div className="col-span-2 flex flex-col justify-between gap-3 bg-surface px-5 py-4 @3xl/main:col-span-1">
-        <div className="flex items-center gap-1.5 text-xs font-medium text-ink-3">
-          <FileCode2 size={13} strokeWidth={1.9} />
-          构建号
+    <DataView
+      label="最终配置概要"
+      summary={`构建 ${data.build_id} · ${data.inlined_proxy_count} 节点 · ${data.proxy_group_count} 策略组 · ${stats.rules} 规则 · ${stats.providers} 规则集 · ${stats.lines} 行`}
+      items={[
+        { value: 'build', label: `构建号：${data.build_id}（${formatBytes(stats.bytes)} · ${stats.lines} 行）` },
+        { value: 'proxies', label: `节点：${data.inlined_proxy_count} 个` },
+        { value: 'groups', label: `策略组：${data.proxy_group_count} 个` },
+        { value: 'rules', label: `规则：${stats.rules} 条（${data.anchors_applied.length} 个锚点）` },
+        { value: 'providers', label: `规则集：${stats.providers} 个` },
+      ]}
+    >
+      <Card className="grid animate-rise grid-cols-2 gap-px overflow-hidden bg-line @3xl/main:grid-cols-[1.3fr_repeat(4,1fr)]">
+        <div className="col-span-2 flex flex-col justify-between gap-3 bg-surface px-5 py-4 @3xl/main:col-span-1">
+          <div className="flex items-center gap-1.5 text-xs font-medium text-ink-3">
+            <FileCode2 size={13} strokeWidth={1.9} />
+            构建号
+          </div>
+          <div className="font-mono text-[22px] font-medium leading-none tracking-tight text-ink">{data.build_id}</div>
+          <div className="tnum text-xs text-ink-3">
+            <Tooltip content={formatDate(data.rendered_at, true)}>
+              <span>{relativeTime(data.rendered_at)}生成</span>
+            </Tooltip>
+            <span className="mx-1.5 text-ink-4">·</span>
+            {formatBytes(stats.bytes)} · {formatCount(stats.lines)} 行
+          </div>
         </div>
-        <div className="font-mono text-[22px] font-medium leading-none tracking-tight text-ink">{data.build_id}</div>
-        <div className="tnum text-xs text-ink-3">
-          <Tooltip content={formatDate(data.rendered_at, true)}>
-            <span>{relativeTime(data.rendered_at)}生成</span>
-          </Tooltip>
-          <span className="mx-1.5 text-ink-4">·</span>
-          {formatBytes(stats.bytes)} · {formatCount(stats.lines)} 行
-        </div>
-      </div>
-      {cells.map((cell) => (
-        <div key={cell.label} className="flex flex-col gap-3 bg-surface px-5 py-4">
-          <div className="text-xs font-medium text-ink-3">{cell.label}</div>
-          <Numeral value={cell.value} className="text-[34px]" />
-          <div className="truncate text-xs text-ink-3">{cell.sub}</div>
-        </div>
-      ))}
-    </Card>
+        {cells.map((cell) => (
+          <div key={cell.label} className="flex flex-col gap-3 bg-surface px-5 py-4">
+            <div className="text-xs font-medium text-ink-3">{cell.label}</div>
+            <Numeral value={cell.value} className="text-[34px]" />
+            <div className="truncate text-xs text-ink-3">{cell.sub}</div>
+          </div>
+        ))}
+      </Card>
+    </DataView>
   );
 }
 
 function JumpChip({ label, code, count, onClick }: { label: string; code?: string; count?: number | null; onClick: () => void }) {
   return (
-    <button
+    <UiButton
       type="button"
       onClick={onClick}
       title={code}
@@ -291,7 +306,7 @@ function JumpChip({ label, code, count, onClick }: { label: string; code?: strin
     >
       {label}
       {count !== null && count !== undefined && <span className="tnum text-2xs font-normal text-ink-4">{count}</span>}
-    </button>
+    </UiButton>
   );
 }
 
@@ -309,43 +324,55 @@ function Diagnostics({
   const warnings = data.warnings ?? [];
   const collisions = data.collisions ?? [];
   const unmatched = data.unmatched_anchors ?? [];
-  if (!warnings.length && !collisions.length && !unmatched.length) {
+  const diagnosticItems = [
+    ...unmatched.map((a) => ({ value: `unmatched:${a}`, label: `缺少锚点：${a}` })),
+    ...collisions.map((c) => ({
+      value: `collision:${c.name}`,
+      label: `重名节点「${c.name}」：保留 ${c.keptFrom ? sourceName(c.keptFrom) : '首个'}，丢弃 ${c.droppedFrom.map(sourceName).join('、')}`,
+    })),
+    ...warnings.map((w, i) => ({ value: `warn:${i}`, label: `提示：${w}` })),
+  ];
+  if (!diagnosticItems.length) {
     return (
-      <div className="flex items-start gap-2.5 rounded-xl border border-ok/20 bg-ok-soft/60 px-4 py-3">
-        <ListTree size={15} className="mt-0.5 shrink-0 text-ok" />
-        <div>
-          <div className="text-[13px] font-medium text-ink">没有需要留意的地方</div>
-          <p className="mt-0.5 text-xs leading-relaxed text-ink-2">所有规则都找到了锚点，节点没有重名，渲染没有提示。</p>
+      <DataView label="渲染诊断" summary="正常，无警告、无重名节点、无缺失锚点" items={[]}>
+        <div className="flex items-start gap-2.5 rounded-xl border border-ok/20 bg-ok-soft/60 px-4 py-3">
+          <ListTree size={15} className="mt-0.5 shrink-0 text-ok" />
+          <div>
+            <div className="text-[13px] font-medium text-ink">没有需要留意的地方</div>
+            <p className="mt-0.5 text-xs leading-relaxed text-ink-2">所有规则都找到了锚点，节点没有重名，渲染没有提示。</p>
+          </div>
         </div>
-      </div>
+      </DataView>
     );
   }
   return (
-    <Card>
-      <CardHeader title="需要留意" icon={AlertTriangle} description="这些情况不会阻止下发，但可能和你预想的不一样。" />
-      <ul className="flex flex-col divide-y divide-line border-t border-line">
-        {unmatched.length > 0 && (
-          <li className="px-4 py-3">
-            <div className="text-[13px] font-medium text-ink">有规则找不到插入位置</div>
-            <p className="mt-0.5 text-xs leading-relaxed text-ink-2">
-              基础配置里缺少锚点 {unmatched.map((a) => `「${a}」`).join('')}，指向它们的规则没有进入这份配置。
-            </p>
-            <Button asChild size="xs" variant="secondary" trailingIcon={ArrowUpRight} className="mt-2">
-              <Link href={basePath}>打开基础配置</Link>
-            </Button>
-          </li>
-        )}
-        {collisions.map((collision) => (
-          <CollisionRow key={collision.name} collision={collision} sourceName={sourceName} />
-        ))}
-        {warnings.map((warning) => (
-          <li key={warning} className="flex gap-2 px-4 py-3 text-xs leading-relaxed text-ink-2">
-            <AlertTriangle size={13} className="mt-0.5 shrink-0 text-warn" />
-            {warning}
-          </li>
-        ))}
-      </ul>
-    </Card>
+    <DataView label="渲染诊断" summary={`共 ${diagnosticItems.length} 项提示`} items={diagnosticItems}>
+      <Card>
+        <CardHeader title="需要留意" icon={AlertTriangle} description="这些情况不会阻止下发，但可能和你预想的不一样。" />
+        <ul className="flex flex-col divide-y divide-line border-t border-line">
+          {unmatched.length > 0 && (
+            <li className="px-4 py-3">
+              <div className="text-[13px] font-medium text-ink">有规则找不到插入位置</div>
+              <p className="mt-0.5 text-xs leading-relaxed text-ink-2">
+                基础配置里缺少锚点 {unmatched.map((a) => `「${a}」`).join('')}，指向它们的规则没有进入这份配置。
+              </p>
+              <Button asChild size="xs" variant="secondary" trailingIcon={ArrowUpRight} className="mt-2">
+                <Link href={basePath}>打开基础配置</Link>
+              </Button>
+            </li>
+          )}
+          {collisions.map((collision) => (
+            <CollisionRow key={collision.name} collision={collision} sourceName={sourceName} />
+          ))}
+          {warnings.map((warning) => (
+            <li key={warning} className="flex gap-2 px-4 py-3 text-xs leading-relaxed text-ink-2">
+              <AlertTriangle size={13} className="mt-0.5 shrink-0 text-warn" />
+              {warning}
+            </li>
+          ))}
+        </ul>
+      </Card>
+    </DataView>
   );
 }
 
@@ -371,23 +398,34 @@ function SourcesPanel({ data, sourceName }: { data: PreviewData; sourceName: (na
   const statuses = new Map((data.subscriptions ?? []).map((s) => [s.name, s]));
   const names = [...new Set([...Object.keys(bySub), ...statuses.keys()])];
   return (
-    <Card>
-      <CardHeader
-        title="节点来源"
-        description={names.length ? `${formatCount(data.inlined_proxy_count)} 个节点来自 ${names.length} 个订阅源` : undefined}
-      />
-      <div className="border-t border-line">
-        {names.length === 0 ? (
-          <p className="px-4 py-4 text-xs leading-relaxed text-ink-3">这份配置没有注入订阅节点。绑定订阅源或聚合订阅后，节点会出现在这里。</p>
-        ) : (
-          <ul className="flex flex-col divide-y divide-line">
-            {names.map((name) => (
-              <SourceRow key={name} name={name} label={sourceName(name)} nodes={bySub[name] ?? []} status={statuses.get(name)} />
-            ))}
-          </ul>
-        )}
-      </div>
-    </Card>
+    <DataView
+      label="最终配置节点来源"
+      summary={names.length ? `${data.inlined_proxy_count} 个节点来自 ${names.length} 个订阅源` : '没有注入订阅节点'}
+      items={names.map((name) => {
+        const nodes = bySub[name] ?? [];
+        const status = statuses.get(name);
+        const flag = status?.error ? ' · 拉取失败' : status?.stale ? ' · 缓存' : '';
+        return { value: name, label: `${sourceName(name)} · ${nodes.length} 个节点${flag}` };
+      })}
+    >
+      <Card>
+        <CardHeader
+          title="节点来源"
+          description={names.length ? `${formatCount(data.inlined_proxy_count)} 个节点来自 ${names.length} 个订阅源` : undefined}
+        />
+        <div className="border-t border-line">
+          {names.length === 0 ? (
+            <p className="px-4 py-4 text-xs leading-relaxed text-ink-3">这份配置没有注入订阅节点。绑定订阅源或聚合订阅后，节点会出现在这里。</p>
+          ) : (
+            <ul className="flex flex-col divide-y divide-line">
+              {names.map((name) => (
+                <SourceRow key={name} name={name} label={sourceName(name)} nodes={bySub[name] ?? []} status={statuses.get(name)} />
+              ))}
+            </ul>
+          )}
+        </div>
+      </Card>
+    </DataView>
   );
 }
 
@@ -405,7 +443,7 @@ function SourceRow({
   const [open, setOpen] = useState(false);
   return (
     <li>
-      <button
+      <UiButton
         type="button"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
@@ -421,7 +459,7 @@ function SourceRow({
           </span>
         </span>
         <ChevronRight size={14} className={cn('shrink-0 text-ink-4 transition-transform', open && 'rotate-90')} />
-      </button>
+      </UiButton>
       {open && (
         <div className="flex animate-rise flex-col gap-2 px-4 pb-3">
           {(status?.staleReason || status?.error) && (
@@ -446,26 +484,32 @@ function AnchorsPanel({ data, onReveal }: { data: PreviewData; onReveal: (anchor
   if (!data.anchors_applied.length) return null;
   const max = Math.max(1, ...data.anchors_applied.map((a) => a.ruleCount));
   return (
-    <Card>
-      <CardHeader title="规则锚点" description="规则按锚点顺序写入，点击跳到对应位置。" />
-      <ul className="flex flex-col gap-1 border-t border-line p-2">
-        {data.anchors_applied.map((anchor) => (
-          <li key={anchor.anchor}>
-            <button
-              type="button"
-              onClick={() => onReveal(anchor.anchor)}
-              className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-surface-2"
-            >
-              <span className="truncate font-mono text-[12.5px] text-ink">{anchor.anchor}</span>
-              <span className="tnum text-2xs text-ink-3">{anchor.ruleCount} 条</span>
-              <span className="col-span-2 h-1 overflow-hidden rounded-full bg-surface-3">
-                <span className="block h-full rounded-full bg-accent/60" style={{ width: `${(anchor.ruleCount / max) * 100}%` }} />
-              </span>
-            </button>
-          </li>
-        ))}
-      </ul>
-    </Card>
+    <DataView
+      label="规则锚点分布"
+      summary={`${data.anchors_applied.length} 个锚点`}
+      items={data.anchors_applied.map((a) => ({ value: a.anchor, label: `${a.anchor} · ${a.ruleCount} 条规则` }))}
+    >
+      <Card>
+        <CardHeader title="规则锚点" description="规则按锚点顺序写入，点击跳到对应位置。" />
+        <ul className="flex flex-col gap-1 border-t border-line p-2">
+          {data.anchors_applied.map((anchor) => (
+            <li key={anchor.anchor}>
+              <UiButton
+                type="button"
+                onClick={() => onReveal(anchor.anchor)}
+                className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-surface-2"
+              >
+                <span className="truncate font-mono text-[12.5px] text-ink">{anchor.anchor}</span>
+                <span className="tnum text-2xs text-ink-3">{anchor.ruleCount} 条</span>
+                <span className="col-span-2 h-1 overflow-hidden rounded-full bg-surface-3">
+                  <span className="block h-full rounded-full bg-accent/60" style={{ width: `${(anchor.ruleCount / max) * 100}%` }} />
+                </span>
+              </UiButton>
+            </li>
+          ))}
+        </ul>
+      </Card>
+    </DataView>
   );
 }
 

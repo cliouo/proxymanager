@@ -1,6 +1,6 @@
 'use client';
 
-import { isValidElement, useRef, type ComponentType, type ReactNode } from 'react';
+import { cloneElement, isValidElement, useRef, type ComponentType, type ReactElement, type ReactNode } from 'react';
 import {
   Dialog as UiDialog,
   DialogBackdrop,
@@ -236,6 +236,16 @@ export function Tooltip({
   disabled?: boolean;
 }) {
   if (disabled || !content) return <>{children}</>;
+  // Non-interactive inline tags (span/time) lack an accessible name and can live inside <p>; use native title.
+  if (
+    isValidElement<{ title?: string }>(children) &&
+    typeof children.type === 'string' &&
+    children.type !== 'button' &&
+    children.type !== 'a'
+  ) {
+    const title = typeof content === 'string' ? (shortcut ? `${content} (${shortcut})` : content) : undefined;
+    return title && !children.props.title ? cloneElement(children as ReactElement<{ title?: string }>, { title }) : <>{children}</>;
+  }
   return (
     <UiTooltip delay={350}>
       {isValidElement<{ children?: ReactNode }>(children) ? (
