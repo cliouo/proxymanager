@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { Button as UiButton } from '@ui-sdk/react/button';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   closestCenter,
@@ -25,6 +26,7 @@ import {
   Plus,
   X,
 } from 'lucide-react';
+import { DataView } from '@/ui/agent';
 import { useAnchors, useGroups, usePolicies, useRuleSets } from '@/ui/data/hooks';
 import { setQueryData } from '@/ui/data/query';
 import { keys } from '@/ui/data/hooks';
@@ -259,7 +261,8 @@ export function RulesPage() {
       const ok = await confirmAction({
         title: '删除这条规则？',
         description: `${ruleText(rule)}。可以在操作历史中撤销。`,
-        confirmText: '删除',
+        confirmText: '确认删除',
+        confirmHint: `删除规则 ${ruleText(rule)}`,
         tone: 'danger',
       });
       if (!ok) return;
@@ -428,7 +431,12 @@ export function RulesPage() {
               trigger={<Button iconOnly icon={MoreHorizontal} aria-label="更多" />}
               items={[
                 { label: '复制全部生效规则', icon: ClipboardCopy, onSelect: () => void copyAll() },
-                { label: '整理排序序号', icon: ArrowDownWideNarrow, onSelect: () => void normalizeAll() },
+                {
+                  label: '整理排序序号',
+                  icon: ArrowDownWideNarrow,
+                  confirm: '整理全部规则的排序序号',
+                  onSelect: () => void normalizeAll(),
+                },
               ]}
             />
           </>
@@ -458,10 +466,11 @@ export function RulesPage() {
         <div className="sticky top-0 z-20 -mx-2 flex flex-col gap-2 bg-panel/92 px-2 py-2 backdrop-blur-md">
           <div className="flex flex-wrap items-center gap-2">
             <div ref={searchRef} className="w-full sm:w-[260px]">
-              <SearchInput value={query} onChange={setQuery} placeholder="搜索内容、备注、去向…" shortcut={<Kbd>/</Kbd>} />
+              <SearchInput aria-label="搜索规则" value={query} onChange={setQuery} placeholder="搜索内容、备注、去向…" shortcut={<Kbd>/</Kbd>} />
             </div>
             <div className="w-[150px]">
               <Select
+                label="规则类型筛选"
                 value={typeFilter || 'all'}
                 onValueChange={(v) => setParams({ type: v === 'all' ? null : v })}
                 options={[
@@ -538,7 +547,15 @@ export function RulesPage() {
             }
           />
         ) : (
-          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd} accessibility={DND_A11Y}>
+          <DataView
+            label="规则列表"
+            summary={hasFilters ? `显示 ${flatVisible.length} / ${total} 条规则` : `共 ${total} 条规则（${enabledOrdered.length} 条生效）`}
+            items={flatVisible.map((rule) => ({
+              value: rule.id,
+              label: `${rule.anchor} · ${ruleText(rule)}${rule.enabled === false ? ' [已停用]' : ''}${rule.note ? ` · ${rule.note}` : ''}`,
+            }))}
+          >
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd} accessibility={DND_A11Y}>
             <div className="flex flex-col gap-5">
               {sections.map((section) => (
                 <section key={section.anchor} aria-label={`锚点 ${section.anchor}`}>
@@ -587,7 +604,8 @@ export function RulesPage() {
                 </div>
               ) : null}
             </div>
-          </DndContext>
+            </DndContext>
+          </DataView>
         )}
       </div>
 
@@ -604,10 +622,24 @@ export function RulesPage() {
               <span className="mr-2 text-[13px] text-ink-2">
                 已选 <span className="tnum font-semibold text-ink">{selected.size}</span> 条
               </span>
-              <Button size="sm" variant="ghost" icon={CircleCheck} loading={batchBusy} onClick={() => void runBatch('启用', (r) => ({ op: 'update', id: r.id, patch: { enabled: true } }))}>
+              <Button
+                size="sm"
+                variant="ghost"
+                icon={CircleCheck}
+                loading={batchBusy}
+                data-agent-confirm={`批量启用 ${selected.size} 条规则`}
+                onClick={() => void runBatch('启用', (r) => ({ op: 'update', id: r.id, patch: { enabled: true } }))}
+              >
                 启用
               </Button>
-              <Button size="sm" variant="ghost" icon={Ban} loading={batchBusy} onClick={() => void runBatch('停用', (r) => ({ op: 'update', id: r.id, patch: { enabled: false } }))}>
+              <Button
+                size="sm"
+                variant="ghost"
+                icon={Ban}
+                loading={batchBusy}
+                data-agent-confirm={`批量停用 ${selected.size} 条规则`}
+                onClick={() => void runBatch('停用', (r) => ({ op: 'update', id: r.id, patch: { enabled: false } }))}
+              >
                 停用
               </Button>
               <Combobox
@@ -630,7 +662,8 @@ export function RulesPage() {
                   const ok = await confirmAction({
                     title: `删除 ${selected.size} 条规则？`,
                     description: '可以在操作历史中逐条撤销。',
-                    confirmText: '删除',
+                    confirmText: '确认删除',
+                    confirmHint: `批量删除 ${selected.size} 条规则`,
                     tone: 'danger',
                   });
                   if (ok) void runBatch('删除', (r) => ({ op: 'delete', id: r.id }));
@@ -661,7 +694,7 @@ export function RulesPage() {
 
 function FilterChip({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
   return (
-    <button
+    <UiButton
       type="button"
       onClick={onClick}
       aria-pressed={active}
@@ -671,7 +704,7 @@ function FilterChip({ active, onClick, children }: { active: boolean; onClick: (
       )}
     >
       {children}
-    </button>
+    </UiButton>
   );
 }
 
@@ -713,8 +746,9 @@ function Terminus({
           <span className="size-[6px] rounded-full" style={{ background: color }} />
         </span>
       </div>
-      <button
+      <UiButton
         type="button"
+        aria-label={`编辑兜底规则 MATCH → ${rule.policy}`}
         onClick={() => onOpen(rule)}
         className={cn(
           'flex min-h-12 items-center gap-3 rounded-xl border border-line bg-surface px-3 py-2 text-left shadow-xs transition hover:border-line-strong hover:shadow-sm',
@@ -732,7 +766,7 @@ function Terminus({
           <PolicyChip policy={rule.policy} />
           {isBuiltinPolicy(rule.policy) && <span className="text-xs text-ink-3">{BUILTIN_LABEL[rule.policy]}</span>}
         </span>
-      </button>
+      </UiButton>
     </div>
   );
 }

@@ -1,7 +1,9 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { Button as UiButton } from '@ui-sdk/react/button';
 import { ChevronDown, CircleCheck, CircleDashed, CircleHelp, Crosshair, FlaskConical, Minus, X } from 'lucide-react';
+import { DataView } from '@/ui/agent';
 import { api } from '@/ui/data/api';
 import type { Rule, RuleSet, RuleSetListItem } from '@/ui/data/types';
 import { cn } from '@/ui/lib/cn';
@@ -131,13 +133,14 @@ export function RouteTester({
         <FlaskConical size={15} className="text-accent" />
         <span className="text-sm font-semibold text-ink">路由测试</span>
         <span className="text-xs text-ink-3">输入一个域名或 IP，看它会命中哪条规则、走哪条线路</span>
-        <button type="button" onClick={onClose} aria-label="关闭路由测试" className="ml-auto flex size-6 items-center justify-center rounded-md text-ink-3 hover:bg-surface-2 hover:text-ink">
+        <UiButton type="button" onClick={onClose} aria-label="关闭路由测试" className="ml-auto flex size-6 items-center justify-center rounded-md text-ink-3 hover:bg-surface-2 hover:text-ink">
           <X size={14} />
-        </button>
+        </UiButton>
       </div>
       <div className="flex flex-col gap-4 p-4">
         <div className="flex flex-col gap-2">
           <Input
+            aria-label="路由测试目标"
             autoFocus
             inputSize="lg"
             mono
@@ -150,19 +153,31 @@ export function RouteTester({
           <div className="flex flex-wrap items-center gap-1.5 text-xs text-ink-3">
             试试
             {EXAMPLES.map((example) => (
-              <button
+              <UiButton
                 key={example}
                 type="button"
                 onClick={() => setInput(example)}
                 className="rounded-full border border-line bg-surface px-2 py-0.5 font-mono text-[11px] text-ink-2 transition hover:border-line-strong hover:text-ink"
               >
                 {example}
-              </button>
+              </UiButton>
             ))}
           </div>
         </div>
 
         {result && (
+          <DataView
+            label="路由测试结果"
+            summary={
+              result.match
+                ? `${probe?.host ?? probe?.ip} → ${result.match.rule.policy}（第 ${result.match.position} 条：${ruleText(result.match.rule)}）`
+                : '没有确定命中的规则'
+            }
+            items={result.steps.map((s) => ({
+              value: `${s.position}:${s.rule.id}`,
+              label: `#${s.position} [${s.verdict}] ${ruleText(s.rule)}${s.reason ? ` (${s.reason})` : ''}`,
+            }))}
+          >
           <div className="flex flex-col gap-3">
             {result.likely && (
               <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-accent-line/70 bg-accent-soft/50 px-4 py-3">
@@ -215,9 +230,9 @@ export function RouteTester({
                   {result.uncertain.slice(0, 6).map((step) => (
                     <li key={step.rule.id} className="flex flex-wrap items-center gap-2 text-xs">
                       <span className="tnum w-6 text-right text-ink-4">{step.position}</span>
-                      <button type="button" onClick={() => onReveal(step.rule.id)} className="font-mono text-[11.5px] text-ink hover:underline">
+                      <UiButton type="button" onClick={() => onReveal(step.rule.id)} className="font-mono text-[11.5px] text-ink hover:underline">
                         {step.rule.type} {step.rule.value}
-                      </button>
+                      </UiButton>
                       <PolicyChip policy={step.rule.policy} size="sm" />
                       {step.likely && <Badge tone="accent">很可能</Badge>}
                       <span className="text-ink-3">{step.reason}</span>
@@ -228,14 +243,14 @@ export function RouteTester({
               </div>
             )}
 
-            <button
+            <UiButton
               type="button"
               onClick={() => setShowTrace((v) => !v)}
               className="flex items-center gap-1.5 self-start text-xs font-medium text-ink-3 hover:text-ink"
             >
               <ChevronDown size={13} className={cn('transition-transform', showTrace && 'rotate-180')} />
               {showTrace ? '收起' : '查看'}逐条判断过程（{result.steps.length} 条）
-            </button>
+            </UiButton>
             {showTrace && (
               <ol className="max-h-[280px] overflow-y-auto rounded-lg border border-line">
                 {result.steps.map((step) => (
@@ -261,6 +276,7 @@ export function RouteTester({
               </ol>
             )}
           </div>
+          </DataView>
         )}
       </div>
     </div>

@@ -3,6 +3,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
+import { Button as UiButton } from '@ui-sdk/react/button';
+import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from '@ui-sdk/react/collapsible';
+import { Input as UiInput } from '@ui-sdk/react/input';
 import {
   ArrowLeft,
   ArrowUpRight,
@@ -232,7 +235,8 @@ function GroupEditor({ group }: { group: ProxyGroup }) {
     const ok = await confirmAction({
       title: `删除「${group.name}」？`,
       description: '没有规则或策略组用到它。删除后客户端里不再有这条线路。',
-      confirmText: '删除',
+      confirmText: '确认删除',
+      confirmHint: `删除策略组「${group.name}」`,
       tone: 'danger',
     });
     if (!ok) return;
@@ -264,9 +268,9 @@ function GroupEditor({ group }: { group: ProxyGroup }) {
         <div className="flex items-start gap-3">
           <LineDot color={color(group.name)} size={12} className="mt-[13px]" />
           <div className="min-w-0 flex-1">
-            <input
+            <UiInput
               value={draft.name}
-              onChange={(event) => set({ name: event.target.value })}
+              onValueChange={(name) => set({ name })}
               aria-label="策略组名字"
               aria-invalid={!!errors.name || undefined}
               spellCheck={false}
@@ -307,9 +311,14 @@ function GroupEditor({ group }: { group: ProxyGroup }) {
               </label>
             </Tooltip>
             <Menu
-              trigger={<Button iconOnly variant="ghost" icon={MoreHorizontal} aria-label="更多操作" />}
+              trigger={<Button iconOnly variant="ghost" icon={MoreHorizontal} aria-label="策略组更多操作" />}
               items={[
-                { label: '复制为新组', icon: Copy, onSelect: () => void duplicate() },
+                {
+                  label: '复制为新组',
+                  icon: Copy,
+                  confirm: `复制策略组「${group.name}」`,
+                  onSelect: () => void duplicate(),
+                },
                 { label: '查看引用它的规则', icon: ListTree, onSelect: () => router.push(rulesHref), disabled: !ruleCount },
                 'separator',
                 { label: '删除', icon: Trash2, tone: 'danger', onSelect: () => void remove() },
@@ -337,9 +346,9 @@ function GroupEditor({ group }: { group: ProxyGroup }) {
               <CornerDownRight size={13} className="text-ink-3" />
               被
               {parents.map((g) => (
-                <button key={g.id} type="button" onClick={() => void ws.select(g.id)} className="rounded-full transition hover:opacity-80">
+                <UiButton key={g.id} type="button" onClick={() => void ws.select(g.id)} className="rounded-full transition hover:opacity-80">
                   <PolicyChip policy={g.name} size="sm" />
-                </button>
+                </UiButton>
               ))}
               引用
             </span>
@@ -364,6 +373,7 @@ function GroupEditor({ group }: { group: ProxyGroup }) {
         <div className="flex flex-col gap-2.5">
           <div className="overflow-x-auto">
             <SegmentedControl
+              label="策略组类型"
               value={draft.type}
               onChange={(type) => set({ type })}
               options={GROUP_TYPE_ORDER.map((type) => ({
@@ -404,11 +414,13 @@ function GroupEditor({ group }: { group: ProxyGroup }) {
       )}
 
       {/* advanced */}
-      <section className="rounded-xl border border-line bg-surface shadow-xs">
-        <button
+      <Collapsible
+        open={advancedOpen}
+        onOpenChange={setAdvancedOpen}
+        className="rounded-xl border border-line bg-surface shadow-xs"
+      >
+        <CollapsibleTrigger
           type="button"
-          aria-expanded={advancedOpen}
-          onClick={() => setAdvancedOpen((open) => !open)}
           className="flex w-full items-center justify-between gap-3 rounded-xl px-4 py-3.5 text-left transition-colors hover:bg-surface-2/50"
         >
           <span>
@@ -416,13 +428,11 @@ function GroupEditor({ group }: { group: ProxyGroup }) {
             <span className="mt-0.5 block text-xs text-ink-3">模版、空成员兜底、前置代理、分组与备注</span>
           </span>
           <ChevronDown size={16} className={cn('shrink-0 text-ink-3 transition-transform', advancedOpen && 'rotate-180')} />
-        </button>
-        {advancedOpen && (
-          <div className="animate-fade-in border-t border-line px-4 pb-4 pt-3">
-            <AdvancedFields draft={draft} set={set} errors={errors} groupName={group.name} />
-          </div>
-        )}
-      </section>
+        </CollapsibleTrigger>
+        <CollapsiblePanel className="animate-fade-in border-t border-line px-4 pb-4 pt-3">
+          <AdvancedFields draft={draft} set={set} errors={errors} groupName={group.name} />
+        </CollapsiblePanel>
+      </Collapsible>
 
       <SaveBar
         visible={dirty}

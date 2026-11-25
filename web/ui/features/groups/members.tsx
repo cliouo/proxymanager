@@ -1,6 +1,8 @@
 'use client';
 
 import { useMemo, useState, type ReactNode } from 'react';
+import { Button as UiButton } from '@ui-sdk/react/button';
+import { Radio, RadioGroup } from '@ui-sdk/react/radio';
 import {
   closestCenter,
   DndContext,
@@ -20,6 +22,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { AlertTriangle, CircleAlert, FileCode2, Filter, GripVertical, Hand, Link2, Plus, RefreshCw, X } from 'lucide-react';
+import { DataView } from '@/ui/agent';
 import type { ProxyGroup, ProxyGroupType } from '@/ui/data/types';
 import { cn } from '@/ui/lib/cn';
 import { Badge, Button, Field, Input, MultiCombobox, Select, Skeleton, Switch, type ComboOption } from '@/ui/primitives';
@@ -152,14 +155,14 @@ function PickRow({
         {isDefault && <Badge tone="accent">默认</Badge>}
       </span>
       <span className={cn('shrink-0 text-[11px]', kind === 'missing' ? 'text-bad' : 'text-ink-4')}>{KIND_LABEL[kind]}</span>
-      <button
+      <UiButton
         type="button"
         onClick={onRemove}
         aria-label={`移除「${name}」`}
         className="flex size-6 shrink-0 items-center justify-center rounded text-ink-4 hover:bg-surface-2 hover:text-ink"
       >
         <X size={13} />
-      </button>
+      </UiButton>
     </li>
   );
 }
@@ -248,17 +251,22 @@ const MODES: Array<{ value: Exclude<MemberMode, 'raw'>; icon: typeof Hand; title
 
 function ModePicker({ value, onChange }: { value: MemberMode; onChange: (mode: MemberMode) => void }) {
   return (
-    <div role="radiogroup" aria-label="成员来源" className="grid gap-2 sm:grid-cols-3">
+    <RadioGroup
+      aria-label="成员来源"
+      value={value === 'raw' ? null : value}
+      onValueChange={(next) => {
+        if (next) onChange(next as MemberMode);
+      }}
+      className="grid gap-2 sm:grid-cols-3"
+    >
       {MODES.map((mode) => {
         const active = value === mode.value;
         const Icon = mode.icon;
         return (
-          <button
+          <Radio
             key={mode.value}
-            type="button"
-            role="radio"
-            aria-checked={active}
-            onClick={() => onChange(mode.value)}
+            value={mode.value}
+            aria-label={mode.title}
             className={cn(
               'flex items-start gap-2.5 rounded-lg border px-3 py-2.5 text-left transition-[border-color,background-color,box-shadow] duration-150',
               'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent',
@@ -277,10 +285,10 @@ function ModePicker({ value, onChange }: { value: MemberMode; onChange: (mode: M
               <span className={cn('block text-[13px] font-medium', active ? 'text-ink' : 'text-ink-2')}>{mode.title}</span>
               <span className="mt-0.5 block text-[11px] leading-snug text-ink-3">{mode.body}</span>
             </span>
-          </button>
+          </Radio>
         );
       })}
-    </div>
+    </RadioGroup>
   );
 }
 
@@ -325,40 +333,46 @@ export function MatchPreview({ auto, filter, extraCount = 0 }: { auto: AutoResul
   const matchedSet = new Set(auto.matched);
   const rest = catalog.names.filter((n) => !matchedSet.has(n));
   return (
-    <div className="flex flex-col gap-2 rounded-lg border border-line bg-surface-2/50 p-3">
-      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-ink-3">
-        <span>
-          匹配 <span className="tnum font-semibold text-ink">{auto.matched.length}</span> / {catalog.names.length} 个节点
-          {auto.typeDropped > 0 && <span>（另有 {auto.typeDropped} 个因协议类型被排除）</span>}
-        </span>
-        {rest.length > 0 && (
-          <button type="button" onClick={() => setShowRest((v) => !v)} className="font-medium text-ink-2 hover:text-ink">
-            {showRest ? '隐藏未匹配的' : `看看未匹配的 ${rest.length} 个`}
-          </button>
-        )}
-      </div>
-      {auto.matched.length === 0 ? (
-        <p className="text-xs text-warn">
-          {extraCount > 0 ? '没有节点被自动纳入，组里只剩固定成员。' : '没有任何节点匹配。保存后这个组没有可用成员，最终配置会校验失败。'}
-        </p>
-      ) : (
-        <div className="flex flex-wrap gap-1.5">
-          {auto.matched.slice(0, PREVIEW_LIMIT).map((name) => (
-            <NodeChip key={name} name={name} filter={filter} />
-          ))}
-          {auto.matched.length > PREVIEW_LIMIT && (
-            <span className="inline-flex h-6 items-center px-1.5 text-xs text-ink-3">+{auto.matched.length - PREVIEW_LIMIT}</span>
+    <DataView
+      label="匹配节点预览"
+      summary={`匹配 ${auto.matched.length} / ${catalog.names.length} 个节点${auto.typeDropped > 0 ? `（排除 ${auto.typeDropped} 个协议）` : ''}`}
+      items={auto.matched.map((name) => ({ value: name, label: name }))}
+    >
+      <div className="flex flex-col gap-2 rounded-lg border border-line bg-surface-2/50 p-3">
+        <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-ink-3">
+          <span>
+            匹配 <span className="tnum font-semibold text-ink">{auto.matched.length}</span> / {catalog.names.length} 个节点
+            {auto.typeDropped > 0 && <span>（另有 {auto.typeDropped} 个因协议类型被排除）</span>}
+          </span>
+          {rest.length > 0 && (
+            <UiButton type="button" onClick={() => setShowRest((v) => !v)} className="font-medium text-ink-2 hover:text-ink">
+              {showRest ? '隐藏未匹配的' : `看看未匹配的 ${rest.length} 个`}
+            </UiButton>
           )}
         </div>
-      )}
-      {showRest && rest.length > 0 && (
-        <div className="flex flex-wrap gap-1.5 border-t border-line pt-2">
-          {rest.slice(0, PREVIEW_LIMIT).map((name) => (
-            <NodeChip key={name} name={name} muted />
-          ))}
-        </div>
-      )}
-    </div>
+        {auto.matched.length === 0 ? (
+          <p className="text-xs text-warn">
+            {extraCount > 0 ? '没有节点被自动纳入，组里只剩固定成员。' : '没有任何节点匹配。保存后这个组没有可用成员，最终配置会校验失败。'}
+          </p>
+        ) : (
+          <div className="flex flex-wrap gap-1.5">
+            {auto.matched.slice(0, PREVIEW_LIMIT).map((name) => (
+              <NodeChip key={name} name={name} filter={filter} />
+            ))}
+            {auto.matched.length > PREVIEW_LIMIT && (
+              <span className="inline-flex h-6 items-center px-1.5 text-xs text-ink-3">+{auto.matched.length - PREVIEW_LIMIT}</span>
+            )}
+          </div>
+        )}
+        {showRest && rest.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 border-t border-line pt-2">
+            {rest.slice(0, PREVIEW_LIMIT).map((name) => (
+              <NodeChip key={name} name={name} muted />
+            ))}
+          </div>
+        )}
+      </div>
+    </DataView>
   );
 }
 
@@ -367,7 +381,7 @@ export function RegionQuickFill({ onPick }: { onPick: (preset: (typeof REGION_PR
     <div className="flex flex-wrap items-center gap-1.5">
       <span className="text-[11px] text-ink-3">快速填入</span>
       {REGION_PRESETS.map((preset) => (
-        <button
+        <UiButton
           key={preset.code}
           type="button"
           onClick={() => onPick(preset)}
@@ -375,7 +389,7 @@ export function RegionQuickFill({ onPick }: { onPick: (preset: (typeof REGION_PR
         >
           <Flag region={preset.code} size={12} />
           {preset.label}
-        </button>
+        </UiButton>
       ))}
     </div>
   );

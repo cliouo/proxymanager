@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { Button as UiButton } from '@ui-sdk/react/button';
 import { AlertTriangle, EyeOff, Plus, Waypoints } from 'lucide-react';
 import type { ProxyGroup } from '@/ui/data/types';
 import { cn } from '@/ui/lib/cn';
@@ -103,8 +104,9 @@ function LineCard({
   const TypeIcon = meta.icon;
   const rules = ws.ruleCounts[group.name] ?? 0;
   return (
-    <button
+    <UiButton
       type="button"
+      aria-label={`编辑线路「${group.name}」`}
       onClick={() => void ws.select(group.id)}
       onMouseEnter={() => onFocus(group.name)}
       onMouseLeave={() => onFocus(null)}
@@ -133,7 +135,7 @@ function LineCard({
         </span>
       </span>
       <Members group={group} />
-    </button>
+    </UiButton>
   );
 }
 

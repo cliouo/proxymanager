@@ -1,7 +1,9 @@
 'use client';
 
 import { useState } from 'react';
+import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from '@ui-sdk/react/collapsible';
 import { ArrowLeft, ChevronDown, LayoutTemplate, Pencil, Plus, Trash2 } from 'lucide-react';
+import { DataView } from '@/ui/agent';
 import type { ProxyGroupTemplate } from '@/ui/data/types';
 import { cn } from '@/ui/lib/cn';
 import { Badge, Button, confirmAction, EmptyState, Field, Input, notify, Select, Sheet, Skeleton, Textarea } from '@/ui/primitives';
@@ -164,22 +166,20 @@ function TemplateForm({
           </div>
         ))}
       </div>
-      <button
-        type="button"
-        aria-expanded={more}
-        onClick={() => setMore((v) => !v)}
-        className="flex items-center gap-1.5 self-start text-xs font-medium text-ink-2 hover:text-ink"
-      >
-        <ChevronDown size={14} className={cn('transition-transform', more && 'rotate-180')} />
-        更多字段
-      </button>
-      {more && (
-        <div className="grid animate-fade-in gap-3 sm:grid-cols-2">
+      <Collapsible open={more} onOpenChange={setMore} className="flex flex-col gap-3">
+        <CollapsibleTrigger
+          type="button"
+          className="flex items-center gap-1.5 self-start text-xs font-medium text-ink-2 hover:text-ink"
+        >
+          <ChevronDown size={14} className={cn('transition-transform', more && 'rotate-180')} />
+          更多字段
+        </CollapsibleTrigger>
+        <CollapsiblePanel className="grid animate-fade-in gap-3 sm:grid-cols-2">
           {MORE.map((spec) => (
             <SpecField key={spec.key} spec={spec} value={values[spec.key]} error={errors[spec.key]} onChange={set(spec.key)} />
           ))}
-        </div>
-      )}
+        </CollapsiblePanel>
+      </Collapsible>
     </div>
   );
 }
@@ -228,7 +228,8 @@ export function TemplatesSheet({ open, onOpenChange }: { open: boolean; onOpenCh
       description: users.length
         ? `这份配置里还有 ${users.length} 个策略组在用它，需要先在这些组里取消引用。`
         : '其他配置文件若还在用它，删除会被拒绝。',
-      confirmText: '删除',
+      confirmText: '确认删除',
+      confirmHint: `删除策略组模版「${t.name}」`,
       tone: 'danger',
     });
     if (!ok) return;
@@ -259,7 +260,13 @@ export function TemplatesSheet({ open, onOpenChange }: { open: boolean; onOpenCh
             <Button variant="ghost" icon={ArrowLeft} onClick={back}>
               返回
             </Button>
-            <Button variant="primary" loading={busy} disabled={errorCount > 0} onClick={() => void save()}>
+            <Button
+              variant="primary"
+              loading={busy}
+              disabled={errorCount > 0}
+              data-agent-confirm={editing ? `保存策略组模版「${editing.name}」` : '创建策略组模版'}
+              onClick={() => void save()}
+            >
               {editing ? '保存' : '创建'}
             </Button>
           </>
@@ -291,44 +298,53 @@ export function TemplatesSheet({ open, onOpenChange }: { open: boolean; onOpenCh
           }
         />
       ) : (
-        <ul className="-my-3 flex flex-col divide-y divide-line">
-          {templates.map((t) => {
-            const users = ws.groups.filter((g) => g.template_id === t.id).length;
-            const fields = Object.keys(TEMPLATE_FIELD_LABELS).filter(
-              (key) => (t as unknown as Record<string, unknown>)[key] !== undefined,
-            );
-            return (
-              <li key={t.id} className="flex items-start gap-3 py-3">
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-mono text-[13px] font-medium text-ink">{t.name}</span>
-                    {users > 0 && <Badge tone="accent">本配置 {users} 个组在用</Badge>}
-                  </div>
-                  {t.notes && <p className="mt-0.5 text-xs text-ink-3">{t.notes}</p>}
-                  <div className="mt-1.5 flex flex-wrap gap-1">
-                    {fields.length === 0 && <span className="text-[11px] text-ink-4">没有设置字段</span>}
-                    {fields.map((key) => (
-                      <span key={key} className="inline-flex h-5 items-center gap-1 rounded-md border border-line bg-surface-2 px-1.5 text-[11px]">
-                        <span className="text-ink-3">{TEMPLATE_FIELD_LABELS[key]}</span>
-                        <span className="font-mono text-ink-2">
-                          {key === 'type'
-                            ? GROUP_TYPES[t.type as keyof typeof GROUP_TYPES]?.label
-                            : templateFieldText(key, (t as unknown as Record<string, unknown>)[key])}
+        <DataView
+          label="策略组模版列表"
+          summary={`共 ${templates.length} 个策略组模版`}
+          items={templates.map((t) => ({
+            value: t.id,
+            label: `${t.name}${t.notes ? ` · ${t.notes}` : ''}`,
+          }))}
+        >
+          <ul className="-my-3 flex flex-col divide-y divide-line">
+            {templates.map((t) => {
+              const users = ws.groups.filter((g) => g.template_id === t.id).length;
+              const fields = Object.keys(TEMPLATE_FIELD_LABELS).filter(
+                (key) => (t as unknown as Record<string, unknown>)[key] !== undefined,
+              );
+              return (
+                <li key={t.id} className="flex items-start gap-3 py-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-mono text-[13px] font-medium text-ink">{t.name}</span>
+                      {users > 0 && <Badge tone="accent">本配置 {users} 个组在用</Badge>}
+                    </div>
+                    {t.notes && <p className="mt-0.5 text-xs text-ink-3">{t.notes}</p>}
+                    <div className="mt-1.5 flex flex-wrap gap-1">
+                      {fields.length === 0 && <span className="text-[11px] text-ink-4">没有设置字段</span>}
+                      {fields.map((key) => (
+                        <span key={key} className="inline-flex h-5 items-center gap-1 rounded-md border border-line bg-surface-2 px-1.5 text-[11px]">
+                          <span className="text-ink-3">{TEMPLATE_FIELD_LABELS[key]}</span>
+                          <span className="font-mono text-ink-2">
+                            {key === 'type'
+                              ? GROUP_TYPES[t.type as keyof typeof GROUP_TYPES]?.label
+                              : templateFieldText(key, (t as unknown as Record<string, unknown>)[key])}
+                          </span>
                         </span>
-                      </span>
-                    ))}
+                      ))}
+                    </div>
                   </div>
-                </div>
-                <div className="flex shrink-0 items-center gap-0.5">
-                  <Button size="sm" variant="ghost" icon={Pencil} onClick={() => startEdit(t)}>
-                    编辑
-                  </Button>
-                  <Button size="sm" variant="danger-ghost" iconOnly icon={Trash2} aria-label={`删除模版 ${t.name}`} onClick={() => void remove(t)} />
-                </div>
-              </li>
-            );
-          })}
-        </ul>
+                  <div className="flex shrink-0 items-center gap-0.5">
+                    <Button size="sm" variant="ghost" icon={Pencil} onClick={() => startEdit(t)}>
+                      编辑
+                    </Button>
+                    <Button size="sm" variant="danger-ghost" iconOnly icon={Trash2} aria-label={`删除模版 ${t.name}`} onClick={() => void remove(t)} />
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </DataView>
       )}
     </Sheet>
   );
