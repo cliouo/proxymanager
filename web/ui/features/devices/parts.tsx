@@ -93,7 +93,7 @@ export function useSubscriptionUrl(profile: Profile) {
   const isTemplate = profile.kind === 'template';
   const dashboard = useDashboard(isTemplate ? null : profile.id);
   return {
-    url: dashboard.data?.meta.subscriptionUrl ?? null,
+    url: dashboard.data?.meta?.subscriptionUrl ?? null,
     loading: dashboard.isLoading,
     error: dashboard.error,
     isTemplate,

@@ -101,7 +101,7 @@ export function ShareDialog() {
   const [variant, setVariant] = useState<DeviceLinkVariant>('clash');
   const [qrKey, setQrKey] = useState<string>('profile');
 
-  const base = dashboard?.meta.subscriptionUrl ?? '';
+  const base = dashboard?.meta?.subscriptionUrl ?? '';
   const links = useMemo(() => {
     if (!base) return [];
     return [

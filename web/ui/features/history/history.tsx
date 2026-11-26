@@ -71,7 +71,7 @@ function useLedger() {
       return true;
     });
   }, [head.data, live]);
-  const cursor = live ? live.cursor : (head.data?.meta.nextCursor ?? null);
+  const cursor = live ? live.cursor : (head.data?.meta?.nextCursor ?? null);
 
   useIsomorphicLayoutEffect(() => {
     loaded.current = Math.max(PAGE, events.length);

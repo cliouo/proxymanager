@@ -1,6 +1,14 @@
 'use client';
 
-import { cloneElement, isValidElement, useRef, type ComponentType, type ReactElement, type ReactNode } from 'react';
+import {
+  cloneElement,
+  isValidElement,
+  useEffect,
+  useRef,
+  type ComponentType,
+  type ReactElement,
+  type ReactNode,
+} from 'react';
 import { createPortal } from 'react-dom';
 import {
   Dialog as UiDialog,
@@ -31,7 +39,70 @@ import {
 import { Tooltip as UiTooltip, TooltipContent, TooltipTrigger } from '@ui-sdk/react/tooltip';
 import { Check, ChevronRight, X } from 'lucide-react';
 import { cn } from '@/ui/lib/cn';
+import { Button } from './button';
 import { ASSISTANT_PERSISTENT_SELECTORS, useWorkspaceOverlayScope } from './overlay-scope';
+
+/**
+ * Guard non-modal Dialog/Sheet close callbacks so clicking an external same-origin
+ * navigation link (e.g. a sidebar `<Link>` while the AI assistant is open) does not
+ * let `onOpenChange(false)` run a page's `router.replace(...)` and cancel the navigation.
+ */
+function useGuardedOpenChange(open: boolean, onOpenChange: (next: boolean) => void) {
+  const leavingRef = useRef(false);
+
+  useEffect(() => {
+    if (!open || typeof document === 'undefined') {
+      leavingRef.current = false;
+      return;
+    }
+    let resetTimer: ReturnType<typeof setTimeout> | null = null;
+    const markIfLeaving = (event: Event) => {
+      const node = event.target instanceof Element ? event.target : null;
+      const anchor = node?.closest<HTMLAnchorElement>('a[href]');
+      if (!anchor || anchor.target === '_blank' || anchor.hasAttribute('download')) return;
+      try {
+        const resolved = new URL(anchor.href, window.location.href);
+        if (resolved.origin === window.location.origin && resolved.pathname !== window.location.pathname) {
+          leavingRef.current = true;
+          if (resetTimer) clearTimeout(resetTimer);
+          resetTimer = setTimeout(() => {
+            leavingRef.current = false;
+            resetTimer = null;
+          }, 1000);
+        }
+      } catch {
+        /* ignore malformed href */
+      }
+    };
+    document.addEventListener('pointerdown', markIfLeaving, true);
+    document.addEventListener('click', markIfLeaving, true);
+    return () => {
+      if (resetTimer) clearTimeout(resetTimer);
+      document.removeEventListener('pointerdown', markIfLeaving, true);
+      document.removeEventListener('click', markIfLeaving, true);
+    };
+  }, [open]);
+
+  return (next: boolean) => {
+    if (!next && leavingRef.current) return;
+    onOpenChange(next);
+  };
+}
+
+function normalizeTrigger(
+  trigger: ReactNode,
+  extraProps?: Record<string, string | undefined>,
+): ReactElement<{ children?: ReactNode }> | null {
+  if (!isValidElement<{ children?: ReactNode; native?: boolean }>(trigger)) return null;
+  const patch: Record<string, unknown> = {};
+  if (trigger.type === Button) patch.native = true;
+  if (extraProps) {
+    for (const [k, v] of Object.entries(extraProps)) {
+      if (v !== undefined) patch[k] = v;
+    }
+  }
+  return Object.keys(patch).length > 0 ? cloneElement(trigger, patch) : trigger;
+}
 
 export interface DialogProps {
   open: boolean;
@@ -66,16 +137,17 @@ export function Dialog({
   const contentRef = useRef<HTMLDivElement>(null);
   const { scopedContainer, keepAssistantInteractive } = useWorkspaceOverlayScope();
   const isScoped = Boolean(scopedContainer);
+  const handleOpenChange = useGuardedOpenChange(open, onOpenChange);
 
   const tree = (
     <UiDialog
       open={open}
-      onOpenChange={(next) => onOpenChange(next)}
+      onOpenChange={handleOpenChange}
       modal={keepAssistantInteractive ? false : true}
       persistentElements={keepAssistantInteractive ? ASSISTANT_PERSISTENT_SELECTORS : undefined}
     >
       <DialogBackdrop
-        onClick={keepAssistantInteractive ? () => onOpenChange(false) : undefined}
+        onClick={keepAssistantInteractive ? () => handleOpenChange(false) : undefined}
         className={cn(
           isScoped ? 'pointer-events-auto absolute inset-0 z-10' : 'fixed inset-0 z-50',
           'bg-overlay backdrop-blur-[1.5px] data-ending-style:animate-[fade-out_0.16s_ease-in_both] data-open:animate-fade-in',
@@ -161,16 +233,17 @@ export function Sheet({
 }: SheetProps) {
   const { scopedContainer, keepAssistantInteractive } = useWorkspaceOverlayScope();
   const isScoped = Boolean(scopedContainer);
+  const handleOpenChange = useGuardedOpenChange(open, onOpenChange);
 
   const tree = (
     <UiDialog
       open={open}
-      onOpenChange={(next) => onOpenChange(next)}
+      onOpenChange={handleOpenChange}
       modal={keepAssistantInteractive ? false : true}
       persistentElements={keepAssistantInteractive ? ASSISTANT_PERSISTENT_SELECTORS : undefined}
     >
       <DialogBackdrop
-        onClick={keepAssistantInteractive ? () => onOpenChange(false) : undefined}
+        onClick={keepAssistantInteractive ? () => handleOpenChange(false) : undefined}
         className={cn(
           isScoped ? 'pointer-events-auto absolute inset-0 z-10' : 'fixed inset-0 z-50',
           'bg-overlay data-ending-style:animate-[fade-out_0.18s_ease-in_both] data-open:animate-fade-in',
@@ -238,10 +311,11 @@ export function Popover({
   className?: string;
   modal?: boolean;
 }) {
+  const triggerEl = normalizeTrigger(trigger);
   return (
     <UiPopover open={open} onOpenChange={(next) => onOpenChange?.(next)} modal={modal}>
-      {isValidElement<{ children?: ReactNode }>(trigger) ? (
-        <PopoverTrigger render={trigger}>{trigger.props.children}</PopoverTrigger>
+      {triggerEl ? (
+        <PopoverTrigger render={triggerEl}>{triggerEl.props.children}</PopoverTrigger>
       ) : (
         <PopoverTrigger>{trigger}</PopoverTrigger>
       )}
@@ -324,6 +398,8 @@ export interface MenuItemSpec {
   checked?: boolean;
   hint?: ReactNode;
   confirm?: string;
+  /** Target pathname if selecting this item triggers an in-app route navigation. */
+  nav?: string;
   items?: MenuEntry[];
 }
 
@@ -376,6 +452,7 @@ function MenuItems({ items }: { items: MenuEntry[] }) {
             disabled={entry.disabled}
             destructive={entry.tone === 'danger' || undefined}
             data-agent-confirm={entry.confirm}
+            data-agent-nav={entry.nav}
             onSelect={() => entry.onSelect?.()}
             className={cn(itemClass, entry.tone === 'danger' && 'text-bad data-highlighted:bg-bad-soft')}
           >
@@ -400,6 +477,19 @@ function MenuItems({ items }: { items: MenuEntry[] }) {
   );
 }
 
+function collectNavItemMap(items: MenuEntry[]): Record<string, string> | null {
+  const out: Record<string, string> = {};
+  const walk = (entries: MenuEntry[]) => {
+    for (const entry of entries) {
+      if (entry === 'separator' || 'heading' in entry) continue;
+      if (typeof entry.label === 'string' && entry.nav) out[entry.label] = entry.nav;
+      if (entry.items) walk(entry.items);
+    }
+  };
+  walk(items);
+  return Object.keys(out).length > 0 ? out : null;
+}
+
 export function Menu({
   trigger,
   items,
@@ -415,10 +505,15 @@ export function Menu({
   className?: string;
   onOpenChange?: (open: boolean) => void;
 }) {
+  const navMap = collectNavItemMap(items);
+  const triggerEl = normalizeTrigger(
+    trigger,
+    navMap ? { 'data-agent-nav-items': JSON.stringify(navMap) } : undefined,
+  );
   return (
     <UiMenu modal={false} onOpenChange={(next) => onOpenChange?.(next)}>
-      {isValidElement<{ children?: ReactNode }>(trigger) ? (
-        <MenuTrigger render={trigger}>{trigger.props.children}</MenuTrigger>
+      {triggerEl ? (
+        <MenuTrigger render={triggerEl}>{triggerEl.props.children}</MenuTrigger>
       ) : (
         <MenuTrigger>{trigger}</MenuTrigger>
       )}

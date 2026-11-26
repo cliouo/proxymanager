@@ -76,6 +76,25 @@ function detectNavigationIntent(
   if (step.action !== 'press' && step.action !== 'click') return { expected: false };
   if (!target) return { expected: false };
 
+  if (step.component === 'menu' && typeof step.args[0] === 'string') {
+    const navItemsAttr = target.closest<HTMLElement>('[data-agent-nav-items]')?.getAttribute('data-agent-nav-items');
+    if (navItemsAttr) {
+      try {
+        const navMap = JSON.parse(navItemsAttr) as Record<string, string>;
+        const raw = navMap[step.args[0].trim()];
+        if (raw) {
+          const resolved = new URL(raw, window.location.href);
+          if (resolved.origin === window.location.origin && resolved.pathname !== currentPath) {
+            return { expected: true, expectedPath: resolved.pathname };
+          }
+          return { expected: false };
+        }
+      } catch {
+        /* ignore malformed nav items map */
+      }
+    }
+  }
+
   const navHost = target.closest<HTMLElement>('[data-agent-nav]');
   if (navHost) {
     const raw = navHost.getAttribute('data-agent-nav')?.trim();

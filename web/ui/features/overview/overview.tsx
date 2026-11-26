@@ -161,7 +161,7 @@ export function Overview() {
   const breakdown = dashboard.data?.groupTypeBreakdown ?? {};
   const activeRules = rules.data?.filter((r) => r.enabled !== false).length;
   const disabledRules = rules.data ? rules.data.length - (activeRules ?? 0) : 0;
-  const subscriptionUrl = dashboard.data?.meta.subscriptionUrl;
+  const subscriptionUrl = dashboard.data?.meta?.subscriptionUrl;
   const isTemplate = profile.kind === 'template';
 
   const failing = supply.list.filter((s) => {
@@ -194,7 +194,7 @@ export function Overview() {
       },
       {
         value: 'devices',
-        label: `设备：${dashboard.data?.deviceCounts.total ?? 0}${dashboard.data?.deviceCounts.tailscale ? `（${dashboard.data.deviceCounts.tailscale} 台启用 Tailscale）` : ''}`,
+        label: `设备：${dashboard.data?.deviceCounts?.total ?? 0}${dashboard.data?.deviceCounts?.tailscale ? `（${dashboard.data.deviceCounts.tailscale} 台启用 Tailscale）` : ''}`,
       },
     ];
     if (supply.mode === 'none') items.push({ value: 'alert:no-source', label: '提示：尚未绑定节点来源' });
@@ -285,8 +285,8 @@ export function Overview() {
             <Menu
               trigger={<Button iconOnly icon={MoreHorizontal} aria-label="更多" />}
               items={[
-                { label: '查看最终配置', icon: ScrollText, onSelect: () => router.push(path('output')) },
-                { label: '编辑基础配置', icon: FileCode2, onSelect: () => router.push(path('base')) },
+                { label: '查看最终配置', icon: ScrollText, nav: path('output'), onSelect: () => router.push(path('output')) },
+                { label: '编辑基础配置', icon: FileCode2, nav: path('base'), onSelect: () => router.push(path('base')) },
                 'separator',
                 {
                   label: '让 AI 体检这份配置',
@@ -310,7 +310,7 @@ export function Overview() {
                 title="还没有绑定节点来源"
                 body="这份配置目前不会注入任何订阅节点。绑定一个订阅源或聚合订阅后，策略组才有节点可选。"
                 action={
-                  <Button size="sm" variant="secondary" onClick={() => router.push('/profiles')}>
+                  <Button size="sm" variant="secondary" data-agent-nav="/profiles" onClick={() => router.push('/profiles')}>
                     去绑定
                   </Button>
                 }
@@ -326,7 +326,7 @@ export function Overview() {
                 title={`${failing.length} 个节点来源需要留意`}
                 body={failing.map((s) => `${s.display_name || s.name}：${sourceHealth(s).detail}`).join('；')}
                 action={
-                  <Button size="sm" variant="secondary" onClick={() => router.push('/sources')}>
+                  <Button size="sm" variant="secondary" data-agent-nav="/sources" onClick={() => router.push('/sources')}>
                     查看
                   </Button>
                 }
@@ -347,7 +347,7 @@ export function Overview() {
                 title="有规则找不到插入位置"
                 body={`基础配置里缺少锚点：${unmatched.join('、')}。这些规则不会出现在最终配置中。`}
                 action={
-                  <Button size="sm" variant="secondary" onClick={() => router.push(path('base'))}>
+                  <Button size="sm" variant="secondary" data-agent-nav={path('base')} onClick={() => router.push(path('base'))}>
                     打开基础配置
                   </Button>
                 }
@@ -444,7 +444,7 @@ export function Overview() {
                   title="还没有规则"
                   description="规则决定什么流量走哪个策略组。"
                   actions={
-                    <Button size="sm" variant="primary" icon={Plus} onClick={() => router.push(`${path('rules')}?compose=1`)}>
+                    <Button size="sm" variant="primary" icon={Plus} data-agent-nav={path('rules')} onClick={() => router.push(`${path('rules')}?compose=1`)}>
                       添加规则
                     </Button>
                   }
@@ -498,7 +498,7 @@ export function Overview() {
                   title="没有节点来源"
                   description="添加机场订阅或自建节点，再绑定到这份配置。"
                   actions={
-                    <Button size="sm" variant="secondary" icon={Plus} onClick={() => router.push('/sources?new=1')}>
+                    <Button size="sm" variant="secondary" icon={Plus} data-agent-nav="/sources" onClick={() => router.push('/sources?new=1')}>
                       添加订阅源
                     </Button>
                   }
@@ -583,7 +583,7 @@ export function Overview() {
                   title="还没有设备"
                   description="不同设备需要不同端口或 TUN 设置时，再单独添加。"
                   actions={
-                    <Button size="sm" variant="secondary" icon={Plus} onClick={() => router.push(`${path('devices')}?new=1`)}>
+                    <Button size="sm" variant="secondary" icon={Plus} data-agent-nav={path('devices')} onClick={() => router.push(`${path('devices')}?new=1`)}>
                       添加设备
                     </Button>
                   }

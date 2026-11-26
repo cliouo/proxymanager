@@ -67,6 +67,8 @@ export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElemen
   loading?: boolean;
   iconOnly?: boolean;
   asChild?: boolean;
+  /** Render a plain `<button>` without registering a separate ui-sdk button (used by Menu/Popover triggers). */
+  native?: boolean;
 }
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
@@ -78,6 +80,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
     loading = false,
     iconOnly = false,
     asChild = false,
+    native = false,
     className,
     children,
     disabled,
@@ -118,6 +121,24 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       >
         {children.props.children}
       </UiButton>
+    );
+  }
+
+  if (native) {
+    return (
+      <button
+        ref={ref}
+        type={type ?? 'button'}
+        className={classes}
+        disabled={disabled || loading}
+        aria-busy={loading || undefined}
+        onClick={handleClick}
+        {...props}
+      >
+        {loading ? <Spinner size={iconSize[size]} /> : renderIcon(icon, size)}
+        {children}
+        {!loading && renderIcon(trailingIcon, size)}
+      </button>
     );
   }
 
