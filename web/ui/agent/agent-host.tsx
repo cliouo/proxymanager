@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import {
   AlertDialog,
   AlertDialogBackdrop,
@@ -10,6 +10,7 @@ import {
   AlertDialogTitle,
 } from '@ui-sdk/react/alert-dialog';
 import { ShieldAlert } from 'lucide-react';
+import { cn } from '@/ui/lib/cn';
 import { registerAppWebMcp, type AppAgent } from './bridge';
 import {
   findConfirmTargetElement,
@@ -18,6 +19,13 @@ import {
   usePendingAgentConfirm,
   type AgentConfirmRequest,
 } from './confirm';
+import { useTakeover } from './takeover';
+import {
+  AgentActionStage,
+  AgentTakeoverAura,
+  AgentTakeoverBar,
+  AgentTakeoverGuard,
+} from './takeover-ui';
 
 function useConfirmTargetHighlight(request: AgentConfirmRequest | null) {
   useEffect(() => {
@@ -35,17 +43,31 @@ function useConfirmTargetHighlight(request: AgentConfirmRequest | null) {
 }
 
 export function AgentConfirmCard({ request }: { request: AgentConfirmRequest }) {
+  const { confirmPulseSeq } = useTakeover();
+  const rejectRef = useRef<HTMLButtonElement>(null);
+  const lastSeqRef = useRef(confirmPulseSeq);
   const targetLabel =
     (typeof request.step.args[0] === 'string' && request.step.args[0]) ||
     request.step.label ||
     request.step.ref;
 
+  useEffect(() => {
+    if (confirmPulseSeq === lastSeqRef.current) return;
+    lastSeqRef.current = confirmPulseSeq;
+    rejectRef.current?.focus();
+  }, [confirmPulseSeq]);
+
   return (
     <div
+      key={confirmPulseSeq}
       role="region"
       aria-label="AI 操作确认"
       data-agent-hidden
-      className="animate-rise rounded-xl border border-warn/35 bg-warn-soft/55 p-3.5 shadow-xs"
+      data-agent-confirm-card
+      className={cn(
+        'animate-rise rounded-xl border border-warn/35 bg-warn-soft/55 p-3.5 shadow-xs',
+        confirmPulseSeq > 0 && 'ring-2 ring-warn/50',
+      )}
     >
       <div className="flex items-start gap-2.5">
         <span className="mt-0.5 inline-flex size-6 shrink-0 items-center justify-center rounded-lg bg-warn/15 text-warn">
@@ -63,6 +85,7 @@ export function AgentConfirmCard({ request }: { request: AgentConfirmRequest }) 
       </div>
       <div className="mt-3 flex items-center justify-end gap-2">
         <button
+          ref={rejectRef}
           type="button"
           onClick={() => resolveAgentConfirm(request.id, false)}
           className="inline-flex h-7 select-none items-center justify-center rounded-md border border-line bg-surface px-2.5 text-xs font-medium text-ink-2 transition hover:bg-surface-2 hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
@@ -102,6 +125,8 @@ export function AgentConfirmDialog() {
         <AlertDialogBackdrop className="fixed inset-0 z-50 bg-overlay backdrop-blur-[1.5px] transition-opacity duration-150 data-starting-style:opacity-0 data-ending-style:opacity-0" />
         <AlertDialogContent
           data-agent-hidden
+          data-takeover-exempt
+          data-agent-confirm-card
           className="fixed left-1/2 top-[min(18vh,140px)] z-50 m-0 flex w-[calc(100%-24px)] max-w-[440px] -translate-x-1/2 flex-col overflow-hidden rounded-2xl border border-line bg-surface p-0 text-ink shadow-xl outline-none transition-[opacity,transform] duration-150 data-starting-style:scale-95 data-starting-style:opacity-0 data-ending-style:scale-95 data-ending-style:opacity-0"
         >
           <div className="flex flex-col gap-2 px-5 pb-4 pt-5">
@@ -141,5 +166,13 @@ export function AgentConfirmDialog() {
 
 export function AgentHost({ agent }: { agent?: AppAgent } = {}) {
   useEffect(() => registerAppWebMcp(agent), [agent]);
-  return <AgentConfirmDialog />;
+  return (
+    <>
+      <AgentTakeoverGuard />
+      <AgentTakeoverAura />
+      <AgentTakeoverBar />
+      <AgentActionStage />
+      <AgentConfirmDialog />
+    </>
+  );
 }

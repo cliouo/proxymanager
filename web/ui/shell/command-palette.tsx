@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import {
   Command,
@@ -34,6 +35,7 @@ import { useDashboard, useDevices, useGroups, usePools, useProfiles, useRuleSets
 import { navigateWithGuard } from '@/ui/features/groups/guard';
 import { cn } from '@/ui/lib/cn';
 import { copyText, Kbd, notify } from '@/ui/primitives';
+import { ASSISTANT_PERSISTENT_SELECTORS, useWorkspaceOverlayScope } from '@/ui/primitives/overlay-scope';
 import { useLineColors, LineDot } from '@/ui/viz/lines';
 import { ALL_NAV } from './nav';
 import { profilePath, useActiveProfile } from './scope';
@@ -108,13 +110,30 @@ export function CommandPalette() {
 
   const sortedGroups = useMemo(() => (groups ?? []).slice().sort((a, b) => a.rank - b.rank), [groups]);
   const trimmedSearch = search.trim();
+  const { scopedContainer, keepAssistantInteractive } = useWorkspaceOverlayScope();
+  const isScoped = Boolean(scopedContainer);
 
-  return (
-    <Dialog open={open} onOpenChange={(next) => (next ? setUi({ paletteOpen: true }) : close())}>
-      <DialogBackdrop className="fixed inset-0 z-50 bg-overlay backdrop-blur-[2px] data-open:animate-fade-in" />
-      <DialogContent
+  const tree = (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => (next ? setUi({ paletteOpen: true }) : close())}
+      modal={keepAssistantInteractive ? false : true}
+      persistentElements={keepAssistantInteractive ? ASSISTANT_PERSISTENT_SELECTORS : undefined}
+    >
+      <DialogBackdrop
+        onClick={keepAssistantInteractive ? close : undefined}
         className={cn(
-          'fixed left-1/2 top-[12vh] z-50 m-0 w-[min(640px,calc(100vw-24px))] -translate-x-1/2 overflow-hidden rounded-2xl border border-line bg-surface p-0 text-ink shadow-xl outline-none',
+          isScoped ? 'pointer-events-auto absolute inset-0 z-10' : 'fixed inset-0 z-50',
+          'bg-overlay backdrop-blur-[2px] data-open:animate-fade-in',
+        )}
+      />
+      <DialogContent
+        inline={keepAssistantInteractive || undefined}
+        className={cn(
+          isScoped
+            ? 'pointer-events-auto absolute left-1/2 top-[min(12vh,96px)] z-20 w-[min(640px,calc(100%-24px))]'
+            : 'fixed left-1/2 top-[12vh] z-50 w-[min(640px,calc(100vw-24px))]',
+          'm-0 -translate-x-1/2 overflow-hidden rounded-2xl border border-line bg-surface p-0 text-ink shadow-xl outline-none',
           'data-open:animate-pop',
         )}
       >
@@ -182,7 +201,7 @@ export function CommandPalette() {
               >
                 添加订阅源
               </Item>
-              {dashboard?.meta.subscriptionUrl && (
+              {dashboard?.meta?.subscriptionUrl && (
                 <Item
                   value="copy-subscription-link"
                   label="复制订阅链接"
@@ -191,7 +210,8 @@ export function CommandPalette() {
                   hint={profile ? profileTitle(profile) : undefined}
                   onSelect={() => {
                     close();
-                    void copyText(dashboard.meta.subscriptionUrl).then((ok) => ok && notify.success('订阅链接已复制'));
+                    const subUrl = dashboard.meta?.subscriptionUrl;
+                    if (subUrl) void copyText(subUrl).then((ok) => ok && notify.success('订阅链接已复制'));
                   }}
                 >
                   复制订阅链接
@@ -417,4 +437,6 @@ export function CommandPalette() {
       </DialogContent>
     </Dialog>
   );
+
+  return scopedContainer ? createPortal(tree, scopedContainer) : tree;
 }

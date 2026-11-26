@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { render } from '@testing-library/react';
 import { Button as UiButton } from '@ui-sdk/react/button';
 import { createAgent } from '@ui-sdk/react/agent';
@@ -274,5 +275,63 @@ describe('In-site assistant agentTools loop', () => {
     container.querySelector('.skeleton')?.remove();
     const readySnap = await dispatchAgentTool('snapshot', {}, { agent });
     expect(Array.isArray(JSON.parse(readySnap.modelContent))).toBe(true);
+  });
+
+  test('act waits for async client-side link navigation and reports the new route without stale values', async () => {
+    const agent = createAgent({ allow: createAppAllow() });
+    const prevUrl = window.location.pathname + window.location.search;
+    window.history.replaceState({}, '', '/rule-sets');
+
+    function NavDemo() {
+      const [filter, setFilter] = useState('all');
+      return (
+        <div>
+          <aside data-takeover-sidebar>
+            <UiButton
+              render={
+                <Link
+                  href="/sources"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    setTimeout(() => {
+                      window.history.pushState({}, '', '/sources');
+                      const main = document.getElementById('main');
+                      if (main) main.innerHTML = '<h1>节点来源</h1>';
+                    }, 50);
+                  }}
+                />
+              }
+            >
+              节点来源
+            </UiButton>
+          </aside>
+          <main id="main">
+            <h1>规则集</h1>
+            <UiInput aria-label="规则集搜索" value={filter} onValueChange={setFilter} />
+          </main>
+        </div>
+      );
+    }
+
+    try {
+      render(<NavDemo />);
+      const result = await dispatchAgentTool(
+        'act',
+        { steps: [{ ref: '节点来源', action: 'press' }] },
+        { agent },
+      );
+      expect(result.kind).toBe('act');
+      expect(window.location.pathname).toBe('/sources');
+      const parsed = JSON.parse(result.modelContent) as {
+        route?: string;
+        navigated?: { from: string; to: string };
+        values?: Record<string, unknown>;
+      };
+      expect(parsed.route).toBe('/sources');
+      expect(parsed.navigated).toEqual({ from: '/rule-sets', to: '/sources' });
+      expect(parsed.values).toBeUndefined();
+    } finally {
+      window.history.replaceState({}, '', prevUrl || '/');
+    }
   });
 });

@@ -18,7 +18,13 @@ import {
   Waypoints,
   X,
 } from 'lucide-react';
-import { AgentConfirmCard, registerInlineConfirmHost, usePendingAgentConfirm } from '@/ui/agent';
+import {
+  AgentConfirmCard,
+  registerInlineConfirmHost,
+  resumeTakeover,
+  usePendingAgentConfirm,
+  useTakeover,
+} from '@/ui/agent';
 import { errorMessage } from '@/ui/data/api';
 import { useAssistantConfig } from '@/ui/data/hooks';
 import { useIsomorphicLayoutEffect } from '@/ui/data/query';
@@ -141,6 +147,7 @@ export function AssistantPanel({ onClose }: { onClose: () => void }) {
     [pathname, profileContext],
   );
   const convo = useConversation();
+  const takeover = useTakeover();
   const pendingConfirm = usePendingAgentConfirm();
   const composerRef = useRef<ComposerHandle>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -301,7 +308,16 @@ export function AssistantPanel({ onClose }: { onClose: () => void }) {
         )}
       </div>
 
-      {configured && <Composer ref={composerRef} running={convo.running} onSend={send} onStop={stop} />}
+      {configured && (
+        <Composer
+          ref={composerRef}
+          running={convo.running}
+          paused={takeover.mode === 'paused'}
+          onResume={resumeTakeover}
+          onSend={send}
+          onStop={stop}
+        />
+      )}
     </div>
   );
 }
