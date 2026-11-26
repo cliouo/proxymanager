@@ -21,6 +21,7 @@ import {
 import { describeInput, describeResult, resultError } from '@/ui/assistant/labels';
 import { buildSystemPrompt, pageLabelFor } from '@/ui/assistant/prompt';
 import { getActiveRequestSource } from '@/ui/data/api';
+import { Button, Menu } from '@/ui/primitives';
 import type { AssistantConfig } from '@/ui/data/types';
 
 function makeSseResponse(chunks: unknown[]): Response {
@@ -333,5 +334,47 @@ describe('In-site assistant agentTools loop', () => {
     } finally {
       window.history.replaceState({}, '', prevUrl || '/');
     }
+  });
+
+  test('act enriches missing-component errors with a hint when the target is an item inside an open menu', async () => {
+    const agent = createAgent({ allow: createAppAllow() });
+    const onAdjust = vi.fn();
+
+    render(
+      <Menu
+        trigger={<Button aria-label="链路 2 的更多操作">更多</Button>}
+        items={[
+          { label: '调整筛选与测速', onSelect: onAdjust },
+          { label: '删除链路', tone: 'danger', onSelect: () => undefined },
+        ]}
+      />,
+    );
+
+    // Mistaken 2-step call: opens the menu, then tries to press the menu item as a standalone ref.
+    const mistaken = await dispatchAgentTool(
+      'act',
+      {
+        steps: [
+          { ref: '链路 2 的更多操作', action: 'press' },
+          { ref: '调整筛选与测速', action: 'press' },
+        ],
+      },
+      { agent },
+    );
+    expect(mistaken.kind).toBe('error');
+    const errPayload = JSON.parse(mistaken.modelContent) as { hint?: string };
+    expect(errPayload.hint).toContain('链路 2 的更多操作');
+    expect(errPayload.hint).toContain('"args":["调整筛选与测速"]');
+
+    // Correct 1-step call succeeds and invokes the menu item.
+    const fixed = await dispatchAgentTool(
+      'act',
+      {
+        steps: [{ ref: '链路 2 的更多操作', action: 'press', args: ['调整筛选与测速'] }],
+      },
+      { agent },
+    );
+    expect(fixed.kind).toBe('act');
+    expect(onAdjust).toHaveBeenCalledTimes(1);
   });
 });

@@ -274,11 +274,11 @@ interface CardActions {
   remove: (profile: Profile) => void;
 }
 
-function menuItems(profile: Profile, actions: CardActions, open: () => void): MenuEntry[] {
+function menuItems(profile: Profile, actions: CardActions, open: () => void, href: string): MenuEntry[] {
   const isDefault = profile.name === DEFAULT_PROFILE;
   const template = profile.kind === 'template';
   return [
-    { label: '打开', icon: ArrowUpRight, onSelect: open },
+    { label: '打开', icon: ArrowUpRight, nav: href, onSelect: open },
     { label: '编辑', icon: Pencil, onSelect: () => actions.edit(profile) },
     { label: template ? '用它新建配置文件' : '从它新建', icon: CopyPlus, onSelect: () => actions.derive(profile) },
     'separator',
@@ -394,7 +394,7 @@ function ProfileCard({ profile, current, actions }: { profile: Profile; current:
           </Tooltip>
           <Menu
             trigger={<Button variant="ghost" size="sm" iconOnly icon={MoreHorizontal} aria-label={`「${title}」的更多操作`} />}
-            items={menuItems(profile, actions, () => router.push(href))}
+            items={menuItems(profile, actions, () => router.push(href), href)}
           />
         </div>
       </div>
@@ -467,7 +467,7 @@ function TemplateCard({ profile, actions, index }: { profile: Profile; actions: 
         <div className="relative z-10 -mr-1.5 -mt-1">
           <Menu
             trigger={<Button variant="ghost" size="sm" iconOnly icon={MoreHorizontal} aria-label={`「${title}」的更多操作`} />}
-            items={menuItems(profile, actions, () => router.push(href))}
+            items={menuItems(profile, actions, () => router.push(href), href)}
           />
         </div>
       </div>

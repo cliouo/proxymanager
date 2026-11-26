@@ -104,6 +104,9 @@ describe('ui-sdk migrated overlay & feedback primitives', () => {
     for (const entry of snap) {
       expect(entry.label, `${entry.component} ${entry.ref} has no name`).toBeTruthy();
     }
+    // Menu and Popover triggers wrapped with <Button> must register only once (not duplicate button + menu/popover).
+    expect(snap.filter((e) => e.label === '更多操作').map((e) => e.component)).toEqual(['menu']);
+    expect(snap.filter((e) => e.label === '筛选条件').map((e) => e.component)).toEqual(['popover']);
 
     const menuRes = await agent.act({
       steps: [{ ref: '更多操作', action: 'press', args: ['立即刷新'] }],

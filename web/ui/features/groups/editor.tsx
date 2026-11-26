@@ -319,7 +319,7 @@ function GroupEditor({ group }: { group: ProxyGroup }) {
                   confirm: `复制策略组「${group.name}」`,
                   onSelect: () => void duplicate(),
                 },
-                { label: '查看引用它的规则', icon: ListTree, onSelect: () => router.push(rulesHref), disabled: !ruleCount },
+                { label: '查看引用它的规则', icon: ListTree, nav: rulesHref, onSelect: () => router.push(rulesHref), disabled: !ruleCount },
                 'separator',
                 { label: '删除', icon: Trash2, tone: 'danger', onSelect: () => void remove() },
               ]}

@@ -381,6 +381,38 @@ export async function streamModelRound(options: {
   return round;
 }
 
+function enrichMissingComponentError(data: Json, target: AppAgent): Json {
+  const err = isRecord(data.error) ? data.error : null;
+  const msg = typeof err?.message === 'string' ? err.message : '';
+  const match = msg.match(/^No component "([^"]+)" on the page/);
+  if (!match) return data;
+  const wanted = match[1].trim();
+  const wantedLower = wanted.toLowerCase();
+
+  let items: unknown[] = [];
+  try {
+    items = target.snapshot();
+  } catch {
+    return data;
+  }
+  for (const item of items) {
+    if (!isRecord(item) || !Array.isArray(item.buttons)) continue;
+    const parentLabel = typeof item.label === 'string' && item.label.trim() ? item.label.trim() : null;
+    if (!parentLabel) continue;
+    const buttonMatch = item.buttons.find(
+      (btn): btn is string =>
+        typeof btn === 'string' && (btn.trim() === wanted || btn.trim().toLowerCase() === wantedLower),
+    );
+    if (!buttonMatch) continue;
+    const kind = typeof item.component === 'string' ? item.component : 'menu';
+    return {
+      ...data,
+      hint: `「${buttonMatch}」是「${parentLabel}」（${kind}）内部的选项，不是独立组件；请改为单步传 args 调用：${JSON.stringify({ ref: parentLabel, action: 'press', args: [buttonMatch] })}`,
+    };
+  }
+  return data;
+}
+
 function errorResult(message: string): ToolDispatchResult {
   const data = { error: message };
   return { kind: 'error', data, modelContent: JSON.stringify(data) };
@@ -499,7 +531,8 @@ export async function dispatchAgentTool(
           if (signal?.aborted || !isBuiltinOwnerValid(owner)) throw makeAbortError();
         }
         if (!ok) {
-          return { kind: 'error', data, modelContent: JSON.stringify(data) };
+          const enriched = isRecord(data) ? enrichMissingComponentError(data, target) : data;
+          return { kind: 'error', data: enriched, modelContent: JSON.stringify(enriched) };
         }
         let modelContent: string;
         if (navigated && isRecord(data)) {

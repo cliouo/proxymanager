@@ -129,7 +129,7 @@ export function SourceCard({ source, subBase }: { source: Source; subBase: strin
                 disabled: !subBase,
                 onSelect: () => void copyLink(subBase ? sourceLink(subBase, source) : null, title),
               },
-              { label: '编辑', icon: Pencil, onSelect: () => router.push(`/sources/${source.id}?tab=settings`) },
+              { label: '编辑', icon: Pencil, nav: `/sources/${source.id}`, onSelect: () => router.push(`/sources/${source.id}?tab=settings`) },
               'separator',
               { label: '删除', icon: Trash2, tone: 'danger', onSelect: () => void deleteSource(source) },
             ]}
