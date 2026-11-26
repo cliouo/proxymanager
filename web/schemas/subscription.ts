@@ -100,13 +100,17 @@ export type SubscriptionFetchFailurePolicy = z.infer<typeof SubscriptionFetchFai
  *
  *   - server-auto: the deployed backend fetches the upstream URL and uses the
  *     normal fetch cache / failure policy.
+ *   - server-manual: the backend never auto-fetches upstream (not on TTL expiry,
+ *     render, preview, preflight, noCache=1, or bulk refresh); only an explicit
+ *     manual refresh fetches upstream and persists a permanent no-TTL snapshot.
  *   - manual: one checksum-verified snapshot from the dedicated Redis key is
- *     the only source of bytes. Missing stays server-auto for legacy rows.
+ *     the only source of bytes (uploaded via manual-refresh). Missing stays
+ *     server-auto for legacy rows.
  */
-export const SubscriptionRefreshModeSchema = z.enum(['server-auto', 'manual']);
+export const SubscriptionRefreshModeSchema = z.enum(['server-auto', 'server-manual', 'manual']);
 export type SubscriptionRefreshMode = z.infer<typeof SubscriptionRefreshModeSchema>;
 
-export const SubscriptionManualUpdateOriginSchema = z.enum(['web', 'extension']);
+export const SubscriptionManualUpdateOriginSchema = z.enum(['web', 'extension', 'server']);
 export type SubscriptionManualUpdateOrigin = z.infer<typeof SubscriptionManualUpdateOriginSchema>;
 
 /** Bounded metadata stored with the definition; raw bytes are always separate. */
@@ -401,6 +405,7 @@ export const SubscriptionCreateSchema = z
     // Remote-only declarative policy; an explicit value on a LOCAL create is
     // rejected by the service against the merged candidate (422).
     fetch_failure_policy: SubscriptionFetchFailurePolicySchema.optional(),
+    refresh_mode: z.enum(['server-auto', 'server-manual']).optional(),
     keep_info_nodes: z.boolean().optional(),
   })
   .refine(
@@ -426,9 +431,9 @@ export const SubscriptionUpdateSchema = z.object({
   operators: MutableOperatorListSchema.optional(),
   fetch_failure_policy: SubscriptionFetchFailurePolicySchema.optional(),
   keep_info_nodes: z.boolean().optional(),
-  // Import is the sole transition into manual mode. Generic PATCH can only
-  // request the validated manual → server-auto transition.
-  refresh_mode: z.literal('server-auto').optional(),
+  // Manual-import (`manual`) is entered solely via POST /manual-refresh;
+  // generic PATCH can toggle between server-auto and server-manual.
+  refresh_mode: z.enum(['server-auto', 'server-manual']).optional(),
 });
 
 /**

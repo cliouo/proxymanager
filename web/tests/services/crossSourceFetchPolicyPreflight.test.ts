@@ -202,7 +202,9 @@ const SS_NODE = {
 
 const LOCAL_CONTENT = stringify({ proxies: [SS_NODE] }, { lineWidth: 0 });
 
-function localSub(over: Partial<Subscription> = {}): Subscription {
+function localSub(
+  over: Partial<Omit<Subscription, 'refresh_mode'>> = {},
+): Omit<Subscription, 'refresh_mode'> & { refresh_mode?: undefined } {
   return {
     id: LOCAL_ID,
     name: 'local-edit',
@@ -215,7 +217,7 @@ function localSub(over: Partial<Subscription> = {}): Subscription {
     operators: [],
     updated_at: 1,
     ...over,
-  } as Subscription;
+  } as Omit<Subscription, 'refresh_mode'> & { refresh_mode?: undefined };
 }
 
 function mitceSub(over: Partial<Subscription> = {}): Subscription {

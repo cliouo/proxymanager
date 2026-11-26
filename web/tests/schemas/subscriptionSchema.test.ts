@@ -171,14 +171,56 @@ describe('remote refresh mode and manual snapshot storage', () => {
     expect(local.fetch_identity_revision).toBeUndefined();
   });
 
-  it('only permits the explicit manual to server-auto transition through PATCH', () => {
+  it('permits server-auto and server-manual through create/PATCH, while rejecting manual', () => {
+    expect(
+      SubscriptionCreateSchema.safeParse({
+        ...base,
+        url: 'https://up.example/sub',
+        refresh_mode: 'server-manual',
+      }).success,
+    ).toBe(true);
+    expect(
+      SubscriptionCreateSchema.safeParse({
+        ...base,
+        url: 'https://up.example/sub',
+        refresh_mode: 'manual',
+      }).success,
+    ).toBe(false);
     expect(SubscriptionUpdateSchema.safeParse({ refresh_mode: 'server-auto' }).success).toBe(true);
+    expect(SubscriptionUpdateSchema.safeParse({ refresh_mode: 'server-manual' }).success).toBe(
+      true,
+    );
     expect(SubscriptionUpdateSchema.safeParse({ refresh_mode: 'manual' }).success).toBe(false);
     const hostile = SubscriptionUpdateSchema.parse({
       manual_content: 'proxies: []',
       manual_snapshot_meta: { content_sha256: 'secret' },
     });
     expect(hostile).toEqual({});
+  });
+
+  it('accepts server-manual remote rows with server-origin snapshots', () => {
+    const serverSnapshotMeta = {
+      updated_at: 12,
+      proxy_count: 5,
+      info_proxy_count: 1,
+      origin: 'server' as const,
+      fetch_identity_revision: 1,
+      content_sha256: 'b'.repeat(64),
+    };
+    const parsed = SubscriptionSchema.parse({
+      id: '00000000-0000-4000-8000-000000000000',
+      name: 'mitce',
+      enabled: true,
+      kind: 'remote',
+      url: 'https://mitce.example/sub',
+      ttl_ms: 60_000,
+      tags: [],
+      refresh_mode: 'server-manual',
+      fetch_identity_revision: 1,
+      manual_snapshot_meta: serverSnapshotMeta,
+    });
+    expect(parsed.refresh_mode).toBe('server-manual');
+    expect(parsed.manual_snapshot_meta).toEqual(serverSnapshotMeta);
   });
 });
 

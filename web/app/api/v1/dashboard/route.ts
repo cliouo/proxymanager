@@ -4,7 +4,7 @@ import { getDashboardSummary } from '@/lib/repos/dashboardRepo';
 import { deriveSubToken } from '@/lib/auth';
 import { getSubscriptionFetchHealthMany } from '@/lib/repos/subscriptionFetchHealthRepo';
 import { projectSubscriptionAdminView } from '@/lib/services/subscriptionService';
-import { SubscriptionSchema, type Subscription } from '@/schemas';
+import { effectiveSubscriptionRefreshMode, SubscriptionSchema, type Subscription } from '@/schemas';
 
 export const GET = withProblemDetails(async (request: Request) => {
   const profile = await resolveScopeProfile(request);
@@ -15,7 +15,9 @@ export const GET = withProblemDetails(async (request: Request) => {
     const parsed = SubscriptionSchema.safeParse(raw);
     return parsed.success ? [parsed.data] : [];
   });
-  const remoteIds = subscriptions.filter((sub) => sub.kind !== 'local').map((sub) => sub.id);
+  const remoteIds = subscriptions
+    .filter((sub) => sub.kind !== 'local' && effectiveSubscriptionRefreshMode(sub) === 'server-auto')
+    .map((sub) => sub.id);
   const health = remoteIds.length ? await getSubscriptionFetchHealthMany(remoteIds) : [];
   const byId = new Map(remoteIds.map((id, i) => [id, health[i]]));
   summary.subscriptionHealthSummary = subscriptions.map((sub) => {

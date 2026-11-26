@@ -97,7 +97,7 @@ if entityAction == 'set' then
       return {2, 'remote-actions-malformed'}
     end
     local mode = entity.refresh_mode or 'server-auto'
-    if mode ~= 'server-auto' and mode ~= 'manual' then
+    if mode ~= 'server-auto' and mode ~= 'server-manual' and mode ~= 'manual' then
       return {2, 'refresh-mode-malformed'}
     end
     local meta = entity.manual_snapshot_meta
@@ -107,7 +107,7 @@ if entityAction == 'set' then
          not isSafeUnsignedNumber(meta.proxy_count) or meta.proxy_count < 1 or
          (meta.info_proxy_count ~= nil and
           (not isSafeUnsignedNumber(meta.info_proxy_count) or meta.info_proxy_count > meta.proxy_count)) or
-         (meta.origin ~= 'web' and meta.origin ~= 'extension') or
+         (meta.origin ~= 'web' and meta.origin ~= 'extension' and meta.origin ~= 'server') or
          not isSafeUnsignedNumber(meta.fetch_identity_revision) or
          type(meta.content_sha256) ~= 'string' or
          string.len(meta.content_sha256) ~= 64 or
@@ -119,10 +119,13 @@ if entityAction == 'set' then
     if mode == 'manual' and meta == nil then
       return {2, 'manual-snapshot-meta-missing'}
     end
-    if snapshotAction == 'set' and mode ~= 'manual' then
+    if snapshotAction == 'set' and mode ~= 'manual' and mode ~= 'server-manual' then
       return {2, 'snapshot-mode-mismatch'}
     end
-    if mode == 'manual' and snapshotAction == 'keep' and not redis.call('GET', KEYS[6]) then
+    if snapshotAction == 'set' and meta == nil then
+      return {2, 'manual-snapshot-meta-missing'}
+    end
+    if (mode == 'manual' or (mode == 'server-manual' and meta ~= nil)) and snapshotAction == 'keep' and not redis.call('GET', KEYS[6]) then
       return {2, 'manual-snapshot-missing'}
     end
   else

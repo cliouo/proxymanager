@@ -33,6 +33,10 @@ function Facts({ source }: { source: Source }) {
     });
     cells.push({ label: '缓存时长', value: `${msToMinutes(source.ttl_ms)} 分钟` });
     cells.push({ label: '拉取失败时', value: source.fetch_failure_policy === 'fail-closed' ? '阻断' : '沿用缓存' });
+  } else if (mode === 'server-manual') {
+    cells.push({ label: '上次刷新', value: source.manual_snapshot ? relativeTime(source.manual_snapshot.updated_at) : '还没有' });
+    cells.push({ label: '缓存策略', value: '永久缓存（仅手动刷新）' });
+    cells.push({ label: '缓存节点', value: source.manual_snapshot ? `${source.manual_snapshot.proxy_count} 个` : '—' });
   } else if (mode === 'manual') {
     cells.push({ label: '上次导入', value: source.manual_snapshot ? relativeTime(source.manual_snapshot.updated_at) : '还没有' });
     cells.push({ label: '导入节点', value: source.manual_snapshot ? `${source.manual_snapshot.proxy_count} 个` : '—' });
@@ -153,6 +157,7 @@ export function SourceDetail() {
             <span>订阅源</span>
             <span className="font-mono text-[11px] text-ink-2">{source.name}</span>
             <Badge tone="outline">{source.kind === 'local' ? '本地' : '远程'}</Badge>
+            {mode === 'server-manual' && <Badge tone="neutral">仅手动刷新</Badge>}
           </>
         }
         title={
@@ -183,6 +188,7 @@ export function SourceDetail() {
             <NamingLink href={`/sources/${source.id}/naming`} dirty={pipelineDirty} />
             {canServerRefresh(source) && (
               <Button
+                variant={mode === 'server-manual' && !source.manual_snapshot ? 'primary' : undefined}
                 icon={RefreshCw}
                 loading={busy === 'refresh'}
                 data-agent-confirm={`刷新订阅源「${title}」`}
@@ -192,7 +198,7 @@ export function SourceDetail() {
                   setBusy(null);
                 }}
               >
-                刷新
+                {mode === 'server-manual' ? '手动刷新' : '刷新'}
               </Button>
             )}
             {mode === 'manual' && source.enabled && (
@@ -205,7 +211,7 @@ export function SourceDetail() {
             </Button>
             <Menu
               items={[
-                ...(mode === 'auto' && source.enabled
+                ...((mode === 'auto' || mode === 'server-manual') && source.enabled
                   ? [{ label: '手动导入…', icon: Download, onSelect: () => setImporting(true) }, 'separator' as const]
                   : []),
                 source.enabled

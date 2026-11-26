@@ -27,10 +27,14 @@ import {
   getSubscriptionFetchHealthMany,
   healthMatchesDefinition,
 } from '@/lib/repos/subscriptionFetchHealthRepo';
-import { parseSubscriptionManualSnapshotMeta } from '@/lib/repos/subscriptionManualSnapshotRepo';
+import {
+  parseSubscriptionManualSnapshotMeta,
+  readVerifiedSubscriptionManualSnapshot,
+} from '@/lib/repos/subscriptionManualSnapshotRepo';
 import {
   buildCacheKey,
   FETCH_CACHE_STALE_RETENTION_MS,
+  getFetchCache,
   type FetchCacheEntry,
 } from '@/lib/repos/fetchCacheRepo';
 import {
@@ -49,6 +53,7 @@ import {
   type SubscriptionUpdate,
 } from '@/schemas';
 import {
+  fetchSubscriptionForManualSnapshot,
   resolveSubscriptionContentRaw,
   resolveSubscriptionProxiesRaw,
   validateManualSubscriptionContent,
@@ -216,7 +221,8 @@ export async function listSubscriptionAdminViews(): Promise<SubscriptionAdminVie
 
 async function readStoredSubscriptionInfo(sub: Subscription): Promise<StoredSubscriptionInfo | undefined> {
   if (sub.kind !== 'local') {
-    if (effectiveSubscriptionRefreshMode(sub) !== 'manual') return;
+    const mode = effectiveSubscriptionRefreshMode(sub);
+    if (mode !== 'manual' && mode !== 'server-manual') return;
     const meta = parseSubscriptionManualSnapshotMeta(sub);
     if (!meta || meta.info_proxy_count !== undefined) return;
   }
@@ -232,9 +238,9 @@ async function readStoredSubscriptionInfo(sub: Subscription): Promise<StoredSubs
 export async function getSubscriptionAdminView(id: string): Promise<SubscriptionAdminView | null> {
   const sub = await getSubscription(id);
   if (!sub) return null;
-  // P-FFP v1 invariant 1: LOCAL sources never consult health storage — the
-  // health read happens only on the remote branch.
-  if (sub.kind === 'local' || effectiveSubscriptionRefreshMode(sub) === 'manual') {
+  // P-FFP v1 invariant 1: LOCAL and snapshot-backed remote sources never
+  // consult health storage — the health read happens only on server-auto.
+  if (sub.kind === 'local' || effectiveSubscriptionRefreshMode(sub) !== 'server-auto') {
     return projectSubscriptionAdminView(sub, undefined, await readStoredSubscriptionInfo(sub));
   }
   return projectSubscriptionAdminView(sub, await getSubscriptionFetchHealth(id));
@@ -248,8 +254,101 @@ export function generateSubscriptionId(): string {
   return crypto.randomUUID();
 }
 
+async function prepareRemoteModeTransition(
+  current: Subscription,
+  next: Subscription,
+): Promise<{
+  contentOverrides?: ReadonlyMap<string, string>;
+  fetchCache?: { cacheKey: string; entry: FetchCacheEntry; ttlMs: number };
+  manualSnapshot: SubscriptionManualSnapshotAction;
+}> {
+  if (next.kind === 'local') {
+    return { manualSnapshot: { type: 'delete' } };
+  }
+  const prevMode = current.kind === 'remote' ? effectiveSubscriptionRefreshMode(current) : null;
+  const nextMode = effectiveSubscriptionRefreshMode(next);
+
+  if (prevMode !== null && prevMode !== 'server-auto' && nextMode === 'server-auto') {
+    if (!next.url) {
+      throw ProblemDetailsError.unprocessable('远程订阅需要 URL。');
+    }
+    const fresh = await resolveSubscriptionContentRaw(next, {
+      noCache: true,
+      writeCache: false,
+      recordHealth: false,
+    });
+    const customHeaders = effectiveSubscriptionCustomHeaders(next);
+    return {
+      contentOverrides: new Map([[next.id, fresh.yaml]]),
+      fetchCache: {
+        cacheKey: buildCacheKey({
+          url: next.url,
+          userAgent: subscriptionUserAgent(next),
+          headers: customHeaders,
+          keepInfoNodes: next.keep_info_nodes,
+        }),
+        entry: {
+          content: fresh.yaml,
+          ...(fresh.traffic ? { traffic: fresh.traffic } : {}),
+          proxy_count: fresh.proxyCount,
+          fetched_at: Date.now(),
+        },
+        ttlMs: Math.max(next.ttl_ms, FETCH_CACHE_STALE_RETENTION_MS),
+      },
+      manualSnapshot: { type: 'keep' },
+    };
+  }
+
+  if (prevMode === 'server-auto' && nextMode === 'server-manual') {
+    if (next.url) {
+      const cacheKey = buildCacheKey({
+        url: next.url,
+        userAgent: subscriptionUserAgent(next),
+        headers: effectiveSubscriptionCustomHeaders(next),
+        keepInfoNodes: next.keep_info_nodes,
+      });
+      const cached = await getFetchCache(cacheKey).catch(() => null);
+      if (cached && Buffer.byteLength(cached.content, 'utf8') <= MAX_SUBSCRIPTION_CONTENT) {
+        try {
+          const validated = validateManualSubscriptionContent(
+            cached.content,
+            (next.operators ?? []).some(isActiveCurrentRenameTemplateOperator),
+          );
+          const traffic = cached.traffic ?? validated.traffic;
+          next.manual_snapshot_meta = {
+            updated_at: Math.max(0, Math.floor(cached.fetched_at / 1000)),
+            proxy_count: validated.proxyCount,
+            info_proxy_count: validated.infoProxyCount,
+            ...(traffic ? { traffic } : {}),
+            origin: 'server',
+            fetch_identity_revision: effectiveFetchIdentityRevision(next),
+            content_sha256: createHash('sha256').update(cached.content, 'utf8').digest('hex'),
+          };
+          return {
+            contentOverrides: new Map([[next.id, cached.content]]),
+            manualSnapshot: { type: 'set', content: cached.content },
+          };
+        } catch {
+          // Corrupt or empty fetch cache cannot be promoted; keep waiting for manual refresh.
+        }
+      }
+    }
+    if (next.manual_snapshot_meta !== undefined) {
+      try {
+        await readVerifiedSubscriptionManualSnapshot(next);
+      } catch {
+        delete next.manual_snapshot_meta;
+      }
+    }
+    return { manualSnapshot: { type: 'keep' } };
+  }
+
+  return { manualSnapshot: { type: 'keep' } };
+}
+
 export async function createSubscription(input: SubscriptionCreate): Promise<Subscription> {
   assertPolicyAllowedForKind(input.kind, input.fetch_failure_policy);
+  assertRefreshModeAllowedForKind(input.kind, input.refresh_mode);
   const planningVersion = await getConfigVersion();
   const dup = await getSubscriptionByName(input.name);
   if (dup) {
@@ -266,7 +365,7 @@ export async function createSubscription(input: SubscriptionCreate): Promise<Sub
   const sub = applyFetchIdentityRevision(null, {
     ...input,
     ...(operators !== undefined ? { operators: operators as Subscription['operators'] } : {}),
-    ...(input.kind === 'remote' ? { refresh_mode: 'server-auto' as const } : {}),
+    ...(input.kind === 'remote' ? { refresh_mode: input.refresh_mode ?? ('server-auto' as const) } : {}),
     id: generateSubscriptionId(),
     updated_at: nowSeconds(),
   });
@@ -295,6 +394,7 @@ export async function replaceSubscription(
   input: SubscriptionCreate,
 ): Promise<Subscription> {
   assertPolicyAllowedForKind(input.kind, input.fetch_failure_policy);
+  assertRefreshModeAllowedForKind(input.kind, input.refresh_mode);
   const planningVersion = await getConfigVersion();
   const current = await getSubscription(id);
   if (!current) {
@@ -320,9 +420,10 @@ export async function replaceSubscription(
     ...(input.kind === 'remote'
       ? {
           refresh_mode:
-            current.kind === 'remote'
+            input.refresh_mode ??
+            (current.kind === 'remote'
               ? effectiveSubscriptionRefreshMode(current)
-              : ('server-auto' as const),
+              : ('server-auto' as const)),
           ...(current.kind === 'remote' && current.manual_snapshot_meta !== undefined
             ? { manual_snapshot_meta: current.manual_snapshot_meta }
             : {}),
@@ -333,6 +434,10 @@ export async function replaceSubscription(
     updated_at: nextUpdatedAt(current),
   });
   if (next.kind === 'remote') delete next.content;
+  const { contentOverrides, fetchCache, manualSnapshot } = await prepareRemoteModeTransition(
+    current,
+    next,
+  );
   const [collections, profiles, allSubs] = await Promise.all([
     listCollections(),
     listProfiles(),
@@ -345,16 +450,16 @@ export async function replaceSubscription(
   for (const profile of [...currentConsumers, ...candidateConsumers]) {
     byId.set(profile.id, profile);
   }
-  const manualSnapshot: SubscriptionManualSnapshotAction =
-    next.kind === 'local' ? { type: 'delete' } : { type: 'keep' };
   await commitUnderPipelineGate({
     planningVersion,
     affected: [...byId.values()],
     candidateSubscriptions: (subs) => subs.map((sub) => (sub.id === id ? next : sub)),
+    contentOverrides,
     commit: (version, ordinalPlan) =>
       commitSubscriptionChange(next, version, ordinalPlan, {
         manualSnapshot,
         clearFetchHealth: fetchHealthMustClear(current, next),
+        fetchCache,
       }),
   });
   return next;
@@ -424,40 +529,10 @@ export async function patchSubscription(
   }
   next = applyFetchIdentityRevision(current, next);
 
-  let contentOverrides: ReadonlyMap<string, string> | undefined;
-  let fetchCache: { cacheKey: string; entry: FetchCacheEntry; ttlMs: number } | undefined;
-  if (
-    current.kind === 'remote' &&
-    effectiveSubscriptionRefreshMode(current) === 'manual' &&
-    next.kind === 'remote' &&
-    effectiveSubscriptionRefreshMode(next) === 'server-auto'
-  ) {
-    if (!next.url) {
-      throw ProblemDetailsError.unprocessable('远程订阅需要 URL。');
-    }
-    const fresh = await resolveSubscriptionContentRaw(next, {
-      noCache: true,
-      writeCache: false,
-      recordHealth: false,
-    });
-    contentOverrides = new Map([[id, fresh.yaml]]);
-    const customHeaders = effectiveSubscriptionCustomHeaders(next);
-    fetchCache = {
-      cacheKey: buildCacheKey({
-        url: next.url,
-        userAgent: subscriptionUserAgent(next),
-        headers: customHeaders,
-        keepInfoNodes: next.keep_info_nodes,
-      }),
-      entry: {
-        content: fresh.yaml,
-        ...(fresh.traffic ? { traffic: fresh.traffic } : {}),
-        proxy_count: fresh.proxyCount,
-        fetched_at: Date.now(),
-      },
-      ttlMs: Math.max(next.ttl_ms, FETCH_CACHE_STALE_RETENTION_MS),
-    };
-  }
+  const { contentOverrides, fetchCache, manualSnapshot } = await prepareRemoteModeTransition(
+    current,
+    next,
+  );
 
   if (touchesRenderedOutput(patch)) {
     const [collections, profiles, allSubs] = await Promise.all([
@@ -482,8 +557,6 @@ export async function patchSubscription(
     for (const profile of [...currentConsumers, ...candidateConsumers]) {
       byId.set(profile.id, profile);
     }
-    const manualSnapshot: SubscriptionManualSnapshotAction =
-      next.kind === 'local' ? { type: 'delete' } : { type: 'keep' };
     await commitUnderPipelineGate({
       planningVersion,
       affected: [...byId.values()],
@@ -498,6 +571,99 @@ export async function patchSubscription(
     });
   }
   return next;
+}
+
+export interface ServerManualRefreshResult {
+  subscription: Subscription;
+  proxyCount: number;
+}
+
+/**
+ * Explicitly pull upstream bytes for a `server-manual` remote subscription,
+ * preflight all consuming profiles, and atomically persist the permanent
+ * no-TTL snapshot. Any fetch or validation failure leaves the previous
+ * snapshot untouched.
+ */
+export async function refreshServerManualSubscription(
+  id: string,
+  prefetched?: Subscription,
+): Promise<ServerManualRefreshResult> {
+  const initial = prefetched ?? (await getSubscription(id));
+  if (!initial) throw ProblemDetailsError.notFound(`Subscription ${id} not found.`);
+  if (!initial.enabled) {
+    throw ProblemDetailsError.unprocessable(`Subscription "${initial.name}" is disabled.`);
+  }
+  if (
+    initial.kind !== 'remote' ||
+    effectiveSubscriptionRefreshMode(initial) !== 'server-manual'
+  ) {
+    throw ProblemDetailsError.unprocessable('只有设为仅手动刷新的远程订阅支持此操作。');
+  }
+  if (!initial.url) {
+    throw ProblemDetailsError.unprocessable('远程订阅需要 URL。');
+  }
+
+  const fetched = await fetchSubscriptionForManualSnapshot(initial);
+
+  const planningVersion = await getConfigVersion();
+  const current = await getSubscription(id);
+  if (!current) throw ProblemDetailsError.notFound(`Subscription ${id} not found.`);
+  if (!current.enabled) {
+    throw ProblemDetailsError.unprocessable(`Subscription "${current.name}" is disabled.`);
+  }
+  if (
+    current.kind !== 'remote' ||
+    effectiveSubscriptionRefreshMode(current) !== 'server-manual' ||
+    effectiveFetchIdentityRevision(current) !== effectiveFetchIdentityRevision(initial)
+  ) {
+    throw ProblemDetailsError.preconditionFailed('该订阅源在拉取期间已被修改，请重试。');
+  }
+
+  const refreshedAt = nextUpdatedAt(current);
+  const next: Subscription = {
+    ...current,
+    refresh_mode: 'server-manual',
+    manual_snapshot_meta: {
+      updated_at: refreshedAt,
+      proxy_count: fetched.proxyCount,
+      info_proxy_count: fetched.infoProxyCount,
+      ...(fetched.traffic ? { traffic: fetched.traffic } : {}),
+      origin: 'server',
+      fetch_identity_revision: effectiveFetchIdentityRevision(current),
+      content_sha256: createHash('sha256').update(fetched.content, 'utf8').digest('hex'),
+    },
+    updated_at: refreshedAt,
+  };
+  const contentOverrides = new Map<string, string>([[id, fetched.content]]);
+  const [collections, profiles, allSubs] = await Promise.all([
+    listCollections(),
+    listProfiles(),
+    listSubscriptions(),
+  ]);
+  const currentConsumers = consumingProfilesOfSubscription(current, collections, allSubs, profiles);
+  const nextSubs = allSubs.map((sub) => (sub.id === id ? next : sub));
+  const candidateConsumers = consumingProfilesOfSubscription(next, collections, nextSubs, profiles);
+  const byId = new Map<string, Profile>();
+  for (const profile of [...currentConsumers, ...candidateConsumers]) {
+    byId.set(profile.id, profile);
+  }
+
+  await commitUnderPipelineGate({
+    planningVersion,
+    affected: [...byId.values()],
+    candidateSubscriptions: (subs) => subs.map((sub) => (sub.id === id ? next : sub)),
+    contentOverrides,
+    commit: (version, ordinalPlan) =>
+      commitSubscriptionChange(next, version, ordinalPlan, {
+        manualSnapshot: { type: 'set', content: fetched.content },
+        clearFetchHealth: true,
+      }),
+  });
+
+  return {
+    subscription: next,
+    proxyCount: fetched.proxyCount - (current.keep_info_nodes ? 0 : fetched.infoProxyCount),
+  };
 }
 
 export interface ManualSubscriptionImportResult {
