@@ -37,19 +37,85 @@ interface ActiveCallContext {
   source: 'ai_chat' | 'webmcp';
   owner?: AbortController;
   signal?: AbortSignal;
+  onNavigationIntent?: (expectedPath?: string) => void;
+}
+
+const NON_NAV_COMMANDS = new Set([
+  'copy-subscription-link',
+  'share-qr',
+  'ai-assistant',
+  'toggle-theme',
+]);
+
+const STATIC_NAV_COMMAND_PATHS: Record<string, string> = {
+  'nav-sources': '/sources',
+  'nav-rule-sets': '/rule-sets',
+  'nav-profiles': '/profiles',
+  'nav-history': '/history',
+  'nav-settings': '/settings',
+  'add-source': '/sources',
+};
+
+function detectNavigationIntent(
+  step: AgentAction,
+  target: HTMLElement | null,
+): { expected: boolean; expectedPath?: string } {
+  if (typeof window === 'undefined') return { expected: false };
+  const currentPath = window.location.pathname;
+
+  if (step.component === 'command' && step.action === 'run') {
+    const value = typeof step.args[0] === 'string' ? step.args[0].trim() : '';
+    if (!value || NON_NAV_COMMANDS.has(value)) return { expected: false };
+    const staticPath = STATIC_NAV_COMMAND_PATHS[value];
+    if (staticPath) {
+      return staticPath === currentPath ? { expected: false } : { expected: true, expectedPath: staticPath };
+    }
+    return { expected: true };
+  }
+
+  if (step.action !== 'press' && step.action !== 'click') return { expected: false };
+  if (!target) return { expected: false };
+
+  const navHost = target.closest<HTMLElement>('[data-agent-nav]');
+  if (navHost) {
+    const raw = navHost.getAttribute('data-agent-nav')?.trim();
+    if (!raw) return { expected: true };
+    try {
+      const resolved = new URL(raw, window.location.href);
+      if (resolved.origin === window.location.origin && resolved.pathname !== currentPath) {
+        return { expected: true, expectedPath: resolved.pathname };
+      }
+      return { expected: false };
+    } catch {
+      return { expected: true };
+    }
+  }
+
+  const anchor = target.closest<HTMLAnchorElement>('a[href]');
+  if (!anchor || anchor.target === '_blank' || anchor.hasAttribute('download')) {
+    return { expected: false };
+  }
+  try {
+    const resolved = new URL(anchor.href, window.location.href);
+    if (resolved.origin !== window.location.origin || resolved.pathname === currentPath) {
+      return { expected: false };
+    }
+    return { expected: true, expectedPath: resolved.pathname };
+  } catch {
+    return { expected: false };
+  }
 }
 
 let activeCallContext: ActiveCallContext | null = null;
 let lastFxKey = '';
 let lastFxAt = 0;
 
-function emitStepFxOnce(step: AgentAction) {
+function emitStepFxOnce(step: AgentAction, target: HTMLElement | null) {
   const key = `${step.ref}:${step.action}`;
   const now = Date.now();
   if (key === lastFxKey && now - lastFxAt < 180) return;
   lastFxKey = key;
   lastFxAt = now;
-  const target = resolveActionTargetElement(step);
   const kind =
     step.action === 'press' || step.action === 'click' || step.action === 'toggle' || step.action === 'setChecked'
       ? 'press'
@@ -96,7 +162,13 @@ export function createAppAllow() {
       setTimeout(endPulse, 900);
     }
 
-    emitStepFxOnce(step);
+    const target = resolveActionTargetElement(step);
+    const nav = detectNavigationIntent(step, target);
+    if (nav.expected) {
+      ctx?.onNavigationIntent?.(nav.expectedPath);
+    }
+
+    emitStepFxOnce(step, target);
     return true;
   };
 }
@@ -137,13 +209,24 @@ function restoreAssistantFocusIfStolen(prev: HTMLElement | null) {
 
 export async function runAgentAct(
   input: { steps: AgentStep[] },
-  options?: { signal?: AbortSignal; source?: 'ai_chat' | 'webmcp'; owner?: AbortController; agent?: AppAgent },
+  options?: {
+    signal?: AbortSignal;
+    source?: 'ai_chat' | 'webmcp';
+    owner?: AbortController;
+    agent?: AppAgent;
+    onNavigationIntent?: (expectedPath?: string) => void;
+  },
 ) {
   const target = options?.agent ?? getAgent();
   const source = options?.source ?? 'ai_chat';
   const prevFocus = source === 'ai_chat' ? captureAssistantFocus() : null;
   const prevCtx = activeCallContext;
-  activeCallContext = { source, owner: options?.owner, signal: options?.signal };
+  activeCallContext = {
+    source,
+    owner: options?.owner,
+    signal: options?.signal,
+    onNavigationIntent: options?.onNavigationIntent,
+  };
   try {
     return await withRequestSource(source, () =>
       target.act(input, options?.signal ? { signal: options.signal } : undefined),

@@ -1,5 +1,7 @@
+import Link from 'next/link';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { Button as UiButton } from '@ui-sdk/react/button';
 import { createAgent } from '@ui-sdk/react/agent';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { AgentHost, clearAgentConfirms, createAppAllow, customTools } from '@/ui/agent';
@@ -200,5 +202,33 @@ describe('shared customTools for WebMCP and in-site AI', () => {
     } finally {
       main.remove();
     }
+  });
+
+  test('wait_for ignores sidebar navigation buttons and waits for target text inside #main', async () => {
+    render(
+      <div>
+        <aside data-takeover-sidebar>
+          <nav aria-label="主导航">
+            <UiButton render={<Link href="/sources" onClick={(e) => e.preventDefault()} />}>节点来源</UiButton>
+          </nav>
+        </aside>
+        <main id="main">
+          <h1>规则集</h1>
+        </main>
+      </div>,
+    );
+
+    const waitPromise = dispatchAgentTool('wait_for', { text: '节点来源', timeout_ms: 1500 }, { agent });
+
+    setTimeout(() => {
+      const main = document.getElementById('main');
+      if (main) main.innerHTML = '<h1>节点来源</h1>';
+    }, 45);
+
+    const res = await waitPromise;
+    expect(res.kind).toBe('custom');
+    const data = res.data as { found: boolean; waitedMs: number };
+    expect(data.found).toBe(true);
+    expect(data.waitedMs).toBeGreaterThanOrEqual(25);
   });
 });

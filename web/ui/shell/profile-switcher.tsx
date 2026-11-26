@@ -152,6 +152,7 @@ export function ProfileSwitcher({ collapsed }: { collapsed?: boolean }) {
         <div className="flex gap-1 border-t border-line p-1">
           <UiButton
             type="button"
+            data-agent-nav="/profiles"
             onClick={() => {
               void navigateWithGuard(() => {
                 setOpen(false);
@@ -164,6 +165,7 @@ export function ProfileSwitcher({ collapsed }: { collapsed?: boolean }) {
           </UiButton>
           <UiButton
             type="button"
+            data-agent-nav="/profiles"
             onClick={() => {
               void navigateWithGuard(() => {
                 setOpen(false);

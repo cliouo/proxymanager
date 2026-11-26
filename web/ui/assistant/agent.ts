@@ -15,6 +15,7 @@ import {
   runAgentAct,
   runAgentQuery,
   settleRouteCommit,
+  waitForRouteChange,
   waitIfPaused,
   type AgentStep,
   type AppAgent,
@@ -471,6 +472,8 @@ export async function dispatchAgentTool(
         endActing = markTakeoverActing(owner, label, { mutating: true });
       }
       const beforePath = typeof window !== 'undefined' ? window.location.pathname : '';
+      let navigationIntent = false;
+      let expectedPath: string | undefined;
       try {
         if (validSteps) options?.onSideEffectDispatched?.();
         const data = await runAgentAct(input as { steps: AgentStep[] }, {
@@ -478,15 +481,47 @@ export async function dispatchAgentTool(
           source: 'ai_chat',
           owner,
           agent: target,
+          onNavigationIntent: (nextPath) => {
+            navigationIntent = true;
+            expectedPath = nextPath;
+          },
         });
         if (signal?.aborted || !isBuiltinOwnerValid(owner)) throw makeAbortError();
-        if (typeof window !== 'undefined' && window.location.pathname !== beforePath) {
-          await settleRouteCommit(signal);
+        const ok = !(isRecord(data) && data.ok === false);
+        if (ok && navigationIntent && typeof window !== 'undefined' && window.location.pathname === beforePath) {
+          await waitForRouteChange(beforePath, { signal, expectedPath });
+          if (signal?.aborted || !isBuiltinOwnerValid(owner)) throw makeAbortError();
         }
-        if (isRecord(data) && data.ok === false) {
+        const afterPath = typeof window !== 'undefined' ? window.location.pathname : '';
+        const navigated = Boolean(beforePath && afterPath && afterPath !== beforePath);
+        if (ok && navigated) {
+          await settleRouteCommit(signal);
+          if (signal?.aborted || !isBuiltinOwnerValid(owner)) throw makeAbortError();
+        }
+        if (!ok) {
           return { kind: 'error', data, modelContent: JSON.stringify(data) };
         }
-        return { kind: 'act', data, modelContent: JSON.stringify(data) };
+        let modelContent: string;
+        if (navigated && isRecord(data)) {
+          // Drop stale pre-navigation form values so the model sees the new route cleanly.
+          const { values: _staleValues, ...rest } = data;
+          void _staleValues;
+          modelContent = JSON.stringify({
+            ...rest,
+            route: afterPath,
+            navigated: { from: beforePath, to: afterPath },
+            loading: hasMainSkeletons(),
+          });
+        } else if (navigationIntent && isRecord(data)) {
+          modelContent = JSON.stringify({
+            ...data,
+            route: afterPath,
+            navigationPending: true,
+          });
+        } else {
+          modelContent = JSON.stringify(data);
+        }
+        return { kind: 'act', data, modelContent };
       } finally {
         endActing();
       }

@@ -1,5 +1,6 @@
 'use client';
 
+import { elementOf } from '@ui-sdk/react/observe';
 import type { AppAgent } from './bridge';
 
 export interface WaitForTargetOptions {
@@ -60,6 +61,22 @@ function visibleMainText(root: Element): string {
   return parts.join(' ');
 }
 
+function isInsideMainScope(ref: unknown): boolean {
+  if (typeof document === 'undefined' || typeof ref !== 'string') return true;
+  const main = document.getElementById('main');
+  if (!main) return true;
+  let el: Element | null = null;
+  try {
+    el = elementOf(ref);
+  } catch {
+    el = null;
+  }
+  if (!el) return true;
+  if (el.closest('[data-takeover-sidebar], nav[aria-label="主导航"]')) return false;
+  if (main.contains(el)) return true;
+  return Boolean(el.closest('[role="dialog"], [role="alertdialog"]'));
+}
+
 function snapshotHasMatch(
   agent: AppAgent | undefined,
   needle: string | null,
@@ -70,6 +87,7 @@ function snapshotHasMatch(
     const items = agent.snapshot();
     for (const item of items) {
       const rec = item as unknown as Record<string, unknown>;
+      if (!isInsideMainScope(rec.ref)) continue;
       const kind = typeof rec.component === 'string' ? rec.component.toLowerCase() : '';
       if (componentKind && kind !== componentKind) continue;
       if (!needle) return true;
@@ -242,5 +260,74 @@ export function settleRouteCommit(signal?: AbortSignal, maxMs = 450): Promise<vo
     }
     quietTimer = setTimeout(done, 80);
     maxTimer = setTimeout(done, maxMs);
+  });
+}
+
+/**
+ * Wait for an async client-side navigation (Next.js App Router `<Link>` or
+ * `router.push`) to update `window.location.pathname`. Exits early on abort or
+ * if a new dialog (such as an unsaved-changes leave confirmation) interrupts the
+ * transition.
+ */
+export function waitForRouteChange(
+  fromPath: string,
+  options: { signal?: AbortSignal; maxMs?: number; expectedPath?: string } = {},
+): Promise<boolean> {
+  if (typeof window === 'undefined') return Promise.resolve(false);
+  const { signal, maxMs = 4500, expectedPath } = options;
+  if (expectedPath && expectedPath === fromPath) return Promise.resolve(false);
+  if (window.location.pathname !== fromPath) return Promise.resolve(true);
+  if (signal?.aborted) return Promise.resolve(false);
+
+  const initialDialogs = new Set(
+    typeof document !== 'undefined'
+      ? Array.from(document.querySelectorAll('[role="alertdialog"], [role="dialog"]'))
+      : [],
+  );
+
+  return new Promise<boolean>((resolve) => {
+    let settled = false;
+    let observer: MutationObserver | null = null;
+    let pollTimer: ReturnType<typeof setInterval> | null = null;
+    let maxTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const finish = (changed: boolean) => {
+      if (settled) return;
+      settled = true;
+      observer?.disconnect();
+      if (pollTimer) clearInterval(pollTimer);
+      if (maxTimer) clearTimeout(maxTimer);
+      window.removeEventListener('popstate', check);
+      signal?.removeEventListener('abort', onAbort);
+      resolve(changed);
+    };
+
+    const onAbort = () => finish(false);
+
+    const check = () => {
+      if (settled) return;
+      if (window.location.pathname !== fromPath) {
+        finish(true);
+        return;
+      }
+      if (typeof document !== 'undefined') {
+        const dialogs = document.querySelectorAll('[role="alertdialog"], [role="dialog"]');
+        for (const dialog of dialogs) {
+          if (!initialDialogs.has(dialog) && !dialog.closest('[data-agent-hidden]')) {
+            finish(false);
+            return;
+          }
+        }
+      }
+    };
+
+    window.addEventListener('popstate', check);
+    signal?.addEventListener('abort', onAbort, { once: true });
+    if (typeof document !== 'undefined' && typeof MutationObserver !== 'undefined') {
+      observer = new MutationObserver(check);
+      observer.observe(document.body, { subtree: true, childList: true });
+    }
+    pollTimer = setInterval(check, 25);
+    maxTimer = setTimeout(() => finish(window.location.pathname !== fromPath), maxMs);
   });
 }

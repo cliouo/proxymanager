@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Button as UiButton } from '@ui-sdk/react/button';
 import {
@@ -88,7 +88,46 @@ export function RuleSetsView() {
 
   const openId = params.get('open');
   const target: SheetTarget | null = params.get('new') === '1' ? { kind: 'create' } : openId ? { kind: 'edit', id: openId } : null;
+  const sheetOpen = Boolean(target);
+  const leavingRef = useRef(false);
+
+  useEffect(() => {
+    if (!sheetOpen) {
+      leavingRef.current = false;
+      return;
+    }
+    let resetTimer: ReturnType<typeof setTimeout> | null = null;
+    const markIfLeaving = (event: Event) => {
+      const node = event.target instanceof Element ? event.target : null;
+      const anchor = node?.closest<HTMLAnchorElement>('a[href]');
+      if (!anchor || anchor.target === '_blank' || anchor.hasAttribute('download')) return;
+      try {
+        const resolved = new URL(anchor.href, window.location.href);
+        if (resolved.origin === window.location.origin && resolved.pathname !== '/rule-sets') {
+          leavingRef.current = true;
+          if (resetTimer) clearTimeout(resetTimer);
+          resetTimer = setTimeout(() => {
+            leavingRef.current = false;
+            resetTimer = null;
+          }, 1000);
+        }
+      } catch {
+        /* ignore malformed href */
+      }
+    };
+    document.addEventListener('pointerdown', markIfLeaving, true);
+    document.addEventListener('click', markIfLeaving, true);
+    return () => {
+      if (resetTimer) clearTimeout(resetTimer);
+      document.removeEventListener('pointerdown', markIfLeaving, true);
+      document.removeEventListener('click', markIfLeaving, true);
+    };
+  }, [sheetOpen]);
+
   const go = (next: SheetTarget | null) => {
+    if (!next && (leavingRef.current || (typeof window !== 'undefined' && window.location.pathname !== '/rule-sets'))) {
+      return;
+    }
     const qs = next ? (next.kind === 'create' ? '?new=1' : `?open=${encodeURIComponent(next.id)}`) : '';
     router.replace(`/rule-sets${qs}`, { scroll: false });
   };

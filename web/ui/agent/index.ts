@@ -67,6 +67,7 @@ export {
   hasMainSkeletons,
   settleRouteCommit,
   waitForMainTarget,
+  waitForRouteChange,
   type WaitForTargetOptions,
   type WaitForTargetResult,
 } from './wait';
