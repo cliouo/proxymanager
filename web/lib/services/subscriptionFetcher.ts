@@ -45,6 +45,7 @@ import {
   SubscriptionResolutionValidationError,
 } from '@/lib/services/subscriptionResolutionErrors';
 import {
+  MAX_SUBSCRIPTION_CONTENT,
   SubscriptionTrafficSchema,
   effectiveFetchFailurePolicy,
   effectiveSubscriptionCustomHeaders,
@@ -533,9 +534,14 @@ function withoutInfoNodes(proxies: unknown[]): unknown[] {
   });
 }
 
-function projectStoredText(raw: RawResolved, keepInfoNodes: boolean, deferUniqueNames: boolean): RawResolved {
+function projectStoredText(
+  raw: RawResolved,
+  keepInfoNodes: boolean,
+  deferUniqueNames: boolean,
+  storedTraffic?: SubscriptionTraffic,
+): RawResolved {
   const all = raw.getProxies();
-  const traffic = subscriptionTrafficFromNodes(proxyNames(all));
+  const traffic = storedTraffic ?? subscriptionTrafficFromNodes(proxyNames(all));
   const proxies = keepInfoNodes ? all : withoutInfoNodes(all);
   return rawFromProxies(proxies, { traffic, proxyCount: proxies.length }, deferUniqueNames);
 }
@@ -576,25 +582,26 @@ async function resolveUnmarkedSubscriptionRaw(
   options: SubscriptionResolveOptions = {},
 ): Promise<RawResolved> {
   const deferUniqueNames = options.deferUniqueNames ?? hasActiveManagedNaming(sub.operators);
+  const refreshMode = effectiveSubscriptionRefreshMode(sub);
+  const isSnapshotMode =
+    sub.kind === 'remote' && (refreshMode === 'manual' || refreshMode === 'server-manual');
   const overridePresent = options.contentOverrides?.has(sub.id) === true;
   if (overridePresent) {
     const raw = resolveRawText(
       options.contentOverrides!.get(sub.id)!,
       deferUniqueNames,
-      sub.kind === 'remote' && effectiveSubscriptionRefreshMode(sub) === 'manual',
+      isSnapshotMode,
     );
-    if (sub.kind === 'remote' && effectiveSubscriptionRefreshMode(sub) === 'manual') {
-      const meta = parseSubscriptionManualSnapshotMeta(sub);
-      if (meta && meta.proxy_count !== raw.proxyCount) {
-        throw asSubscriptionValidationError(
-          ProblemDetailsError.unprocessable('Manual subscription snapshot metadata is invalid.'),
-          'definition',
-          'subscription_manual_snapshot_invalid',
-          'Manual subscription snapshot metadata is invalid.',
-        );
-      }
+    const meta = isSnapshotMode ? parseSubscriptionManualSnapshotMeta(sub) : null;
+    if (isSnapshotMode && meta && meta.proxy_count !== raw.proxyCount) {
+      throw asSubscriptionValidationError(
+        ProblemDetailsError.unprocessable('Manual subscription snapshot metadata is invalid.'),
+        'definition',
+        'subscription_manual_snapshot_invalid',
+        'Manual subscription snapshot metadata is invalid.',
+      );
     }
-    return projectStoredText(raw, sub.keep_info_nodes === true, deferUniqueNames);
+    return projectStoredText(raw, sub.keep_info_nodes === true, deferUniqueNames, meta?.traffic);
   }
 
   if (sub.kind === 'local') {
@@ -610,17 +617,22 @@ async function resolveUnmarkedSubscriptionRaw(
     return projectStoredText(raw, sub.keep_info_nodes === true, deferUniqueNames);
   }
 
-  if (effectiveSubscriptionRefreshMode(sub) === 'manual') {
+  if (isSnapshotMode) {
     let content: string;
     try {
       content = await readVerifiedSubscriptionManualSnapshot(sub);
     } catch (error) {
       if (!(error instanceof ManualSnapshotIntegrityError)) throw error;
+      const missingInitial =
+        refreshMode === 'server-manual' && error.code === 'metadata-missing';
+      const message = missingInitial
+        ? '该订阅源已设为仅手动刷新，尚未拉取缓存，请先手动点击刷新。'
+        : 'Manual subscription snapshot is unavailable.';
       throw asSubscriptionValidationError(
-        ProblemDetailsError.unprocessable('Manual subscription snapshot is unavailable.'),
+        ProblemDetailsError.unprocessable(message),
         'definition',
         'subscription_manual_snapshot_invalid',
-        'Manual subscription snapshot is unavailable.',
+        message,
       );
     }
     const raw = resolveRawText(content, deferUniqueNames, true);
@@ -633,7 +645,7 @@ async function resolveUnmarkedSubscriptionRaw(
         'Manual subscription snapshot metadata is invalid.',
       );
     }
-    return projectStoredText(raw, sub.keep_info_nodes === true, deferUniqueNames);
+    return projectStoredText(raw, sub.keep_info_nodes === true, deferUniqueNames, meta.traffic);
   }
 
   if (!sub.url) {
@@ -832,16 +844,33 @@ export async function fetchSubscription(
   return { yaml: raw.getYaml(), traffic: raw.traffic, proxyCount: raw.proxyCount };
 }
 
-async function fetchSubscriptionInternal(
+function mergeUpstreamTraffic(
+  headerTraffic: SubscriptionTraffic | undefined,
+  trafficHeader: string | null,
+  nodeNames: readonly string[],
+): SubscriptionTraffic | undefined {
+  const inferred = subscriptionTrafficFromNodes(nodeNames);
+  if (!headerTraffic) return inferred;
+  if (!inferred) return headerTraffic;
+  const hasHeaderUsage = /(?:^|;)\s*(?:upload|download|total)\s*=/.test(trafficHeader ?? '');
+  return {
+    ...(hasHeaderUsage ? headerTraffic : inferred),
+    expire: headerTraffic.expire || inferred.expire,
+  };
+}
+
+async function fetchUpstreamSubscriptionText(
   url: string,
   options: {
     userAgent?: string;
     timeoutMs?: number;
     customHeaders?: Record<string, string>;
-    deferUniqueNames?: boolean;
-    keepInfoNodes?: boolean;
   } = {},
-): Promise<RawResolved> {
+): Promise<{
+  text: string;
+  traffic: SubscriptionTraffic | undefined;
+  trafficHeader: string | null;
+}> {
   const upstreamUrl = parseSubscriptionUrl(url);
   const userAgent = options.userAgent ?? subscriptionUserAgent({ ua_override: undefined });
   const timeoutMs = options.timeoutMs ?? FETCH_TIMEOUT_MS;
@@ -949,21 +978,88 @@ async function fetchSubscriptionInternal(
   } finally {
     clearTimeout(timer);
   }
+  return { text, traffic, trafficHeader };
+}
+
+export interface ServerManualSnapshotFetchResult {
+  content: string;
+  proxyCount: number;
+  infoProxyCount: number;
+  traffic?: SubscriptionTraffic;
+}
+
+/**
+ * Explicitly fetch upstream bytes for a `server-manual` subscription so they
+ * can be persisted in the permanent no-TTL snapshot. Never touches fetch-cache
+ * or fetch-health; on any transport/content failure throws the same typed
+ * RemoteFetchAttemptError as normal refreshes while leaving existing cache intact.
+ */
+export async function fetchSubscriptionForManualSnapshot(
+  sub: Subscription,
+  options: { timeoutMs?: number } = {},
+): Promise<ServerManualSnapshotFetchResult> {
+  if (sub.kind !== 'remote' || !sub.url) {
+    throw asSubscriptionValidationError(
+      ProblemDetailsError.unprocessable(`Subscription "${sub.name}" is kind=remote but has no url.`),
+      'definition',
+      'subscription_url_missing',
+      'A remote subscription has no URL.',
+    );
+  }
+  const { text, traffic: headerTraffic, trafficHeader } = await fetchUpstreamSubscriptionText(
+    sub.url,
+    {
+      userAgent: subscriptionUserAgent(sub),
+      timeoutMs: options.timeoutMs ?? FETCH_TIMEOUT_MS,
+      customHeaders: effectiveSubscriptionCustomHeaders(sub),
+    },
+  );
+  const deferUniqueNames = hasActiveManagedNaming(sub.operators);
+  let proxies: Record<string, unknown>[];
+  let proxyCount: number;
+  try {
+    ({ proxies, proxyCount } = normaliseToClashProxies(text, deferUniqueNames));
+  } catch (error) {
+    throw classifyFreshContentError(error);
+  }
+  if (proxyCount === 0) {
+    throw new RemoteFetchAttemptError('response-content-format', { sourceName: sub.name });
+  }
+  const names = proxyNames(proxies);
+  const infoProxyCount = names.filter(isSubscriptionInfoNodeName).length;
+  const traffic = mergeUpstreamTraffic(headerTraffic, trafficHeader, names);
+
+  let content = text;
+  if (Buffer.byteLength(content, 'utf8') > MAX_SUBSCRIPTION_CONTENT) {
+    content = stringify({ proxies }, { lineWidth: 0 });
+    if (Buffer.byteLength(content, 'utf8') > MAX_SUBSCRIPTION_CONTENT) {
+      throw ProblemDetailsError.payloadTooLarge('订阅内容过大，最大支持 4 MiB。');
+    }
+  }
+  return { content, proxyCount, infoProxyCount, traffic };
+}
+
+async function fetchSubscriptionInternal(
+  url: string,
+  options: {
+    userAgent?: string;
+    timeoutMs?: number;
+    customHeaders?: Record<string, string>;
+    deferUniqueNames?: boolean;
+    keepInfoNodes?: boolean;
+  } = {},
+): Promise<RawResolved> {
+  const { text, traffic: headerTraffic, trafficHeader } = await fetchUpstreamSubscriptionText(
+    url,
+    options,
+  );
+  let traffic: SubscriptionTraffic | undefined = headerTraffic;
 
   let proxies: Record<string, unknown>[];
   let proxyCount: number;
   try {
     ({ proxies, proxyCount } = normaliseToClashProxies(text, options.deferUniqueNames ?? false, (list) => {
-      const inferred = subscriptionTrafficFromNodes(proxyNames(list));
-      if (!traffic) {
-        traffic = inferred;
-      } else if (inferred) {
-        const hasHeaderUsage = /(?:^|;)\s*(?:upload|download|total)\s*=/.test(trafficHeader ?? '');
-        traffic = {
-          ...(hasHeaderUsage ? traffic : inferred),
-          expire: traffic.expire || inferred.expire,
-        };
-      }
+      traffic = mergeUpstreamTraffic(headerTraffic, trafficHeader, proxyNames(list));
       return options.keepInfoNodes === true ? list : withoutInfoNodes(list);
     }));
   } catch (error) {

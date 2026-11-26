@@ -2,6 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import { createAgent } from '@ui-sdk/react/agent';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { runAgentAct } from '@/ui/agent';
+import { clearQueries } from '@/ui/data/query';
 import type { Source } from '@/ui/features/sources/model';
 import { AddSourceDialog } from '@/ui/features/sources/create-dialogs';
 import { NodesPanel } from '@/ui/features/sources/shared';
@@ -61,6 +62,7 @@ function jsonResponse(body: unknown, status = 200) {
 }
 
 beforeEach(() => {
+  clearQueries();
   allowConfirm = false;
   searchParamsString = '';
   routerMock.push.mockReset();
@@ -336,5 +338,135 @@ describe('Sources pilot pages agent-readiness', () => {
       expect(delCall).toBeTruthy();
       expect((delCall?.[1]?.headers as Record<string, string>)['X-Source']).toBe('ai_chat');
     });
+  });
+
+  test('server-manual sources are excluded from bulk refresh, toggleable in settings, and skip post-create refresh', async () => {
+    const manualOnlySource: Source = {
+      ...SAMPLE_SOURCE,
+      id: 'sub-mitce',
+      name: 'mitce',
+      display_name: 'Mitce',
+      refresh_mode: 'server-manual',
+      fetch_health: null,
+      manual_snapshot: {
+        updated_at: Math.floor(Date.now() / 1000) - 120,
+        proxy_count: 12,
+        origin: 'server',
+        source_changed: false,
+      },
+    };
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      const method = (init?.method ?? 'GET').toUpperCase();
+      if (url.includes('/subscriptions/sub-1/refresh') && method === 'POST') {
+        return jsonResponse({ data: SAMPLE_SOURCE, meta: { proxyCount: 3 } });
+      }
+      if (url.includes('/subscriptions/sub-1') && method === 'PATCH') {
+        const body = JSON.parse(String(init?.body ?? '{}'));
+        return jsonResponse({ data: { ...SAMPLE_SOURCE, ...body } });
+      }
+      if (url.endsWith('/api/v1/subscriptions') && method === 'POST') {
+        const body = JSON.parse(String(init?.body ?? '{}'));
+        return jsonResponse({ data: { ...manualOnlySource, ...body, id: 'sub-created', manual_snapshot: null } });
+      }
+      if (url.includes('/subscriptions') && method === 'GET') {
+        return jsonResponse({ data: [SAMPLE_SOURCE, manualOnlySource] });
+      }
+      if (url.includes('/collections') && method === 'GET') {
+        return jsonResponse({ data: [] });
+      }
+      if (url.includes('/meta')) {
+        return jsonResponse({ data: { subBase: 'https://pm.example.com/sub/tok' } });
+      }
+      return jsonResponse({ data: {} });
+    });
+
+    const { unmount } = render(
+      <>
+        <SourcesIndex />
+        <FeedbackHost />
+        <AppToaster />
+      </>,
+    );
+
+    expect(await screen.findByText('Mitce')).toBeTruthy();
+    expect(screen.getAllByText('仅手动刷新').length).toBeGreaterThan(0);
+
+    allowConfirm = true;
+    const bulkRefresh = await runAgentAct({ steps: [{ ref: '全部刷新', action: 'press' }] }, { agent });
+    expect(bulkRefresh.ok, bulkRefresh.error?.message).toBe(true);
+
+    await waitFor(() => {
+      expect(
+        fetchSpy.mock.calls.some(([u, init]) => String(u).includes('/subscriptions/sub-1/refresh') && init?.method === 'POST'),
+      ).toBe(true);
+    });
+    expect(
+      fetchSpy.mock.calls.some(([u, init]) => String(u).includes('/subscriptions/sub-mitce/refresh') && init?.method === 'POST'),
+    ).toBe(false);
+
+    unmount();
+
+    // SourceSettings: turning off 自动刷新 hides TTL and PATCHes refresh_mode: 'server-manual'.
+    const settingsView = render(
+      <>
+        <SourceSettings source={SAMPLE_SOURCE} active />
+        <FeedbackHost />
+        <AppToaster />
+      </>,
+    );
+    const toggleOff = await runAgentAct(
+      { steps: [{ ref: '自动刷新上游订阅', action: 'setChecked', args: [false] }] },
+      { agent },
+    );
+    expect(toggleOff.ok, toggleOff.error?.message).toBe(true);
+    expect(screen.queryByLabelText('缓存时长')).toBeNull();
+
+    const saveOff = await runAgentAct({ steps: [{ ref: '保存', action: 'press' }] }, { agent });
+    expect(saveOff.ok, saveOff.error?.message).toBe(true);
+    await waitFor(() => {
+      const patchCall = fetchSpy.mock.calls.find(
+        ([u, init]) => String(u).includes('/subscriptions/sub-1') && init?.method === 'PATCH',
+      );
+      expect(patchCall).toBeTruthy();
+      expect(JSON.parse(String(patchCall?.[1]?.body))).toEqual({ refresh_mode: 'server-manual' });
+    });
+    settingsView.unmount();
+
+    // AddSourceDialog: turning off 自动刷新 POSTs refresh_mode: 'server-manual' and never auto-refreshes.
+    fetchSpy.mockClear();
+    render(
+      <>
+        <AddSourceDialog open onOpenChange={vi.fn()} sources={[SAMPLE_SOURCE]} />
+        <AppToaster />
+      </>,
+    );
+    const createManual = await runAgentAct(
+      {
+        steps: [
+          { ref: '订阅链接', action: 'setValue', args: ['https://mitce.example.com/sub'] },
+          { ref: '显示名称', action: 'setValue', args: ['Mitce New'] },
+          { ref: '标识', action: 'setValue', args: ['mitce-new'] },
+          { ref: '自动刷新上游订阅', action: 'setChecked', args: [false] },
+          { ref: '确认添加', action: 'press' },
+        ],
+      },
+      { agent },
+    );
+    expect(createManual.ok, createManual.error?.message).toBe(true);
+
+    await waitFor(() => {
+      const postCall = fetchSpy.mock.calls.find(
+        ([u, init]) => String(u).endsWith('/api/v1/subscriptions') && init?.method === 'POST',
+      );
+      expect(postCall).toBeTruthy();
+      expect(JSON.parse(String(postCall?.[1]?.body))).toMatchObject({
+        name: 'mitce-new',
+        refresh_mode: 'server-manual',
+      });
+    });
+    expect(
+      fetchSpy.mock.calls.some(([u, init]) => String(u).includes('/refresh') && init?.method === 'POST'),
+    ).toBe(false);
   });
 });

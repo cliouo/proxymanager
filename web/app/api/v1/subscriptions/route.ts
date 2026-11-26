@@ -7,7 +7,7 @@ import {
   projectSubscriptionAdminView,
 } from '@/lib/services/subscriptionService';
 import { getSubscriptionFetchHealth } from '@/lib/repos/subscriptionFetchHealthRepo';
-import { SubscriptionCreateSchema } from '@/schemas';
+import { effectiveSubscriptionRefreshMode, SubscriptionCreateSchema } from '@/schemas';
 
 export const dynamic = 'force-dynamic';
 
@@ -38,7 +38,7 @@ export const POST = withProblemDetails(async (request: Request) => {
   // re-read race); health is fingerprint-joined and null when absent. LOCAL
   // sources never consult health storage (invariant 1).
   const view =
-    created.kind === 'local'
+    created.kind === 'local' || effectiveSubscriptionRefreshMode(created) !== 'server-auto'
       ? projectSubscriptionAdminView(created)
       : projectSubscriptionAdminView(created, await getSubscriptionFetchHealth(created.id));
   return Response.json(

@@ -38,6 +38,9 @@ const consumerRepos = vi.hoisted(() => ({
 const subscriptionFetcher = vi.hoisted(() => ({
   resolveSubscriptionContentRaw: vi.fn(),
 }));
+const fetchCacheRepo = vi.hoisted(() => ({
+  getFetchCache: vi.fn(async () => null as unknown),
+}));
 const manualSnapshot = vi.hoisted(() => ({
   readVerifiedSubscriptionManualSnapshot: vi.fn<(sub: Subscription) => Promise<string>>(),
 }));
@@ -111,6 +114,10 @@ vi.mock('@/lib/services/nodeOrdinalService', () => ({
   })),
 }));
 vi.mock('@/lib/services/configPreflight', () => gate);
+vi.mock('@/lib/repos/fetchCacheRepo', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/repos/fetchCacheRepo')>()),
+  getFetchCache: fetchCacheRepo.getFetchCache,
+}));
 vi.mock('@/lib/repos/subscriptionManualSnapshotRepo', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/repos/subscriptionManualSnapshotRepo')>()),
   ...manualSnapshot,
@@ -219,6 +226,7 @@ beforeEach(() => {
   consumerRepos.listProfiles.mockResolvedValue([]);
   consumerRepos.listCollections.mockResolvedValue([]);
   manualSnapshot.readVerifiedSubscriptionManualSnapshot.mockRejectedValue(new ManualSnapshotIntegrityError('snapshot-missing'));
+  fetchCacheRepo.getFetchCache.mockResolvedValue(null);
   subscriptionFetcher.resolveSubscriptionContentRaw.mockResolvedValue({
     yaml: 'proxies:\n  - { name: fresh, type: direct }\n',
     proxyCount: 1,
@@ -773,6 +781,124 @@ describe('fetch identity revision and mutation timestamps', () => {
     } finally {
       clock.mockRestore();
     }
+  });
+});
+
+describe('server-manual refresh mode transitions', () => {
+  it('creates a remote subscription in server-manual mode without consulting fetch health', async () => {
+    const res = await createPOST(
+      new Request('https://pm.test/api/v1/subscriptions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: 'mitce',
+          display_name: 'Mitce',
+          kind: 'remote',
+          url: 'https://mitce.example/sub',
+          refresh_mode: 'server-manual',
+        }),
+      }),
+    );
+    expect(res.status).toBe(201);
+    const { data } = (await json(res)) as { data: SubscriptionAdminView };
+    expect(data.refresh_mode).toBe('server-manual');
+    expect(data.fetch_health).toBeNull();
+    expect(data.manual_snapshot).toBeNull();
+    expect(healthRepo.getSubscriptionFetchHealth).not.toHaveBeenCalled();
+  });
+
+  it('rejects refresh_mode on local subscription create with 422', async () => {
+    const res = await createPOST(
+      new Request('https://pm.test/api/v1/subscriptions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: 'local-x',
+          kind: 'local',
+          content: 'proxies:\n  - { name: HK, type: direct }\n',
+          refresh_mode: 'server-manual',
+        }),
+      }),
+    );
+    expect(res.status).toBe(422);
+  });
+
+  it('promotes a valid retained fetch cache into a permanent snapshot when switching server-auto to server-manual without contacting upstream', async () => {
+    const cachedYaml = 'proxies:\n  - { name: Mitce-HK, type: direct }\n';
+    const traffic = { upload: 10, download: 20, total: 100, expire: 1_900_000_000 };
+    fetchCacheRepo.getFetchCache.mockResolvedValue({
+      content: cachedYaml,
+      proxy_count: 1,
+      fetched_at: 1_700_000_000_000,
+      traffic,
+    });
+
+    const res = await itemPATCH(
+      new Request(`https://pm.test/api/v1/subscriptions/${REMOTE_ID}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_mode: 'server-manual' }),
+      }),
+      { params: Promise.resolve({ id: REMOTE_ID }) } as never,
+    );
+    expect(res.status).toBe(200);
+    expect(subscriptionFetcher.resolveSubscriptionContentRaw).not.toHaveBeenCalled();
+    expect(healthRepo.getSubscriptionFetchHealth).not.toHaveBeenCalled();
+
+    const { data } = (await json(res)) as { data: SubscriptionAdminView };
+    expect(data.refresh_mode).toBe('server-manual');
+    expect(data.fetch_health).toBeNull();
+    expect(data.manual_snapshot).toMatchObject({
+      origin: 'server',
+      proxy_count: 1,
+      source_changed: false,
+      traffic,
+    });
+    expect(repo.commitSubscriptionChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: REMOTE_ID,
+        refresh_mode: 'server-manual',
+        manual_snapshot_meta: expect.objectContaining({
+          origin: 'server',
+          proxy_count: 1,
+          updated_at: 1_700_000_000,
+        }),
+      }),
+      7,
+      expect.anything(),
+      expect.objectContaining({
+        manualSnapshot: { type: 'set', content: cachedYaml },
+        clearFetchHealth: true,
+      }),
+    );
+  });
+
+  it('switches server-auto to server-manual without upstream fetch even when no fetch cache exists', async () => {
+    const res = await itemPATCH(
+      new Request(`https://pm.test/api/v1/subscriptions/${REMOTE_ID}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_mode: 'server-manual' }),
+      }),
+      { params: Promise.resolve({ id: REMOTE_ID }) } as never,
+    );
+    expect(res.status).toBe(200);
+    expect(subscriptionFetcher.resolveSubscriptionContentRaw).not.toHaveBeenCalled();
+    const { data } = (await json(res)) as { data: SubscriptionAdminView };
+    expect(data.refresh_mode).toBe('server-manual');
+    expect(data.manual_snapshot).toBeNull();
+    expect(repo.commitSubscriptionChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: REMOTE_ID,
+        refresh_mode: 'server-manual',
+      }),
+      7,
+      expect.anything(),
+      expect.objectContaining({
+        manualSnapshot: { type: 'keep' },
+        clearFetchHealth: true,
+      }),
+    );
   });
 });
 

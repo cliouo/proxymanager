@@ -30,6 +30,7 @@ import { deletePool, deleteSource, refreshSource, setPoolEnabled, setSourceEnabl
 import { AddSourceDialog, NewPoolDialog } from './create-dialogs';
 import {
   activeMembers,
+  canAutoRefresh,
   canServerRefresh,
   knownNodeCount,
   poolLink,
@@ -50,6 +51,11 @@ function nodeLine(source: Source): string {
   if (mode === 'local') return '本地节点';
   const count = knownNodeCount(source);
   if (mode === 'manual') return count !== null ? `${count} 个节点 · 手动导入` : '等待导入';
+  if (mode === 'server-manual') {
+    return count !== null && source.manual_snapshot
+      ? `${count} 个节点 · ${relativeTime(source.manual_snapshot.updated_at)}刷新`
+      : '待手动刷新';
+  }
   const health = source.fetch_health;
   if (!health) return '尚未拉取';
   if (count === null) return '暂无可用节点';
@@ -70,6 +76,7 @@ export function SourceCard({ source, subBase }: { source: Source; subBase: strin
   const health = sourceHealth(source);
   const traffic = source.traffic ?? trafficOf(source.fetch_health) ?? source.manual_snapshot?.traffic;
   const title = sourceTitle(source);
+  const mode = sourceMode(source);
   const refreshable = canServerRefresh(source);
   return (
     <article
@@ -90,6 +97,7 @@ export function SourceCard({ source, subBase }: { source: Source; subBase: strin
           <div className="mt-0.5 flex items-center gap-1.5">
             <span className="truncate font-mono text-[11px] text-ink-3">{source.name}</span>
             <Badge tone="outline">{source.kind === 'local' ? '本地' : '远程'}</Badge>
+            {mode === 'server-manual' && <Badge tone="neutral">仅手动刷新</Badge>}
           </div>
         </div>
         <div className="relative z-10 flex items-center gap-0.5">
@@ -112,7 +120,7 @@ export function SourceCard({ source, subBase }: { source: Source; subBase: strin
               ...(refreshable
                 ? [
                     {
-                      label: '刷新',
+                      label: mode === 'server-manual' ? '手动刷新' : '刷新',
                       icon: RefreshCw,
                       confirm: `刷新订阅源「${title}」`,
                       onSelect: async () => {
@@ -301,7 +309,7 @@ export function SourcesIndex() {
   const shownPools = (pools.data ?? []).filter(
     (p) => !needle || [p.name, p.slug ?? '', ...p.subscription_tags].some((v) => v.toLowerCase().includes(needle)),
   );
-  const refreshable = list.filter(canServerRefresh);
+  const refreshable = list.filter(canAutoRefresh);
 
   const refreshAll = async () => {
     setRefreshingAll(true);
@@ -398,7 +406,7 @@ export function SourcesIndex() {
               summary={`共 ${shownSources.length} 个订阅源`}
               items={shownSources.map((source) => ({
                 value: source.id,
-                label: `${sourceTitle(source)} (${source.name}) · ${source.kind === 'local' ? '本地' : '远程'} · ${source.enabled ? '启用' : '停用'} · ${nodeLine(source)}`,
+                label: `${sourceTitle(source)} (${source.name}) · ${source.kind === 'local' ? '本地' : source.refresh_mode === 'server-manual' ? '远程·仅手动刷新' : '远程'} · ${source.enabled ? '启用' : '停用'} · ${nodeLine(source)}`,
               }))}
               className="grid animate-rise gap-4 sm:grid-cols-2 @4xl/main:grid-cols-3"
             >

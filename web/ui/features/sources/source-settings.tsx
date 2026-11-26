@@ -52,6 +52,7 @@ export function SourceSettings({ source, active }: { source: Source; active: boo
       url: source.url ?? '',
       ua: source.ua_override ?? '',
       rows: headersToRows(source.custom_headers),
+      autoRefresh: source.refresh_mode !== 'server-manual' && source.refresh_mode !== 'manual',
       ttl: String(msToMinutes(source.ttl_ms)),
       policy: (source.fetch_failure_policy ?? 'use-stale-cache') as FailurePolicy,
       content: source.content ?? '',
@@ -67,7 +68,7 @@ export function SourceSettings({ source, active }: { source: Source; active: boo
   const errors = {
     name: validateSlug(form.name, taken, source.name),
     url: remote ? validateUrl(form.url) : null,
-    ttl: remote ? validateTtl(form.ttl) : null,
+    ttl: remote && form.autoRefresh ? validateTtl(form.ttl) : null,
     content: !remote && !form.content.trim() ? '节点内容不能为空' : null,
   };
   const invalid = Object.values(errors).some(Boolean) || (remote && Object.keys(headers.errors).length > 0);
@@ -82,8 +83,16 @@ export function SourceSettings({ source, active }: { source: Source; active: boo
     if (form.url.trim() !== (source.url ?? '')) patch.url = form.url.trim();
     if (form.ua.trim() !== (source.ua_override ?? '').trim()) patch.ua_override = form.ua.trim();
     if (!sameHeaders(headers.headers, source.custom_headers)) patch.custom_headers = headers.headers;
-    if (!errors.ttl && Number(form.ttl) !== msToMinutes(source.ttl_ms)) patch.ttl_ms = Number(form.ttl) * 60_000;
-    if (form.policy !== (source.fetch_failure_policy ?? 'use-stale-cache')) patch.fetch_failure_policy = form.policy;
+    if (source.refresh_mode === 'manual') {
+      if (form.autoRefresh) patch.refresh_mode = 'server-auto';
+    } else {
+      const nextMode = form.autoRefresh ? 'server-auto' : 'server-manual';
+      if (nextMode !== (source.refresh_mode ?? 'server-auto')) patch.refresh_mode = nextMode;
+    }
+    if (form.autoRefresh) {
+      if (!errors.ttl && Number(form.ttl) !== msToMinutes(source.ttl_ms)) patch.ttl_ms = Number(form.ttl) * 60_000;
+      if (form.policy !== (source.fetch_failure_policy ?? 'use-stale-cache')) patch.fetch_failure_policy = form.policy;
+    }
   } else if (form.content !== (source.content ?? '')) {
     patch.content = form.content;
   }
@@ -159,20 +168,41 @@ export function SourceSettings({ source, active }: { source: Source; active: boo
           <Field label="自定义请求头" optional>
             {() => <HeaderRowsEditor rows={form.rows} onChange={(rows) => set('rows', rows)} errors={headers.errors} />}
           </Field>
-          <Field label="缓存时长" error={errors.ttl} hint="这段时间内重复使用上次拉取的结果。">
-            {(id) => (
-              <Input
-                id={id}
-                inputMode="numeric"
-                value={form.ttl}
-                invalid={!!errors.ttl}
-                onChange={(e) => set('ttl', e.target.value.replace(/[^\d]/g, ''))}
-                trailing={<span className="pr-1 text-xs text-ink-3">分钟</span>}
-                className="w-40"
-              />
-            )}
-          </Field>
-          <Field label="拉取失败时">{() => <PolicyPicker value={form.policy} onChange={(p) => set('policy', p)} />}</Field>
+          <div className="flex items-center justify-between gap-4 border-t border-line pt-4">
+            <div>
+              <div className="text-[13px] font-medium text-ink">自动刷新</div>
+              <p className="mt-0.5 text-xs text-ink-3">
+                {form.autoRefresh
+                  ? '缓存过期后自动向上游拉取最新节点，也会包含在「全部刷新」中。'
+                  : source.refresh_mode === 'manual'
+                    ? '当前为「手动导入」模式，平台不会自动拉取。打开后将改回平台自动拉取。'
+                    : '关闭后绝不自动请求上游链接，永久保留上次手动刷新的缓存，直到你再次点击「手动刷新」。'}
+              </p>
+            </div>
+            <Switch
+              checked={form.autoRefresh}
+              onCheckedChange={(on) => set('autoRefresh', on)}
+              label="自动刷新上游订阅"
+            />
+          </div>
+          {form.autoRefresh && (
+            <>
+              <Field label="缓存时长" error={errors.ttl} hint="这段时间内重复使用上次拉取的结果。">
+                {(id) => (
+                  <Input
+                    id={id}
+                    inputMode="numeric"
+                    value={form.ttl}
+                    invalid={!!errors.ttl}
+                    onChange={(e) => set('ttl', e.target.value.replace(/[^\d]/g, ''))}
+                    trailing={<span className="pr-1 text-xs text-ink-3">分钟</span>}
+                    className="w-40"
+                  />
+                )}
+              </Field>
+              <Field label="拉取失败时">{() => <PolicyPicker value={form.policy} onChange={(p) => set('policy', p)} />}</Field>
+            </>
+          )}
         </Section>
       ) : (
         <Section title="节点内容" description="Clash 格式的 YAML，包含一个 proxies: 列表。保存前会检查所有用到它的配置文件。">

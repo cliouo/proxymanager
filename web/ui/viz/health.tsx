@@ -33,6 +33,25 @@ export interface HealthView {
 export function sourceHealth(source: Pick<SubscriptionAdminView, 'kind' | 'enabled' | 'fetch_health' | 'refresh_mode' | 'manual_snapshot'>): HealthView {
   if (!source.enabled) return { tone: 'idle', badge: 'neutral', label: '已停用', detail: '停用的源不会被拉取，也不会提供节点。' };
   if (source.kind === 'local') return { tone: 'ok', badge: 'neutral', label: '本地', detail: '节点内容保存在本平台，无需拉取。' };
+  if (source.refresh_mode === 'server-manual') {
+    const snap = source.manual_snapshot;
+    if (!snap) {
+      return {
+        tone: 'idle',
+        badge: 'neutral',
+        label: '待刷新',
+        detail: '已关闭自动刷新，还没有缓存节点，请激活订阅后手动点击「手动刷新」。',
+      };
+    }
+    const originLabel =
+      snap.origin === 'extension' ? '通过浏览器扩展导入' : snap.origin === 'web' ? '通过网页导入' : '手动刷新';
+    return {
+      tone: snap.source_changed ? 'warn' : 'ok',
+      badge: snap.source_changed ? 'warn' : 'ok',
+      label: '仅手动刷新',
+      detail: `${relativeTime(snap.updated_at)}${originLabel} · ${snap.proxy_count} 个节点 · 永久缓存${snap.source_changed ? ' · 拉取参数已变更，建议手动刷新' : ''}`,
+    };
+  }
   if (source.refresh_mode === 'manual') {
     const snap = source.manual_snapshot;
     if (!snap) return { tone: 'bad', badge: 'bad', label: '待导入', detail: '手动维护的源还没有导入内容。' };

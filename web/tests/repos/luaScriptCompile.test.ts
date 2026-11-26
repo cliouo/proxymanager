@@ -553,6 +553,66 @@ describe('subscription definition + separate snapshot fail-first CAS', () => {
     expect(values.get('render:profile-a')).toBe('{"configVersion":7}');
   });
 
+  it('supports server-manual without initial snapshot and commits server-origin snapshots atomically', () => {
+    const initialServerManual = JSON.stringify({
+      id: 'entity-1',
+      kind: 'remote',
+      url: 'https://mitce.example/sub',
+      refresh_mode: 'server-manual',
+      fetch_identity_revision: 1,
+    });
+    expect(
+      runSubscription(plan({ sources: [] }), {
+        snapshotAction: 'keep',
+        healthAction: 'delete',
+        mutate: (_keys, args) => {
+          args[2] = initialServerManual;
+        },
+      }),
+    ).toEqual([1, '8']);
+    expect(hash('entities').get('entity-1')).toBe(initialServerManual);
+
+    const refreshedServerManual = JSON.stringify({
+      id: 'entity-1',
+      kind: 'remote',
+      url: 'https://mitce.example/sub',
+      refresh_mode: 'server-manual',
+      fetch_identity_revision: 1,
+      manual_snapshot_meta: {
+        updated_at: 10,
+        proxy_count: 2,
+        info_proxy_count: 0,
+        origin: 'server',
+        fetch_identity_revision: 1,
+        content_sha256: 'a1d0ec66e897879f5c02474d3ca5de8db43d438a7e45c697f6eb0bf0ad1c615e',
+      },
+    });
+    expect(
+      runSubscription(plan({ sources: [] }), {
+        snapshotAction: 'set',
+        healthAction: 'delete',
+        mutate: (_keys, args) => {
+          args[0] = '8';
+          args[2] = refreshedServerManual;
+        },
+      }),
+    ).toEqual([1, '9']);
+    expect(values.get('manual-snapshot')).toBe('raw-content');
+
+    // Keep with meta requires the snapshot key to exist.
+    values.delete('manual-snapshot');
+    expect(
+      runSubscription(plan({ sources: [] }), {
+        snapshotAction: 'keep',
+        healthAction: 'keep',
+        mutate: (_keys, args) => {
+          args[0] = '9';
+          args[2] = refreshedServerManual;
+        },
+      }),
+    ).toEqual([2, 'manual-snapshot-missing']);
+  });
+
   it('atomically replaces the preflighted server-auto fetch cache', () => {
     seedSubscriptionState();
     values.set('fetch-cache', '{"content":"old"}');

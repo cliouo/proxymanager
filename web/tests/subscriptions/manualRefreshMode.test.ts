@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  fetchSubscriptionForManualSnapshot,
   resolveSubscriptionContent,
   resolveSubscriptionProxiesRaw,
   validateManualSubscriptionContent,
@@ -108,6 +109,77 @@ describe('manual remote subscription resolution', () => {
     ).rejects.toMatchObject({
       code: 'subscription_manual_snapshot_invalid',
       stage: 'definition',
+    });
+  });
+
+  it('never fetches upstream for server-manual even with noCache=true and preserves stored header traffic', async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    const headerTraffic = { upload: 100, download: 200, total: 1000, expire: 1_900_000_000 };
+    const sub = manualSub({
+      name: 'mitce',
+      refresh_mode: 'server-manual',
+      manual_snapshot_meta: {
+        updated_at: 7,
+        proxy_count: 1,
+        info_proxy_count: 0,
+        traffic: headerTraffic,
+        origin: 'server',
+        fetch_identity_revision: 2,
+        content_sha256: 'a'.repeat(64),
+      },
+    });
+
+    const result = await resolveSubscriptionContent(sub, {
+      noCache: true,
+      writeCache: false,
+      recordHealth: false,
+      contentOverrides: new Map([[SUB_ID, CLASH_CONTENT]]),
+    });
+
+    expect(result.proxyCount).toBe(1);
+    expect(result.traffic).toEqual(headerTraffic);
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    await expect(
+      resolveSubscriptionContent({ ...sub, manual_snapshot_meta: undefined }, {
+        noCache: true,
+        writeCache: false,
+        recordHealth: false,
+      }),
+    ).rejects.toMatchObject({
+      code: 'subscription_manual_snapshot_invalid',
+      stage: 'definition',
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('fetchSubscriptionForManualSnapshot fetches upstream, merges header traffic, and rejects HTTP failures cleanly', async () => {
+    const fetchSpy = vi.fn().mockResolvedValueOnce(
+      new Response(CLASH_CONTENT, {
+        status: 200,
+        headers: {
+          'subscription-userinfo': 'upload=10; download=20; total=100; expire=1900000000',
+        },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const sub = manualSub({ name: 'mitce', refresh_mode: 'server-manual' });
+    const fetched = await fetchSubscriptionForManualSnapshot(sub);
+    expect(fetched.proxyCount).toBe(1);
+    expect(fetched.infoProxyCount).toBe(0);
+    expect(fetched.content).toBe(CLASH_CONTENT);
+    expect(fetched.traffic).toEqual({
+      upload: 10,
+      download: 20,
+      total: 100,
+      expire: 1_900_000_000,
+    });
+
+    fetchSpy.mockResolvedValueOnce(new Response('forbidden', { status: 403 }));
+    await expect(fetchSubscriptionForManualSnapshot(sub)).rejects.toMatchObject({
+      category: 'http',
     });
   });
 });

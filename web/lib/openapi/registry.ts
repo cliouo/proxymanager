@@ -382,7 +382,7 @@ registry.registerPath({
   path: '/api/v1/subscriptions/{id}/refresh',
   summary: 'Refresh subscription from upstream',
   description:
-    "Force-fetches the upstream URL (bypasses the fetch cache — fresh-only, no stale serving), validates it parses as Clash YAML, and records actual-attempt fetch health (separate advisory value; NO definition-row write). The fresh content is cached and used at the next resolveConfig run when the subscription's nodes are injected into `/api/sub/{token}/default`. Returns the current admin view (effective fetch_failure_policy + fingerprint-matched fetch_health). Failures surface the fixed 503 (transport) / 422 (invalid upstream response) problem; the health receipt records failed-no-cache.",
+    "Force-fetches the upstream URL (bypasses the fetch cache — fresh-only, no stale serving), validates it parses as Clash YAML, and updates serving state. For `server-auto` sources, records actual-attempt fetch health (separate advisory value; NO definition-row write) and caches the fresh content. For `server-manual` sources (auto-refresh disabled), preflights consuming profiles and atomically persists the fetched content into the permanent no-TTL snapshot; failures leave the existing cached snapshot untouched. Returns the current admin view. Failures surface the fixed 503 (transport) / 422 (invalid upstream response) problem.",
   tags: ['subscriptions'],
   request: { params: z.object({ id: z.string() }) },
   responses: {

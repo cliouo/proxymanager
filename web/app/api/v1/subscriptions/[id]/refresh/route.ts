@@ -1,7 +1,11 @@
 import { withProblemDetails } from '@/lib/http/handler';
 import { ProblemDetailsError } from '@/lib/http/problem';
 import { resolveSubscriptionContent } from '@/lib/services/subscriptionFetcher';
-import { getSubscription, projectSubscriptionAdminView } from '@/lib/services/subscriptionService';
+import {
+  getSubscription,
+  projectSubscriptionAdminView,
+  refreshServerManualSubscription,
+} from '@/lib/services/subscriptionService';
 import {
   computeSubscriptionDefinitionFingerprint,
   getSubscriptionFetchHealth,
@@ -43,6 +47,11 @@ export const POST = withProblemDetails(async (_request: Request, ctx: Ctx) => {
     throw ProblemDetailsError.unprocessable(
       '该订阅由手动内容维护，请使用“手动更新”导入新内容，或先改回平台自动拉取。',
     );
+  }
+  if (sub.kind === 'remote' && effectiveSubscriptionRefreshMode(sub) === 'server-manual') {
+    const refreshed = await refreshServerManualSubscription(id, sub);
+    const view = projectSubscriptionAdminView(refreshed.subscription);
+    return Response.json({ data: view, meta: { proxyCount: refreshed.proxyCount } });
   }
 
   const resolved = await resolveSubscriptionContent(sub, {

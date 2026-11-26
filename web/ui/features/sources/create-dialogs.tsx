@@ -19,6 +19,7 @@ import {
   MultiCombobox,
   notify,
   SegmentedControl,
+  Switch,
   TagInput,
   Textarea,
 } from '@/ui/primitives';
@@ -63,6 +64,7 @@ export function AddSourceDialog({ open, onOpenChange, sources }: { open: boolean
   const [advanced, setAdvanced] = useState(false);
   const [ua, setUa] = useState('');
   const [rows, setRows] = useState<HeaderRow[]>([]);
+  const [autoRefresh, setAutoRefresh] = useState(true);
   const [ttl, setTtl] = useState(String(DEFAULT_TTL_MINUTES));
   const [policy, setPolicy] = useState<FailurePolicy>('use-stale-cache');
   const [content, setContent] = useState('');
@@ -74,7 +76,7 @@ export function AddSourceDialog({ open, onOpenChange, sources }: { open: boolean
   const errors = {
     url: kind === 'remote' ? validateUrl(url) : null,
     slug: validateSlug(effectiveSlug, taken),
-    ttl: kind === 'remote' ? validateTtl(ttl) : null,
+    ttl: kind === 'remote' && autoRefresh ? validateTtl(ttl) : null,
     content: kind === 'local' && !content.trim() ? '请粘贴节点内容（YAML，包含 proxies: 列表）' : null,
   };
   const headerErrors = kind === 'remote' ? headers.errors : {};
@@ -91,6 +93,7 @@ export function AddSourceDialog({ open, onOpenChange, sources }: { open: boolean
     setAdvanced(false);
     setUa('');
     setRows([]);
+    setAutoRefresh(true);
     setTtl(String(DEFAULT_TTL_MINUTES));
     setPolicy('use-stale-cache');
     setContent('');
@@ -115,6 +118,7 @@ export function AddSourceDialog({ open, onOpenChange, sources }: { open: boolean
             custom_headers: Object.keys(headers.headers).length ? headers.headers : undefined,
             ttl_ms: Number(ttl) * 60_000,
             fetch_failure_policy: policy,
+            refresh_mode: autoRefresh ? 'server-auto' : 'server-manual',
             tags,
             operators: [],
           }
@@ -131,9 +135,16 @@ export function AddSourceDialog({ open, onOpenChange, sources }: { open: boolean
     setSaving(true);
     try {
       const created = await api.post<Source>('/subscriptions', body);
-      notify.success(`已添加「${sourceTitle(created)}」`, kind === 'remote' ? '正在第一次拉取节点…' : undefined);
+      notify.success(
+        `已添加「${sourceTitle(created)}」`,
+        kind === 'remote'
+          ? autoRefresh
+            ? '正在第一次拉取节点…'
+            : '已关闭自动刷新，需要时请手动点击「手动刷新」拉取节点'
+          : undefined,
+      );
       refreshShared();
-      if (created.kind === 'remote') void refreshSource(created, true);
+      if (created.kind === 'remote' && autoRefresh) void refreshSource(created, true);
       reset();
       onOpenChange(false);
       router.push(`/sources/${created.id}`);
@@ -244,30 +255,49 @@ export function AddSourceDialog({ open, onOpenChange, sources }: { open: boolean
               <ChevronRight size={14} className={cn('transition-transform', advanced && 'rotate-90')} />
               高级设置
               <span data-agent-hidden className="text-xs font-normal text-ink-3">
-                User-Agent、请求头、缓存时长、失败策略
+                自动刷新、User-Agent、请求头、缓存时长、失败策略
               </span>
             </CollapsibleTrigger>
             <CollapsiblePanel className="flex flex-col gap-4 border-t border-line px-3.5 py-3.5">
-              <Field label="User-Agent" optional hint={`留空使用默认的 ${DEFAULT_UA}。部分机场按它决定返回的格式。`}>
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <div className="text-[13px] font-medium text-ink">自动刷新</div>
+                  <p className="mt-0.5 text-xs text-ink-3">
+                    {autoRefresh
+                      ? '缓存过期后自动向上游拉取最新节点，添加后会立即拉取一次。'
+                      : '关闭后绝不自动请求上游链接，永久保留上次手动刷新的缓存（适合仅短时间激活有效的机场订阅）。'}
+                  </p>
+                </div>
+                <Switch
+                  checked={autoRefresh}
+                  onCheckedChange={setAutoRefresh}
+                  label="自动刷新上游订阅"
+                />
+              </div>
+              <Field label="User-Agent" optional hint={`留空使用默认的 ${DEFAULT_UA}。`}>
                 {(id) => <Input id={id} mono value={ua} placeholder={DEFAULT_UA} onChange={(e) => setUa(e.target.value)} />}
               </Field>
               <Field label="自定义请求头" optional>
                 {() => <HeaderRowsEditor rows={rows} onChange={setRows} errors={headerErrors} />}
               </Field>
-              <Field label="缓存时长" error={show('ttl')} hint="这段时间内重复使用上次拉取的结果，减少对机场的请求。">
-                {(id) => (
-                  <Input
-                    id={id}
-                    inputMode="numeric"
-                    value={ttl}
-                    invalid={!!show('ttl')}
-                    onChange={(e) => setTtl(e.target.value.replace(/[^\d]/g, ''))}
-                    trailing={<span className="pr-1 text-xs text-ink-3">分钟</span>}
-                    className="w-40"
-                  />
-                )}
-              </Field>
-              <Field label="拉取失败时">{() => <PolicyPicker value={policy} onChange={setPolicy} />}</Field>
+              {autoRefresh && (
+                <>
+                  <Field label="缓存时长" error={show('ttl')} hint="这段时间内重复使用上次拉取的结果，减少对机场的请求。">
+                    {(id) => (
+                      <Input
+                        id={id}
+                        inputMode="numeric"
+                        value={ttl}
+                        invalid={!!show('ttl')}
+                        onChange={(e) => setTtl(e.target.value.replace(/[^\d]/g, ''))}
+                        trailing={<span className="pr-1 text-xs text-ink-3">分钟</span>}
+                        className="w-40"
+                      />
+                    )}
+                  </Field>
+                  <Field label="拉取失败时">{() => <PolicyPicker value={policy} onChange={setPolicy} />}</Field>
+                </>
+              )}
             </CollapsiblePanel>
           </Collapsible>
         )}

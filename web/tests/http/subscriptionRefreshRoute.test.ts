@@ -22,7 +22,7 @@ const fetchHealthRepo = vi.hoisted(() => ({
 const repos = vi.hoisted(() => ({
   getConfigVersion: vi.fn(async () => 7),
   getSubscription: vi.fn(),
-  listSubscriptions: vi.fn(async () => []),
+  listSubscriptions: vi.fn(async () => [] as Subscription[]),
   listProfiles: vi.fn(async () => []),
   listCollections: vi.fn(async () => []),
   getOrdinalGeneration: vi.fn(async () => 0),
@@ -30,10 +30,12 @@ const repos = vi.hoisted(() => ({
 }));
 
 const resolveContent = vi.hoisted(() => vi.fn());
+const fetchForManualSnapshot = vi.hoisted(() => vi.fn());
 
 vi.mock('@/lib/repos/configVersionRepo', () => ({ getConfigVersion: repos.getConfigVersion }));
 vi.mock('@/lib/services/subscriptionFetcher', () => ({
   resolveSubscriptionContent: resolveContent,
+  fetchSubscriptionForManualSnapshot: fetchForManualSnapshot,
 }));
 vi.mock('@/lib/repos/subscriptionsRepo', () => ({
   getSubscription: repos.getSubscription,
@@ -286,6 +288,67 @@ describe('POST /api/v1/subscriptions/{id}/refresh (v2 I14)', () => {
       status: 422,
       detail: 'Upstream response content is not a valid subscription',
     });
+  });
+
+  it('refreshes server-manual subscriptions into the permanent no-TTL snapshot and keeps old snapshot on upstream failure', async () => {
+    const mitce = sub({
+      name: 'mitce',
+      refresh_mode: 'server-manual',
+      fetch_identity_revision: 2,
+    });
+    repos.getSubscription.mockResolvedValue(mitce);
+    repos.listSubscriptions.mockResolvedValue([mitce]);
+    const yaml = 'proxies:\n  - { name: HK-1, type: direct }\n';
+    fetchForManualSnapshot.mockResolvedValue({
+      content: yaml,
+      proxyCount: 1,
+      infoProxyCount: 0,
+      traffic: { upload: 1, download: 2, total: 100, expire: 1_900_000_000 },
+    });
+
+    const okRes = await POST(new Request('https://pm.test/x'), {
+      params: Promise.resolve({ id: SUB_ID }),
+    } as never);
+    expect(okRes.status).toBe(200);
+    const okBody = (await json(okRes)) as {
+      data: SubscriptionAdminView;
+      meta: { proxyCount: number };
+    };
+    expect(okBody.data.refresh_mode).toBe('server-manual');
+    expect(okBody.data.fetch_health).toBeNull();
+    expect(okBody.data.manual_snapshot).toMatchObject({
+      origin: 'server',
+      proxy_count: 1,
+      source_changed: false,
+      traffic: { upload: 1, download: 2, total: 100, expire: 1_900_000_000 },
+    });
+    expect(okBody.meta.proxyCount).toBe(1);
+    expect(repos.commitSubscriptionChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: SUB_ID,
+        refresh_mode: 'server-manual',
+        manual_snapshot_meta: expect.objectContaining({
+          origin: 'server',
+          proxy_count: 1,
+        }),
+      }),
+      7,
+      expect.anything(),
+      expect.objectContaining({
+        manualSnapshot: { type: 'set', content: yaml },
+        clearFetchHealth: true,
+      }),
+    );
+    expect(fetchHealthRepo.getSubscriptionFetchHealth).not.toHaveBeenCalled();
+
+    // When the 60s window is closed, upstream fails and NO commit overwrites the existing snapshot.
+    repos.commitSubscriptionChange.mockClear();
+    fetchForManualSnapshot.mockRejectedValueOnce(new RemoteFetchAttemptError('http'));
+    const failRes = await POST(new Request('https://pm.test/x'), {
+      params: Promise.resolve({ id: SUB_ID }),
+    } as never);
+    expect(failRes.status).toBe(503);
+    expect(repos.commitSubscriptionChange).not.toHaveBeenCalled();
   });
 
   it('404s an unknown subscription and 422s a disabled one before any resolve', async () => {

@@ -178,26 +178,40 @@ export function validateTtl(value: string): string | null {
 
 /* ─── source facts ───────────────────────────────────────────────────── */
 
-export type SourceMode = 'local' | 'manual' | 'auto';
+export type SourceMode = 'local' | 'manual' | 'server-manual' | 'auto';
 
 export function sourceMode(source: Pick<Source, 'kind' | 'refresh_mode'>): SourceMode {
   if (source.kind === 'local') return 'local';
-  return source.refresh_mode === 'manual' ? 'manual' : 'auto';
+  if (source.refresh_mode === 'manual') return 'manual';
+  if (source.refresh_mode === 'server-manual') return 'server-manual';
+  return 'auto';
 }
 
-export const MODE_LABEL: Record<SourceMode, string> = { local: '本地', manual: '手动导入', auto: '远程' };
+export const MODE_LABEL: Record<SourceMode, string> = {
+  local: '本地',
+  manual: '手动导入',
+  'server-manual': '仅手动刷新',
+  auto: '远程',
+};
 
 /** The node count we can honestly state from the list view (null = unknown). */
 export function knownNodeCount(source: Source): number | null {
   if (!source.enabled) return null;
   if (source.kind === 'local') return null;
-  if (source.refresh_mode === 'manual') return source.manual_snapshot?.proxy_count ?? null;
+  if (source.refresh_mode === 'manual' || source.refresh_mode === 'server-manual') {
+    return source.manual_snapshot?.proxy_count ?? null;
+  }
   const health = source.fetch_health;
   if (!health || health.state === 'failed-no-cache') return null;
   return health.proxy_count;
 }
 
 export function canServerRefresh(source: Source): boolean {
+  const mode = sourceMode(source);
+  return source.enabled && (mode === 'auto' || mode === 'server-manual');
+}
+
+export function canAutoRefresh(source: Source): boolean {
   return source.enabled && sourceMode(source) === 'auto';
 }
 
