@@ -21,7 +21,9 @@ import {
   type AppAgent,
 } from '@/ui/agent';
 import { dispatchAgentTool, runAgent } from '@/ui/assistant/agent';
+import { AppToaster, appToaster, notify } from '@/ui/primitives/feedback';
 import { useHotkey } from '@/ui/shell/hotkeys';
+import { setUi } from '@/ui/shell/state';
 import type { AssistantConfig } from '@/ui/data/types';
 
 import { setTrustCheckForTests } from '@/ui/agent/takeover';
@@ -69,6 +71,8 @@ describe('AI workspace takeover', () => {
   });
 
   afterEach(() => {
+    appToaster.dismiss();
+    setUi({ assistantOpen: false, assistantDocked: false });
     cleanup();
     resetTakeoverForTests();
     clearAgentConfirms();
@@ -536,5 +540,40 @@ describe('AI workspace takeover', () => {
       window.removeEventListener('submit', markSubmitTrusted, true);
       releaseTakeover(owner);
     }
+  });
+
+  it('offsets AppToaster clear of docked AI sidebar and exempts toast close clicks from pausing takeover', async () => {
+    const owner = new AbortController();
+    setUi({ assistantOpen: true, assistantDocked: true });
+
+    render(
+      <div>
+        <AppToaster />
+        <AgentHost />
+      </div>,
+    );
+
+    act(() => {
+      acquireTakeover(owner, { activityLabel: '新建策略组' });
+      notify.success('已创建「日本节点」');
+    });
+
+    const closeBtn = await screen.findByRole('button', { name: '关闭通知' });
+    const region = closeBtn.closest('[role="region"], [aria-label="通知"]');
+    expect(region?.className).toContain('right-[452px]');
+    expect(closeBtn.closest('[data-takeover-exempt]')).not.toBeNull();
+
+    // Trusted pointerdown + click on toast close button must NOT be blocked or pause takeover.
+    const down = makePointerEvent('pointerdown', { pointerId: 11, pointerType: 'mouse' });
+    const click = makeTrustedEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    act(() => {
+      closeBtn.dispatchEvent(down);
+      closeBtn.dispatchEvent(click);
+    });
+    expect(down.defaultPrevented).toBe(false);
+    expect(click.defaultPrevented).toBe(false);
+    expect(getTakeoverSnapshot().mode).toBe('standby');
+
+    releaseTakeover(owner);
   });
 });
