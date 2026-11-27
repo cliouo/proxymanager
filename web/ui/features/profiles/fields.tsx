@@ -106,6 +106,7 @@ export function SourceField({
             ) : (
               <Select
                 id={id}
+                label={value.mode === 'subscription' ? '选择订阅源' : '选择聚合订阅'}
                 value={value.id ?? undefined}
                 onValueChange={(next) => onChange({ mode: value.mode, id: next })}
                 placeholder={value.mode === 'subscription' ? '选择一个订阅源' : '选择一个聚合订阅'}

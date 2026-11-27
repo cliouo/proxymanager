@@ -1,4 +1,5 @@
-import { render } from '@testing-library/react';
+import { useState } from 'react';
+import { render, waitFor } from '@testing-library/react';
 import { createAgent } from '@ui-sdk/react/agent';
 import {
   Command,
@@ -15,8 +16,10 @@ import {
   analyzeToolError,
   buildLatestDiagnosticReport,
   clearLatestDiagnostics,
+  scrubErrorPattern,
   scrubRouteTemplate,
 } from '@/ui/assistant/diagnostics';
+import { Button, Dialog } from '@/ui/primitives';
 import { shouldCancelAssistantFocusOut } from '@/ui/primitives/overlay-scope';
 import { ProfileSwitcher } from '@/ui/shell/profile-switcher';
 import { setUi } from '@/ui/shell/state';
@@ -351,5 +354,156 @@ describe('P0 assistant overlay persistence, error taxonomy, and scrubbed diagnos
     expect(overflow.calls).toHaveLength(MAX_CALL_RECORDS);
     expect(overflow.summary.droppedCalls).toBe(9);
     expect(overflow.summary.noEffectActCalls).toBe(4);
+  });
+
+  test('waits for async aria-busy submit buttons to settle before act returns', async () => {
+    const agent = createAgent({ allow: createAppAllow() });
+    let finishRequest!: () => void;
+    const requestPromise = new Promise<void>((resolve) => {
+      finishRequest = resolve;
+    });
+
+    function AsyncSubmitDialog() {
+      const [open, setOpen] = useState(true);
+      const [busy, setBusy] = useState(false);
+      return (
+        <Dialog
+          open={open}
+          onOpenChange={setOpen}
+          title="新建策略组"
+          footer={
+            <Button
+              variant="primary"
+              loading={busy}
+              onClick={async () => {
+                setBusy(true);
+                await requestPromise;
+                setBusy(false);
+                setOpen(false);
+              }}
+            >
+              创建
+            </Button>
+          }
+        >
+          <p>表单内容</p>
+        </Dialog>
+      );
+    }
+
+    render(<AsyncSubmitDialog />);
+    const actPromise = dispatchAgentTool('act', { steps: [{ ref: '创建', action: 'press' }] }, { agent });
+
+    let settledEarly = false;
+    void actPromise.then(() => {
+      settledEarly = true;
+    });
+
+    // Give the click + React loading={true} + @ui-sdk internal settle time; act must still be waiting on aria-busy
+    await waitFor(() => {
+      expect(document.querySelector('button[aria-busy="true"]')).toBeTruthy();
+    });
+    await new Promise((r) => setTimeout(r, 150));
+    expect(settledEarly).toBe(false);
+
+    // Resolve the async request -> dialog closes and act returns with settledAfterBusy + dialogClosed
+    finishRequest();
+    const res = await actPromise;
+    expect(res.kind).toBe('act');
+    const payload = JSON.parse(res.modelContent) as { settledAfterBusy?: boolean; dialogClosed?: boolean };
+    expect(payload.settledAfterBusy).toBe(true);
+    expect(payload.dialogClosed).toBe(true);
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  test('isolates #scroll-root with data-agent-hidden while a scoped Dialog is open so duplicate background controls do not collide', async () => {
+    const agent = createAgent({ allow: createAppAllow() });
+    setUi({ assistantOpen: true, assistantDocked: true });
+    const bgClick = vi.fn();
+    const dialogClick = vi.fn();
+
+    function IsolationHarness() {
+      const [open, setOpen] = useState(true);
+      return (
+        <main id="main">
+          <div id="scroll-root">
+            <Button onClick={bgClick}>香港</Button>
+          </div>
+          <div id="main-overlay-root" />
+          <Dialog open={open} onOpenChange={setOpen} title="新建策略组">
+            <Button onClick={dialogClick}>香港</Button>
+            <Button onClick={() => setOpen(false)}>关闭窗口</Button>
+          </Dialog>
+        </main>
+      );
+    }
+
+    render(<IsolationHarness />);
+
+    await waitFor(() => {
+      expect(document.getElementById('scroll-root')?.getAttribute('data-agent-hidden')).toBe('true');
+    });
+
+    // Pressing "香港" must NOT hit label_ambiguous and must click only the dialog's button
+    const res = await dispatchAgentTool('act', { steps: [{ ref: '香港', action: 'press' }] }, { agent });
+    expect(res.kind, res.modelContent).toBe('act');
+    expect(dialogClick).toHaveBeenCalledTimes(1);
+    expect(bgClick).toHaveBeenCalledTimes(0);
+
+    // Closing the dialog restores #scroll-root visibility for the agent
+    await dispatchAgentTool('act', { steps: [{ ref: '关闭窗口', action: 'press' }] }, { agent });
+    await waitFor(() => {
+      expect(document.getElementById('scroll-root')?.getAttribute('data-agent-hidden')).toBeNull();
+    });
+  });
+
+  test('classifies disabled controls as control_disabled with form validation hints and scrubs errorPattern', async () => {
+    const agent = createAgent({ allow: createAppAllow() });
+    render(
+      <div role="dialog" aria-label="新建策略组">
+        <p data-validation-hint>选一个地区，或写一个筛选正则</p>
+        <Button disabled>创建</Button>
+      </div>,
+    );
+
+    const recorder = new RunDiagnosticRecorder({
+      model: 'deepseek-flash',
+      initialRoute: '/p/secret-alpha/groups',
+      agent,
+    });
+    try {
+      const res = await dispatchAgentTool(
+        'act',
+        { steps: [{ ref: '创建', action: 'press' }] },
+        { agent, diagnostics: recorder, round: 0, slot: '0:0' },
+      );
+      expect(res.kind).toBe('error');
+      const payload = JSON.parse(res.modelContent) as { errorCode?: string; hint?: string };
+      expect(payload.errorCode, res.modelContent).toBe('control_disabled');
+      expect(payload.hint).toContain('选一个地区，或写一个筛选正则');
+
+      const rawReport = buildLatestDiagnosticReport()!;
+      expect(rawReport).not.toContain('secret-alpha');
+      const report = JSON.parse(rawReport) as {
+        calls: Array<{ errorCode?: string; errorPattern?: string }>;
+      };
+      expect(report.calls[0].errorCode).toBe('control_disabled');
+      expect(report.calls[0].errorPattern).toBeTruthy();
+      expect(report.calls[0].errorPattern).not.toMatch(/\bc\d+\b/);
+
+      const scrubbed = scrubErrorPattern(
+        'No component "secret-profile-alpha" at https://sub.example.com/tok/550e8400-e29b-41d4-a716-446655440000 on c99. Its labels: a, b, c',
+      );
+      expect(scrubbed).not.toContain('secret-profile-alpha');
+      expect(scrubbed).not.toContain('sub.example.com');
+      expect(scrubbed).not.toContain('550e8400');
+      expect(scrubbed).not.toContain('c99');
+      expect(scrubbed).toContain('<text>');
+      expect(scrubbed).toContain('<url>');
+      expect(scrubbed).toContain('<ref>');
+      expect(scrubbed).toContain('Its labels: <list>');
+    } finally {
+      recorder.dispose();
+    }
   });
 });

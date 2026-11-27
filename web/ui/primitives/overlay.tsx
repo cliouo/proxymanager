@@ -43,6 +43,7 @@ import { Button } from './button';
 import {
   ASSISTANT_PERSISTENT_SELECTORS,
   shouldCancelAssistantFocusOut,
+  useIsolateBackgroundForAgent,
   useWorkspaceOverlayScope,
 } from './overlay-scope';
 
@@ -142,6 +143,7 @@ export function Dialog({
   const { scopedContainer, keepAssistantInteractive } = useWorkspaceOverlayScope();
   const isScoped = Boolean(scopedContainer);
   const handleOpenChange = useGuardedOpenChange(open, onOpenChange);
+  useIsolateBackgroundForAgent(open, contentRef);
 
   const tree = (
     <UiDialog
@@ -235,9 +237,11 @@ export function Sheet({
   width = 480,
   headerExtra,
 }: SheetProps) {
+  const contentRef = useRef<HTMLDivElement>(null);
   const { scopedContainer, keepAssistantInteractive } = useWorkspaceOverlayScope();
   const isScoped = Boolean(scopedContainer);
   const handleOpenChange = useGuardedOpenChange(open, onOpenChange);
+  useIsolateBackgroundForAgent(open, contentRef);
 
   const tree = (
     <UiDialog
@@ -254,6 +258,7 @@ export function Sheet({
         )}
       />
       <DialogContent
+        ref={contentRef}
         inline={keepAssistantInteractive || undefined}
         style={{ width: isScoped ? `min(${width}px, calc(100% - 16px))` : `min(${width}px, calc(100vw - 16px))` }}
         className={cn(

@@ -24,6 +24,7 @@ describe('shared customTools for WebMCP and in-site AI', () => {
         'query',
         'act',
         'wait_for',
+        'get_node_catalog_summary',
         'search_mihomo_docs',
         'fetch_url',
         'preview_direct_alias_migration',
@@ -230,5 +231,85 @@ describe('shared customTools for WebMCP and in-site AI', () => {
     const data = res.data as { found: boolean; waitedMs: number };
     expect(data.found).toBe(true);
     expect(data.waitedMs).toBeGreaterThanOrEqual(25);
+  });
+
+  test('get_node_catalog_summary aggregates profile and pool nodes by region with preset patterns', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes('/api/v1/preview/zeta')) {
+        return new Response(
+          JSON.stringify({
+            data: {
+              node_names: ['🇭🇰 香港 01', '香港 IEPL 02', '🇯🇵 东京 01', 'US-LA-01', '神秘实验节点'],
+              nodes_by_sub: { airportA: ['🇭🇰 香港 01', '香港 IEPL 02', '🇯🇵 东京 01'], airportB: ['US-LA-01', '神秘实验节点'] },
+              node_types: { '🇭🇰 香港 01': 'ss', '香港 IEPL 02': 'ss', '🇯🇵 东京 01': 'trojan', 'US-LA-01': 'vmess' },
+              warnings: [],
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      if (url.endsWith('/api/v1/collections/pool-1')) {
+        return new Response(
+          JSON.stringify({ data: { id: 'pool-1', name: '主力聚合', operators: [] } }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      if (url.endsWith('/api/v1/collections/pool-1/preview')) {
+        return new Response(
+          JSON.stringify({
+            data: {
+              before: { count: 2, names: ['🇸🇬 新加坡 01', '🇸🇬 新加坡 02'], truncated: false },
+              after: { count: 2, names: ['🇸🇬 新加坡 01', '🇸🇬 新加坡 02'], truncated: false },
+              steps: [],
+              issues: [],
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      return new Response(JSON.stringify({ data: {} }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    });
+
+    const profileRes = await dispatchAgentTool(
+      'get_node_catalog_summary',
+      { profile: 'zeta', sample_per_region: 2 },
+      { agent },
+    );
+    expect(profileRes.kind).toBe('custom');
+    const profileData = profileRes.data as {
+      ok: boolean;
+      totalNodes: number;
+      regions: Array<{ code: string | null; label: string; count: number; presetPattern?: string; samples?: string[] }>;
+      bySubscription: Array<{ name: string; count: number }>;
+      protocols: Record<string, number>;
+    };
+    expect(profileData.ok).toBe(true);
+    expect(profileData.totalNodes).toBe(5);
+    expect(profileData.regions[0]).toMatchObject({
+      code: 'HK',
+      label: '香港',
+      count: 2,
+      samples: ['🇭🇰 香港 01', '香港 IEPL 02'],
+    });
+    expect(profileData.regions[0].presetPattern).toContain('HK');
+    expect(profileData.regions.at(-1)).toMatchObject({ code: null, label: '其他', count: 1 });
+    expect(profileData.bySubscription).toEqual([
+      { name: 'airportA', count: 3 },
+      { name: 'airportB', count: 2 },
+    ]);
+    expect(profileData.protocols).toEqual({ ss: 2, trojan: 1, vmess: 1 });
+
+    const poolRes = await dispatchAgentTool(
+      'get_node_catalog_summary',
+      { pool_id: 'pool-1' },
+      { agent },
+    );
+    expect(poolRes.kind).toBe('custom');
+    expect(poolRes.data).toMatchObject({
+      ok: true,
+      scope: { kind: 'collection', id: 'pool-1', name: '主力聚合' },
+      totalNodes: 2,
+    });
   });
 });

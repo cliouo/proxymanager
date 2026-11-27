@@ -1,7 +1,10 @@
 'use client';
 
+import { detectRegion, regionByCode } from '@/lib/proxies/regions';
 import { errorMessage, request, withRequestSource } from '@/ui/data/api';
 import { refreshShared } from '@/ui/data/hooks';
+import type { Collection, PipelinePreview, PreviewData, Profile, SubscriptionAdminView } from '@/ui/data/types';
+import { REGION_PRESETS } from '@/ui/features/groups/model';
 import { lastProfileName } from '@/ui/shell/scope';
 import type { AppAgent } from './bridge';
 import { requestAgentConfirm } from './confirm';
@@ -44,6 +47,184 @@ function resolveProfileQuery(input: Record<string, unknown>): Record<string, str
     if (remembered) return { profile: remembered };
   }
   return {};
+}
+
+async function getTool<T>(
+  path: string,
+  query?: Record<string, string>,
+  signal?: AbortSignal,
+): Promise<T> {
+  const res = await request<{ data: T }>(path, { method: 'GET', query, signal });
+  return res.data;
+}
+
+const REGION_PRESET_BY_CODE = new Map<string, (typeof REGION_PRESETS)[number]>(
+  REGION_PRESETS.map((preset) => [preset.code, preset]),
+);
+
+function summarizeNodeCatalog(
+  names: readonly string[],
+  options: {
+    samplePerRegion: number;
+    nodesBySub?: Record<string, string[]>;
+    nodeTypes?: Record<string, string>;
+  },
+) {
+  const { samplePerRegion, nodesBySub, nodeTypes } = options;
+  const buckets = new Map<string, { code: string | null; label: string; count: number; samples: string[] }>();
+
+  for (const name of names) {
+    const code = detectRegion(name);
+    const key = code ?? '__other__';
+    let bucket = buckets.get(key);
+    if (!bucket) {
+      bucket = {
+        code,
+        label: code ? (regionByCode(code)?.zh ?? code) : '其他',
+        count: 0,
+        samples: [],
+      };
+      buckets.set(key, bucket);
+    }
+    bucket.count += 1;
+    if (bucket.samples.length < samplePerRegion) {
+      bucket.samples.push(name);
+    }
+  }
+
+  const regions = [...buckets.values()]
+    .sort((a, b) => (a.code === null ? 1 : b.code === null ? -1 : b.count - a.count))
+    .map((bucket) => {
+      const preset = bucket.code ? REGION_PRESET_BY_CODE.get(bucket.code) : undefined;
+      return {
+        code: bucket.code,
+        label: bucket.label,
+        count: bucket.count,
+        ...(preset ? { presetName: preset.name, presetPattern: preset.pattern } : {}),
+        ...(samplePerRegion > 0 ? { samples: bucket.samples } : {}),
+      };
+    });
+
+  const bySubscription = nodesBySub
+    ? Object.entries(nodesBySub)
+        .map(([name, list]) => ({ name, count: list.length }))
+        .sort((a, b) => b.count - a.count)
+    : undefined;
+
+  let protocols: Record<string, number> | undefined;
+  if (nodeTypes) {
+    const counts: Record<string, number> = {};
+    for (const type of Object.values(nodeTypes)) {
+      if (!type) continue;
+      counts[type] = (counts[type] ?? 0) + 1;
+    }
+    if (Object.keys(counts).length > 0) protocols = counts;
+  }
+
+  return { regions, bySubscription, protocols };
+}
+
+async function runNodeCatalogSummary(
+  input: Record<string, unknown>,
+  signal?: AbortSignal,
+): Promise<unknown> {
+  const rawSample = typeof input.sample_per_region === 'number' && Number.isFinite(input.sample_per_region)
+    ? Math.round(input.sample_per_region)
+    : 3;
+  const samplePerRegion = Math.min(10, Math.max(0, rawSample));
+
+  const explicitProfile =
+    (typeof input.profile_id === 'string' && input.profile_id.trim()) ||
+    (typeof input.profile === 'string' && input.profile.trim());
+  let poolId = typeof input.pool_id === 'string' ? input.pool_id.trim() : '';
+  let subscriptionId = typeof input.subscription_id === 'string' ? input.subscription_id.trim() : '';
+
+  if (!explicitProfile && !poolId && !subscriptionId && typeof window !== 'undefined') {
+    const path = window.location.pathname;
+    const poolMatch = path.match(/^\/(?:sources\/)?pools\/([^/]+)/);
+    const subMatch = path.match(/^\/sources\/([^/]+)/);
+    if (poolMatch?.[1]) {
+      poolId = decodeURIComponent(poolMatch[1]);
+    } else if (subMatch?.[1] && subMatch[1] !== 'pools') {
+      subscriptionId = decodeURIComponent(subMatch[1]);
+    }
+  }
+
+  if (poolId) {
+    const pool = await getTool<Collection>(`/collections/${encodeURIComponent(poolId)}`, undefined, signal);
+    const preview = await postTool<PipelinePreview>(
+      `/collections/${encodeURIComponent(poolId)}/preview`,
+      { operators: pool.operators ?? [] },
+      undefined,
+      signal,
+    );
+    const summary = summarizeNodeCatalog(preview.after.names, { samplePerRegion });
+    return {
+      ok: true,
+      scope: { kind: 'collection', id: pool.id, name: pool.name },
+      totalNodes: preview.after.count,
+      truncated: preview.after.truncated,
+      regions: summary.regions,
+      ...(preview.memberErrors?.length ? { memberErrors: preview.memberErrors } : {}),
+    };
+  }
+
+  if (subscriptionId) {
+    const sub = await getTool<SubscriptionAdminView>(
+      `/subscriptions/${encodeURIComponent(subscriptionId)}`,
+      undefined,
+      signal,
+    );
+    const preview = await postTool<PipelinePreview>(
+      `/subscriptions/${encodeURIComponent(subscriptionId)}/preview`,
+      { operators: sub.operators ?? [] },
+      undefined,
+      signal,
+    );
+    const summary = summarizeNodeCatalog(preview.after.names, { samplePerRegion });
+    return {
+      ok: true,
+      scope: { kind: 'subscription', id: sub.id, name: sub.display_name || sub.name },
+      totalNodes: preview.after.count,
+      truncated: preview.after.truncated,
+      regions: summary.regions,
+    };
+  }
+
+  const query = resolveProfileQuery(input);
+  let profileName = query.profile;
+  const profileId = query.profileId;
+  if (!profileName && profileId) {
+    const profiles = await getTool<Profile[]>('/profiles', undefined, signal);
+    const matched = profiles.find((p) => p.id === profileId);
+    if (!matched) return { ok: false, error: `找不到配置文件：${profileId}` };
+    profileName = matched.name;
+  }
+  if (!profileName) {
+    return { ok: false, error: '未指定配置文件、聚合订阅或订阅源，请传入 profile、pool_id 或 subscription_id。' };
+  }
+
+  const preview = await getTool<PreviewData>(
+    `/preview/${encodeURIComponent(profileName)}`,
+    profileId ? { profileId } : undefined,
+    signal,
+  );
+  const names = preview.node_names ?? [];
+  const summary = summarizeNodeCatalog(names, {
+    samplePerRegion,
+    nodesBySub: preview.nodes_by_sub,
+    nodeTypes: preview.node_types,
+  });
+  return {
+    ok: true,
+    scope: { kind: 'profile', profile: profileName, ...(profileId ? { profileId } : {}) },
+    totalNodes: names.length,
+    truncated: false,
+    regions: summary.regions,
+    ...(summary.bySubscription ? { bySubscription: summary.bySubscription } : {}),
+    ...(summary.protocols ? { protocols: summary.protocols } : {}),
+    ...(preview.warnings?.length ? { warnings: preview.warnings } : {}),
+  };
 }
 
 async function postTool<T>(
@@ -153,6 +334,35 @@ export const customTools: readonly CustomAgentTool[] = [
         signal: ctx.signal,
         agent: ctx.agent,
       }),
+  },
+  {
+    name: 'get_node_catalog_summary',
+    label: '读取节点地区分布摘要',
+    effect: 'read',
+    description:
+      '只读摘要：一次性返回当前配置文件、聚合订阅（pool_id）或订阅源（subscription_id）的节点总数、按地区归类计数（含推荐正则 presetPattern 与示例节点名）、按来源统计和协议分布。规划地区策略组或摸清可用节点时直接调用，无需对长列表反复翻页 query。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ...PROFILE_SCOPE_PROPS,
+        pool_id: {
+          type: 'string',
+          description: '可选：聚合订阅 UUID。处于聚合订阅详情页且未传 profile 时会自动识别当前聚合订阅。',
+        },
+        subscription_id: {
+          type: 'string',
+          description: '可选：订阅源 UUID。处于订阅源详情页且未传 profile 时会自动识别当前订阅源。',
+        },
+        sample_per_region: {
+          type: 'integer',
+          minimum: 0,
+          maximum: 10,
+          default: 3,
+          description: '可选：每个地区返回多少条示例节点名（默认 3，上限 10）。',
+        },
+      },
+    },
+    run: (input, ctx) => runNodeCatalogSummary(input, ctx.signal),
   },
   {
     name: 'search_mihomo_docs',

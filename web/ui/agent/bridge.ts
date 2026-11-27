@@ -38,6 +38,7 @@ interface ActiveCallContext {
   owner?: AbortController;
   signal?: AbortSignal;
   onNavigationIntent?: (expectedPath?: string) => void;
+  onPressedTarget?: (target: HTMLElement) => void;
 }
 
 const NON_NAV_COMMANDS = new Set([
@@ -188,6 +189,9 @@ export function createAppAllow() {
     if (nav.expected) {
       ctx?.onNavigationIntent?.(nav.expectedPath);
     }
+    if (target && (step.action === 'press' || step.action === 'click')) {
+      ctx?.onPressedTarget?.(target);
+    }
 
     emitStepFxOnce(step, target);
     return true;
@@ -236,6 +240,7 @@ export async function runAgentAct(
     owner?: AbortController;
     agent?: AppAgent;
     onNavigationIntent?: (expectedPath?: string) => void;
+    onPressedTarget?: (target: HTMLElement) => void;
   },
 ) {
   const target = options?.agent ?? getAgent();
@@ -247,6 +252,7 @@ export async function runAgentAct(
     owner: options?.owner,
     signal: options?.signal,
     onNavigationIntent: options?.onNavigationIntent,
+    onPressedTarget: options?.onPressedTarget,
   };
   try {
     return await withRequestSource(source, () =>

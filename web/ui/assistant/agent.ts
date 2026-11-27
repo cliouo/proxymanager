@@ -15,6 +15,7 @@ import {
   runAgentAct,
   runAgentQuery,
   settleRouteCommit,
+  waitForBusySubmitSettle,
   waitForRouteChange,
   waitIfPaused,
   type AgentStep,
@@ -567,6 +568,12 @@ export async function dispatchAgentTool(
         endActing = markTakeoverActing(owner, label, { mutating: true });
       }
       const beforePath = typeof window !== 'undefined' ? window.location.pathname : '';
+      const initialDialogs = new Set(
+        typeof document !== 'undefined'
+          ? Array.from(document.querySelectorAll('[role="alertdialog"], [role="dialog"]'))
+          : [],
+      );
+      const pressedTargets: HTMLElement[] = [];
       let navigationIntent = false;
       let expectedPath: string | undefined;
       try {
@@ -580,9 +587,21 @@ export async function dispatchAgentTool(
             navigationIntent = true;
             expectedPath = nextPath;
           },
+          onPressedTarget: (el) => {
+            pressedTargets.push(el);
+          },
         });
         if (signal?.aborted || !isBuiltinOwnerValid(owner)) throw makeAbortError();
         const ok = !(isRecord(data) && data.ok === false);
+        const waitedBusy = ok
+          ? await waitForBusySubmitSettle({
+              targets: pressedTargets,
+              fromPath: beforePath,
+              initialDialogs,
+              signal,
+            })
+          : false;
+        if (signal?.aborted || !isBuiltinOwnerValid(owner)) throw makeAbortError();
         if (ok && navigationIntent && typeof window !== 'undefined' && window.location.pathname === beforePath) {
           await waitForRouteChange(beforePath, { signal, expectedPath });
           if (signal?.aborted || !isBuiltinOwnerValid(owner)) throw makeAbortError();
@@ -642,6 +661,8 @@ export async function dispatchAgentTool(
           !navigated && finished.closedBeforeReturn.length > 0
             ? `注意：刚才打开的浮层（${finished.closedBeforeReturn.map((o) => o.label || o.component).join('、')}）在返回前已关闭，下一步操作前请先重新打开或调用 snapshot 确认。`
             : undefined;
+        const closedDialogAfterBusy =
+          waitedBusy && initialDialogs.size > 0 && Array.from(initialDialogs).some((d) => !d.isConnected);
         let modelContent: string;
         if (navigated && isRecord(data)) {
           // Drop stale pre-navigation form values so the model sees the new route cleanly.
@@ -658,10 +679,17 @@ export async function dispatchAgentTool(
             ...data,
             route: afterPath,
             navigationPending: true,
+            ...(waitedBusy ? { settledAfterBusy: true } : {}),
+            ...(closedDialogAfterBusy ? { dialogClosed: true } : {}),
             ...(overlayClosedNote ? { note: overlayClosedNote } : {}),
           });
-        } else if (overlayClosedNote && isRecord(data)) {
-          modelContent = JSON.stringify({ ...data, note: overlayClosedNote });
+        } else if ((overlayClosedNote || waitedBusy) && isRecord(data)) {
+          modelContent = JSON.stringify({
+            ...data,
+            ...(waitedBusy ? { settledAfterBusy: true } : {}),
+            ...(closedDialogAfterBusy ? { dialogClosed: true } : {}),
+            ...(overlayClosedNote ? { note: overlayClosedNote } : {}),
+          });
         } else {
           modelContent = JSON.stringify(data);
         }

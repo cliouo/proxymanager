@@ -66,6 +66,7 @@ export {
 export {
   hasMainSkeletons,
   settleRouteCommit,
+  waitForBusySubmitSettle,
   waitForMainTarget,
   waitForRouteChange,
   type WaitForTargetOptions,

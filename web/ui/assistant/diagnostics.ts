@@ -1,6 +1,7 @@
 'use client';
 
 import { useSyncExternalStore } from 'react';
+import { elementOf } from '@ui-sdk/react/observe';
 import type { AgentComponent, AppAgent, ObservedChange } from '@/ui/agent';
 
 export type ToolErrorCode =
@@ -8,6 +9,7 @@ export type ToolErrorCode =
   | 'label_ambiguous'
   | 'option_as_component'
   | 'overlay_closed'
+  | 'control_disabled'
   | 'invalid_args'
   | 'user_rejected'
   | 'unknown';
@@ -17,6 +19,7 @@ export const TOOL_ERROR_LABELS: Record<ToolErrorCode, string> = {
   label_ambiguous: '标签歧义',
   option_as_component: '把选项当组件',
   overlay_closed: '观察到弹层关闭',
+  control_disabled: '控件已禁用',
   invalid_args: '参数格式',
   user_rejected: '用户拒绝或中断',
   unknown: '未知',
@@ -26,6 +29,7 @@ export interface ToolErrorAnalysis {
   code: ToolErrorCode;
   codes: ToolErrorCode[];
   hint?: string;
+  errorPattern?: string;
   failedStepIndex?: number;
   completedSteps?: number;
 }
@@ -90,6 +94,7 @@ export interface ToolCallDiagnostic {
   actions?: string[];
   errorCode?: ToolErrorCode;
   errorCodes?: ToolErrorCode[];
+  errorPattern?: string;
   navigated?: boolean;
   navigationPending?: boolean;
   changesCount?: number;
@@ -290,6 +295,85 @@ function findUniqueOptionMatches(wanted: string, components: AgentComponent[]): 
   return matches;
 }
 
+export function scrubErrorPattern(message: string): string | undefined {
+  const trimmed = message.trim();
+  if (!trimmed) return undefined;
+  const out = trimmed
+    .replace(/https?:\/\/\S+/gi, '<url>')
+    .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '<id>')
+    .replace(/Its labels:[\s\S]*$/i, 'Its labels: <list>')
+    .replace(/names \d+ components:[\s\S]*$/i, 'names <n> components: <list>')
+    .replace(/"[^"]*"/g, '"<text>"')
+    .replace(/'[^']*'/g, "'<text>'")
+    .replace(/「[^」]*」/g, '「<text>」')
+    .replace(/\bc\d+\b/g, '<ref>')
+    .replace(/(?<![A-Za-z0-9_])\/(?:[A-Za-z0-9._:@%-]+(?:\/[A-Za-z0-9._:@%-]*)*)/g, '<path>')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!out) return undefined;
+  return out.length > 140 ? `${out.slice(0, 139)}…` : out;
+}
+
+function isElementDisabledOrBusy(el: Element | null): { disabled: boolean; busy: boolean } {
+  if (!el) return { disabled: false, busy: false };
+  const busy = el.getAttribute('aria-busy') === 'true';
+  const disabled =
+    busy ||
+    el.hasAttribute('disabled') ||
+    el.getAttribute('aria-disabled') === 'true' ||
+    el.hasAttribute('data-disabled');
+  return { disabled, busy };
+}
+
+function collectActiveFormValidationHints(): { busy: boolean; reasons: string[] } {
+  if (typeof document === 'undefined') return { busy: false, reasons: [] };
+  const dialogs = [...document.querySelectorAll<HTMLElement>('[role="alertdialog"], [role="dialog"]')].filter(
+    (el) => !el.closest('[data-agent-hidden]'),
+  );
+  const scope: Element | null = dialogs.length > 0 ? dialogs[dialogs.length - 1] : document.getElementById('main');
+  if (!scope) return { busy: false, reasons: [] };
+
+  let busy = false;
+  for (const btn of scope.querySelectorAll('button[aria-busy="true"]')) {
+    if (!btn.closest('[data-agent-hidden]')) {
+      busy = true;
+      break;
+    }
+  }
+
+  const reasons = new Set<string>();
+  const addText = (text: string | null | undefined) => {
+    const clean = (text ?? '').replace(/\s+/g, ' ').trim();
+    if (clean && clean.length <= 120) reasons.add(clean);
+  };
+
+  for (const invalid of scope.querySelectorAll('[aria-invalid="true"]')) {
+    if (invalid.closest('[data-agent-hidden]')) continue;
+    const described = invalid.getAttribute('aria-describedby') ?? '';
+    for (const id of described.split(/\s+/).filter(Boolean)) {
+      const target = document.getElementById(id);
+      if (target && !target.closest('[data-agent-hidden]')) addText(target.textContent);
+    }
+  }
+  for (const node of scope.querySelectorAll('[id$="-error"], .text-bad, [data-validation-hint]')) {
+    if (node.closest('[data-agent-hidden]')) continue;
+    addText(node.textContent);
+  }
+
+  return { busy, reasons: [...reasons].slice(0, 4) };
+}
+
+function buildDisabledHint(busyHint: boolean): string {
+  const { busy, reasons } = collectActiveFormValidationHints();
+  if (busyHint || busy) {
+    return '目标控件当前正在提交（aria-busy），请等待提交完成或调用 snapshot 确认结果，不要重复点击。';
+  }
+  if (reasons.length > 0) {
+    return `目标控件当前已禁用，无法操作。页面校验提示：${reasons.join('；')}。请先补齐或修正表单字段后再试。`;
+  }
+  return '目标控件当前已禁用，无法操作。请先检查必填项、字段校验错误，或确认是否尚未修改（无变更时保存按钮禁用）。';
+}
+
 export function analyzeToolError(options: {
   name: string;
   input?: unknown;
@@ -307,6 +391,7 @@ export function analyzeToolError(options: {
       : typeof nestedErr?.message === 'string'
         ? nestedErr.message
         : '';
+  const errorPattern = scrubErrorPattern(message);
   const failedStepIndex = typeof nestedErr?.step === 'number' ? nestedErr.step : undefined;
   const completedSteps = Array.isArray(rec?.steps) ? rec.steps.length : undefined;
   const failedStep =
@@ -324,12 +409,24 @@ export function analyzeToolError(options: {
     /Needs a person|用户拒绝|调用被中断|被拒绝|已取消/.test(message)
   ) {
     pushCode('user_rejected');
-    return { code: 'user_rejected', codes, failedStepIndex, completedSteps };
+    return { code: 'user_rejected', codes, errorPattern, failedStepIndex, completedSteps };
+  }
+
+  if (/\bis disabled\b|cannot press disabled/i.test(message)) {
+    pushCode('control_disabled');
+    return {
+      code: 'control_disabled',
+      codes,
+      errorPattern,
+      failedStepIndex,
+      completedSteps,
+      hint: buildDisabledHint(false),
+    };
   }
 
   if (/合法的 JSON|Invalid|must be an array|Unknown action|missing required/i.test(message)) {
     pushCode('invalid_args');
-    return { code: 'invalid_args', codes, failedStepIndex, completedSteps };
+    return { code: 'invalid_args', codes, errorPattern, failedStepIndex, completedSteps };
   }
 
   const ambigMatch = message.match(/^"([^"]+)" names (\d+) components:/);
@@ -338,20 +435,43 @@ export function analyzeToolError(options: {
     return {
       code: 'label_ambiguous',
       codes,
+      errorPattern,
       failedStepIndex,
       completedSteps,
       hint: `「${ambigMatch[1]}」在当前页面对应多个同名控件，请先根据上下文确认目标，再用报错列出的精确 ref 调用。`,
     };
   }
 
-  // Case A: ui-sdk matched the option text to a parent command/select/combobox/tabs and rejected `press`.
-  const wrongPressMatch = message.match(/^([a-z-]+)\s+(c\d+)\s+(?:has nothing to press|has no action)/i);
+  // Case A: ui-sdk matched the option text to a parent command/select/combobox/tabs and rejected `press`,
+  // OR rejected `press` on a disabled/busy button.
+  const wrongPressMatch = message.match(/^([a-z-]+)\s+(c\d+)\s+(?:has nothing to press|has no action|is disabled)/i);
   if (wrongPressMatch) {
-    const [, , matchedRef] = wrongPressMatch;
+    const [, kind, matchedRef] = wrongPressMatch;
     const failedRef = typeof failedStep?.ref === 'string' ? failedStep.ref.trim() : '';
     const failedArg =
       Array.isArray(failedStep?.args) && typeof failedStep.args[0] === 'string' ? failedStep.args[0].trim() : '';
     const parentComp = currentSnapshot.find((c) => c.ref === matchedRef);
+
+    // Check if the matched control itself is disabled or busy (e.g. submit button before validation passes).
+    let domState = { disabled: false, busy: false };
+    try {
+      domState = isElementDisabledOrBusy(elementOf(matchedRef));
+    } catch {
+      /* ignore lookup failure */
+    }
+    const compDisabled = Boolean((parentComp as unknown as Record<string, unknown> | undefined)?.disabled);
+    if (domState.disabled || compDisabled || (kind === 'button' && /has nothing to press|has no action/i.test(message))) {
+      pushCode('control_disabled');
+      return {
+        code: 'control_disabled',
+        codes,
+        errorPattern,
+        failedStepIndex,
+        completedSteps,
+        hint: buildDisabledHint(domState.busy),
+      };
+    }
+
     const wanted = failedArg || failedRef;
     if (parentComp && wanted) {
       const optionMatches = findUniqueOptionMatches(wanted, [parentComp]);
@@ -365,11 +485,11 @@ export function analyzeToolError(options: {
               action: m.action,
               args: [m.argValue],
             })}`;
-        return { code: 'option_as_component', codes, hint, failedStepIndex, completedSteps };
+        return { code: 'option_as_component', codes, errorPattern, hint, failedStepIndex, completedSteps };
       }
     }
     pushCode('invalid_args');
-    return { code: 'invalid_args', codes, failedStepIndex, completedSteps };
+    return { code: 'invalid_args', codes, errorPattern, failedStepIndex, completedSteps };
   }
 
   const missingMatch =
@@ -388,7 +508,7 @@ export function analyzeToolError(options: {
             action: m.action,
             args: [m.argValue],
           })}`;
-      return { code: 'option_as_component', codes, hint, failedStepIndex, completedSteps };
+      return { code: 'option_as_component', codes, errorPattern, hint, failedStepIndex, completedSteps };
     }
 
     // Check if the missing component or its parent overlay was open in the previous turn and closed before this call.
@@ -414,6 +534,7 @@ export function analyzeToolError(options: {
         return {
           code: 'overlay_closed',
           codes,
+          errorPattern,
           failedStepIndex,
           completedSteps,
           hint: `「${m.parentLabel}」（${m.parentComponent}）当前已关闭，且「${m.displayLabel}」是其内部选项；请先重新打开或调用 snapshot 确认当前界面，再用 ${m.action} 传入目标 value。`,
@@ -423,6 +544,7 @@ export function analyzeToolError(options: {
         return {
           code: 'overlay_closed',
           codes,
+          errorPattern,
           failedStepIndex,
           completedSteps,
           hint: `「${wanted}」在上一轮曾出现，但对应浮层现已关闭；请先重新打开该浮层或调用 snapshot 核对当前可用控件。`,
@@ -431,11 +553,11 @@ export function analyzeToolError(options: {
     }
 
     pushCode('component_missing');
-    return { code: 'component_missing', codes, failedStepIndex, completedSteps };
+    return { code: 'component_missing', codes, errorPattern, failedStepIndex, completedSteps };
   }
 
   pushCode('unknown');
-  return { code: 'unknown', codes, failedStepIndex, completedSteps };
+  return { code: 'unknown', codes, errorPattern, failedStepIndex, completedSteps };
 }
 
 export class RunDiagnosticRecorder {
@@ -645,7 +767,13 @@ export class RunDiagnosticRecorder {
       ...(analysis?.failedStepIndex !== undefined ? { failedStepIndex: analysis.failedStepIndex } : {}),
       ...(targetRefs?.length ? { targetRefs } : {}),
       ...(actions?.length ? { actions } : {}),
-      ...(analysis ? { errorCode: analysis.code, errorCodes: analysis.codes } : {}),
+      ...(analysis
+        ? {
+            errorCode: analysis.code,
+            errorCodes: analysis.codes,
+            ...(analysis.errorPattern ? { errorPattern: analysis.errorPattern } : {}),
+          }
+        : {}),
       ...(navigated ? { navigated: true } : {}),
       ...(navigationPending ? { navigationPending: true } : {}),
       ...(actOutcome
@@ -792,7 +920,13 @@ export function buildLatestDiagnosticReport(): string | null {
       ...(c.failedStepIndex !== undefined ? { failedStepIndex: c.failedStepIndex } : {}),
       ...(targets?.length ? { targets } : {}),
       ...(c.actions?.length ? { actions: c.actions } : {}),
-      ...(c.errorCode ? { errorCode: c.errorCode, errorCodes: c.errorCodes } : {}),
+      ...(c.errorCode
+        ? {
+            errorCode: c.errorCode,
+            errorCodes: c.errorCodes,
+            ...(c.errorPattern ? { errorPattern: c.errorPattern } : {}),
+          }
+        : {}),
       ...(c.navigated ? { navigated: true } : {}),
       ...(c.navigationPending ? { navigationPending: true } : {}),
       ...(c.changesCount !== undefined ? { changesCount: c.changesCount } : {}),
