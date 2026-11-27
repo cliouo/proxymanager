@@ -51,7 +51,28 @@ export interface OverlayTransitionEvent {
   source?: string;
 }
 
+export type DiagnosticSegmentTrigger = 'message' | 'continue';
+export type DiagnosticSegmentEndReason = 'done' | 'cap' | 'interrupted' | 'error';
+
+export interface DiagnosticSegmentSummary {
+  index: number;
+  trigger: DiagnosticSegmentTrigger;
+  startedAt: string;
+  tsOffsetMs: number;
+  initialRoute: string;
+  endReason?: DiagnosticSegmentEndReason;
+  totalCalls: number;
+  errorCalls: number;
+}
+
+export interface ActOutcomeCounts {
+  changesCount: number;
+  appearedCount: number;
+  goneCount: number;
+}
+
 export interface ToolCallDiagnostic {
+  segment: number;
   round: number;
   slot: string;
   tool: string;
@@ -71,6 +92,10 @@ export interface ToolCallDiagnostic {
   errorCodes?: ToolErrorCode[];
   navigated?: boolean;
   navigationPending?: boolean;
+  changesCount?: number;
+  appearedCount?: number;
+  goneCount?: number;
+  noEffect?: boolean;
   overlaysBefore: OverlayStateSummary[];
   overlaysAfter: OverlayStateSummary[];
   closedSincePrevCall?: Array<{ ref: string; component: string; label?: string }>;
@@ -83,20 +108,46 @@ interface DiagnosticRunState {
   startedMs: number;
   model: string;
   initialRoute: string;
+  nextSegmentIndex: number;
+  segments: DiagnosticSegmentSummary[];
+  droppedSegments: number;
   calls: ToolCallDiagnostic[];
+  totalRecordedCalls: number;
+  totalErrorCalls: number;
+  totalNoEffectActCalls: number;
+  totalErrorCounts: Partial<Record<ToolErrorCode, number>>;
+  droppedCalls: number;
   overlayTransitions: OverlayTransitionEvent[];
+  totalRecordedOverlayTransitions: number;
+  droppedOverlayTransitions: number;
   lastObservedSnapshot: AgentComponent[];
   lastOpenOverlays: OverlayStateSummary[];
   recentClosedOverlays: OverlayTransitionEvent[];
 }
 
-const MAX_CALL_RECORDS = 40;
-const MAX_OVERLAY_EVENTS = 60;
+export const MAX_CALL_RECORDS = 200;
+export const MAX_OVERLAY_EVENTS = 200;
+export const MAX_SEGMENTS = 20;
 const OVERLAY_KINDS = new Set(['popover', 'menu', 'dialog', 'alertdialog', 'combobox', 'select', 'command']);
 const UUID_SEGMENT_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === 'object' && !Array.isArray(value);
+
+export function extractActOutcomeCounts(data: unknown): ActOutcomeCounts | undefined {
+  if (!isRecord(data)) return undefined;
+  let changesCount = 0;
+  let goneCount = 0;
+  if (Array.isArray(data.steps)) {
+    for (const step of data.steps) {
+      if (!isRecord(step)) continue;
+      if (Array.isArray(step.changes)) changesCount += step.changes.length;
+      if (Array.isArray(step.gone)) goneCount += step.gone.length;
+    }
+  }
+  const appearedCount = Array.isArray(data.appeared) ? data.appeared.length : 0;
+  return { changesCount, appearedCount, goneCount };
+}
 
 export function scrubRouteTemplate(pathname: string): string {
   if (!pathname) return '/';
@@ -389,21 +440,73 @@ export function analyzeToolError(options: {
 
 export class RunDiagnosticRecorder {
   private readonly state: DiagnosticRunState;
+  private readonly segment: DiagnosticSegmentSummary;
   private unsubscribe: (() => void) | null = null;
 
-  constructor(options: { model: string; initialRoute: string; agent?: AppAgent }) {
-    this.state = {
-      id: `run_${Date.now().toString(36)}`,
-      startedAt: new Date().toISOString(),
-      startedMs: Date.now(),
-      model: options.model,
-      initialRoute: scrubRouteTemplate(options.initialRoute),
-      calls: [],
-      overlayTransitions: [],
-      lastObservedSnapshot: [],
-      lastOpenOverlays: [],
-      recentClosedOverlays: [],
-    };
+  constructor(options: {
+    model: string;
+    initialRoute: string;
+    agent?: AppAgent;
+    trigger?: DiagnosticSegmentTrigger;
+    continueSession?: boolean;
+  }) {
+    const now = Date.now();
+    const nowIso = new Date(now).toISOString();
+    const route = scrubRouteTemplate(options.initialRoute);
+    const trigger: DiagnosticSegmentTrigger = options.trigger ?? 'message';
+
+    if (options.continueSession && latestRun) {
+      this.state = latestRun;
+      this.state.model = options.model;
+      const index = this.state.nextSegmentIndex++;
+      this.segment = {
+        index,
+        trigger,
+        startedAt: nowIso,
+        tsOffsetMs: Math.max(0, now - this.state.startedMs),
+        initialRoute: route,
+        totalCalls: 0,
+        errorCalls: 0,
+      };
+      this.state.segments.push(this.segment);
+      if (this.state.segments.length > MAX_SEGMENTS) {
+        this.state.segments.shift();
+        this.state.droppedSegments += 1;
+      }
+    } else {
+      this.segment = {
+        index: 0,
+        trigger,
+        startedAt: nowIso,
+        tsOffsetMs: 0,
+        initialRoute: route,
+        totalCalls: 0,
+        errorCalls: 0,
+      };
+      this.state = {
+        id: `run_${now.toString(36)}`,
+        startedAt: nowIso,
+        startedMs: now,
+        model: options.model,
+        initialRoute: route,
+        nextSegmentIndex: 1,
+        segments: [this.segment],
+        droppedSegments: 0,
+        calls: [],
+        totalRecordedCalls: 0,
+        totalErrorCalls: 0,
+        totalNoEffectActCalls: 0,
+        totalErrorCounts: {},
+        droppedCalls: 0,
+        overlayTransitions: [],
+        totalRecordedOverlayTransitions: 0,
+        droppedOverlayTransitions: 0,
+        lastObservedSnapshot: [],
+        lastOpenOverlays: [],
+        recentClosedOverlays: [],
+      };
+    }
+
     if (options.agent && typeof options.agent.subscribe === 'function') {
       try {
         this.unsubscribe = options.agent.subscribe((change: ObservedChange) => {
@@ -426,9 +529,11 @@ export class RunDiagnosticRecorder {
       reason: change.reason,
       source: change.source,
     };
+    this.state.totalRecordedOverlayTransitions += 1;
     this.state.overlayTransitions.push(entry);
     if (this.state.overlayTransitions.length > MAX_OVERLAY_EVENTS) {
       this.state.overlayTransitions.shift();
+      this.state.droppedOverlayTransitions += 1;
     }
     if (change.value === false) {
       this.state.recentClosedOverlays.push(entry);
@@ -449,7 +554,7 @@ export class RunDiagnosticRecorder {
   beginCall(agent: AppAgent) {
     const startedMs = Date.now();
     const routeBefore =
-      typeof window !== 'undefined' ? scrubRouteTemplate(window.location.pathname) : this.state.initialRoute;
+      typeof window !== 'undefined' ? scrubRouteTemplate(window.location.pathname) : this.segment.initialRoute;
     const focusBefore = captureFocusRegion();
     const overlaysBefore = extractMountedOpenOverlays(agent);
     const beforeRefs = new Set(overlaysBefore.map((o) => o.ref));
@@ -471,6 +576,7 @@ export class RunDiagnosticRecorder {
     navigated?: boolean;
     navigationPending?: boolean;
     reportedOpenOverlays?: OverlayStateSummary[];
+    actOutcome?: ActOutcomeCounts;
   }): { closedBeforeReturn: Array<{ ref: string; component: string; label?: string }> } {
     const {
       round,
@@ -484,6 +590,7 @@ export class RunDiagnosticRecorder {
       navigated,
       navigationPending,
       reportedOpenOverlays = [],
+      actOutcome,
     } = options;
     const now = Date.now();
     const routeAfter =
@@ -512,7 +619,17 @@ export class RunDiagnosticRecorder {
       targetRefs = [recInput.within];
     }
 
+    const noEffect =
+      tool === 'act' &&
+      status === 'ok' &&
+      !navigated &&
+      actOutcome !== undefined &&
+      actOutcome.changesCount === 0 &&
+      actOutcome.appearedCount === 0 &&
+      actOutcome.goneCount === 0;
+
     const record: ToolCallDiagnostic = {
+      segment: this.segment.index,
       round,
       slot,
       tool,
@@ -531,15 +648,36 @@ export class RunDiagnosticRecorder {
       ...(analysis ? { errorCode: analysis.code, errorCodes: analysis.codes } : {}),
       ...(navigated ? { navigated: true } : {}),
       ...(navigationPending ? { navigationPending: true } : {}),
+      ...(actOutcome
+        ? {
+            changesCount: actOutcome.changesCount,
+            appearedCount: actOutcome.appearedCount,
+            goneCount: actOutcome.goneCount,
+          }
+        : {}),
+      ...(noEffect ? { noEffect: true } : {}),
       overlaysBefore: begin.overlaysBefore,
       overlaysAfter,
       ...(begin.closedSincePrevCall.length ? { closedSincePrevCall: begin.closedSincePrevCall } : {}),
       ...(closedBeforeReturn.length ? { closedBeforeReturn } : {}),
     };
 
+    this.segment.totalCalls += 1;
+    this.state.totalRecordedCalls += 1;
+    if (status === 'error') {
+      this.segment.errorCalls += 1;
+      this.state.totalErrorCalls += 1;
+      const code = analysis?.code ?? 'unknown';
+      this.state.totalErrorCounts[code] = (this.state.totalErrorCounts[code] ?? 0) + 1;
+    }
+    if (noEffect) {
+      this.state.totalNoEffectActCalls += 1;
+    }
+
     this.state.calls.push(record);
     if (this.state.calls.length > MAX_CALL_RECORDS) {
       this.state.calls.shift();
+      this.state.droppedCalls += 1;
     }
     this.state.lastObservedSnapshot = currentSnapshot;
     this.state.lastOpenOverlays = overlaysAfter;
@@ -548,6 +686,13 @@ export class RunDiagnosticRecorder {
     }
     publishLatestDiagnostics(this.state);
     return { closedBeforeReturn };
+  }
+
+  finishSegment(endReason: DiagnosticSegmentEndReason) {
+    this.segment.endReason = endReason;
+    if (this.state.calls.length > 0) {
+      publishLatestDiagnostics(this.state);
+    }
   }
 
   dispose() {
@@ -624,29 +769,14 @@ export function buildLatestDiagnosticReport(): string | null {
     ...(typeof o.itemCount === 'number' ? { itemCount: o.itemCount } : {}),
   });
 
-  const errorCounts: Partial<Record<ToolErrorCode, number>> = {};
-  let errorTotal = 0;
-  for (const call of latestRun.calls) {
-    if (call.status === 'error') {
-      errorTotal += 1;
-      const code = call.errorCode ?? 'unknown';
-      errorCounts[code] = (errorCounts[code] ?? 0) + 1;
-    }
-  }
-
-  const report = {
-    schemaVersion: 1,
-    privacy: 'whitelisted-structural-only',
-    runId: latestRun.id,
-    startedAt: latestRun.startedAt,
-    model: latestRun.model,
-    initialRoute: latestRun.initialRoute,
-    summary: {
-      totalCalls: latestRun.calls.length,
-      errorCalls: errorTotal,
-      errorCounts,
-    },
-    calls: latestRun.calls.map((c) => ({
+  const scrubbedCalls = latestRun.calls.map((c) => {
+    const targets = c.targetRefs?.length
+      ? c.targetRefs
+          .map((r) => (/^c\d+$/.test(r) ? aliasRef(r) : aliasLabel(r)))
+          .filter((v): v is string => typeof v === 'string')
+      : undefined;
+    return {
+      segment: c.segment,
       round: c.round,
       slot: c.slot,
       tool: c.tool,
@@ -660,16 +790,106 @@ export function buildLatestDiagnosticReport(): string | null {
       ...(c.stepCount !== undefined ? { stepCount: c.stepCount } : {}),
       ...(c.completedSteps !== undefined ? { completedSteps: c.completedSteps } : {}),
       ...(c.failedStepIndex !== undefined ? { failedStepIndex: c.failedStepIndex } : {}),
-      ...(c.targetRefs?.length ? { targets: c.targetRefs.map((r) => (/^c\d+$/.test(r) ? aliasRef(r) : aliasLabel(r))) } : {}),
+      ...(targets?.length ? { targets } : {}),
       ...(c.actions?.length ? { actions: c.actions } : {}),
       ...(c.errorCode ? { errorCode: c.errorCode, errorCodes: c.errorCodes } : {}),
       ...(c.navigated ? { navigated: true } : {}),
       ...(c.navigationPending ? { navigationPending: true } : {}),
+      ...(c.changesCount !== undefined ? { changesCount: c.changesCount } : {}),
+      ...(c.appearedCount !== undefined ? { appearedCount: c.appearedCount } : {}),
+      ...(c.goneCount !== undefined ? { goneCount: c.goneCount } : {}),
+      ...(c.noEffect ? { noEffect: true } : {}),
       overlaysBefore: c.overlaysBefore.map(scrubOverlay),
       overlaysAfter: c.overlaysAfter.map(scrubOverlay),
       ...(c.closedSincePrevCall?.length ? { closedSincePrevCall: c.closedSincePrevCall.map(scrubOverlay) } : {}),
       ...(c.closedBeforeReturn?.length ? { closedBeforeReturn: c.closedBeforeReturn.map(scrubOverlay) } : {}),
+    };
+  });
+
+  // Compute repeated (target, action) hotspots over retained calls to spotlight retry/stuck loops.
+  const hotspotStats = new Map<
+    string,
+    {
+      target: string;
+      action: string;
+      count: number;
+      currentStreak: number;
+      maxConsecutive: number;
+      noEffectCount: number;
+      errorCount: number;
+    }
+  >();
+  for (const call of scrubbedCalls) {
+    const seenInCall = new Set<string>();
+    if (call.targets?.length) {
+      for (let i = 0; i < call.targets.length; i++) {
+        const target = call.targets[i];
+        const action = call.tool === 'act' ? (call.actions?.[i] ?? 'act') : call.tool;
+        const key = `${target}\u0000${action}`;
+        let entry = hotspotStats.get(key);
+        if (!entry) {
+          entry = { target, action, count: 0, currentStreak: 0, maxConsecutive: 0, noEffectCount: 0, errorCount: 0 };
+          hotspotStats.set(key, entry);
+        }
+        entry.count += 1;
+        if (call.noEffect) entry.noEffectCount += 1;
+        if (call.status === 'error') entry.errorCount += 1;
+        seenInCall.add(key);
+      }
+    }
+    for (const [key, entry] of hotspotStats) {
+      if (seenInCall.has(key)) {
+        entry.currentStreak += 1;
+        if (entry.currentStreak > entry.maxConsecutive) entry.maxConsecutive = entry.currentStreak;
+      } else {
+        entry.currentStreak = 0;
+      }
+    }
+  }
+  const repeatedTargetHotspots = [...hotspotStats.values()]
+    .filter((entry) => entry.count >= 3)
+    .sort((a, b) => b.count - a.count || b.maxConsecutive - a.maxConsecutive)
+    .slice(0, 8)
+    .map(({ target, action, count, maxConsecutive, noEffectCount, errorCount }) => ({
+      target,
+      action,
+      count,
+      maxConsecutive,
+      noEffectCount,
+      errorCount,
+    }));
+
+  const report = {
+    schemaVersion: 1,
+    privacy: 'whitelisted-structural-only',
+    runId: latestRun.id,
+    startedAt: latestRun.startedAt,
+    model: latestRun.model,
+    initialRoute: latestRun.initialRoute,
+    summary: {
+      segmentCount: latestRun.segments.length + latestRun.droppedSegments,
+      totalCalls: latestRun.totalRecordedCalls,
+      retainedCalls: latestRun.calls.length,
+      droppedCalls: latestRun.droppedCalls,
+      ...(latestRun.droppedOverlayTransitions > 0
+        ? { droppedOverlayTransitions: latestRun.droppedOverlayTransitions }
+        : {}),
+      errorCalls: latestRun.totalErrorCalls,
+      errorCounts: { ...latestRun.totalErrorCounts },
+      noEffectActCalls: latestRun.totalNoEffectActCalls,
+      ...(repeatedTargetHotspots.length > 0 ? { repeatedTargetHotspots } : {}),
+    },
+    segments: latestRun.segments.map((s) => ({
+      index: s.index,
+      trigger: s.trigger,
+      startedAt: s.startedAt,
+      tsOffsetMs: s.tsOffsetMs,
+      initialRoute: s.initialRoute,
+      ...(s.endReason ? { endReason: s.endReason } : {}),
+      totalCalls: s.totalCalls,
+      errorCalls: s.errorCalls,
     })),
+    calls: scrubbedCalls,
     overlayTransitions: latestRun.overlayTransitions.map((t) => ({
       tsOffsetMs: t.tsOffsetMs,
       ref: aliasRef(t.ref),
