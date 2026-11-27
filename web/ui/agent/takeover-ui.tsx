@@ -78,6 +78,25 @@ export function AgentTakeoverGuard() {
     const suppressedPointers = new Set<number>();
     let suppressNextClick = false;
     let suppressClickTimer: ReturnType<typeof setTimeout> | null = null;
+    let programmaticSubmitAllowed = false;
+    let programmaticSubmitTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const clearProgrammaticSubmit = () => {
+      programmaticSubmitAllowed = false;
+      if (programmaticSubmitTimer !== null) {
+        clearTimeout(programmaticSubmitTimer);
+        programmaticSubmitTimer = null;
+      }
+    };
+
+    const allowProgrammaticSubmitBriefly = () => {
+      programmaticSubmitAllowed = true;
+      if (programmaticSubmitTimer !== null) clearTimeout(programmaticSubmitTimer);
+      programmaticSubmitTimer = setTimeout(() => {
+        programmaticSubmitAllowed = false;
+        programmaticSubmitTimer = null;
+      }, 0);
+    };
 
     const armTrailingClickSuppression = () => {
       suppressNextClick = true;
@@ -132,7 +151,13 @@ export function AgentTakeoverGuard() {
     };
 
     const onClick = (event: MouseEvent) => {
-      if (!isTrustedUserEvent(event)) return;
+      if (!isTrustedUserEvent(event)) {
+        // Per the HTML spec, programmatic `button.click()` on `<button type="submit">` invokes
+        // the browser's form-submission algorithm, which fires a `submit` event with
+        // `isTrusted === true` right after this untrusted `click`. Allow that submit through.
+        if (isTakeoverLocked()) allowProgrammaticSubmitBriefly();
+        return;
+      }
       if (suppressNextClick) {
         suppressNextClick = false;
         if (suppressClickTimer !== null) {
@@ -162,6 +187,17 @@ export function AgentTakeoverGuard() {
     const onBlockedMutationInput = (event: Event) => {
       if (!isTrustedUserEvent(event) || !isTakeoverLocked()) return;
       if (isExemptEvent(event)) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    };
+
+    const onSubmit = (event: Event) => {
+      if (!isTrustedUserEvent(event) || !isTakeoverLocked()) return;
+      if (isExemptEvent(event)) return;
+      if (programmaticSubmitAllowed) {
+        clearProgrammaticSubmit();
+        return;
+      }
       event.preventDefault();
       event.stopImmediatePropagation();
     };
@@ -222,12 +258,13 @@ export function AgentTakeoverGuard() {
     window.addEventListener('drop', onBlockedMouseOrDrag, true);
     window.addEventListener('beforeinput', onBlockedMutationInput, true);
     window.addEventListener('paste', onBlockedMutationInput, true);
-    window.addEventListener('submit', onBlockedMutationInput, true);
+    window.addEventListener('submit', onSubmit, true);
     window.addEventListener('keydown', onKeyDown, true);
     window.addEventListener('popstate', onPopState);
 
     return () => {
       if (suppressClickTimer !== null) clearTimeout(suppressClickTimer);
+      clearProgrammaticSubmit();
       window.removeEventListener('pointerdown', onPointerDown, true);
       window.removeEventListener('pointerup', onPointerUpOrCancel, true);
       window.removeEventListener('pointercancel', onPointerUpOrCancel, true);
@@ -242,7 +279,7 @@ export function AgentTakeoverGuard() {
       window.removeEventListener('drop', onBlockedMouseOrDrag, true);
       window.removeEventListener('beforeinput', onBlockedMutationInput, true);
       window.removeEventListener('paste', onBlockedMutationInput, true);
-      window.removeEventListener('submit', onBlockedMutationInput, true);
+      window.removeEventListener('submit', onSubmit, true);
       window.removeEventListener('keydown', onKeyDown, true);
       window.removeEventListener('popstate', onPopState);
     };

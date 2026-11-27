@@ -484,4 +484,57 @@ describe('AI workspace takeover', () => {
     expect(res).toEqual({ ok: true, steps: [] });
     expect(actMock).toHaveBeenCalledTimes(1);
   });
+
+  it('allows browser-trusted submit triggered by programmatic click on <button type="submit"> during takeover while blocking standalone trusted submit', () => {
+    const owner = new AbortController();
+    const onSubmit = vi.fn((event: React.FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+    });
+
+    // Simulate Chromium/HTML spec: browser's default activation of programmatic `button.click()`
+    // dispatches a `submit` event whose `isTrusted` is true.
+    const markSubmitTrusted = (event: Event) => {
+      makeTrustedEvent(event);
+    };
+    window.addEventListener('submit', markSubmitTrusted, true);
+
+    try {
+      render(
+        <div>
+          <main id="main">
+            <form id="create-profile-form" onSubmit={onSubmit}>
+              <input aria-label="名称" defaultValue="test" />
+            </form>
+            <button type="submit" form="create-profile-form">
+              创建并打开
+            </button>
+          </main>
+          <AgentHost />
+        </div>,
+      );
+
+      act(() => {
+        acquireTakeover(owner, { activityLabel: '点击 创建并打开' });
+      });
+
+      // 1. Standalone trusted submit (not caused by an agent's programmatic click) must stay blocked.
+      const form = document.getElementById('create-profile-form') as HTMLFormElement;
+      const standaloneSubmit = makeTrustedEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      act(() => {
+        form.dispatchEvent(standaloneSubmit);
+      });
+      expect(standaloneSubmit.defaultPrevented).toBe(true);
+      expect(onSubmit).toHaveBeenCalledTimes(0);
+
+      // 2. Programmatic click on `<button type="submit" form="...">` (untrusted click -> trusted submit) must run onSubmit.
+      const submitBtn = screen.getByRole('button', { name: '创建并打开' });
+      act(() => {
+        submitBtn.click();
+      });
+      expect(onSubmit).toHaveBeenCalledTimes(1);
+    } finally {
+      window.removeEventListener('submit', markSubmitTrusted, true);
+      releaseTakeover(owner);
+    }
+  });
 });
