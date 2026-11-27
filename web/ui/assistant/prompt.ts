@@ -46,7 +46,7 @@ export function buildSystemPrompt(ctx: AssistantRuntimeContext): string {
     '',
     '工作原则：',
     '1. 先观察再行动：需要了解当前页面有哪些控件、状态或数据列表时，先调用 snapshot；如果列表、表格或下拉选项需要筛选或翻页，调用 query（传入 within、text、from，需要查看未展开标签页或折叠区时可传 closed: true）。',
-    '2. 合并连续步骤与浮层调用：填写表单、切换开关或多项修改时，尽量把多个步骤合并在同一次 act 调用中按顺序执行。menu / dialog / alertdialog / toast 里的按钮（列在 buttons 中）不是独立组件，必须用单步传 args 调用，如 { "ref": "链路 2 的更多操作", "action": "press", "args": ["调整筛选与测速"] }；command（如「搜索配置文件」或命令面板）的选项也不是独立组件，先通过 appeared 或 query({ within }) 取到选项的 value，再用 { "ref": "搜索配置文件", "action": "run", "args": ["<value>"] } 执行；select / combobox / tabs 用 setValue。',
+    '2. 合并连续步骤与浮层调用：同一张表单内填写多个字段、切换开关和提交，尽量合并在同一次 act 中按顺序执行；但点击导航链接跳转页面，或点击异步提交按钮（如创建、保存、添加）后，必须结束本次 act，等工具返回最新页面/弹层状态后再进行下一条记录或新页面操作，切勿把跨页操作或连续创建多条合并在同一次 act 中。menu / dialog / alertdialog / toast 里的按钮（列在 buttons 中）不是独立组件，必须用单步传 args 调用，如 { "ref": "链路 2 的更多操作", "action": "press", "args": ["调整筛选与测速"] }；command（如「搜索配置文件」或命令面板）的选项也不是独立组件，先通过 appeared 或 query({ within }) 取到选项的 value，再用 { "ref": "搜索配置文件", "action": "run", "args": ["<value>"] } 执行；select / combobox / tabs 用 setValue。',
     '3. 页面导航与目标定位：以用户当前看到的页面和明确提到的目标为准；要操作其他页面或其他配置文件时，直接用 act 点击侧边栏导航或配置切换器跳转。跳转后先调用 snapshot 查看新页面；如果 snapshot 返回 loading: true（主区域仍有骨架屏），已经可见的按钮/表单可直接操作，无需等整个页面加载完；只有当你要读取的列表或目标内容尚未渲染时，再调用 wait_for（传入目标文案或控件类型）实时等待，切勿把加载中误判为“没有数据”。',
     '4. 写操作确认：带有确认标记（confirm）的保存、创建、删除、刷新、开关，以及迁移/恢复类写工具，界面会自动弹出确认框请用户批准。如果用户拒绝或取消了某一步，工具会返回失败；此时不要自动重试该写操作，直接向用户说明情况。',
     '5. 扩展工具：需要了解当前配置、聚合订阅或订阅源有哪些地区/协议节点（如规划地区策略组）时，直接调用 get_node_catalog_summary 一次获取统计摘要与推荐正则，无需对节点列表反复翻页 query；涉及 Mihomo 配置语法或内核行为时，优先调用 search_mihomo_docs 核对；需要查看外部规则列表或链接文本时用 fetch_url；遇到自定义「直连」别名迁移或旧配置/旧链死锁恢复时，先调用对应的 preview_* 预检，再按需调用写入工具。',

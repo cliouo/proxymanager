@@ -593,11 +593,13 @@ export async function dispatchAgentTool(
         });
         if (signal?.aborted || !isBuiltinOwnerValid(owner)) throw makeAbortError();
         const ok = !(isRecord(data) && data.ok === false);
+        const dialogsAfterAct =
+          typeof document !== 'undefined'
+            ? Array.from(document.querySelectorAll('[role="alertdialog"], [role="dialog"]'))
+            : [];
         const waitedBusy = ok
           ? await waitForBusySubmitSettle({
               targets: pressedTargets,
-              fromPath: beforePath,
-              initialDialogs,
               signal,
             })
           : false;
@@ -655,14 +657,17 @@ export async function dispatchAgentTool(
               navigationPending: navigationIntent && !navigated,
               reportedOpenOverlays: reportedOpen,
               actOutcome: extractActOutcomeCounts(data),
+              settledAfterBusy: waitedBusy,
             })
           : { closedBeforeReturn: [] };
         const overlayClosedNote =
-          !navigated && finished.closedBeforeReturn.length > 0
+          !navigated && !waitedBusy && finished.closedBeforeReturn.length > 0
             ? `注意：刚才打开的浮层（${finished.closedBeforeReturn.map((o) => o.label || o.component).join('、')}）在返回前已关闭，下一步操作前请先重新打开或调用 snapshot 确认。`
             : undefined;
         const closedDialogAfterBusy =
-          waitedBusy && initialDialogs.size > 0 && Array.from(initialDialogs).some((d) => !d.isConnected);
+          waitedBusy &&
+          (Array.from(initialDialogs).some((d) => !d.isConnected) ||
+            dialogsAfterAct.some((d) => !d.isConnected));
         let modelContent: string;
         if (navigated && isRecord(data)) {
           // Drop stale pre-navigation form values so the model sees the new route cleanly.

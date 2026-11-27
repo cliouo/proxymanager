@@ -506,4 +506,124 @@ describe('P0 assistant overlay persistence, error taxonomy, and scrubbed diagnos
       recorder.dispose();
     }
   });
+
+  test('waits for busy submit even when the dialog was opened in an earlier step of the same act call, without false noEffect', async () => {
+    const agent = createAgent({ allow: createAppAllow() });
+    let finishRequest!: () => void;
+    const requestPromise = new Promise<void>((resolve) => {
+      finishRequest = resolve;
+    });
+
+    function OpenAndSubmitHarness() {
+      const [open, setOpen] = useState(false);
+      const [busy, setBusy] = useState(false);
+      return (
+        <div>
+          <Button onClick={() => setOpen(true)}>打开新建</Button>
+          <Dialog
+            open={open}
+            onOpenChange={setOpen}
+            title="新建策略组"
+            footer={
+              <Button
+                variant="primary"
+                loading={busy}
+                onClick={async () => {
+                  setBusy(true);
+                  await requestPromise;
+                  setBusy(false);
+                  setOpen(false);
+                }}
+              >
+                创建
+              </Button>
+            }
+          >
+            <p>内容</p>
+          </Dialog>
+        </div>
+      );
+    }
+
+    render(<OpenAndSubmitHarness />);
+    const recorder = new RunDiagnosticRecorder({
+      model: 'deepseek-flash',
+      initialRoute: '/p/zeta/groups',
+      agent,
+    });
+    try {
+      const actPromise = dispatchAgentTool(
+        'act',
+        { steps: [{ ref: '打开新建', action: 'press' }, { ref: '创建', action: 'press' }] },
+        { agent, diagnostics: recorder, round: 0, slot: '0:0' },
+      );
+
+      let settledEarly = false;
+      void actPromise.then(() => {
+        settledEarly = true;
+      });
+
+      await waitFor(() => {
+        expect(document.querySelector('button[aria-busy="true"]')).toBeTruthy();
+      });
+      await new Promise((r) => setTimeout(r, 150));
+      expect(settledEarly).toBe(false);
+
+      finishRequest();
+      const res = await actPromise;
+      expect(res.kind).toBe('act');
+      const payload = JSON.parse(res.modelContent) as { settledAfterBusy?: boolean; dialogClosed?: boolean };
+      expect(payload.settledAfterBusy).toBe(true);
+      expect(payload.dialogClosed).toBe(true);
+      expect(document.querySelector('[role="dialog"]')).toBeNull();
+
+      const report = JSON.parse(buildLatestDiagnosticReport()!) as {
+        summary: { noEffectActCalls: number };
+        calls: Array<{ noEffect?: boolean; overlaysAfter: unknown[] }>;
+      };
+      expect(report.summary.noEffectActCalls).toBe(0);
+      expect(report.calls[0].noEffect).toBeUndefined();
+      expect(report.calls[0].overlaysAfter).toEqual([]);
+    } finally {
+      recorder.dispose();
+    }
+  });
+
+  test('classifies overlay-blocked, No item, and No button errors with actionable hints', () => {
+    const blocked = analyzeToolError({
+      name: 'act',
+      data: { ok: false, error: { step: 0, message: '"新建" isn\'t available to agents here. Ask the person.' } },
+      currentSnapshot: [{ ref: 'c5', component: 'dialog', label: '新建策略组', open: true, actions: ['setOpen', 'press'] }],
+    });
+    expect(blocked.code).toBe('overlay_blocked');
+    expect(blocked.hint).toContain('新建策略组');
+
+    const badItem = analyzeToolError({
+      name: 'act',
+      data: { ok: false, error: { step: 0, message: 'No item "空白" in 从哪里开始 (c60). Its items: ...' } },
+      currentSnapshot: [
+        {
+          ref: 'c60',
+          component: 'radio-group',
+          label: '从哪里开始',
+          actions: ['setValue'],
+          items: [
+            { value: 'template', label: '从模版开始' },
+            { value: 'blank', label: '空白' },
+            { value: 'copy', label: '复制现有配置' },
+          ],
+        },
+      ],
+    });
+    expect(badItem.code).toBe('invalid_args');
+    expect(badItem.hint).toContain('template、blank、copy');
+
+    const badButton = analyzeToolError({
+      name: 'act',
+      data: { ok: false, error: { step: 5, message: 'No button "新建规则集" in c3. Buttons: 关闭, 取消, 创建.' } },
+      currentSnapshot: [],
+    });
+    expect(badButton.code).toBe('invalid_args');
+    expect(badButton.hint).toContain('新建规则集');
+  });
 });

@@ -9,6 +9,7 @@ export type ToolErrorCode =
   | 'label_ambiguous'
   | 'option_as_component'
   | 'overlay_closed'
+  | 'overlay_blocked'
   | 'control_disabled'
   | 'invalid_args'
   | 'user_rejected'
@@ -19,6 +20,7 @@ export const TOOL_ERROR_LABELS: Record<ToolErrorCode, string> = {
   label_ambiguous: '标签歧义',
   option_as_component: '把选项当组件',
   overlay_closed: '观察到弹层关闭',
+  overlay_blocked: '被弹层隔离',
   control_disabled: '控件已禁用',
   invalid_args: '参数格式',
   user_rejected: '用户拒绝或中断',
@@ -412,6 +414,48 @@ export function analyzeToolError(options: {
     return { code: 'user_rejected', codes, errorPattern, failedStepIndex, completedSteps };
   }
 
+  if (/isn't available to agents here/i.test(message)) {
+    pushCode('overlay_blocked');
+    const openOverlays = extractOpenOverlays(currentSnapshot);
+    const dialogNames = openOverlays
+      .filter((o) => o.component === 'dialog' || o.component === 'alert-dialog' || o.component === 'alertdialog')
+      .map((o) => o.label || o.component);
+    const hint =
+      dialogNames.length > 0
+        ? `当前弹层（${dialogNames.join('、')}）尚未关闭，背景页控件已被隔离；请先完成或关闭该弹层，再在下一轮操作背景页控件（不要把连续创建多条合并在同一次 act 中）。`
+        : '目标控件当前对 AI 不可用或已被隐藏；请调用 snapshot 确认当前可操作的控件。';
+    return { code: 'overlay_blocked', codes, errorPattern, failedStepIndex, completedSteps, hint };
+  }
+
+  const noItemMatch = message.match(/^No item "([^"]+)" in ([^(\n]+?)\s*\((c\d+)\)/i);
+  if (noItemMatch) {
+    const [, badItem, rawCompName, matchedRef] = noItemMatch;
+    const parentComp = currentSnapshot.find((c) => c.ref === matchedRef);
+    const validValues = (parentComp?.items ?? [])
+      .map((it) => (typeof it?.value === 'string' ? it.value : ''))
+      .filter(Boolean)
+      .slice(0, 10);
+    pushCode('invalid_args');
+    const hint = validValues.length
+      ? `「${rawCompName.trim()}」没有选项「${badItem}」，请改用有效 value：${validValues.join('、')}。`
+      : `「${rawCompName.trim()}」没有选项「${badItem}」，请先通过 snapshot 或 query 核对选项的 value。`;
+    return { code: 'invalid_args', codes, errorPattern, failedStepIndex, completedSteps, hint };
+  }
+
+  const noButtonMatch = message.match(/^No button "([^"]+)" in (c\d+)/i);
+  if (noButtonMatch) {
+    const [, badBtn] = noButtonMatch;
+    pushCode('invalid_args');
+    return {
+      code: 'invalid_args',
+      codes,
+      errorPattern,
+      failedStepIndex,
+      completedSteps,
+      hint: `目标容器内没有按钮「${badBtn}」；如果该按钮属于背景页面，请先关闭当前弹层后再在下一轮点击，或从报错列出的 Buttons 中选择。`,
+    };
+  }
+
   if (/\bis disabled\b|cannot press disabled/i.test(message)) {
     pushCode('control_disabled');
     return {
@@ -699,6 +743,7 @@ export class RunDiagnosticRecorder {
     navigationPending?: boolean;
     reportedOpenOverlays?: OverlayStateSummary[];
     actOutcome?: ActOutcomeCounts;
+    settledAfterBusy?: boolean;
   }): { closedBeforeReturn: Array<{ ref: string; component: string; label?: string }> } {
     const {
       round,
@@ -713,6 +758,7 @@ export class RunDiagnosticRecorder {
       navigationPending,
       reportedOpenOverlays = [],
       actOutcome,
+      settledAfterBusy = false,
     } = options;
     const now = Date.now();
     const routeAfter =
@@ -741,10 +787,15 @@ export class RunDiagnosticRecorder {
       targetRefs = [recInput.within];
     }
 
+    const overlaysChanged =
+      begin.overlaysBefore.length !== overlaysAfter.length ||
+      begin.overlaysBefore.some((o, i) => overlaysAfter[i]?.ref !== o.ref || overlaysAfter[i]?.open !== o.open);
     const noEffect =
       tool === 'act' &&
       status === 'ok' &&
       !navigated &&
+      !settledAfterBusy &&
+      !overlaysChanged &&
       actOutcome !== undefined &&
       actOutcome.changesCount === 0 &&
       actOutcome.appearedCount === 0 &&

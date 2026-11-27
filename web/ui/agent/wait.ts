@@ -353,15 +353,13 @@ function collectBusySubmitButtons(targets: readonly HTMLElement[]): HTMLElement[
 
 /**
  * When `act` presses an async submit button (which sets `loading={busy}` -> `aria-busy="true"`
- * while its API request is in flight), wait until the button finishes being busy, disconnects
- * (e.g. its dialog closed), navigates to a new route, or opens a follow-up confirmation dialog.
+ * while its API request is in flight), wait until the button finishes being busy, its host dialog
+ * finishes closing/unmounting, the route changes, or a new follow-up confirmation dialog opens.
  * Returns `true` if a busy submission was observed and waited on; returns `false` immediately
  * (0ms) for synchronous buttons.
  */
 export async function waitForBusySubmitSettle(options: {
   targets: readonly HTMLElement[];
-  fromPath: string;
-  initialDialogs: ReadonlySet<Element>;
   signal?: AbortSignal;
   maxMs?: number;
 }): Promise<boolean> {
@@ -371,12 +369,25 @@ export async function waitForBusySubmitSettle(options: {
   // Allow one microtask so synchronous setState inside click/submit flushes if pending.
   await Promise.resolve();
   if (options.signal?.aborted) return false;
-  if (typeof window !== 'undefined' && window.location.pathname !== options.fromPath) return false;
 
   const busyButtons = collectBusySubmitButtons(options.targets);
   if (busyButtons.length === 0) return false;
 
-  const { fromPath, initialDialogs, signal, maxMs = 5000 } = options;
+  const { signal, maxMs = 5000 } = options;
+  const settleStartPath = typeof window !== 'undefined' ? window.location.pathname : '';
+  // Snapshot dialogs AFTER `act` finished (so a dialog opened in step 0 of the same `act` call
+  // is not misidentified as a newly spawned confirmation dialog).
+  const dialogsAtSettleStart = new Set(
+    Array.from(document.querySelectorAll('[role="alertdialog"], [role="dialog"]')),
+  );
+  const hostDialogs = new Set<Element>();
+  for (const btn of busyButtons) {
+    const dialog = btn.closest('[role="dialog"], [role="alertdialog"]');
+    if (dialog) hostDialogs.add(dialog);
+  }
+
+  const isDialogClosing = (dialog: Element) =>
+    dialog.isConnected && (dialog.hasAttribute('data-ending-style') || !dialog.hasAttribute('data-open'));
 
   await new Promise<void>((resolve) => {
     let settled = false;
@@ -384,6 +395,7 @@ export async function waitForBusySubmitSettle(options: {
     let pollTimer: ReturnType<typeof setInterval> | null = null;
     let maxTimer: ReturnType<typeof setTimeout> | null = null;
     let postSettleTimer: ReturnType<typeof setTimeout> | null = null;
+    let closeAnimDeadline: number | null = null;
 
     const cleanup = () => {
       observer?.disconnect();
@@ -405,28 +417,51 @@ export async function waitForBusySubmitSettle(options: {
       resolve();
     };
 
+    const hasClosingHostDialog = () => Array.from(hostDialogs).some(isDialogClosing);
+
     const scheduleBriefCommitSettle = () => {
       if (settled || postSettleTimer !== null) return;
-      // Give React / Next.js router one brief commit tick after `setBusy(false)` so
+      // Give React / Next.js router a brief commit tick after `setBusy(false)` so
       // `onOpenChange(false)` and `router.push(...)` land before `act` returns.
-      postSettleTimer = setTimeout(finishNow, 60);
+      postSettleTimer = setTimeout(() => {
+        postSettleTimer = null;
+        if (settled) return;
+        if (hasClosingHostDialog()) {
+          // Dialog/Sheet exit animation (`sink` / `slide-out-right`, ~160-200ms) is in progress;
+          // wait briefly for it to unmount so `#scroll-root` isolation and `overlaysAfter` settle cleanly.
+          closeAnimDeadline = Date.now() + 360;
+          check();
+          return;
+        }
+        finishNow();
+      }, 80);
     };
 
     const check = () => {
       if (settled) return;
-      if (typeof window !== 'undefined' && window.location.pathname !== fromPath) {
+      const stillBusy = busyButtons.some((btn) => btn.isConnected && btn.getAttribute('aria-busy') === 'true');
+      if (!stillBusy && typeof window !== 'undefined' && window.location.pathname !== settleStartPath) {
         finishNow();
         return;
       }
       const dialogs = document.querySelectorAll('[role="alertdialog"], [role="dialog"]');
       for (const dialog of dialogs) {
-        if (!initialDialogs.has(dialog) && !dialog.closest('[data-agent-hidden]')) {
+        if (!dialogsAtSettleStart.has(dialog) && !dialog.closest('[data-agent-hidden]')) {
           finishNow();
           return;
         }
       }
-      const stillBusy = busyButtons.some((btn) => btn.isConnected && btn.getAttribute('aria-busy') === 'true');
       if (!stillBusy) {
+        if (closeAnimDeadline !== null) {
+          if (!hasClosingHostDialog() || Date.now() >= closeAnimDeadline) {
+            finishNow();
+          }
+          return;
+        }
+        if (hasClosingHostDialog()) {
+          closeAnimDeadline = Date.now() + 360;
+          return;
+        }
         scheduleBriefCommitSettle();
       }
     };
@@ -439,7 +474,7 @@ export async function waitForBusySubmitSettle(options: {
         subtree: true,
         childList: true,
         attributes: true,
-        attributeFilter: ['aria-busy', 'disabled', 'open', 'data-open'],
+        attributeFilter: ['aria-busy', 'disabled', 'open', 'data-open', 'data-ending-style'],
       });
     }
     pollTimer = setInterval(check, 30);
