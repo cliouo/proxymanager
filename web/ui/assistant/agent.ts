@@ -22,6 +22,12 @@ import {
 } from '@/ui/agent';
 import { ApiError, api, errorMessage } from '@/ui/data/api';
 import type { AssistantConfig } from '@/ui/data/types';
+import {
+  analyzeToolError,
+  extractOpenOverlays,
+  type RunDiagnosticRecorder,
+  type ToolErrorAnalysis,
+} from './diagnostics';
 import { describeInput } from './labels';
 
 export interface ToolCall {
@@ -381,41 +387,30 @@ export async function streamModelRound(options: {
   return round;
 }
 
-function enrichMissingComponentError(data: Json, target: AppAgent): Json {
-  const err = isRecord(data.error) ? data.error : null;
-  const msg = typeof err?.message === 'string' ? err.message : '';
-  const match = msg.match(/^No component "([^"]+)" on the page/);
-  if (!match) return data;
-  const wanted = match[1].trim();
-  const wantedLower = wanted.toLowerCase();
-
-  let items: unknown[] = [];
-  try {
-    items = target.snapshot();
-  } catch {
-    return data;
-  }
-  for (const item of items) {
-    if (!isRecord(item) || !Array.isArray(item.buttons)) continue;
-    const parentLabel = typeof item.label === 'string' && item.label.trim() ? item.label.trim() : null;
-    if (!parentLabel) continue;
-    const buttonMatch = item.buttons.find(
-      (btn): btn is string =>
-        typeof btn === 'string' && (btn.trim() === wanted || btn.trim().toLowerCase() === wantedLower),
-    );
-    if (!buttonMatch) continue;
-    const kind = typeof item.component === 'string' ? item.component : 'menu';
-    return {
-      ...data,
-      hint: `「${buttonMatch}」是「${parentLabel}」（${kind}）内部的选项，不是独立组件；请改为单步传 args 调用：${JSON.stringify({ ref: parentLabel, action: 'press', args: [buttonMatch] })}`,
-    };
-  }
-  return data;
+function errorResult(message: string, analysis?: ToolErrorAnalysis): ToolDispatchResult {
+  const data: Json = {
+    error: message,
+    ...(analysis
+      ? {
+          errorCode: analysis.code,
+          errorCodes: analysis.codes,
+          ...(analysis.hint ? { hint: analysis.hint } : {}),
+        }
+      : {}),
+  };
+  return { kind: 'error', data, modelContent: JSON.stringify(data) };
 }
 
-function errorResult(message: string): ToolDispatchResult {
-  const data = { error: message };
-  return { kind: 'error', data, modelContent: JSON.stringify(data) };
+function attachAnalysis(data: unknown, analysis: ToolErrorAnalysis): unknown {
+  if (!isRecord(data)) return data;
+  return {
+    ...data,
+    errorCode: analysis.code,
+    errorCodes: analysis.codes,
+    ...(analysis.failedStepIndex !== undefined ? { failedStepIndex: analysis.failedStepIndex } : {}),
+    ...(analysis.completedSteps !== undefined ? { completedSteps: analysis.completedSteps } : {}),
+    ...(analysis.hint ? { hint: analysis.hint } : {}),
+  };
 }
 
 function makeAbortError(): Error {
@@ -433,11 +428,27 @@ export async function dispatchAgentTool(
     onStop?: () => void;
     onSideEffectDispatched?: () => void;
     agent?: AppAgent;
+    diagnostics?: RunDiagnosticRecorder;
+    round?: number;
+    slot?: string;
   },
 ): Promise<ToolDispatchResult> {
   const target = options?.agent ?? getAgent();
   const signal = options?.signal;
   const owner = options?.owner;
+  const diagnostics = options?.diagnostics;
+  const round = options?.round ?? 0;
+  const slot = options?.slot ?? '0:0';
+  const diagBegin = diagnostics?.beginCall(target);
+
+  const safeSnap = () => {
+    try {
+      return target.snapshot();
+    } catch {
+      return [];
+    }
+  };
+
   try {
     if (name === 'snapshot') {
       const data = target.snapshot();
@@ -450,6 +461,9 @@ export async function dispatchAgentTool(
             hint: '主区域仍有部分骨架屏在加载；已可见的按钮可直接用 act 操作，若目标数据或列表尚未出现，可调用 wait_for 等待其渲染。',
           })
         : JSON.stringify(data);
+      if (diagnostics && diagBegin) {
+        diagnostics.finishCall({ round, slot, tool: name, input, status: 'ok', agent: target, begin: diagBegin });
+      }
       return { kind: 'snapshot', data, modelContent };
     }
     if (name === 'query') {
@@ -474,7 +488,31 @@ export async function dispatchAgentTool(
           // Discard partial arrays if the run was aborted or expired while SDK restored closed tabs.
           if (signal?.aborted || !isBuiltinOwnerValid(owner)) throw makeAbortError();
           if (isRecord(data) && typeof data.error === 'string') {
-            return { kind: 'error', data, modelContent: JSON.stringify(data) };
+            const analysis = analyzeToolError({
+              name,
+              input,
+              data,
+              currentSnapshot: safeSnap(),
+              lastObservedSnapshot: diagnostics?.getLastObservedSnapshot(),
+              recentClosedOverlays: diagnostics?.getRecentClosedOverlays(),
+            });
+            const enriched = attachAnalysis(data, analysis);
+            if (diagnostics && diagBegin) {
+              diagnostics.finishCall({
+                round,
+                slot,
+                tool: name,
+                input,
+                status: 'error',
+                agent: target,
+                begin: diagBegin,
+                analysis,
+              });
+            }
+            return { kind: 'error', data: enriched, modelContent: JSON.stringify(enriched) };
+          }
+          if (diagnostics && diagBegin) {
+            diagnostics.finishCall({ round, slot, tool: name, input, status: 'ok', agent: target, begin: diagBegin });
           }
           return { kind: 'query', data, modelContent: JSON.stringify(data) };
         } finally {
@@ -489,7 +527,31 @@ export async function dispatchAgentTool(
         agent: target,
       });
       if (isRecord(data) && typeof data.error === 'string') {
-        return { kind: 'error', data, modelContent: JSON.stringify(data) };
+        const analysis = analyzeToolError({
+          name,
+          input,
+          data,
+          currentSnapshot: safeSnap(),
+          lastObservedSnapshot: diagnostics?.getLastObservedSnapshot(),
+          recentClosedOverlays: diagnostics?.getRecentClosedOverlays(),
+        });
+        const enriched = attachAnalysis(data, analysis);
+        if (diagnostics && diagBegin) {
+          diagnostics.finishCall({
+            round,
+            slot,
+            tool: name,
+            input,
+            status: 'error',
+            agent: target,
+            begin: diagBegin,
+            analysis,
+          });
+        }
+        return { kind: 'error', data: enriched, modelContent: JSON.stringify(enriched) };
+      }
+      if (diagnostics && diagBegin) {
+        diagnostics.finishCall({ round, slot, tool: name, input, status: 'ok', agent: target, begin: diagBegin });
       }
       return { kind: 'query', data, modelContent: JSON.stringify(data) };
     }
@@ -531,9 +593,53 @@ export async function dispatchAgentTool(
           if (signal?.aborted || !isBuiltinOwnerValid(owner)) throw makeAbortError();
         }
         if (!ok) {
-          const enriched = isRecord(data) ? enrichMissingComponentError(data, target) : data;
+          const analysis = analyzeToolError({
+            name,
+            input,
+            data,
+            currentSnapshot: safeSnap(),
+            lastObservedSnapshot: diagnostics?.getLastObservedSnapshot(),
+            recentClosedOverlays: diagnostics?.getRecentClosedOverlays(),
+          });
+          const enriched = attachAnalysis(data, analysis);
+          if (diagnostics && diagBegin) {
+            diagnostics.finishCall({
+              round,
+              slot,
+              tool: name,
+              input,
+              status: 'error',
+              agent: target,
+              begin: diagBegin,
+              analysis,
+            });
+          }
           return { kind: 'error', data: enriched, modelContent: JSON.stringify(enriched) };
         }
+        const reportedOpen = isRecord(data)
+          ? extractOpenOverlays([
+              ...(Array.isArray(data.open) ? (data.open as Parameters<typeof extractOpenOverlays>[0]) : []),
+              ...(Array.isArray(data.appeared) ? (data.appeared as Parameters<typeof extractOpenOverlays>[0]) : []),
+            ])
+          : [];
+        const finished = diagnostics && diagBegin
+          ? diagnostics.finishCall({
+              round,
+              slot,
+              tool: name,
+              input,
+              status: 'ok',
+              agent: target,
+              begin: diagBegin,
+              navigated,
+              navigationPending: navigationIntent && !navigated,
+              reportedOpenOverlays: reportedOpen,
+            })
+          : { closedBeforeReturn: [] };
+        const overlayClosedNote =
+          !navigated && finished.closedBeforeReturn.length > 0
+            ? `注意：刚才打开的浮层（${finished.closedBeforeReturn.map((o) => o.label || o.component).join('、')}）在返回前已关闭，下一步操作前请先重新打开或调用 snapshot 确认。`
+            : undefined;
         let modelContent: string;
         if (navigated && isRecord(data)) {
           // Drop stale pre-navigation form values so the model sees the new route cleanly.
@@ -550,7 +656,10 @@ export async function dispatchAgentTool(
             ...data,
             route: afterPath,
             navigationPending: true,
+            ...(overlayClosedNote ? { note: overlayClosedNote } : {}),
           });
+        } else if (overlayClosedNote && isRecord(data)) {
+          modelContent = JSON.stringify({ ...data, note: overlayClosedNote });
         } else {
           modelContent = JSON.stringify(data);
         }
@@ -574,14 +683,57 @@ export async function dispatchAgentTool(
       });
       if (signal?.aborted || !isBuiltinOwnerValid(owner)) throw makeAbortError();
       if (isRecord(data) && data.ok === false) {
-        return { kind: 'error', data, modelContent: JSON.stringify(data) };
+        const analysis = analyzeToolError({ name, data, currentSnapshot: [] });
+        const enriched = attachAnalysis(data, analysis);
+        if (diagnostics && diagBegin) {
+          diagnostics.finishCall({
+            round,
+            slot,
+            tool: name,
+            input,
+            status: 'error',
+            agent: target,
+            begin: diagBegin,
+            analysis,
+          });
+        }
+        return { kind: 'error', data: enriched, modelContent: JSON.stringify(enriched) };
+      }
+      if (diagnostics && diagBegin) {
+        diagnostics.finishCall({ round, slot, tool: name, input, status: 'ok', agent: target, begin: diagBegin });
       }
       return { kind: 'custom', data, modelContent: JSON.stringify(data) };
     }
-    return errorResult(`未知工具：${name}`);
+    const unknownAnalysis: ToolErrorAnalysis = { code: 'invalid_args', codes: ['invalid_args'] };
+    if (diagnostics && diagBegin) {
+      diagnostics.finishCall({
+        round,
+        slot,
+        tool: name,
+        input,
+        status: 'error',
+        agent: target,
+        begin: diagBegin,
+        analysis: unknownAnalysis,
+      });
+    }
+    return errorResult(`未知工具：${name}`, unknownAnalysis);
   } catch (error) {
     if (signal?.aborted || isAbortError(error)) throw error;
-    return errorResult(errorMessage(error));
+    const errAnalysis: ToolErrorAnalysis = { code: 'unknown', codes: ['unknown'] };
+    if (diagnostics && diagBegin) {
+      diagnostics.finishCall({
+        round,
+        slot,
+        tool: name,
+        input,
+        status: 'error',
+        agent: target,
+        begin: diagBegin,
+        analysis: errAnalysis,
+      });
+    }
+    return errorResult(errorMessage(error), errAnalysis);
   }
 }
 
@@ -635,9 +787,10 @@ export async function runAgent(options: {
   owner?: AbortController;
   onStop?: () => void;
   agent?: AppAgent;
+  diagnostics?: RunDiagnosticRecorder;
   onEvent: (event: AgentEvent) => void;
 }): Promise<AgentStatus> {
-  const { config, system, signal, owner, onStop, agent, onEvent } = options;
+  const { config, system, signal, owner, onStop, agent, diagnostics, onEvent } = options;
   const tools = options.tools ?? toOpenAiTools();
   const convo = repairTranscript(options.messages);
   const commit = () => onEvent({ type: 'transcript', messages: [...convo] });
@@ -698,9 +851,15 @@ export async function runAgent(options: {
       onEvent({ type: 'tool-start', slot, name, input });
       let result: ToolDispatchResult;
       if (parseFailed) {
-        result = errorResult('工具参数不是合法的 JSON，请重新生成参数后再调用。');
+        result = errorResult('工具参数不是合法的 JSON，请重新生成参数后再调用。', {
+          code: 'invalid_args',
+          codes: ['invalid_args'],
+        });
       } else if (name !== 'snapshot' && consumeTakeoverRouteDrifted()) {
-        result = errorResult('暂停期间页面或配置已切换，请先调用 snapshot 重新确认当前页面后再继续。');
+        result = errorResult('暂停期间页面或配置已切换，请先调用 snapshot 重新确认当前页面后再继续。', {
+          code: 'overlay_closed',
+          codes: ['overlay_closed'],
+        });
       } else {
         let sideEffectDispatched = false;
         try {
@@ -709,6 +868,9 @@ export async function runAgent(options: {
             owner,
             onStop,
             agent,
+            diagnostics,
+            round,
+            slot,
             onSideEffectDispatched: () => {
               sideEffectDispatched = true;
             },

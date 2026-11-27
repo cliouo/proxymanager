@@ -106,7 +106,7 @@ export function ProfileSwitcher({ collapsed }: { collapsed?: boolean }) {
         </button>
       }
     >
-      <Command loop className="flex flex-col">
+      <Command loop data-agent-active-value={active?.id ?? ''} className="flex flex-col">
         <div className="border-b border-line p-1.5">
           <CommandInput
             autoFocus
@@ -165,6 +165,7 @@ export function ProfileSwitcher({ collapsed }: { collapsed?: boolean }) {
           </UiButton>
           <UiButton
             type="button"
+            aria-label="管理配置文件"
             data-agent-nav="/profiles"
             onClick={() => {
               void navigateWithGuard(() => {
@@ -195,11 +196,13 @@ function ProfileRow({
   template?: boolean;
   intent?: ReturnType<typeof intentProps>;
 }) {
+  const title = profileTitle(profile);
+  const showSlug = title !== profile.name;
   return (
     <CommandItem
       {...intent}
       value={profile.id}
-      label={profileTitle(profile)}
+      label={title}
       keywords={[profile.name, profile.display_name ?? '']}
       onSelect={() => onSelect()}
       className="flex h-10 cursor-default items-center gap-2.5 rounded-md px-2 text-sm text-ink data-highlighted:bg-surface-2"
@@ -209,11 +212,16 @@ function ProfileRow({
           <LayoutTemplate size={13} />
         </span>
       ) : (
-        <Monogram name={profileTitle(profile)} colorKey={profile.id} size={24} />
+        <Monogram name={title} colorKey={profile.id} size={24} />
       )}
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-[13px] font-medium">{profileTitle(profile)}</span>
-        <span className="block truncate font-mono text-[10.5px] text-ink-3">{profile.name}</span>
+        <span className="block truncate text-[13px] font-medium">{title}</span>
+        {showSlug && (
+          <span className="block truncate font-mono text-[10.5px] text-ink-3">
+            <span className="sr-only"> · </span>
+            {profile.name}
+          </span>
+        )}
       </span>
       {active && <Check size={14} className="text-accent" />}
     </CommandItem>

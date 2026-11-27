@@ -1,6 +1,6 @@
 'use client';
 
-import { isValidElement, useMemo, useState, type ReactNode } from 'react';
+import { cloneElement, isValidElement, useMemo, useState, type ReactElement, type ReactNode } from 'react';
 import { Button as UiButton } from '@ui-sdk/react/button';
 import {
   Combobox as UiCombobox,
@@ -17,6 +17,18 @@ import {
 import { Input as UiInput } from '@ui-sdk/react/input';
 import { Check, ChevronsUpDown, Plus, X } from 'lucide-react';
 import { cn } from '@/ui/lib/cn';
+import { Button } from './button';
+import {
+  isFocusInsideAssistant,
+  shouldCancelAssistantFocusOut,
+  useWorkspaceOverlayScope,
+} from './overlay-scope';
+
+function normalizeComboTrigger(trigger: ReactNode): ReactElement<{ children?: ReactNode }> | null {
+  if (!isValidElement<{ children?: ReactNode; native?: boolean }>(trigger)) return null;
+  if (trigger.type === Button) return cloneElement(trigger, { native: true });
+  return trigger;
+}
 
 export interface ComboOption {
   value: string;
@@ -110,6 +122,9 @@ export function Combobox({
     [options],
   );
 
+  const { keepAssistantInteractive } = useWorkspaceOverlayScope();
+  const triggerEl = normalizeComboTrigger(trigger);
+
   return (
     <UiCombobox
       items={dataItems}
@@ -126,16 +141,20 @@ export function Combobox({
       loop
       query={query}
       onQueryChange={(next) => setQuery(next)}
-      onOpenChange={(next) => {
+      onOpenChange={(next, details) => {
+        if (!next && shouldCancelAssistantFocusOut(details, keepAssistantInteractive)) {
+          details.cancel();
+          return;
+        }
         if (next) setQuery('');
       }}
       onOpenChangeComplete={(next) => {
-        if (!next) button?.focus();
+        if (!next && !isFocusInsideAssistant()) button?.focus();
       }}
     >
-      {trigger && isValidElement<{ children?: ReactNode }>(trigger) ? (
-        <ComboboxTrigger ref={setButton} render={trigger} disabled={disabled}>
-          {trigger.props.children}
+      {triggerEl ? (
+        <ComboboxTrigger ref={setButton} render={triggerEl} disabled={disabled}>
+          {triggerEl.props.children}
         </ComboboxTrigger>
       ) : (
         <ComboboxTrigger
@@ -298,6 +317,9 @@ export function MultiCombobox({
     [options],
   );
 
+  const { keepAssistantInteractive } = useWorkspaceOverlayScope();
+  const triggerEl = normalizeComboTrigger(trigger);
+
   const remove = (target: string) => {
     onChange(value.filter((v) => v !== target));
   };
@@ -341,16 +363,20 @@ export function MultiCombobox({
           loop
           query={query}
           onQueryChange={(next) => setQuery(next)}
-          onOpenChange={(next) => {
+          onOpenChange={(next, details) => {
+            if (!next && shouldCancelAssistantFocusOut(details, keepAssistantInteractive)) {
+              details.cancel();
+              return;
+            }
             if (next) setQuery('');
           }}
           onOpenChangeComplete={(next) => {
-            if (!next) button?.focus();
+            if (!next && !isFocusInsideAssistant()) button?.focus();
           }}
         >
-          {trigger && isValidElement<{ children?: ReactNode }>(trigger) ? (
-            <ComboboxTrigger ref={setButton} render={trigger}>
-              {trigger.props.children}
+          {triggerEl ? (
+            <ComboboxTrigger ref={setButton} render={triggerEl}>
+              {triggerEl.props.children}
             </ComboboxTrigger>
           ) : (
             <ComboboxTrigger

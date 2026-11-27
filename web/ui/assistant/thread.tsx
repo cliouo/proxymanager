@@ -6,6 +6,7 @@ import { Brain, Check, ChevronRight, CircleAlert, Play, RotateCcw, Settings2, X 
 import { cn } from '@/ui/lib/cn';
 import { Button, CopyButton, Spinner } from '@/ui/primitives';
 import { formatSeconds, toYamlish } from './format';
+import { TOOL_ERROR_LABELS } from './diagnostics';
 import { toolLabel } from './labels';
 import { Markdown } from './markdown';
 import type { AssistantItem, Item, NoticeItem, ToolItem } from './session';
@@ -123,7 +124,22 @@ const ToolRow = memo(function ToolRow({ item }: { item: ToolItem }) {
             </div>
           )}
           <div className="px-2.5 py-2">
-            <div className="mb-1 text-2xs text-ink-3">{item.status === 'error' ? '错误' : '结果'}</div>
+            <div className="mb-1 flex flex-wrap items-center gap-1.5 text-2xs text-ink-3">
+              <span>{item.status === 'error' ? '错误' : '结果'}</span>
+              {item.status === 'error' && item.errorCode && (
+                <span className="rounded bg-bad-soft px-1.5 py-0.5 font-medium text-bad">
+                  {TOOL_ERROR_LABELS[item.errorCode]}
+                </span>
+              )}
+              {item.status === 'error' && typeof item.failedStepIndex === 'number' && (
+                <span className="text-ink-3">
+                  第 {item.failedStepIndex + 1} 步失败
+                  {typeof item.completedSteps === 'number' && item.completedSteps > 0
+                    ? `（前 ${item.completedSteps} 步已执行）`
+                    : ''}
+                </span>
+              )}
+            </div>
             <pre
               className={cn(
                 'max-h-60 overflow-auto whitespace-pre-wrap font-mono [overflow-wrap:anywhere]',
@@ -132,6 +148,11 @@ const ToolRow = memo(function ToolRow({ item }: { item: ToolItem }) {
             >
               {item.status === 'error' ? item.error : item.preview || '（空）'}
             </pre>
+            {item.status === 'error' && item.errorHint && (
+              <p className="mt-1.5 rounded-md border border-line bg-surface px-2 py-1.5 text-[11px] leading-relaxed text-ink-2">
+                建议：{item.errorHint}
+              </p>
+            )}
           </div>
         </div>
       )}

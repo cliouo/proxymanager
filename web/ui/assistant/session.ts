@@ -3,6 +3,7 @@
 import { useSyncExternalStore } from 'react';
 import {
   consumePauseStopTimeout,
+  getAgent,
   releaseTakeover,
   setTakeoverActivity,
 } from '@/ui/agent';
@@ -20,6 +21,11 @@ import {
   type AgentStatus,
   type ChatMessage,
 } from './agent';
+import {
+  RunDiagnosticRecorder,
+  clearLatestDiagnostics,
+  type ToolErrorCode,
+} from './diagnostics';
 import { previewText } from './format';
 import { describeInput, describeResult, resultError, toolLabel } from './labels';
 import { buildSystemPrompt, type AssistantRuntimeContext } from './prompt';
@@ -52,6 +58,10 @@ export interface ToolItem {
   summary?: string | null;
   preview?: string;
   error?: string;
+  errorCode?: ToolErrorCode;
+  errorHint?: string;
+  failedStepIndex?: number;
+  completedSteps?: number;
 }
 export interface NoticeItem {
   id: string;
@@ -282,6 +292,10 @@ async function run(context: AssistantRuntimeContext, userText?: string) {
         const id = ensureTool(event.slot, event.name);
         const { result } = event;
         const failed = result.kind === 'error';
+        const errData =
+          failed && result.data && typeof result.data === 'object' && !Array.isArray(result.data)
+            ? (result.data as Record<string, unknown>)
+            : null;
         patchOwnedItem<ToolItem>(id, (item) => ({
           ...item,
           status: failed ? 'error' : 'done',
@@ -289,6 +303,10 @@ async function run(context: AssistantRuntimeContext, userText?: string) {
           summary: failed ? null : describeResult(result.kind, result.data),
           preview: previewText(result.data),
           error: failed ? resultError(result.data) : undefined,
+          errorCode: failed && typeof errData?.errorCode === 'string' ? (errData.errorCode as ToolErrorCode) : undefined,
+          errorHint: failed && typeof errData?.hint === 'string' ? errData.hint : undefined,
+          failedStepIndex: failed && typeof errData?.failedStepIndex === 'number' ? errData.failedStepIndex : undefined,
+          completedSteps: failed && typeof errData?.completedSteps === 'number' ? errData.completedSteps : undefined,
         }));
         break;
       }
@@ -299,11 +317,17 @@ async function run(context: AssistantRuntimeContext, userText?: string) {
   };
 
   let status: AgentStatus | 'error' = 'error';
+  let diagnostics: RunDiagnosticRecorder | null = null;
   try {
     const config = await fetchQuery(keys.assistantConfig, fetchAssistantConfig);
     if (!config) {
       addItem({ id: uid(), type: 'notice', tone: 'error', text: 'AI 助手还没有配置模型。', settings: true });
     } else {
+      diagnostics = new RunDiagnosticRecorder({
+        model: config.model,
+        initialRoute: context.pathname || '/',
+        agent: typeof window !== 'undefined' ? getAgent() : undefined,
+      });
       status = await runAgent({
         config,
         system: buildSystemPrompt(context),
@@ -311,6 +335,7 @@ async function run(context: AssistantRuntimeContext, userText?: string) {
         signal: activeController.signal,
         owner: activeController,
         onStop: stop,
+        diagnostics,
         onEvent,
       });
       if (status === 'interrupted') {
@@ -353,6 +378,7 @@ async function run(context: AssistantRuntimeContext, userText?: string) {
       addItem({ id: uid(), type: 'notice', tone: 'error', text, retry: true, settings });
     }
   } finally {
+    diagnostics?.dispose();
     flush();
     releaseTakeover(activeController);
     if (controller === activeController) {
@@ -383,6 +409,7 @@ export function clearConversation() {
     releaseTakeover(active);
     active.abort();
   }
+  clearLatestDiagnostics();
   convo = { ...EMPTY };
   try {
     window.sessionStorage.removeItem(STORAGE_KEY);

@@ -40,7 +40,11 @@ import { Tooltip as UiTooltip, TooltipContent, TooltipTrigger } from '@ui-sdk/re
 import { Check, ChevronRight, X } from 'lucide-react';
 import { cn } from '@/ui/lib/cn';
 import { Button } from './button';
-import { ASSISTANT_PERSISTENT_SELECTORS, useWorkspaceOverlayScope } from './overlay-scope';
+import {
+  ASSISTANT_PERSISTENT_SELECTORS,
+  shouldCancelAssistantFocusOut,
+  useWorkspaceOverlayScope,
+} from './overlay-scope';
 
 /**
  * Guard non-modal Dialog/Sheet close callbacks so clicking an external same-origin
@@ -311,9 +315,20 @@ export function Popover({
   className?: string;
   modal?: boolean;
 }) {
+  const { keepAssistantInteractive } = useWorkspaceOverlayScope();
   const triggerEl = normalizeTrigger(trigger);
   return (
-    <UiPopover open={open} onOpenChange={(next) => onOpenChange?.(next)} modal={modal}>
+    <UiPopover
+      open={open}
+      onOpenChange={(next, details) => {
+        if (!next && shouldCancelAssistantFocusOut(details, keepAssistantInteractive)) {
+          details.cancel();
+          return;
+        }
+        onOpenChange?.(next);
+      }}
+      modal={modal}
+    >
       {triggerEl ? (
         <PopoverTrigger render={triggerEl}>{triggerEl.props.children}</PopoverTrigger>
       ) : (

@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation';
 import {
   ArrowDown,
   ArrowRight,
+  Bug,
   KeyRound,
   ListChecks,
   PlusCircle,
@@ -29,11 +30,12 @@ import { errorMessage } from '@/ui/data/api';
 import { useAssistantConfig } from '@/ui/data/hooks';
 import { useIsomorphicLayoutEffect } from '@/ui/data/query';
 import { cn } from '@/ui/lib/cn';
-import { Button, Skeleton, Tooltip } from '@/ui/primitives';
+import { Button, copyText, notify, Skeleton, Tooltip } from '@/ui/primitives';
 import { modKey } from '@/ui/shell/hotkeys';
 import { useActiveProfile } from '@/ui/shell/scope';
 import { setUi, useUi } from '@/ui/shell/state';
 import { Composer, type ComposerHandle } from './composer';
+import { buildLatestDiagnosticReport, useHasDiagnostics } from './diagnostics';
 import { pageLabelFor, type AssistantRuntimeContext } from './prompt';
 import { clearConversation, retry, sendMessage, stop, useConversation } from './session';
 import { Thread } from './thread';
@@ -147,6 +149,7 @@ export function AssistantPanel({ onClose }: { onClose: () => void }) {
     [pathname, profileContext],
   );
   const convo = useConversation();
+  const hasDiagnostics = useHasDiagnostics();
   const takeover = useTakeover();
   const pendingConfirm = usePendingAgentConfirm();
   const composerRef = useRef<ComposerHandle>(null);
@@ -256,6 +259,26 @@ export function AssistantPanel({ onClose }: { onClose: () => void }) {
             {contextLabel}
           </div>
         </div>
+        {configured && hasDiagnostics && (
+          <Tooltip content="复制本次诊断日志（已脱敏）">
+            <Button
+              variant="ghost"
+              size="sm"
+              iconOnly
+              icon={Bug}
+              aria-label="复制本次诊断日志"
+              onClick={() => {
+                const payload = buildLatestDiagnosticReport();
+                if (!payload) return;
+                void copyText(payload).then((ok) => {
+                  if (ok) {
+                    notify.success('已复制脱敏诊断日志', '仅含操作结构与错误分类，不含对话、密钥或配置数据。');
+                  }
+                });
+              }}
+            />
+          </Tooltip>
+        )}
         {configured && (
           <Tooltip content={hasConversation ? '新对话' : '当前还没有对话'}>
             <Button
