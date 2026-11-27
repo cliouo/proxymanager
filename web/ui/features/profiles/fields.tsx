@@ -75,13 +75,9 @@ export function SourceField({
   const loading = value.mode === 'subscription' ? sources.isLoading : pools.isLoading;
 
   return (
-    <Field
-      label="节点来源"
-      error={showError && missing ? (value.mode === 'subscription' ? '请选择一个订阅源' : '请选择一个聚合订阅') : undefined}
-      hint={SOURCE_HINT[value.mode]}
-    >
-      {(id) => (
-        <div className="flex flex-col gap-2">
+    <div className="flex flex-col gap-2">
+      <Field label="节点来源" hint={value.mode === 'none' ? SOURCE_HINT.none : undefined}>
+        {() => (
           <SegmentedControl<SourceMode>
             label="节点来源类型"
             stretch
@@ -93,8 +89,16 @@ export function SourceField({
               { value: 'collection', label: '聚合订阅', icon: Boxes },
             ]}
           />
-          {value.mode !== 'none' &&
-            (loading ? (
+        )}
+      </Field>
+      {value.mode !== 'none' && (
+        <Field
+          label={value.mode === 'subscription' ? '选择订阅源' : '选择聚合订阅'}
+          error={showError && missing ? (value.mode === 'subscription' ? '请选择一个订阅源' : '请选择一个聚合订阅') : undefined}
+          hint={SOURCE_HINT[value.mode]}
+        >
+          {(id) =>
+            loading ? (
               <Skeleton className="h-8 rounded-md" />
             ) : list.length === 0 ? (
               <div className="flex items-center justify-between gap-3 rounded-md border border-dashed border-line-strong px-3 py-2 text-xs text-ink-3">
@@ -113,10 +117,11 @@ export function SourceField({
                 invalid={showError && missing}
                 options={list}
               />
-            ))}
-        </div>
+            )
+          }
+        </Field>
       )}
-    </Field>
+    </div>
   );
 }
 
