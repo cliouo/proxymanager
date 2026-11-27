@@ -327,6 +327,8 @@ async function run(context: AssistantRuntimeContext, userText?: string) {
         model: config.model,
         initialRoute: context.pathname || '/',
         agent: typeof window !== 'undefined' ? getAgent() : undefined,
+        trigger: userText ? 'message' : 'continue',
+        continueSession: true,
       });
       status = await runAgent({
         config,
@@ -338,6 +340,7 @@ async function run(context: AssistantRuntimeContext, userText?: string) {
         diagnostics,
         onEvent,
       });
+      diagnostics.finishSegment(status);
       if (status === 'interrupted') {
         const timedOut = consumePauseStopTimeout();
         addItem({
@@ -366,6 +369,7 @@ async function run(context: AssistantRuntimeContext, userText?: string) {
     }));
     if (activeController.signal.aborted || isAbortError(error)) {
       status = 'interrupted';
+      diagnostics?.finishSegment('interrupted');
       const timedOut = consumePauseStopTimeout();
       addItem({
         id: uid(),
@@ -374,6 +378,7 @@ async function run(context: AssistantRuntimeContext, userText?: string) {
         text: timedOut ? '暂停超过 4 分钟，已自动停止' : '已停止',
       });
     } else {
+      diagnostics?.finishSegment('error');
       const { text, settings } = errorText(error);
       addItem({ id: uid(), type: 'notice', tone: 'error', text, retry: true, settings });
     }

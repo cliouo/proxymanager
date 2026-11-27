@@ -24,6 +24,7 @@ import { ApiError, api, errorMessage } from '@/ui/data/api';
 import type { AssistantConfig } from '@/ui/data/types';
 import {
   analyzeToolError,
+  extractActOutcomeCounts,
   extractOpenOverlays,
   type RunDiagnosticRecorder,
   type ToolErrorAnalysis,
@@ -634,6 +635,7 @@ export async function dispatchAgentTool(
               navigated,
               navigationPending: navigationIntent && !navigated,
               reportedOpenOverlays: reportedOpen,
+              actOutcome: extractActOutcomeCounts(data),
             })
           : { closedBeforeReturn: [] };
         const overlayClosedNote =

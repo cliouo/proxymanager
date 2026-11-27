@@ -10,6 +10,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 import { createAppAllow } from '@/ui/agent';
 import { dispatchAgentTool } from '@/ui/assistant/agent';
 import {
+  MAX_CALL_RECORDS,
   RunDiagnosticRecorder,
   analyzeToolError,
   buildLatestDiagnosticReport,
@@ -211,5 +212,144 @@ describe('P0 assistant overlay persistence, error taxonomy, and scrubbed diagnos
     } finally {
       recorder.dispose();
     }
+  });
+
+  test('accumulates multi-segment runs across continue, tracks truncation past 200 calls, and flags no-effect hotspot loops', async () => {
+    const fakeAgent = {
+      snapshot: () => [],
+      query: vi.fn(async () => []),
+      act: vi.fn(async () => ({ ok: true, steps: [{ step: 0, ref: 'c72' }], appeared: [] })),
+    } as unknown as ReturnType<typeof createAgent>;
+
+    // Segment 0: initial user message hits cap after 3 no-effect presses on the same button
+    const seg0 = new RunDiagnosticRecorder({
+      model: 'deepseek-flash',
+      initialRoute: '/p/secret-alpha/profiles',
+      agent: fakeAgent,
+      trigger: 'message',
+      continueSession: true,
+    });
+    try {
+      for (let r = 0; r < 3; r++) {
+        await dispatchAgentTool(
+          'act',
+          { steps: [{ ref: '创建并打开 secret-alpha', action: 'press' }] },
+          { agent: fakeAgent, diagnostics: seg0, round: r, slot: `${r}:0` },
+        );
+      }
+      seg0.finishSegment('cap');
+    } finally {
+      seg0.dispose();
+    }
+
+    // Segment 1: user clicks "继续" (continueSession: true) and presses same button once more, then finishes
+    const seg1 = new RunDiagnosticRecorder({
+      model: 'deepseek-flash',
+      initialRoute: '/p/secret-alpha/profiles',
+      agent: fakeAgent,
+      trigger: 'continue',
+      continueSession: true,
+    });
+    try {
+      await dispatchAgentTool(
+        'act',
+        { steps: [{ ref: '创建并打开 secret-alpha', action: 'press' }] },
+        { agent: fakeAgent, diagnostics: seg1, round: 0, slot: '0:0' },
+      );
+      seg1.finishSegment('done');
+    } finally {
+      seg1.dispose();
+    }
+
+    const raw = buildLatestDiagnosticReport();
+    expect(raw).toBeTruthy();
+    expect(raw!).not.toContain('secret-alpha');
+
+    const report = JSON.parse(raw!) as {
+      summary: {
+        segmentCount: number;
+        totalCalls: number;
+        retainedCalls: number;
+        droppedCalls: number;
+        noEffectActCalls: number;
+        repeatedTargetHotspots?: Array<{
+          target: string;
+          action: string;
+          count: number;
+          maxConsecutive: number;
+          noEffectCount: number;
+          errorCount: number;
+        }>;
+      };
+      segments: Array<{ index: number; trigger: string; endReason?: string; totalCalls: number }>;
+      calls: Array<{
+        segment: number;
+        changesCount?: number;
+        appearedCount?: number;
+        goneCount?: number;
+        noEffect?: boolean;
+        targets?: string[];
+      }>;
+    };
+
+    expect(report.summary.segmentCount).toBe(2);
+    expect(report.summary.totalCalls).toBe(4);
+    expect(report.summary.retainedCalls).toBe(4);
+    expect(report.summary.droppedCalls).toBe(0);
+    expect(report.summary.noEffectActCalls).toBe(4);
+    expect(report.segments.map((s) => ({ index: s.index, trigger: s.trigger, endReason: s.endReason, totalCalls: s.totalCalls }))).toEqual([
+      { index: 0, trigger: 'message', endReason: 'cap', totalCalls: 3 },
+      { index: 1, trigger: 'continue', endReason: 'done', totalCalls: 1 },
+    ]);
+    // Same anonymized target alias across segments 0 and 1
+    expect(report.calls[0].segment).toBe(0);
+    expect(report.calls[3].segment).toBe(1);
+    expect(report.calls[0].targets?.[0]).toBe(report.calls[3].targets?.[0]);
+    expect(report.calls[0].noEffect).toBe(true);
+    expect(report.calls[0].changesCount).toBe(0);
+    expect(report.summary.repeatedTargetHotspots?.[0]).toEqual({
+      target: report.calls[0].targets?.[0],
+      action: 'press',
+      count: 4,
+      maxConsecutive: 4,
+      noEffectCount: 4,
+      errorCount: 0,
+    });
+
+    // Overflow past MAX_CALL_RECORDS (200) must report droppedCalls accurately without losing total counts
+    const seg2 = new RunDiagnosticRecorder({
+      model: 'deepseek-flash',
+      initialRoute: '/profiles',
+      agent: fakeAgent,
+      trigger: 'continue',
+      continueSession: true,
+    });
+    try {
+      for (let i = 0; i < MAX_CALL_RECORDS + 5; i++) {
+        const begin = seg2.beginCall(fakeAgent);
+        seg2.finishCall({
+          round: i,
+          slot: `${i}:0`,
+          tool: 'snapshot',
+          input: {},
+          status: 'ok',
+          agent: fakeAgent,
+          begin,
+        });
+      }
+      seg2.finishSegment('done');
+    } finally {
+      seg2.dispose();
+    }
+
+    const overflow = JSON.parse(buildLatestDiagnosticReport()!) as {
+      summary: { totalCalls: number; retainedCalls: number; droppedCalls: number; noEffectActCalls: number };
+      calls: unknown[];
+    };
+    expect(overflow.summary.totalCalls).toBe(4 + MAX_CALL_RECORDS + 5);
+    expect(overflow.summary.retainedCalls).toBe(MAX_CALL_RECORDS);
+    expect(overflow.calls).toHaveLength(MAX_CALL_RECORDS);
+    expect(overflow.summary.droppedCalls).toBe(9);
+    expect(overflow.summary.noEffectActCalls).toBe(4);
   });
 });
