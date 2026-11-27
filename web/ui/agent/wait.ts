@@ -331,3 +331,121 @@ export function waitForRouteChange(
     maxTimer = setTimeout(() => finish(window.location.pathname !== fromPath), maxMs);
   });
 }
+
+function collectBusySubmitButtons(targets: readonly HTMLElement[]): HTMLElement[] {
+  if (typeof document === 'undefined') return [];
+  const busy = new Set<HTMLElement>();
+  for (const el of targets) {
+    if (!el.isConnected || el.closest('[data-agent-hidden]')) continue;
+    const btn = el.matches('button') ? el : el.closest<HTMLElement>('button');
+    if (btn && btn.getAttribute('aria-busy') === 'true') busy.add(btn);
+  }
+  if (busy.size === 0 && targets.length > 0) {
+    const scopeButtons = document.querySelectorAll<HTMLElement>(
+      '[role="dialog"] button[aria-busy="true"], [role="alertdialog"] button[aria-busy="true"], #main button[aria-busy="true"]',
+    );
+    for (const btn of scopeButtons) {
+      if (!btn.closest('[data-agent-hidden]')) busy.add(btn);
+    }
+  }
+  return [...busy];
+}
+
+/**
+ * When `act` presses an async submit button (which sets `loading={busy}` -> `aria-busy="true"`
+ * while its API request is in flight), wait until the button finishes being busy, disconnects
+ * (e.g. its dialog closed), navigates to a new route, or opens a follow-up confirmation dialog.
+ * Returns `true` if a busy submission was observed and waited on; returns `false` immediately
+ * (0ms) for synchronous buttons.
+ */
+export async function waitForBusySubmitSettle(options: {
+  targets: readonly HTMLElement[];
+  fromPath: string;
+  initialDialogs: ReadonlySet<Element>;
+  signal?: AbortSignal;
+  maxMs?: number;
+}): Promise<boolean> {
+  if (typeof document === 'undefined' || options.signal?.aborted || options.targets.length === 0) {
+    return false;
+  }
+  // Allow one microtask so synchronous setState inside click/submit flushes if pending.
+  await Promise.resolve();
+  if (options.signal?.aborted) return false;
+  if (typeof window !== 'undefined' && window.location.pathname !== options.fromPath) return false;
+
+  const busyButtons = collectBusySubmitButtons(options.targets);
+  if (busyButtons.length === 0) return false;
+
+  const { fromPath, initialDialogs, signal, maxMs = 5000 } = options;
+
+  await new Promise<void>((resolve) => {
+    let settled = false;
+    let observer: MutationObserver | null = null;
+    let pollTimer: ReturnType<typeof setInterval> | null = null;
+    let maxTimer: ReturnType<typeof setTimeout> | null = null;
+    let postSettleTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const cleanup = () => {
+      observer?.disconnect();
+      observer = null;
+      if (pollTimer) clearInterval(pollTimer);
+      pollTimer = null;
+      if (maxTimer) clearTimeout(maxTimer);
+      maxTimer = null;
+      if (postSettleTimer) clearTimeout(postSettleTimer);
+      postSettleTimer = null;
+      window.removeEventListener('popstate', check);
+      signal?.removeEventListener('abort', finishNow);
+    };
+
+    const finishNow = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve();
+    };
+
+    const scheduleBriefCommitSettle = () => {
+      if (settled || postSettleTimer !== null) return;
+      // Give React / Next.js router one brief commit tick after `setBusy(false)` so
+      // `onOpenChange(false)` and `router.push(...)` land before `act` returns.
+      postSettleTimer = setTimeout(finishNow, 60);
+    };
+
+    const check = () => {
+      if (settled) return;
+      if (typeof window !== 'undefined' && window.location.pathname !== fromPath) {
+        finishNow();
+        return;
+      }
+      const dialogs = document.querySelectorAll('[role="alertdialog"], [role="dialog"]');
+      for (const dialog of dialogs) {
+        if (!initialDialogs.has(dialog) && !dialog.closest('[data-agent-hidden]')) {
+          finishNow();
+          return;
+        }
+      }
+      const stillBusy = busyButtons.some((btn) => btn.isConnected && btn.getAttribute('aria-busy') === 'true');
+      if (!stillBusy) {
+        scheduleBriefCommitSettle();
+      }
+    };
+
+    window.addEventListener('popstate', check);
+    signal?.addEventListener('abort', finishNow, { once: true });
+    if (typeof MutationObserver !== 'undefined') {
+      observer = new MutationObserver(check);
+      observer.observe(document.body, {
+        subtree: true,
+        childList: true,
+        attributes: true,
+        attributeFilter: ['aria-busy', 'disabled', 'open', 'data-open'],
+      });
+    }
+    pollTimer = setInterval(check, 30);
+    maxTimer = setTimeout(finishNow, maxMs);
+    check();
+  });
+
+  return true;
+}

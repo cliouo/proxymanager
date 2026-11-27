@@ -482,6 +482,7 @@ export function MarkersSection({
           <li key={row.hint}>
             <MarkerRow
               onClick={row.marker ? () => onReveal(row.marker!.line) : undefined}
+              ariaLabel={`定位 ${row.hint} 注入点`}
               name={<span className="font-sans text-[13px] text-ink">{row.label}</span>}
               detail={<span className={cn('text-ink-4', mono)}>{row.hint}</span>}
               right={row.marker ? `第 ${row.marker.line} 行` : <span className="text-ink-4">未放置</span>}
@@ -563,12 +564,14 @@ function MarkerRow({
   right,
   onClick,
   tone,
+  ariaLabel,
 }: {
   name: ReactNode;
   detail?: ReactNode;
   right?: ReactNode;
   onClick?: () => void;
   tone?: 'bad';
+  ariaLabel?: string;
 }) {
   const body = (
     <>
@@ -585,7 +588,12 @@ function MarkerRow({
   );
   const className = 'flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left';
   return onClick ? (
-    <UiButton type="button" onClick={onClick} className={cn(className, 'transition-colors hover:bg-surface-2')}>
+    <UiButton
+      type="button"
+      aria-label={ariaLabel}
+      onClick={onClick}
+      className={cn(className, 'transition-colors hover:bg-surface-2')}
+    >
       {body}
     </UiButton>
   ) : (

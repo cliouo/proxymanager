@@ -338,7 +338,7 @@ export function CreateGroupDialog({ open, onOpenChange }: { open: boolean; onOpe
           </Field>
 
           {memberError && trimmed && !(spec.mode === 'auto' && filter.trim()) && (
-            <p className="text-xs text-ink-3">{memberError}</p>
+            <p data-validation-hint className="text-xs text-ink-3">{memberError}</p>
           )}
         </div>
       </div>

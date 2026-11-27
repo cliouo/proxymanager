@@ -3,6 +3,7 @@ const TOOL_LABELS: Record<string, string> = {
   query: '查询页面内容',
   act: '操作页面',
   wait_for: '等待页面内容就绪',
+  get_node_catalog_summary: '读取节点地区分布摘要',
   search_mihomo_docs: '查询 Mihomo 文档',
   fetch_url: '抓取外部链接',
   preview_direct_alias_migration: '预检直连别名迁移',
@@ -64,6 +65,12 @@ export function describeInput(name: string, input: unknown): string | null {
     if (typeof args.component === 'string' && args.component.trim()) parts.push(args.component.trim());
     return parts.length ? clip(parts.join(' · ')) : '骨架屏加载完成';
   }
+  if (name === 'get_node_catalog_summary') {
+    if (typeof args.profile === 'string' && args.profile.trim()) return clip(`配置「${args.profile.trim()}」`);
+    if (typeof args.pool_id === 'string' && args.pool_id.trim()) return '指定聚合订阅';
+    if (typeof args.subscription_id === 'string' && args.subscription_id.trim()) return '指定订阅源';
+    return '当前节点分布';
+  }
   if (name === 'search_mihomo_docs' && typeof args.question === 'string') {
     return clip(args.question);
   }
@@ -114,6 +121,10 @@ export function describeResult(kind: string, data: unknown): string | null {
     if (typeof record?.found === 'boolean') {
       const ms = typeof record.waitedMs === 'number' ? `（${record.waitedMs}ms）` : '';
       return record.found ? `已就绪${ms}` : '等待超时';
+    }
+    if (typeof record?.totalNodes === 'number') {
+      const regionCount = Array.isArray(record.regions) ? record.regions.length : 0;
+      return `${record.totalNodes} 个节点 · ${regionCount} 类地区`;
     }
     if (record?.unavailable === true) return '文档服务暂不可用';
     if (typeof record?.bytes === 'number') return `${record.bytes} 字节`;
