@@ -479,7 +479,12 @@ export function Overview() {
               }
               actions={
                 <Button asChild size="sm" variant="ghost" trailingIcon={ArrowUpRight}>
-                  <Link href={supply.pool ? `/pools/${supply.pool.id}` : '/sources'}>管理</Link>
+                  <Link
+                    href={supply.pool ? `/pools/${supply.pool.id}` : '/sources'}
+                    aria-label={supply.pool ? '管理聚合订阅' : '管理节点来源'}
+                  >
+                    管理
+                  </Link>
                 </Button>
               }
             />
@@ -569,7 +574,9 @@ export function Overview() {
               description="每台设备一条专属订阅链接"
               actions={
                 <Button asChild size="sm" variant="ghost" trailingIcon={ArrowUpRight}>
-                  <Link href={path('devices')}>管理</Link>
+                  <Link href={path('devices')} aria-label="管理设备">
+                    管理
+                  </Link>
                 </Button>
               }
             />

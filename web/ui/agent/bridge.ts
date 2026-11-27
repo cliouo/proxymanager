@@ -66,6 +66,8 @@ function detectNavigationIntent(
   if (step.component === 'command' && step.action === 'run') {
     const value = typeof step.args[0] === 'string' ? step.args[0].trim() : '';
     if (!value || NON_NAV_COMMANDS.has(value)) return { expected: false };
+    const activeValue = target?.closest<HTMLElement>('[data-agent-active-value]')?.getAttribute('data-agent-active-value');
+    if (activeValue && activeValue === value) return { expected: false };
     const staticPath = STATIC_NAV_COMMAND_PATHS[value];
     if (staticPath) {
       return staticPath === currentPath ? { expected: false } : { expected: true, expectedPath: staticPath };
