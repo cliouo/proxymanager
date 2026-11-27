@@ -22,6 +22,7 @@ import {
 import { AlertTriangle, CircleAlert, CircleCheck, Info, ShieldAlert, X } from 'lucide-react';
 import { ApiError, errorMessage, type ConfigIssue } from '@/ui/data/api';
 import { cn } from '@/ui/lib/cn';
+import { useUi } from '@/ui/shell/state';
 import { Button } from './button';
 import { Dialog } from './overlay';
 import { ASSISTANT_PERSISTENT_SELECTORS, useWorkspaceOverlayScope } from './overlay-scope';
@@ -93,16 +94,30 @@ export const notify = {
 };
 
 export function AppToaster() {
+  const assistantOpen = useUi((s) => s.assistantOpen);
+  const assistantDocked = useUi((s) => s.assistantDocked);
+  const narrowDrawer = assistantOpen && !assistantDocked;
+
   return (
     <ToastRegion
       toaster={appToaster}
-      side="bottom"
-      align="end"
+      side={narrowDrawer ? 'top' : 'bottom'}
+      align={narrowDrawer ? 'start' : 'end'}
       aria-label="通知"
-      className="fixed bottom-5 right-5 z-[70] m-0 flex w-[min(360px,calc(100vw-32px))] flex-col gap-2.5 border-0 bg-transparent p-0 outline-none"
+      data-toast-region
+      data-takeover-exempt
+      className={cn(
+        'fixed z-[70] m-0 flex w-[min(360px,calc(100vw-32px))] flex-col gap-2.5 border-0 bg-transparent p-0 outline-none transition-[right,left,top,bottom] duration-300',
+        assistantDocked
+          ? 'bottom-5 right-[452px]'
+          : narrowDrawer
+            ? 'left-4 top-4'
+            : 'bottom-5 right-5',
+      )}
     >
       {(item) => (
         <Toast
+          data-takeover-exempt
           className={cn(
             'relative flex items-start gap-2.5 rounded-xl border border-line bg-surface px-3.5 py-3 text-sm text-ink shadow-lg',
             'transition-[opacity,transform] duration-150 data-starting-style:translate-y-2 data-starting-style:opacity-0 data-ending-style:opacity-0',

@@ -9,7 +9,11 @@ export const MAIN_OVERLAY_ROOT_ID = 'main-overlay-root';
 const SCROLL_ROOT_ID = 'scroll-root';
 const OVERLAY_HIDDEN_ATTR = 'data-agent-overlay-hidden';
 const isolatedBackgroundTokens = new Set<symbol>();
-export const ASSISTANT_PERSISTENT_SELECTORS = ['[data-assistant-surface]', '[data-takeover-bar]'];
+export const ASSISTANT_PERSISTENT_SELECTORS = [
+  '[data-assistant-surface]',
+  '[data-takeover-bar]',
+  '[data-toast-region]',
+];
 export const ASSISTANT_INTERACTIVE_SELECTOR = ASSISTANT_PERSISTENT_SELECTORS.join(', ');
 const ASSISTANT_FOCUS_SAFE_SELECTOR = `${ASSISTANT_INTERACTIVE_SELECTOR}, [data-agent-confirm-card]`;
 
